@@ -46,8 +46,24 @@ function stripJsonc(source: string): string {
       continue;
     }
     if (character === ',') {
+      // The lookahead must skip comments as well as whitespace: comments are removed from the
+      // output on later iterations, so a comma judged trailing only against whitespace would
+      // survive as `,\n]` once a comment between it and the bracket is stripped.
       let next = index + 1;
-      while (/\s/.test(source[next] ?? '')) next += 1;
+      for (;;) {
+        if (/\s/.test(source[next] ?? '')) {
+          next += 1;
+        } else if (source[next] === '/' && source[next + 1] === '/') {
+          next += 2;
+          while (next < source.length && source[next] !== '\n' && source[next] !== '\r') next += 1;
+        } else if (source[next] === '/' && source[next + 1] === '*') {
+          next += 2;
+          while (next < source.length && !(source[next] === '*' && source[next + 1] === '/')) next += 1;
+          if (next < source.length) next += 2;
+        } else {
+          break;
+        }
+      }
       if (source[next] === '}' || source[next] === ']') {
         index += 1;
         continue;

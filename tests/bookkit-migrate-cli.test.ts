@@ -83,6 +83,19 @@ describe('bookkit-migrate CLI', () => {
     expect(result.capturedArgs()).toContain('bookings');
   });
 
+  it('parses trailing commas separated from their closing bracket by comments', () => {
+    const result = run(`{
+      "d1_databases": [
+        { "binding": "BOOKKIT_DB", "database_name": "bookings" },
+        // more databases can be added here
+      ],
+      /* block comment */
+    }`);
+
+    expect(result.status).toBe(0);
+    expect(result.capturedArgs()).toContain('bookings');
+  });
+
   it('rejects --config when its path argument is missing', () => {
     const result = run('{ "d1_databases": [{ "binding": "BOOKKIT_DB", "database_name": "bookings" }] }', ['--config', '--local']);
 
