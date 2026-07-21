@@ -245,7 +245,7 @@ export function handleCheckout(request: Request, context: BookkitContext): Promi
     }
     if (!booking) throw new Error('Unable to create booking hold');
     try {
-      const checkout = await context.providers.payments.createCheckout(booking, context.config);
+      const checkout = await context.providers.payments.createCheckout(booking, context.config, context.routeConfig.paths);
       await context.repo.updateBooking(booking.id, { stripeSessionId: checkout.sessionId, updatedAt: nowIso(context) });
       return json({ checkoutUrl: checkout.url, bookingId: booking.id, reference: booking.reference }, 201);
     } catch (error) {

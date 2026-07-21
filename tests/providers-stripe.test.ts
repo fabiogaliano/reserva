@@ -8,10 +8,11 @@ import {
   stripePaymentMethodTypes,
   type StripeClient,
 } from '../src/providers/stripe';
+import { resolveRouteConfig } from '../src/routes-manifest';
 
 function makeClient() {
   const sessions = {
-    create: vi.fn(async () => ({ id: 'cs_created', url: 'https://checkout.test/cs_created' })),
+    create: vi.fn(async (_params: Stripe.Checkout.SessionCreateParams) => ({ id: 'cs_created', url: 'https://checkout.test/cs_created' })),
     retrieve: vi.fn(async () => ({
       id: 'cs_1',
       status: 'complete',
@@ -54,6 +55,20 @@ describe('StripeProvider', () => {
       custom_fields: [{ key: 'pickup_address', label: { type: 'custom', custom: 'Pickup address' }, type: 'text' }],
       line_items: [{ quantity: 1, price_data: { currency: 'eur', unit_amount: 12000, product_data: { name: 'Vintage tour (en)' } } }],
     }));
+  });
+
+  it('uses the resolved confirmation path for its default success URL and preserves the unprefixed fallback', async () => {
+    const prefixed = makeClient();
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client: prefixed.client });
+    await provider.createCheckout(booking(), config, resolveRouteConfig('/en').paths);
+    const prefixedParams = prefixed.sessions.create.mock.calls[0]?.[0];
+    expect(prefixedParams?.success_url).toContain('/en/booking-confirmation?session_id=');
+    expect(prefixedParams?.success_url).not.toContain(`${config.business.url}/booking-confirmation?session_id=`);
+
+    const unprefixed = makeClient();
+    const fallbackProvider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client: unprefixed.client });
+    await fallbackProvider.createCheckout(booking(), config);
+    expect(unprefixed.sessions.create.mock.calls[0]?.[0].success_url).toContain('/booking-confirmation?session_id=');
   });
 
   it('omits pickup custom fields for the default pickup and supports positional construction', async () => {

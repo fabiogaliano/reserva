@@ -1,6 +1,7 @@
 import type { ClientConfig } from './config';
 import type { Booking } from './booking';
 import type { CalEvent } from './occupancy';
+import type { BookkitResolvedRouteConfig } from '../routes-manifest';
 
 export type BookingEvent =
   | 'booking.confirmed'
@@ -61,7 +62,12 @@ export interface SessionStatus extends StripeCustomerDetails {
 export type EmailBookingEvent = Exclude<BookingEvent, 'payment.dispute_created'>;
 
 export interface EmailProvider {
-  send(event: EmailBookingEvent, booking: Booking, config: ClientConfig): Promise<void>;
+  send(
+    event: EmailBookingEvent,
+    booking: Booking,
+    config: ClientConfig,
+    routePaths?: BookkitResolvedRouteConfig['paths'],
+  ): Promise<void>;
 }
 
 export interface CalendarProvider {
@@ -72,7 +78,11 @@ export interface CalendarProvider {
 }
 
 export interface PaymentProvider {
-  createCheckout(booking: Booking, config: ClientConfig): Promise<{ url: string; sessionId: string }>;
+  createCheckout(
+    booking: Booking,
+    config: ClientConfig,
+    routePaths?: BookkitResolvedRouteConfig['paths'],
+  ): Promise<{ url: string; sessionId: string }>;
   parseWebhook(request: Request): Promise<StripeEventParsed>;
   getSession(sessionId: string): Promise<SessionStatus>;
   refund(paymentIntent: string): Promise<void>;

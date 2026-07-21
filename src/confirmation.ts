@@ -75,7 +75,7 @@ async function confirmBookingFromPaymentUnlocked(
     }
   }
   if (!current.emailSynced) {
-    if (context.providers.email) await context.providers.email.send('booking.confirmed', current, context.config);
+    if (context.providers.email) await context.providers.email.send('booking.confirmed', current, context.config, context.routeConfig.paths);
     current = await context.repo.updateBooking(current.id, { emailSynced: true, updatedAt: nowIso(context) });
   }
   if (shouldDispatchConfirmation) dispatchNonCritical(context, 'booking.confirmed', current);
@@ -166,7 +166,7 @@ export async function dispatchMutation(
 ): Promise<void> {
   if (context.providers.email) {
     try {
-      await context.providers.email.send(event, booking, context.config);
+      await context.providers.email.send(event, booking, context.config, context.routeConfig.paths);
     } catch (error) {
       context.logger.warn?.('bookkit mutation email failed', { event, bookingId: booking.id, error: String(error) });
     }

@@ -1,6 +1,7 @@
 import type { Booking } from '../core/booking';
 import type { ClientConfig } from '../core/config';
 import type { EmailBookingEvent, EmailProvider } from '../core/events';
+import type { BookkitResolvedRouteConfig } from '../routes-manifest';
 
 export const BREVO_TRANSACTIONAL_EMAIL_URL = 'https://api.brevo.com/v3/smtp/email';
 export const BREVO_API_URL = BREVO_TRANSACTIONAL_EMAIL_URL;
@@ -62,7 +63,7 @@ function getTemplate(event: EmailBookingEvent, recipient: BrevoRecipient, locale
 }
 function escapeHtml(value: string): string { return value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!); }
 function interpolate(template: string, values: Record<string, string>): string { return template.replace(/\{([A-Za-z][A-Za-z0-9]*)\}/g, (_, key: string) => values[key] ?? ''); }
-function manageUrl(config: ClientConfig, token: string): string { return `${config.business.url.replace(/\/$/, '')}/booking/manage?token=${encodeURIComponent(token)}`; }
+function manageUrl(config: ClientConfig, token: string, routePaths?: BookkitResolvedRouteConfig['paths']): string { return `${config.business.url.replace(/\/$/, '')}${routePaths?.managePage ?? '/booking/manage'}?token=${encodeURIComponent(token)}`; }
 function localStart(booking: Booking, config: ClientConfig): string {
   const locale = booking.locale === 'auto' ? config.locales.default : booking.locale || config.locales.default;
   return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short', timeZone: config.business.timezone }).format(new Date(booking.startsAt));
@@ -100,11 +101,16 @@ export class BrevoEmailProvider implements EmailProvider {
     this.apiKey = options.apiKey; this.sender = options.sender; this.owner = options.owner; this.endpoint = options.endpoint ?? BREVO_TRANSACTIONAL_EMAIL_URL;
     this.request = options.fetchImpl ?? options.fetch ?? globalThis.fetch.bind(globalThis); this.renderer = options.renderEmail ?? options.render ?? defaultRender;
   }
-  async send(event: EmailBookingEvent, booking: Booking, config: ClientConfig): Promise<void> {
+  async send(
+    event: EmailBookingEvent,
+    booking: Booking,
+    config: ClientConfig,
+    routePaths?: BookkitResolvedRouteConfig['paths'],
+  ): Promise<void> {
     const recipients: BrevoRecipient[] = ['customer']; if (ownerEvents.has(event)) recipients.push('owner');
     for (const recipient of recipients) {
       const address = addressFor(recipient, booking, config, this.owner); if (!address) continue;
-      const context: BrevoEmailTemplateContext = { event, booking, config, locale: config.locales.supported.includes(booking.locale) ? booking.locale : config.locales.default, recipient, customerManageUrl: manageUrl(config, booking.cancelToken), operatorManageUrl: manageUrl(config, booking.operatorToken), startsAtLocal: localStart(booking, config) };
+      const context: BrevoEmailTemplateContext = { event, booking, config, locale: config.locales.supported.includes(booking.locale) ? booking.locale : config.locales.default, recipient, customerManageUrl: manageUrl(config, booking.cancelToken, routePaths), operatorManageUrl: manageUrl(config, booking.operatorToken, routePaths), startsAtLocal: localStart(booking, config) };
       const content = this.renderer(context);
       const response = await this.request(this.endpoint, { method: 'POST', headers: { accept: 'application/json', 'api-key': this.apiKey, 'content-type': 'application/json' }, body: JSON.stringify({ ...content, sender: this.sender ?? { email: config.business.contact.email, name: config.business.name }, to: [address] }) });
       if (!response.ok) throw new Error(`Brevo email request failed (${response.status}): ${await response.text()}`);

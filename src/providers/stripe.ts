@@ -4,6 +4,7 @@ import type { ClientConfig } from '../core/config';
 import { resolveTour } from '../core/config';
 import type { PaymentProvider, SessionStatus, StripeEventParsed } from '../core/events';
 import { priceFor } from '../core/pricing';
+import type { BookkitResolvedRouteConfig } from '../routes-manifest';
 
 export interface StripeClient {
   checkout: { sessions: {
@@ -130,8 +131,8 @@ function nowMs(now: () => Date | number): number {
   return value instanceof Date ? value.getTime() : value;
 }
 
-function defaultSuccessUrl(config: ClientConfig): string {
-  return `${config.business.url.replace(/\/$/, '')}/booking-confirmation?session_id=${checkoutSessionPlaceholder}`;
+function defaultSuccessUrl(config: ClientConfig, routePaths?: BookkitResolvedRouteConfig['paths']): string {
+  return `${config.business.url.replace(/\/$/, '')}${routePaths?.confirmationPage ?? '/booking-confirmation'}?session_id=${checkoutSessionPlaceholder}`;
 }
 
 function defaultCancelUrl(booking: Booking, config: ClientConfig): string {
@@ -213,7 +214,11 @@ export class StripeProvider implements PaymentProvider {
     this.options = options;
   }
 
-  async createCheckout(booking: Booking, config: ClientConfig): Promise<{ url: string; sessionId: string }> {
+  async createCheckout(
+    booking: Booking,
+    config: ClientConfig,
+    routePaths?: BookkitResolvedRouteConfig['paths'],
+  ): Promise<{ url: string; sessionId: string }> {
     const tour = resolveTour(config, booking.tourSlug);
     const nameCallback = this.options.getTourName
       ?? this.options.tourName
@@ -223,7 +228,7 @@ export class StripeProvider implements PaymentProvider {
     const name = resolveOption(nameCallback, booking, config, booking.tourSlug);
     const description = resolveOption(this.options.productDescription, booking, config, '').trim();
     const successUrl = this.options.getSuccessUrl?.(booking, config)
-      ?? resolveOption(this.options.successUrl, booking, config, defaultSuccessUrl(config));
+      ?? resolveOption(this.options.successUrl, booking, config, defaultSuccessUrl(config, routePaths));
     const cancelUrl = this.options.getCancelUrl?.(booking, config)
       ?? resolveOption(this.options.cancelUrl, booking, config, defaultCancelUrl(booking, config));
     const pickupLabel = resolveOption(this.options.pickupFieldLabel, booking, config, defaultPickupFieldLabel);

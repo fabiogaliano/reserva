@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { brevoEmail, BREVO_TRANSACTIONAL_EMAIL_URL } from '../src/providers/brevo';
 import { calendarInviteOnly } from '../src/providers/noop';
 import { booking, config } from './fixtures';
+import { resolveRouteConfig } from '../src/routes-manifest';
 
 describe('email providers', () => {
   it('posts localized customer and owner messages to Brevo', async () => {
@@ -21,6 +22,23 @@ describe('email providers', () => {
     expect(owner.subject).toContain('Nova reserva');
     expect(owner.to[0]?.email).toBe('owner@example.test');
     expect(owner.htmlContent).toContain('operator-token');
+  });
+
+  it('uses the resolved manage path in emails and preserves the unprefixed fallback', async () => {
+    const prefixedRequest = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
+    await brevoEmail({ apiKey: 'key', fetchImpl: prefixedRequest }).send(
+      'booking.confirmed',
+      booking(),
+      config,
+      resolveRouteConfig('/en').paths,
+    );
+    const prefixedBody = prefixedRequest.mock.calls.map((call) => String(call[1]?.body)).join('\n');
+    expect(prefixedBody).toContain('/en/booking/manage?token=');
+    expect(prefixedBody).not.toContain(`${config.business.url}/booking/manage?token=`);
+
+    const fallbackRequest = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
+    await brevoEmail({ apiKey: 'key', fetchImpl: fallbackRequest }).send('booking.confirmed', booking(), config);
+    expect(fallbackRequest.mock.calls.map((call) => String(call[1]?.body)).join('\n')).toContain('/booking/manage?token=');
   });
 
   it('uses a renderer callback and falls back to the configured locale', async () => {
