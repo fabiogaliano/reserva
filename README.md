@@ -23,7 +23,9 @@ export default defineConfig({
 
 ## Runtime module
 
-`defineCloudflareBookkitRuntime()` reads production bindings from `cloudflare:workers`, which is the supported Astro 7 and `@astrojs/cloudflare` runtime API. Direct `locals.env` is accepted only as an explicit test harness seam. The environment is kept inside the context factory and is never returned as page data.
+`defineCloudflareBookkitRuntime()` reads production bindings from `cloudflare:workers` (`import { env } from 'cloudflare:workers'`), which is the current `@astrojs/cloudflare` v14 runtime API. Direct `locals.env` is accepted only as an explicit test harness seam. The environment is kept inside the context factory and is never returned as page data.
+
+If you're debugging a missing binding and find older tutorials or blog posts pointing you at `locals.runtime.env`: on `@astrojs/cloudflare` v14, `locals.runtime` still exists but accessing `.env` (or `.cf`, `.caches`, `.ctx`) on it throws `Astro.locals.runtime.env has been removed in Astro v6. Use 'import { env } from "cloudflare:workers"' instead.` Don't reach for `locals.runtime.env` — bookkit already reads bindings from `cloudflare:workers`'s `env` export (or the `locals.env` test seam above).
 
 ```ts
 import { defineCloudflareBookkitRuntime } from 'bookkit/runtime';
@@ -76,6 +78,10 @@ Every entry is `optional`: providers are opt-in, so a Stripe-only integration mu
 
 Pass `bookkit({ ..., envSchema: false })` to skip this contribution, e.g. if your project already declares its own `env.schema` for these names.
 
+## Providers
+
+Import each provider from its own narrow subpath — `bookkit/providers/payments-stripe`, `bookkit/providers/email-brevo`, `bookkit/providers/email-none`, `bookkit/providers/ops-tourflow`, `bookkit/providers/calendar-google` — rather than the bare `bookkit/providers` barrel. `bookkit/providers` re-exports every provider from one module, which means importing it pulls every provider's SDK dependency (e.g. `stripe`) into the module graph together; the narrow subpaths import only the one provider (and its one SDK) you actually construct in your runtime module. `bookkit/providers` still exists as a convenience for quick prototyping, and the package sets `"sideEffects": false` so a bundler *can* still tree-shake the unused ones out of the barrel import — but the subpaths make that guarantee structural instead of relying on bundler dead-code elimination.
+
 ## Config validation
 
 `bookkit()` runs `validateConfig()` during `astro:config:setup`. Build-time failures include malformed schedules, invalid IANA timezones, unsupported Stripe locales, `holdMinutes < 35`, and pricing gaps for any widget-generated party-size and pickup combination. The thrown Zod error includes the field paths Astro reports during configuration.
@@ -102,6 +108,8 @@ Every route is server-only with `prerender: false`:
 - `GET /booking-confirmation?session_id=`
 
 The endpoint files are intentionally thin: they import `virtual:bookkit/runtime`, create a request-scoped context, and delegate to the handler exports. JSON errors use `{ error: { code, message } }`. Admin authorization is provided by Cloudflare Access through the runtime context.
+
+Bookkit's own routes are mounted via `injectRoute()`, never through a project-level `src/fetch.ts` — so nothing here needs that file. Keep in mind, though, that Astro 7's `fetchFile` config option defaults to `'fetch'`, meaning Astro looks for `src/fetch.ts` (or `.js`/`.mjs`/`.mts`) in your project as a custom fetch-handler entrypoint; don't repurpose that filename for unrelated code in a project that also uses bookkit.
 
 ## Route customization
 
@@ -149,6 +157,10 @@ Bookkit's build contract is the reference spec, but the implementation deliberat
 - **Refund exactly-once.** The durable guarantee is Stripe's idempotency key (`bookkit-refund-<paymentIntent>`, set in `src/providers/stripe.ts`); the in-memory `refundedPayments` set on the request context is a same-isolate fast path, and the already-cancelled early-return in the operator-cancel handler blocks re-entry on webhook redelivery.
 - **Brevo templates are inlined.** `src/providers/brevo.ts` keeps per-locale template objects, with fallback to the configured default locale, rather than the spec's `templates/{locale}/{event}.ts` file layout. Behavior is the same, only the packaging differs; add a locale by adding an entry to that file's `templates` map.
 
+## Why not Astro sessions?
+
+Bookkit deliberately does not use Astro's `session` API for booking-flow state (holds, checkout progress, confirmation). That state lives in D1 instead, keyed by booking id and the tokens in `Booking`, and is read back through `context.repo` rather than a session store. Astro sessions on Cloudflare are backed by Workers KV, and KV is only eventually consistent across regions (Cloudflare documents propagation of up to about 60 seconds); a customer who creates a hold in one region and completes Stripe Checkout redirected through another could have their session read a stale pre-hold or pre-payment state within that window. Booking correctness — not overselling a slot, not losing a paid hold — needs strong read-after-write consistency, which D1 provides and KV-backed sessions do not.
+
 ## Cloudflare setup runbook
 
 1. Apply bookkit's migrations to the D1 database, in filename order: run `bunx bookkit-migrate --local` for the local dev database (`bunx bookkit-migrate` for the remote one), which wraps `wrangler d1 migrations apply` using the `d1_databases[].database_name` and `--config` it finds in your `wrangler.jsonc`/`wrangler.json` — or point `migrations_dir` at the installed `migrations/` folder and run `wrangler d1 migrations apply` yourself. `defineCloudflareBookkitRuntime` also checks this once per isolate at the first request and throws a descriptive error naming any migration that hasn't been applied yet, instead of a raw D1 SQL error.
@@ -160,6 +172,7 @@ Bookkit's build contract is the reference spec, but the implementation deliberat
 7. Deploy with `output: 'server'` and `@astrojs/cloudflare`; do not prerender booking routes.
 8. Verify availability, checkout holds, webhook redelivery, status confirmation, customer cutoff behavior, operator actions, and feed authentication in a staging Worker.
 9. Monitor D1 sync flags and Stripe webhook responses. Calendar and confirmation-email failures intentionally return non-2xx so Stripe retries delivery. Also alert on persistent `confirmation_in_progress` 503s (a stuck lease), on `stripe_amount_mismatch` 409s (never expected in normal operation), and on the "confirming expired hold after payment" warning, which marks a possible one-slot oversell that may need a phone call to the customer.
+10. If the webhook route returns `400 invalid_stripe_signature` (`{ error: { code: 'invalid_stripe_signature', message: 'Stripe webhook signature verification failed' } }`, thrown by `StripeProvider.parseWebhook` in `src/providers/stripe.ts`), that's Stripe's signature verification failing, not a bookkit bug. Verification runs through Stripe's async WebCrypto path (`stripe.webhooks.constructEventAsync`, using `Stripe.createSubtleCryptoProvider()`) since Workers don't have Node's `crypto` module. The most common cause is a test-mode/live-mode signing-secret mismatch: the `STRIPE_WEBHOOK_SECRET` Worker secret must come from the *same* Stripe Dashboard webhook endpoint (test or live) as the events actually being sent — a live endpoint's signing secret will never verify a test-mode event and vice versa.
 
 The local smoke fixture at `examples/smoke-site` imports `src/index.ts` directly and uses `@astrojs/cloudflare`; it is a build-only check and does not deploy externally.
 
