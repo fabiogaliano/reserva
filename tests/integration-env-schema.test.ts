@@ -48,6 +48,10 @@ describe('bookkit() astro:env schema contribution', () => {
     }
   });
 
+  it('treats envSchema: true as the default behavior', () => {
+    expect(envSchemaFrom(updateConfigCalls({ ...baseOptions, envSchema: true }))).toBeDefined();
+  });
+
   it('skips the contribution entirely when envSchema is false', () => {
     const calls = updateConfigCalls({ ...baseOptions, envSchema: false });
     expect(calls.some((call) => 'env' in call)).toBe(false);

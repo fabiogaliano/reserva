@@ -20,7 +20,7 @@ export interface BookkitIntegrationOptions {
   runtimeEntrypoint: string | URL;
   // Set to `false` to skip contributing bookkit's secret names to the `astro:env` schema, e.g. if
   // the consumer already declares its own schema for these names. Defaults to on.
-  envSchema?: false;
+  envSchema?: boolean;
   // Prepended to every injected route pattern, and to every URL bookkit's own components/handlers
   // render (widget endpoints, manage/admin page links and form actions, the Stripe webhook path).
   // Normalized via `normalizeRoutePrefix` (leading slash, no trailing slash, ''/'/' => none);

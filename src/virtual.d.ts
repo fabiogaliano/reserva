@@ -1,3 +1,4 @@
+// Bookkit's own compiler needs this declaration; integration.ts injects the equivalent consumer type during Astro builds.
 declare module 'virtual:bookkit/runtime' {
   import type { BookkitRuntimeDefinition } from './runtime';
 
