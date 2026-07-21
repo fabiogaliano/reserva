@@ -367,4 +367,86 @@ describe('Bookkit handlers', () => {
     const noShow = await handleOperatorNoShow(new Request('https://example.test/api/booking/operator/no-show', { method: 'POST', body: JSON.stringify({ bookingId: 'b1' }), headers: { 'content-type': 'application/json', authorization: 'Bearer wrong' } }), context);
     expect(noShow.status).toBe(403);
   });
+
+  it('recovers from a reference collision reported by insertHold by retrying with the next sequence', async () => {
+    const repo = fakeRepository();
+    const realInsertHold = repo.insertHold;
+    let insertAttempts = 0;
+    repo.insertHold = async (input) => {
+      insertAttempts += 1;
+      if (insertAttempts === 1) {
+        // Simulate a concurrent request winning the race for this exact reference: it lands
+        // in the table before we re-check, so our failure-classification finds it taken.
+        const winner: Booking = { ...booking(), id: 'winner', reference: input.reference, status: 'hold' };
+        repo.rows.set(winner.id, winner);
+        throw new Error('UNIQUE constraint failed: bookings.reference');
+      }
+      return realInsertHold(input);
+    };
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      providers: providers(),
+    });
+
+    const response = await handleCheckout(new Request('https://example.test/api/booking/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ tourSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', people: 2, pickupType: 'default', locale: 'en' }),
+    }), context);
+
+    expect(response.status).toBe(201);
+    expect(insertAttempts).toBe(2);
+    const payload = await response.json() as { reference: string };
+    expect(payload.reference).toBe('LVT-2026-002');
+  });
+
+  it('logs a warning when a payment confirms an expired hold, but not on the normal hold path', async () => {
+    const expiredWarnings: Array<[string, Record<string, unknown> | undefined]> = [];
+    const seededExpired = booking({ id: 'b-expired', status: 'expired', holdExpiresAt: null, stripeSessionId: 'cs_expired' });
+    const expiredContext = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo: fakeRepository([seededExpired]),
+      logger: { warn: (message, data) => { expiredWarnings.push([message, data]); } },
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      providers: providers({
+        payments: {
+          createCheckout: async () => ({ url: '', sessionId: '' }),
+          parseWebhook: async () => ({ id: 'evt_expired', type: 'checkout.session.completed', bookingId: seededExpired.id, sessionId: 'cs_expired', paid: true, amountCaptured: seededExpired.priceCents }),
+          getSession: async () => ({ status: 'open' }),
+          refund: async () => undefined,
+        },
+      }),
+    });
+    const expiredResponse = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), expiredContext);
+    expect(expiredResponse.status).toBe(200);
+    expect(expiredWarnings).toContainEqual([
+      'confirming expired hold after payment; possible one-slot oversell',
+      { bookingId: seededExpired.id, reference: seededExpired.reference, startsAt: seededExpired.startsAt },
+    ]);
+
+    const holdWarnings: Array<[string, Record<string, unknown> | undefined]> = [];
+    const seededHold = booking({ id: 'b-hold', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', stripeSessionId: 'cs_hold' });
+    const holdContext = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo: fakeRepository([seededHold]),
+      logger: { warn: (message, data) => { holdWarnings.push([message, data]); } },
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      providers: providers({
+        payments: {
+          createCheckout: async () => ({ url: '', sessionId: '' }),
+          parseWebhook: async () => ({ id: 'evt_hold', type: 'checkout.session.completed', bookingId: seededHold.id, sessionId: 'cs_hold', paid: true, amountCaptured: seededHold.priceCents }),
+          getSession: async () => ({ status: 'open' }),
+          refund: async () => undefined,
+        },
+      }),
+    });
+    const holdResponse = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), holdContext);
+    expect(holdResponse.status).toBe(200);
+    expect(holdWarnings.some(([message]) => message.includes('possible one-slot oversell'))).toBe(false);
+  });
 });

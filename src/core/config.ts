@@ -172,11 +172,6 @@ function isValidAccessTeamDomain(value: string): boolean {
   }
 }
 
-function monthDayValue(value: string): number {
-  const [month = 0, day = 0] = value.split('-').map(Number);
-  return month * 100 + day;
-}
-
 function isValidMonthDay(value: string): boolean {
   const [month = 0, day = 0] = value.split('-').map(Number);
   const probe = new Date(Date.UTC(2024, month - 1, day));

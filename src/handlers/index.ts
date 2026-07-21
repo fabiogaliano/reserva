@@ -9,9 +9,9 @@ import {
 import { resolveTour, type PickupType } from '../core/config';
 import { availabilityForDay, capacityForDate } from '../core/occupancy';
 import { priceFor } from '../core/pricing';
-import { formatReference } from '../core/reference';
+import { generateUniqueReference } from '../core/reference';
 import { generateSlots } from '../core/slots';
-import { localDateKey, localDateTimeToUtcIso, parseUtcInstant, utcToLocalIso } from '../core/time';
+import { addDaysToDateKey, enumerateDateKeys, localDateKey, localDateTimeToUtcIso, parseUtcInstant, utcToLocalIso } from '../core/time';
 import { ConfirmationInProgressError, confirmBookingFromPayment, dispatchMutation, dispatchNonCritical } from '../confirmation';
 import type { BookkitContext } from '../context';
 import { getSecret, nowIso } from '../context';
@@ -35,21 +35,10 @@ function run(handler: () => Promise<Response>): Promise<Response> {
   return handler().catch(errorResponse);
 }
 
-function dateRange(from: string, to: string): string[] {
-  const result: string[] = [];
-  const cursor = new Date(`${from}T00:00:00Z`);
-  const end = new Date(`${to}T00:00:00Z`);
-  while (cursor <= end) {
-    result.push(cursor.toISOString().slice(0, 10));
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-  }
-  return result;
-}
-
 function validDateRange(from: string, to: string): string[] {
   parseDate(from, 'from');
   parseDate(to, 'to');
-  const dates = dateRange(from, to);
+  const dates = enumerateDateKeys(from, to);
   if (dates.length > 62) throw new HttpError(400, 'validation_failed', 'Date range cannot exceed 62 days');
   return dates;
 }
@@ -72,10 +61,9 @@ async function availabilityPayload(request: Request, context: BookkitContext, no
   const firstDay = dates[0];
   const lastDay = dates[dates.length - 1];
   if (!firstDay || !lastDay) throw new HttpError(400, 'validation_failed', 'Date range is empty');
-  const dayAfterLast = new Date(`${lastDay}T12:00:00Z`);
-  dayAfterLast.setUTCDate(dayAfterLast.getUTCDate() + 1);
+  const dayAfterLast = addDaysToDateKey(lastDay, 1);
   const horizonStart = parseUtcInstant(localDateTimeToUtcIso(`${firstDay}T00:00`, context.config.business.timezone));
-  const horizonEnd = parseUtcInstant(localDateTimeToUtcIso(`${dayAfterLast.toISOString().slice(0, 10)}T00:00`, context.config.business.timezone));
+  const horizonEnd = parseUtcInstant(localDateTimeToUtcIso(`${dayAfterLast}T00:00`, context.config.business.timezone));
   const lookback = Math.max(...Object.values(context.config.tours).map((candidate) => candidate.durationMin + candidate.turnaroundMin), 0);
   const bookings = await context.repo.listOccupancyBookings(
     new Date(horizonStart.getTime() - lookback * 60_000).toISOString(),
@@ -228,10 +216,12 @@ export function handleCheckout(request: Request, context: BookkitContext): Promi
     }
     const year = Number(localDateKey(candidate.startsAt, context.config.business.timezone).slice(0, 4));
     const prefix = `${context.config.business.shortCode.toUpperCase()}-${year}-`;
-    const sequence = await context.repo.countReferencesForYear(prefix) + 1;
+    const referenceExists = async (candidateReference: string): Promise<boolean> =>
+      (await context.repo.getBookingByReference(candidateReference)) !== null;
+    let sequence = await context.repo.countReferencesForYear(prefix) + 1;
     let booking: Booking | null = null;
     for (let attempt = 0; attempt < 8; attempt += 1) {
-      const reference = formatReference(context.config.business.shortCode, year, sequence + attempt);
+      const reference = await generateUniqueReference(context.config.business.shortCode, year, sequence, referenceExists);
       try {
         const holdLimit = context.config.booking.maxHoldsPerIp;
         booking = await context.repo.insertHold({
@@ -246,9 +236,10 @@ export function handleCheckout(request: Request, context: BookkitContext): Promi
         if (error instanceof HoldLimitExceededError) {
           throw new HttpError(429, 'too_many_holds', error.message);
         }
-        const message = error instanceof Error ? error.message : String(error);
-        const referenceCollision = /unique|constraint/i.test(message) && /reference/i.test(message);
-        if (!referenceCollision || attempt === 7) throw error;
+        // Classify the insert failure by re-checking the DB rather than parsing the error
+        // message: the table has other UNIQUE columns, so message-sniffing could misfire.
+        if (attempt === 7 || !(await referenceExists(reference))) throw error;
+        sequence += 1;
       }
     }
     if (!booking) throw new Error('Unable to create booking hold');
@@ -387,6 +378,7 @@ export function handleCustomerCancel(request: Request, context: BookkitContext):
     const token = requireString(body.token, 'token');
     const booking = await tokenBooking(context, token);
     if (booking.status === 'cancelled') return json({ ok: true });
+    if (booking.status !== 'confirmed') throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
     if (!canCancelBooking(booking, nowIso(context), context.config.booking.cancelCutoffHours)) throw new HttpError(403, 'past_cutoff', 'The cancellation deadline has passed');
     await calendarDelete(context, booking);
     const cancelled = cancelBooking(booking, 'customer', nowIso(context));
@@ -402,8 +394,8 @@ async function readNewStart(body: Record<string, unknown>): Promise<string> {
 
 async function rescheduleWithToken(context: BookkitContext, booking: Booking, newStart: string, operator: boolean): Promise<Booking> {
   const now = nowIso(context);
+  if (booking.status !== 'confirmed') throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be rescheduled');
   if (!operator && !canRescheduleBooking(booking, now, context.config.booking.reschedule.cutoffHours, context.config.booking.reschedule.enabled)) throw new HttpError(403, 'past_cutoff', 'The reschedule deadline has passed');
-  if (booking.status !== 'confirmed') throw new HttpError(409, 'slot_unavailable', 'Only confirmed bookings can be rescheduled');
   const candidate = await checkSlot(context, booking.tourSlug, booking.people, newStart, now, booking.id);
   const next = rescheduleBooking(booking, candidate.startsAt, candidate.tour.durationMin, now);
   const updated = await context.repo.updateBooking(next.id, { startsAt: next.startsAt, endsAt: next.endsAt, rescheduledFrom: next.rescheduledFrom, updatedAt: next.updatedAt });
@@ -548,7 +540,7 @@ function adminPage(
     const date = localDateKey(booking.startsAt, context.config.business.timezone);
     bookingCounts.set(date, (bookingCounts.get(date) ?? 0) + 1);
   }
-  const dayRows = dateRange(fromDate, toDate).map((date) => {
+  const dayRows = enumerateDateKeys(fromDate, toDate).map((date) => {
     const override = overridesByDate.get(date);
     const capacity = override?.capacity ?? context.config.fleet.defaultCapacity;
     const state = override ? 'override' : 'default';

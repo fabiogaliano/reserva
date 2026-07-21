@@ -120,3 +120,26 @@ export function formatLocalDate(value: string | Date, timezone: string): string 
 export function formatLocalTime(value: string | Date, timezone: string): string {
   return utcToLocalDateTime(value, timezone).slice(11, 16);
 }
+
+export function addDaysToDateKey(date: string, days: number): string {
+  const parts = parseDate(date);
+  if (!Number.isInteger(days)) throw new RangeError(`days must be an integer, received ${days}`);
+  const probe = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
+  probe.setUTCDate(probe.getUTCDate() + days);
+  const year = String(probe.getUTCFullYear()).padStart(4, '0');
+  const month = String(probe.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(probe.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function enumerateDateKeys(from: string, to: string): string[] {
+  parseDate(from);
+  parseDate(to);
+  const result: string[] = [];
+  let cursor = from;
+  while (cursor <= to) {
+    result.push(cursor);
+    cursor = addDaysToDateKey(cursor, 1);
+  }
+  return result;
+}

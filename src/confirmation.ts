@@ -31,6 +31,15 @@ async function confirmBookingFromPaymentUnlocked(
   if (details.pickupAddress !== undefined) customerPatch.pickupAddress = details.pickupAddress;
   let current = booking;
   if (current.status === 'hold' || current.status === 'expired') {
+    if (current.status === 'expired') {
+      // Spec §6: payment can land after a hold's window expires; we still honor it,
+      // accepting a possible one-slot oversell, but an operator needs a signal.
+      context.logger.warn?.('confirming expired hold after payment; possible one-slot oversell', {
+        bookingId: current.id,
+        reference: current.reference,
+        startsAt: current.startsAt,
+      });
+    }
     current = confirmBooking(current, now, paymentIntent === undefined ? customerPatch : {
       ...customerPatch,
       stripePaymentIntent: paymentIntent,
