@@ -96,8 +96,8 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     expect(row?.cancelledBy).toBe('operator');
     expect(refunds).toBe(1);
 
-    // Redeliver the same request (simulating a retry): the early return on an
-    // already-cancelled row (handlers/index.ts:444) guarantees no second refund.
+    // Redeliver the same request (simulating a retry): handleOperatorCancel's early
+    // return on an already-cancelled row guarantees no second refund.
     const second = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
     expect(second.status).toBe(200);
     expect(refunds).toBe(1);

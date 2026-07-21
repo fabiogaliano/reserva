@@ -1,7 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createBookkitContext } from '../src/context';
-import { handleStatus } from '../src/handlers';
+import { handleStatus, handleStripeWebhook } from '../src/handlers';
 import { utcToLocalIso } from '../src/core/time';
 import { booking, config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
@@ -105,6 +105,70 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     expect(calendarCreates).toBe(0);
     expect(emails).toBe(0);
     expect(repo.rows.get(seeded.id)?.status).toBe('hold');
+  });
+
+  it('runs side effects exactly once when the webhook and /status confirm the same paid session concurrently', async () => {
+    const seeded = booking({
+      id: 'b-status-race',
+      status: 'hold',
+      holdExpiresAt: '2026-06-14T09:00:00.000Z',
+      stripeSessionId: 'cs_status_race',
+      stripePaymentIntent: null,
+      calendarSynced: false,
+      emailSynced: false,
+      tourflowSynced: false,
+    });
+    const repo = fakeRepository([seeded]);
+    // Gate the session lookup so both handlers have read the hold row before either
+    // reaches the confirmation lease — the interleaving pattern from handlers-checkout-race.
+    let readers = 0;
+    let releaseReaders = (): void => undefined;
+    const bothRead = new Promise<void>((resolve) => { releaseReaders = resolve; });
+    const realGetBookingBySessionId = repo.getBookingBySessionId;
+    repo.getBookingBySessionId = async (sessionId) => {
+      const result = await realGetBookingBySessionId(sessionId);
+      readers += 1;
+      if (readers >= 2) releaseReaders();
+      await bothRead;
+      return result;
+    };
+    let calendarCreates = 0;
+    let emails = 0;
+    const sharedProviders = providers({
+      payments: {
+        createCheckout: async () => ({ url: '', sessionId: '' }),
+        parseWebhook: async () => ({ id: 'evt_race', type: 'checkout.session.completed', sessionId: 'cs_status_race', paymentIntent: 'pi_race', paid: true, amountCaptured: seeded.priceCents }),
+        getSession: async () => ({ status: 'complete', paymentStatus: 'paid', paymentIntent: 'pi_race' }),
+        refund: async () => undefined,
+      },
+      calendar: {
+        listEvents: async () => [],
+        createEvent: async () => { calendarCreates += 1; return 'cal_race'; },
+        patchEvent: async () => undefined,
+        deleteEvent: async () => undefined,
+      },
+      email: { send: async () => { emails += 1; } },
+    });
+    // Separate contexts simulate the two requests landing on different isolates:
+    // each has its own in-process confirmationLocks map, so only the shared
+    // repository's confirmation lease can serialize the confirm paths.
+    const webhookContext = createBookkitContext({ config, db: {} as D1Database, repo, clock: () => new Date('2026-06-14T08:00:00.000Z'), providers: sharedProviders });
+    const statusContext = createBookkitContext({ config, db: {} as D1Database, repo, clock: () => new Date('2026-06-14T08:00:00.000Z'), providers: sharedProviders });
+
+    const [webhookResponse, statusResponse] = await Promise.all([
+      handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST', body: 'raw' }), webhookContext),
+      handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_race'), statusContext),
+    ]);
+
+    // Contract: the webhook confirms (200) or defers to Stripe redelivery (503);
+    // /status never errors — it reports confirmed, or pending while the other side holds the lease.
+    expect([200, 503]).toContain(webhookResponse.status);
+    expect(statusResponse.status).toBe(200);
+    const statusPayload = await statusResponse.json() as { status: string };
+    expect(['confirmed', 'pending']).toContain(statusPayload.status);
+    expect(calendarCreates).toBe(1);
+    expect(emails).toBe(1);
+    expect(repo.rows.get(seeded.id)).toMatchObject({ status: 'confirmed', calendarSynced: true, emailSynced: true });
   });
 
   it('expires the hold when the Stripe session itself expired', async () => {

@@ -92,7 +92,7 @@ describe('POST /cancel (customer, spec §11)', () => {
   });
 
   it('surfaces a calendar delete failure as a non-2xx response and leaves the row uncancelled', async () => {
-    // The handler deletes the calendar event before the DB update (handlers/index.ts:391-393),
+    // handleCustomerCancel deletes the calendar event before the DB update,
     // so a delete failure must prevent the row from ever transitioning to cancelled.
     const seeded = booking({ id: 'b-cancel-calendar-fails', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z', calendarEventId: 'cal-fails' });
     const repo = fakeRepository([seeded]);
