@@ -251,6 +251,26 @@ describe('Bookkit handlers', () => {
     await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed' } });
   });
 
+  it('rejects a multi-century availability range fast, before enumerating or reading occupancy', async () => {
+    const repo = fakeRepository();
+    let occupancyReads = 0;
+    const realListOccupancyBookings = repo.listOccupancyBookings;
+    repo.listOccupancyBookings = async (from, to) => {
+      occupancyReads += 1;
+      return realListOccupancyBookings(from, to);
+    };
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, providers: providers() });
+
+    const startedAt = Date.now();
+    const response = await handleAvailability(new Request('https://example.test/api/booking/availability?tour=vintage&people=2&from=1000-01-01&to=9999-12-31'), context);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: 'Date range cannot exceed 62 days' } });
+    expect(occupancyReads).toBe(0);
+    // Enumerating ~3.3M date keys takes seconds; the cheap span guard must reject
+    // the range without ever building that array.
+    expect(Date.now() - startedAt).toBeLessThan(1000);
+  });
+
   it('rejects feed and operator actions without constant-time shared-secret auth', async () => {
     const seeded = booking({ id: 'b1', status: 'confirmed', startsAt: '2026-06-15T09:00:00.000Z' });
     const repo = fakeRepository([seeded]);

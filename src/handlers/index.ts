@@ -38,9 +38,10 @@ function run(handler: () => Promise<Response>): Promise<Response> {
 function validDateRange(from: string, to: string): string[] {
   parseDate(from, 'from');
   parseDate(to, 'to');
-  const dates = enumerateDateKeys(from, to);
-  if (dates.length > 62) throw new HttpError(400, 'validation_failed', 'Date range cannot exceed 62 days');
-  return dates;
+  // Bound the span before enumerating (zero-padded keys compare lexicographically),
+  // so an adversarial multi-century range fails fast instead of allocating one key per day.
+  if (to > addDaysToDateKey(from, 61)) throw new HttpError(400, 'validation_failed', 'Date range cannot exceed 62 days');
+  return enumerateDateKeys(from, to);
 }
 
 async function availabilityPayload(request: Request, context: BookkitContext, now: string): Promise<{ timezone: string; days: unknown[] }> {

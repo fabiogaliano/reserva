@@ -29,6 +29,8 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & { rows
       return expired;
     },
     acquireConfirmationLease: async (id, token, now, leaseUntil) => {
+      // The real repo's UPDATE ... WHERE id = ? matches no row for unknown ids.
+      if (!rows.has(id)) return false;
       const current = leases.get(id);
       if (current && current.until >= now) return false;
       leases.set(id, { token, until: leaseUntil });
