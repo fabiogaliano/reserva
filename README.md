@@ -58,6 +58,24 @@ Pass the generated `Env` as `defineCloudflareBookkitRuntime<Env>(config, options
 
 `bookkit()` also calls `injectTypes()` during `astro:config:done`, so `virtual:bookkit/runtime` — the module the injected routes import — is typed as `BookkitRuntime` (exported from `bookkit/runtime`) once you run `astro sync` (or `astro dev`/`astro build`, which run it implicitly).
 
+### Secrets and `astro:env`
+
+`bookkit()` also declares its providers' secret names in Astro's [`env.schema`](https://docs.astro.build/en/guides/environment-variables/#type-safe-environment-variables) during `astro:config:setup`, each as `envField.string({ context: 'server', access: 'secret', optional: true })`:
+
+| Declared name | Provider | Set with |
+| --- | --- | --- |
+| `STRIPE_SECRET_KEY` | `providers/payments-stripe` | `wrangler secret put STRIPE_SECRET_KEY` |
+| `STRIPE_WEBHOOK_SECRET` | `providers/payments-stripe` | `wrangler secret put STRIPE_WEBHOOK_SECRET` |
+| `BREVO_API_KEY` | `providers/email-brevo` | `wrangler secret put BREVO_API_KEY` |
+| `TOURFLOW_SHARED_SECRET` | `providers/ops-tourflow` | `wrangler secret put TOURFLOW_SHARED_SECRET` |
+| `GOOGLE_SA_EMAIL` | `providers/calendar-google` | `wrangler secret put GOOGLE_SA_EMAIL` |
+| `GOOGLE_SA_PRIVATE_KEY` | `providers/calendar-google` | `wrangler secret put GOOGLE_SA_PRIVATE_KEY` |
+| `GOOGLE_IMPERSONATE_EMAIL` | `providers/calendar-google` | `wrangler secret put GOOGLE_IMPERSONATE_EMAIL` |
+
+Every entry is `optional`: providers are opt-in, so a Stripe-only integration must not fail env validation over a missing Brevo key. This declaration only buys typed access and build-time visibility (`astro:env/server`); it does not change how bookkit reads secrets at runtime. Providers still receive credentials as constructor options from your runtime module, and the runtime's `secrets()` accessor still only exposes names listed in `secretBindings` (see "Runtime module" above) — if a custom provider reads a secret through `secrets()`, add its name to `secretBindings` regardless of whether it also appears in this table.
+
+Pass `bookkit({ ..., envSchema: false })` to skip this contribution, e.g. if your project already declares its own `env.schema` for these names.
+
 ## Config validation
 
 `bookkit()` runs `validateConfig()` during `astro:config:setup`. Build-time failures include malformed schedules, invalid IANA timezones, unsupported Stripe locales, `holdMinutes < 35`, and pricing gaps for any widget-generated party-size and pickup combination. The thrown Zod error includes the field paths Astro reports during configuration.
@@ -113,9 +131,9 @@ Bookkit's build contract is the reference spec, but the implementation deliberat
 
 ## Cloudflare setup runbook
 
-1. Apply every SQL file in `migrations/` to the D1 database in filename order.
+1. Apply bookkit's migrations to the D1 database, in filename order: run `bunx bookkit-migrate --local` for the local dev database (`bunx bookkit-migrate` for the remote one), which wraps `wrangler d1 migrations apply` using the `d1_databases[].database_name` and `--config` it finds in your `wrangler.jsonc`/`wrangler.json` — or point `migrations_dir` at the installed `migrations/` folder and run `wrangler d1 migrations apply` yourself. `defineCloudflareBookkitRuntime` also checks this once per isolate at the first request and throws a descriptive error naming any migration that hasn't been applied yet, instead of a raw D1 SQL error.
 2. Set `BOOKKIT_DB` in the Worker bindings and optionally expose `BOOKKIT_CACHE`.
-3. Add Stripe, Google Calendar, email, and Tourflow credentials as Worker secrets; keep them out of the config module.
+3. Add Stripe, Google Calendar, email, and Tourflow credentials as Worker secrets (`wrangler secret put <NAME>`; see "Secrets and astro:env" above for the canonical names); keep them out of the config module.
 4. Run `wrangler types` (wire it up as `pretypes`/`predev`) and pass the generated `Env` to `defineCloudflareBookkitRuntime<Env>()` in the runtime module, see "Typed environment bindings" above.
 5. Implement or import the provider adapters in the user-owned runtime module.
 6. Configure Cloudflare Access for `/booking/admin` with the same team domain and audience in `config.admin`.

@@ -4,7 +4,7 @@
   "scripts": {
     "build": "astro build",
     "dev": "astro dev",
-    "db:migrate": "wrangler d1 migrations apply bookkit-smoke --local --config ./wrangler.jsonc",
+    "db:migrate": "bun ../../scripts/bookkit-migrate.ts --local",
     "demo": "bun run db:migrate && bun run dev"
   }
 }

@@ -4,10 +4,12 @@ import { describe, expect, it } from 'vitest';
 import { bookkit, virtualRuntimeId } from '../src/integration';
 import config from '../examples/client-config';
 
-function setup(options = { config, runtimeEntrypoint: './examples/runtime.ts' }) {
+function setup(options: Record<string, unknown> = { config, runtimeEntrypoint: './examples/runtime.ts' }) {
   const routes: Array<Record<string, unknown>> = [];
-  let viteConfig: Record<string, unknown> | undefined;
-  const integration = bookkit(options);
+  // astro:config:setup calls updateConfig once per concern (vite plugin, env schema); merge every
+  // call into one view rather than keeping only the last, matching Astro's own accumulating behavior.
+  let viteConfig: Record<string, unknown> = {};
+  const integration = bookkit(options as never);
   const hook = integration.hooks['astro:config:setup'];
   if (!hook) throw new Error('setup hook is missing');
   hook({
@@ -16,7 +18,7 @@ function setup(options = { config, runtimeEntrypoint: './examples/runtime.ts' })
     isRestart: false,
     injectRoute: (route: any) => routes.push(route),
     updateConfig: (next: any) => {
-      viteConfig = next as Record<string, unknown>;
+      viteConfig = { ...viteConfig, ...(next as Record<string, unknown>) };
       return {} as never;
     },
     logger: { info() {}, warn() {}, error() {} },

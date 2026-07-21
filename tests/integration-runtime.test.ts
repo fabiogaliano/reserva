@@ -2,6 +2,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import config from '../examples/client-config';
 import { defineCloudflareBookkitRuntime, getCache, getEnv } from '../src/runtime-context';
+import { BOOKKIT_MIGRATIONS } from '../src/migrations-manifest';
 
 const payments = {
   createCheckout: async () => ({ url: 'https://checkout.test', sessionId: 'cs_test' }),
@@ -12,8 +13,12 @@ const payments = {
 
 describe('Cloudflare runtime helpers', () => {
   it('reads injected test bindings without exposing env on context', async () => {
-    // Needs a `prepare` function so it passes the D1 shape check `defineCloudflareBookkitRuntime` now runs at context-creation time.
-    const db = { prepare: () => undefined } as unknown as D1Database;
+    // Needs a `prepare` function so it passes the D1 shape check `defineCloudflareBookkitRuntime` runs at
+    // context-creation time, and `.all()` must resolve bookkit's own migrations so the isolate-time
+    // schema check (also run at context creation) doesn't reject this fake as an unmigrated database.
+    const db = {
+      prepare: () => ({ all: async () => ({ results: BOOKKIT_MIGRATIONS.map((name) => ({ name })) }) }),
+    } as unknown as D1Database;
     const cache = { match: async () => undefined, put: async () => undefined } as never;
     const definition = defineCloudflareBookkitRuntime(config, { providers: { payments } });
     const request = new Request('https://example.test/api/booking/status');
