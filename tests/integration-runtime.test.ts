@@ -12,7 +12,8 @@ const payments = {
 
 describe('Cloudflare runtime helpers', () => {
   it('reads injected test bindings without exposing env on context', async () => {
-    const db = {} as D1Database;
+    // Needs a `prepare` function so it passes the D1 shape check `defineCloudflareBookkitRuntime` now runs at context-creation time.
+    const db = { prepare: () => undefined } as unknown as D1Database;
     const cache = { match: async () => undefined, put: async () => undefined } as never;
     const definition = defineCloudflareBookkitRuntime(config, { providers: { payments } });
     const request = new Request('https://example.test/api/booking/status');
@@ -39,5 +40,23 @@ describe('Cloudflare runtime helpers', () => {
     const env = { BOOKKIT_DB: {} };
     expect(getEnv({ env })).toBe(env);
     expect(getCache({ env })).toBeUndefined();
+  });
+
+  it('rejects a missing D1 binding at context-creation time', async () => {
+    const definition = defineCloudflareBookkitRuntime(config, { providers: { payments } });
+    await expect(definition.createContext({
+      request: new Request('https://example.test/api/booking/status'),
+      locals: { env: {} },
+    })).rejects.toThrow('Cloudflare D1 binding BOOKKIT_DB is not configured');
+  });
+
+  it('rejects a misconfigured (non-D1-shaped) binding before it reaches the repository', async () => {
+    // Simulates a typo'd binding name resolving to some other binding (e.g. a string secret)
+    // rather than the D1 database: it must fail here, not with a later "db.prepare is not a function".
+    const definition = defineCloudflareBookkitRuntime(config, { providers: { payments } });
+    await expect(definition.createContext({
+      request: new Request('https://example.test/api/booking/status'),
+      locals: { env: { BOOKKIT_DB: 'not-a-database' } },
+    })).rejects.toThrow('Cloudflare D1 binding BOOKKIT_DB is not configured');
   });
 });

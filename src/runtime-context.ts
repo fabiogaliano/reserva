@@ -13,27 +13,45 @@ export interface BookkitRuntimeDefinition {
   createContext(input: BookkitRuntimeRequest): BookkitContext | Promise<BookkitContext>;
 }
 
+// Alias for the shape the injected `virtual:bookkit/runtime` type declaration points consumers at.
+export type BookkitRuntime = BookkitRuntimeDefinition;
+
 export interface BookkitRuntimeFactoryOptions {
   config: unknown;
   createContext(input: BookkitRuntimeRequest & { config: ClientConfig }): BookkitContextInput | Promise<BookkitContextInput>;
 }
 
-export interface CloudflareRuntimeBindings {
-  env: Record<string, unknown>;
+// The minimal env surface bookkit itself reads (db/cache/secrets). Consumers pass their
+// `wrangler types`-generated Env, which structurally satisfies this, as the TEnv type argument
+// to get keyof-checked binding names and a typed `env` in provider factories instead of `unknown`.
+// No index signature here: a real wrangler-generated Env has none either, and a generic
+// constraint with a string index signature would reject any type that lacks one.
+export interface BookkitEnvShape {
+  BOOKKIT_DB?: D1Database;
+  BOOKKIT_CACHE?: unknown;
+}
+
+// Default TEnv for the zero-config path (no type argument supplied): adds the index signature so
+// bare-string binding-name options keep accepting arbitrary names, same as before this change.
+type UntypedBookkitEnv = BookkitEnvShape & Record<string, unknown>;
+
+export interface CloudflareRuntimeBindings<TEnv extends BookkitEnvShape = UntypedBookkitEnv> {
+  env: TEnv;
   request: Request;
   locals?: unknown;
   config: ClientConfig;
 }
 
-export type CloudflareBinding<T> = string | ((bindings: CloudflareRuntimeBindings) => T | undefined);
+export type CloudflareBinding<T, TEnv extends BookkitEnvShape = UntypedBookkitEnv> =
+  (keyof TEnv & string) | ((bindings: CloudflareRuntimeBindings<TEnv>) => T | undefined);
 
-export interface CloudflareBookkitRuntimeOptions {
-  db?: CloudflareBinding<D1Database>;
-  cache?: CloudflareBinding<BookkitCache> | null;
-  providers: BookkitProviders | ((bindings: CloudflareRuntimeBindings) => BookkitProviders | Promise<BookkitProviders>);
-  secretBindings?: readonly string[];
-  verifyAccess?: (bindings: CloudflareRuntimeBindings) => boolean | Promise<boolean>;
-  logger?: BookkitLogger | ((bindings: CloudflareRuntimeBindings) => BookkitLogger);
+export interface CloudflareBookkitRuntimeOptions<TEnv extends BookkitEnvShape = UntypedBookkitEnv> {
+  db?: CloudflareBinding<D1Database, TEnv>;
+  cache?: CloudflareBinding<BookkitCache, TEnv> | null;
+  providers: BookkitProviders | ((bindings: CloudflareRuntimeBindings<TEnv>) => BookkitProviders | Promise<BookkitProviders>);
+  secretBindings?: ReadonlyArray<keyof TEnv & string>;
+  verifyAccess?: (bindings: CloudflareRuntimeBindings<TEnv>) => boolean | Promise<boolean>;
+  logger?: BookkitLogger | ((bindings: CloudflareRuntimeBindings<TEnv>) => BookkitLogger);
 }
 
 function objectRecord(value: unknown): Record<string, unknown> | undefined {
@@ -47,12 +65,12 @@ export function getEnv(locals: unknown): Record<string, unknown> {
   throw new Error('Cloudflare environment bindings are unavailable in locals');
 }
 
-async function getWorkerEnv(locals: unknown): Promise<Record<string, unknown>> {
+async function getWorkerEnv<TEnv extends BookkitEnvShape>(locals: unknown): Promise<TEnv> {
   try {
-    return getEnv(locals);
+    return getEnv(locals) as unknown as TEnv;
   } catch {
     const module = await import('cloudflare:workers');
-    return module.env as unknown as Record<string, unknown>;
+    return module.env as unknown as TEnv;
   }
 }
 
@@ -76,10 +94,21 @@ export function getCache(locals: unknown, binding = 'BOOKKIT_CACHE'): BookkitCac
   return workerCaches?.default;
 }
 
-function resolveBinding<T>(binding: CloudflareBinding<T> | undefined, input: CloudflareRuntimeBindings, name: string): T | undefined {
+function resolveBinding<T, TEnv extends BookkitEnvShape>(
+  binding: CloudflareBinding<T, TEnv> | undefined,
+  input: CloudflareRuntimeBindings<TEnv>,
+  name: string,
+): T | undefined {
   if (typeof binding === 'function') return binding(input);
-  const candidate = input.env[binding ?? name];
+  // Binding names are keyof-checked at the options call site; this remains the low-level, unchecked escape hatch.
+  const candidate = (input.env as Record<string, unknown>)[binding ?? name];
   return candidate as T | undefined;
+}
+
+// Validates the D1 shape at context-creation time so a misconfigured/mistyped binding fails with
+// this descriptive error immediately, instead of surfacing as "db.prepare is not a function" on first query.
+function isD1Like(value: unknown): value is D1Database {
+  return typeof value === 'object' && value !== null && typeof (value as { prepare?: unknown }).prepare === 'function';
 }
 
 export function defineBookkitRuntime(options: BookkitRuntimeFactoryOptions): BookkitRuntimeDefinition {
@@ -92,18 +121,35 @@ export function defineBookkitRuntime(options: BookkitRuntimeFactoryOptions): Boo
   };
 }
 
-export function defineCloudflareBookkitRuntime(configInput: unknown, options: CloudflareBookkitRuntimeOptions): BookkitRuntimeDefinition {
+// Two overloads rather than a single `TEnv = UntypedBookkitEnv` default: `keyof TEnv` appearing in
+// `options` makes TEnv an inference site, and TypeScript resolves an uninferrable-but-present type
+// parameter to its constraint rather than its default. Without the plain overload below, an
+// untyped call like `{ providers, secretBindings: [...] }` would silently narrow TEnv to the bare
+// `BookkitEnvShape` (no index signature) and reject any binding name — the exact "zero-config path
+// must not get worse" regression this feature has to avoid.
+export function defineCloudflareBookkitRuntime(
+  configInput: unknown,
+  options: CloudflareBookkitRuntimeOptions<UntypedBookkitEnv>,
+): BookkitRuntimeDefinition;
+export function defineCloudflareBookkitRuntime<TEnv extends BookkitEnvShape>(
+  configInput: unknown,
+  options: CloudflareBookkitRuntimeOptions<TEnv>,
+): BookkitRuntimeDefinition;
+export function defineCloudflareBookkitRuntime<TEnv extends BookkitEnvShape>(
+  configInput: unknown,
+  options: CloudflareBookkitRuntimeOptions<TEnv>,
+): BookkitRuntimeDefinition {
   const config = validateConfig(configInput);
-  const secretBindings = new Set(options.secretBindings ?? ['TOURFLOW_SHARED_SECRET']);
+  const secretBindings = new Set<string>(options.secretBindings ?? ['TOURFLOW_SHARED_SECRET']);
   const refundedPayments = new Set<string>();
   const confirmationLocks = new Map<string, Promise<void>>();
   return {
     config,
     async createContext({ request, locals }) {
-      const [env, waitUntil] = await Promise.all([getWorkerEnv(locals), getWorkerWaitUntil()]);
-      const bindings: CloudflareRuntimeBindings = { env, request, ...(locals === undefined ? {} : { locals }), config };
+      const [env, waitUntil] = await Promise.all([getWorkerEnv<TEnv>(locals), getWorkerWaitUntil()]);
+      const bindings: CloudflareRuntimeBindings<TEnv> = { env, request, ...(locals === undefined ? {} : { locals }), config };
       const db = resolveBinding(options.db, bindings, 'BOOKKIT_DB');
-      if (!db) throw new Error('Cloudflare D1 binding BOOKKIT_DB is not configured');
+      if (!isD1Like(db)) throw new Error('Cloudflare D1 binding BOOKKIT_DB is not configured');
       const providers = typeof options.providers === 'function' ? await options.providers(bindings) : options.providers;
       const cache = options.cache === null ? undefined : options.cache
         ? resolveBinding(options.cache, bindings, 'BOOKKIT_CACHE')
@@ -116,7 +162,7 @@ export function defineCloudflareBookkitRuntime(configInput: unknown, options: Cl
         ...(cache ? { cache } : {}),
         secrets: async (name) => {
           if (!secretBindings.has(name)) return undefined;
-          const value = env[name];
+          const value = (env as Record<string, unknown>)[name];
           return typeof value === 'string' ? value : undefined;
         },
         ...(logger ? { logger } : {}),

@@ -14,6 +14,16 @@ export interface BookkitIntegrationOptions {
 const virtualRuntimeId = 'virtual:bookkit/runtime';
 const resolvedVirtualRuntimeId = '\0' + virtualRuntimeId;
 
+// Static declaration (no codegen needed): the virtual module always re-exports whatever the
+// consumer's runtimeEntrypoint default-exports, which is a BookkitRuntimeDefinition (aliased
+// as BookkitRuntime) regardless of which entrypoint file is wired up.
+const virtualRuntimeTypes = `declare module '${virtualRuntimeId}' {
+  import type { BookkitRuntime } from 'bookkit/runtime';
+  const runtime: BookkitRuntime;
+  export default runtime;
+}
+`;
+
 function runtimePath(root: URL, entrypoint: string | URL): string {
   if (entrypoint instanceof URL) return fileURLToPath(entrypoint);
   if (entrypoint.startsWith('file://')) return fileURLToPath(new URL(entrypoint));
@@ -69,13 +79,15 @@ export function bookkit(options: BookkitIntegrationOptions): AstroIntegration {
           });
         }
       },
-      'astro:config:done': ({ config }) => {
+      'astro:config:done': ({ config, injectTypes }) => {
         if (!config.adapter?.name.toLowerCase().includes('cloudflare')) {
           throw new Error('Bookkit requires @astrojs/cloudflare and Cloudflare Workers deployment');
         }
         // Both output modes work: since Astro 5, 'static' plus an adapter renders
         // prerender:false injected routes on demand, so a static site can mount
         // Bookkit without switching its own pages to server rendering.
+
+        injectTypes({ filename: 'bookkit.d.ts', content: virtualRuntimeTypes });
       },
     },
   };

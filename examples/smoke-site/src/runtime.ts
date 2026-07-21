@@ -1,7 +1,16 @@
+import type { D1Database } from '@cloudflare/workers-types';
 import type { CalEvent } from '../../../src/core/occupancy';
 import type { StripeEventParsed } from '../../../src/core/events';
 import { defineCloudflareBookkitRuntime, type BookkitProviders } from '../../../src/runtime';
 import config from './config';
+
+// Hand-declared because this fixture has no real `wrangler types` codegen in CI; it mirrors the
+// bindings in wrangler.jsonc. A real consumer runs `wrangler types` (see README) and imports the
+// generated `Env` from worker-configuration.d.ts instead of declaring it by hand.
+interface Env {
+  BOOKKIT_DB: D1Database;
+  TOURFLOW_SHARED_SECRET: string;
+}
 
 const calendarEvents = new Map<string, CalEvent>();
 
@@ -87,7 +96,7 @@ const providers: BookkitProviders = {
   },
 };
 
-export default defineCloudflareBookkitRuntime(config, {
+export default defineCloudflareBookkitRuntime<Env>(config, {
   providers,
   secretBindings: ['TOURFLOW_SHARED_SECRET'],
   verifyAccess: () => true,
