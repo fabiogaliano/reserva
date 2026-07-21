@@ -105,8 +105,8 @@ export function normalizeRoutePrefix(prefix: string): string {
 
 // Mirrors `validateConfig`'s style (core/config.ts): a Zod schema, `safeParse`, and rethrowing the
 // raw `ZodError` on failure so integration.ts can report it the same way it reports a bad
-// `options.config`. Deliberately narrow — only rejects the "obviously broken" values the handoff
-// names (whitespace, ".." traversal segments); everything else is left to `normalizeRoutePrefix`.
+// `options.config`. It rejects whitespace/traversal plus URL and network-path syntax before
+// normalization can turn an unsafe value into a generated route.
 const routePrefixSchema = z
   .string()
   .refine((value) => !/\s/.test(value), { message: 'routePrefix must not contain whitespace' })

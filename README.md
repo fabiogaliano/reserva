@@ -115,7 +115,7 @@ Bookkit's own routes are mounted via `injectRoute()`, never through a project-le
 
 Two `bookkit()` options adjust where routes are mounted, without renaming any individual route:
 
-- `routePrefix?: string` — prepended to every injected route pattern (and to every URL bookkit's own components and server-rendered pages produce: widget endpoint defaults, `ManageBooking`/`AdminDashboard` form actions, the manage/admin page's own links and redirects). Normalized (leading slash added, trailing slash stripped, `''`/`'/'` mean no prefix) and validated with Zod the same way `config` is — an obviously broken value (whitespace, a `..` segment) throws at `astro:config:setup` instead of building a broken route.
+- `routePrefix?: string` — prepended to every injected route pattern (and to every URL bookkit's own components and server-rendered pages produce: widget endpoint defaults, `ManageBooking`/`AdminDashboard` form actions, the manage/admin page's own links and redirects). Normalized (leading slash added, trailing slash stripped, `''`/`'/'` mean no prefix) and validated with Zod the same way `config` is — whitespace, `..` traversal, URL syntax (`:`, `?`, `#`, `\\`), and repeated slashes throw at `astro:config:setup` instead of building a broken route.
 - `routes?: { admin?: boolean; ops?: boolean }` — turns off the admin dashboard route and/or the Tourflow feed/operator routes. Both default to `true`. The public booking API and customer manage routes are load-bearing and cannot be disabled. A disabled group is simply never injected, and no server-rendered link ever points at it.
 
 ```ts
