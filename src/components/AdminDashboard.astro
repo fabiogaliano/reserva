@@ -1,0 +1,18 @@
+---
+interface Props {
+  endpoint?: string;
+}
+
+const { endpoint = '/booking/admin' } = Astro.props;
+---
+
+<section aria-labelledby="bookkit-admin-title">
+  <h2 id="bookkit-admin-title">Booking administration</h2>
+  <form method="post" action={endpoint}>
+    <label>Date <input name="date" type="date" required /></label>
+    <label>Capacity <input name="capacity" type="number" min="0" /></label>
+    <label>Reason <input name="reason" /></label>
+    <button type="submit" name="action" value="set">Save override</button>
+    <button type="submit" name="action" value="clear">Clear override</button>
+  </form>
+</section>

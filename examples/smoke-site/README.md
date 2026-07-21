@@ -1,0 +1,1 @@
+This fixture exercises the local TypeScript source after dependencies are installed at the repository root. Run `bun run build` from this directory to verify the integration entry, injected Cloudflare routes, and reference checkout component.

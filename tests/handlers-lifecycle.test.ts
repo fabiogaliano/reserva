@@ -1,0 +1,370 @@
+import type { D1Database } from '@cloudflare/workers-types';
+import { describe, expect, it } from 'vitest';
+import { createBookkitContext, type BookkitProviders } from '../src/context';
+import type { Booking } from '../src/core/booking';
+import { HoldLimitExceededError, type BookingRepository } from '../src/repo';
+import { handleAvailability, handleCheckout, handleFeed, handleOperatorNoShow, handleStripeWebhook } from '../src/handlers';
+import { booking, config } from './fixtures';
+
+function fakeRepository(seed: Booking[] = []): BookingRepository & { rows: Map<string, Booking> } {
+  const rows = new Map(seed.map((item) => [item.id, item]));
+  const holdIps = new Map<string, string>();
+  const leases = new Map<string, { token: string; until: string }>();
+  const find = (predicate: (item: Booking) => boolean) => [...rows.values()].find(predicate) ?? null;
+  return {
+    rows,
+    sweepExpiredHolds: async (now) => {
+      let changes = 0;
+      for (const item of rows.values()) if (item.status === 'hold' && item.holdExpiresAt && item.holdExpiresAt < now) {
+        rows.set(item.id, { ...item, status: 'expired', holdExpiresAt: null, updatedAt: now });
+        changes += 1;
+      }
+      return changes;
+    },
+    expireHold: async (id, now) => {
+      const current = rows.get(id);
+      if (!current || current.status !== 'hold') return null;
+      const expired = { ...current, status: 'expired' as const, holdExpiresAt: null, updatedAt: now };
+      rows.set(id, expired);
+      return expired;
+    },
+    acquireConfirmationLease: async (id, token, now, leaseUntil) => {
+      const current = leases.get(id);
+      if (current && current.until >= now) return false;
+      leases.set(id, { token, until: leaseUntil });
+      return true;
+    },
+    releaseConfirmationLease: async (id, token) => {
+      if (leases.get(id)?.token === token) leases.delete(id);
+    },
+    getBookingById: async (id) => rows.get(id) ?? null,
+    getBookingByReference: async (reference) => find((item) => item.reference === reference),
+    getBookingBySessionId: async (sessionId) => find((item) => item.stripeSessionId === sessionId),
+    getBookingByPaymentIntent: async (paymentIntent) => find((item) => item.stripePaymentIntent === paymentIntent),
+    getBookingByCancelToken: async (token) => find((item) => item.cancelToken === token),
+    getBookingByOperatorToken: async (token) => find((item) => item.operatorToken === token),
+    countReferencesForYear: async (prefix) => [...rows.values()].filter((item) => item.reference.startsWith(prefix)).length,
+    insertHold: async (input) => {
+      if (input.holdIp && input.maxActiveHoldsForIp) {
+        const active = [...rows.values()].filter((item) =>
+          holdIps.get(item.id) === input.holdIp
+          && item.status === 'hold'
+          && item.holdExpiresAt !== null
+          && item.holdExpiresAt >= input.createdAt,
+        );
+        if (active.length >= input.maxActiveHoldsForIp) throw new HoldLimitExceededError();
+      }
+      const created: Booking = { ...booking(), ...input, pickupAddress: null, customerName: null, customerEmail: null, customerPhone: null, status: 'hold', stripeSessionId: null, stripePaymentIntent: null, calendarEventId: null, calendarSynced: false, emailSynced: false, tourflowSynced: false, remindedAt: null, reviewRequestedAt: null, cancelledAt: null, cancelledBy: null, rescheduledFrom: null };
+      rows.set(created.id, created);
+      if (input.holdIp) holdIps.set(created.id, input.holdIp);
+      return created;
+    },
+    updateBooking: async (id, patch) => {
+      const current = rows.get(id);
+      if (!current) throw new Error('missing booking');
+      const updated = { ...current, ...patch } as Booking;
+      rows.set(id, updated);
+      return updated;
+    },
+    listOccupancyBookings: async (from, to) => [...rows.values()].filter((item) => item.startsAt >= from && item.startsAt < to),
+    listUpcoming: async () => [...rows.values()],
+    listSince: async () => [...rows.values()],
+    getDayOverride: async () => null,
+    listDayOverrides: async () => [],
+    upsertDayOverride: async () => undefined,
+    deleteDayOverride: async () => undefined,
+  };
+}
+
+function providers(overrides: Partial<BookkitProviders> = {}): BookkitProviders {
+  return {
+    payments: {
+      createCheckout: async () => ({ url: 'https://checkout.test/cs_1', sessionId: 'cs_1' }),
+      parseWebhook: async () => ({
+        id: 'evt_1',
+        type: 'checkout.session.completed',
+        sessionId: 'cs_1',
+        paymentIntent: 'pi_1',
+        paid: true,
+        amountCaptured: 10000,
+        customerName: 'Ada Lovelace',
+        customerEmail: 'ada@example.com',
+        customerPhone: '+351910000000',
+        pickupAddress: 'Praça do Comércio',
+      }),
+      getSession: async () => ({ status: 'open' }),
+      refund: async () => undefined,
+    },
+    calendar: {
+      listEvents: async () => [],
+      createEvent: async () => 'cal_1',
+      patchEvent: async () => undefined,
+      deleteEvent: async () => undefined,
+    },
+    email: { send: async () => undefined },
+    ...overrides,
+  };
+}
+
+describe('Bookkit handlers', () => {
+  it('persists a checkout session and confirms idempotently on webhook replay', async () => {
+    const repo = fakeRepository();
+    let calendarCreates = 0;
+    let emails = 0;
+    const sharedProviders = providers({
+      calendar: {
+        listEvents: async () => [],
+        createEvent: async () => { calendarCreates += 1; return 'cal_1'; },
+        patchEvent: async () => undefined,
+        deleteEvent: async () => undefined,
+      },
+      email: { send: async () => { emails += 1; } },
+    });
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      providers: sharedProviders,
+    });
+    const secondContext = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      providers: sharedProviders,
+    });
+    const checkout = await handleCheckout(new Request('https://example.test/api/booking/checkout', {
+      method: 'POST',
+      body: JSON.stringify({ tourSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', people: 2, pickupType: 'default', locale: 'en' }),
+      headers: { 'content-type': 'application/json' },
+    }), context);
+    expect(checkout.status).toBe(201);
+    const created = [...repo.rows.values()][0];
+    expect(created?.stripeSessionId).toBe('cs_1');
+
+    const [first, second] = await Promise.all([
+      handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST', body: 'same' }), context),
+      handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST', body: 'same' }), secondContext),
+    ]);
+    expect([first.status, second.status]).toContain(200);
+    expect([first.status, second.status].every((status) => status === 200 || status === 503)).toBe(true);
+    const confirmed = repo.rows.get(created?.id ?? '');
+    expect(confirmed).toMatchObject({
+      status: 'confirmed',
+      customerName: 'Ada Lovelace',
+      customerEmail: 'ada@example.com',
+      customerPhone: '+351910000000',
+      pickupAddress: 'Praça do Comércio',
+    });
+    expect(calendarCreates).toBe(1);
+    expect(emails).toBe(1);
+  });
+
+  it('returns a retryable webhook error while another confirmation lease is active', async () => {
+    const seeded = booking({
+      id: 'b-leased',
+      status: 'hold',
+      holdExpiresAt: '2026-06-14T09:00:00.000Z',
+      stripeSessionId: 'cs_1',
+      stripePaymentIntent: null,
+      calendarSynced: false,
+      emailSynced: false,
+      tourflowSynced: false,
+    });
+    const repo = fakeRepository([seeded]);
+    await repo.acquireConfirmationLease(seeded.id, 'stalled-worker', '2026-06-14T08:00:00.000Z', '2026-06-14T08:05:00.000Z');
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      providers: providers(),
+    });
+
+    const blocked = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    expect(blocked.status).toBe(503);
+    await expect(blocked.json()).resolves.toMatchObject({ error: { code: 'confirmation_in_progress' } });
+
+    await repo.releaseConfirmationLease(seeded.id, 'stalled-worker');
+    const retried = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    expect(retried.status).toBe(200);
+    expect(repo.rows.get(seeded.id)).toMatchObject({ status: 'confirmed', calendarSynced: true, emailSynced: true });
+  });
+
+  it('enforces configured hold limits through the repository', async () => {
+    const repo = fakeRepository();
+    const context = createBookkitContext({
+      config: { ...config, booking: { ...config.booking, maxHoldsPerIp: 1 } },
+      db: {} as D1Database,
+      repo,
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      providers: providers(),
+    });
+    const checkoutRequest = () => new Request('https://example.test/api/booking/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.1' },
+      body: JSON.stringify({ tourSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', people: 2, pickupType: 'default', locale: 'en' }),
+    });
+
+    await expect(handleCheckout(checkoutRequest(), context)).resolves.toMatchObject({ status: 201 });
+    const limited = await handleCheckout(checkoutRequest(), context);
+    expect(limited.status).toBe(429);
+    await expect(limited.json()).resolves.toMatchObject({ error: { code: 'too_many_holds' } });
+  });
+
+  it('uses the longest configured tour window during checkout revalidation', async () => {
+    const candidateTour = { ...config.tours.vintage!, turnaroundMin: 0, schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], firstStart: '12:00', lastStart: '12:00', intervalMin: 30 }] };
+    const longTour = { ...config.tours.vintage!, turnaroundMin: 120, schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], firstStart: '10:00', lastStart: '10:00', intervalMin: 30 }] };
+    const multiTourConfig = {
+      ...config,
+      business: { ...config.business, timezone: 'UTC' },
+      tours: { candidate: candidateTour, long: longTour },
+      booking: { ...config.booking, minNoticeHours: 0 },
+    };
+    const existing = booking({
+      id: 'long-booking',
+      tourSlug: 'long',
+      people: 8,
+      startsAt: '2026-06-15T10:00:00.000Z',
+      endsAt: '2026-06-15T11:00:00.000Z',
+    });
+    const context = createBookkitContext({
+      config: multiTourConfig,
+      db: {} as D1Database,
+      repo: fakeRepository([existing]),
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      providers: providers(),
+    });
+
+    const response = await handleCheckout(new Request('https://example.test/api/booking/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ tourSlug: 'candidate', start: '2026-06-15T12:00:00.000Z', people: 2, pickupType: 'default', locale: 'en' }),
+    }), context);
+    expect(response.status).toBe(409);
+  });
+
+  it('does not confirm a paid booking from an unpaid completed event', async () => {
+    const seeded = booking({
+      id: 'b-unpaid',
+      status: 'hold',
+      stripeSessionId: 'cs_unpaid',
+      holdExpiresAt: '2026-06-14T09:00:00.000Z',
+    });
+    const repo = fakeRepository([seeded]);
+    let calendarCreates = 0;
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      providers: providers({
+        payments: {
+          createCheckout: async () => ({ url: '', sessionId: '' }),
+          parseWebhook: async () => ({ id: 'evt_unpaid', type: 'checkout.session.completed', bookingId: seeded.id, sessionId: 'cs_unpaid', paid: false }),
+          getSession: async () => ({ status: 'open' }),
+          refund: async () => undefined,
+        },
+        calendar: {
+          listEvents: async () => [],
+          createEvent: async () => { calendarCreates += 1; return 'cal'; },
+          patchEvent: async () => undefined,
+          deleteEvent: async () => undefined,
+        },
+      }),
+    });
+
+    const response = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    expect(response.status).toBe(200);
+    expect(repo.rows.get(seeded.id)?.status).toBe('hold');
+    expect(calendarCreates).toBe(0);
+  });
+
+  it('reports Stripe disputes through waitUntil without delaying the webhook response', async () => {
+    const seeded = booking({ id: 'b-dispute', stripePaymentIntent: 'pi_dispute' });
+    const repo = fakeRepository([seeded]);
+    const pending: Promise<unknown>[] = [];
+    let pushedEvent: string | undefined;
+    let releaseOps = (): void => undefined;
+    const blockedOps = new Promise<void>((resolve) => { releaseOps = resolve; });
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      waitUntil: (promise) => pending.push(promise),
+      providers: providers({
+        payments: {
+          createCheckout: async () => ({ url: '', sessionId: '' }),
+          parseWebhook: async () => ({ id: 'evt_dispute', type: 'charge.dispute.created', paymentIntent: 'pi_dispute' }),
+          getSession: async () => ({ status: 'open' }),
+          refund: async () => undefined,
+        },
+        ops: {
+          push: async (event) => {
+            pushedEvent = event;
+            await blockedOps;
+          },
+        },
+      }),
+    });
+
+    const response = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    expect(response.status).toBe(200);
+    expect(pushedEvent).toBe('payment.dispute_created');
+    expect(pending).toHaveLength(1);
+    releaseOps();
+    await Promise.all(pending);
+  });
+
+  it('returns a redacted, canonicalized feed payload', async () => {
+    const seeded = booking({ id: 'b-feed', status: 'confirmed', updatedAt: '2026-06-15T10:00:00.000Z' });
+    const repo = fakeRepository([seeded]);
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      secrets: async () => 'expected-secret',
+      providers: providers(),
+    });
+    const response = await handleFeed(new Request('https://example.test/api/booking/feed?since=2026-06-01T01:00:00%2B01:00', {
+      headers: { authorization: 'Bearer expected-secret' },
+    }), context);
+    const payload = await response.json() as { bookings: Array<Record<string, unknown>> };
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(payload.bookings[0]).toMatchObject({ id: seeded.id, reference: seeded.reference, status: 'confirmed' });
+    expect(payload.bookings[0]).not.toHaveProperty('cancelToken');
+    expect(payload.bookings[0]).not.toHaveProperty('operatorToken');
+    expect(payload.bookings[0]).not.toHaveProperty('stripeSessionId');
+  });
+
+  it('rejects impossible availability dates as validation errors', async () => {
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo: fakeRepository(),
+      providers: providers(),
+    });
+    const response = await handleAvailability(new Request('https://example.test/api/booking/availability?tour=vintage&people=2&from=2026-02-30&to=2026-03-01'), context);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed' } });
+  });
+
+  it('rejects feed and operator actions without constant-time shared-secret auth', async () => {
+    const seeded = booking({ id: 'b1', status: 'confirmed', startsAt: '2026-06-15T09:00:00.000Z' });
+    const repo = fakeRepository([seeded]);
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      secrets: async () => 'expected-secret',
+      providers: providers(),
+    });
+    const feed = await handleFeed(new Request('https://example.test/api/booking/feed?since=2026-01-01T00:00:00.000Z', { headers: { authorization: 'Bearer wrong' } }), context);
+    expect(feed.status).toBe(403);
+    const noShow = await handleOperatorNoShow(new Request('https://example.test/api/booking/operator/no-show', { method: 'POST', body: JSON.stringify({ bookingId: 'b1' }), headers: { 'content-type': 'application/json', authorization: 'Bearer wrong' } }), context);
+    expect(noShow.status).toBe(403);
+  });
+});

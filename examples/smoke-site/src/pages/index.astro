@@ -1,0 +1,14 @@
+---
+import BookingWidget from '../../../../src/components/BookingWidget.astro';
+
+const title = 'Bookkit smoke site';
+---
+
+<html lang="en">
+  <head><meta charset="utf-8" /><title>{title}</title></head>
+  <body>
+    <h1>{title}</h1>
+    <p>Injected booking routes and the reference checkout component are checked during the smoke build.</p>
+    <BookingWidget tourSlug="vintage" startOptions={[{ value: '2026-08-01T10:00:00+01:00', label: '1 August at 10:00' }]} />
+  </body>
+</html>

@@ -1,0 +1,19 @@
+---
+interface Props {
+  token?: string;
+  endpoint?: string;
+}
+
+const { token = '', endpoint = '/booking/manage' } = Astro.props;
+---
+
+<section aria-labelledby="bookkit-manage-title">
+  <h2 id="bookkit-manage-title">Manage your booking</h2>
+  <form method="get" action={endpoint}>
+    <label>
+      Booking token
+      <input name="token" value={token} autocomplete="off" required />
+    </label>
+    <button type="submit">Open booking</button>
+  </form>
+</section>

@@ -1,0 +1,85 @@
+---
+interface StartOption {
+  value: string;
+  label: string;
+}
+
+interface Props {
+  tourSlug: string;
+  checkoutEndpoint?: string;
+  locale?: string;
+  peopleOptions?: number[];
+  pickupTypes?: Array<'default' | 'custom'>;
+  startOptions?: StartOption[];
+}
+
+const {
+  tourSlug,
+  checkoutEndpoint = '/api/booking/checkout',
+  locale = 'en',
+  peopleOptions = [1, 2, 3, 4],
+  pickupTypes = ['default', 'custom'],
+  startOptions = [],
+} = Astro.props;
+---
+
+<form data-bookkit-checkout data-endpoint={checkoutEndpoint} aria-label="Book a tour">
+  <input type="hidden" name="tourSlug" value={tourSlug} />
+  <input type="hidden" name="locale" value={locale} />
+  <label>
+    People
+    <select name="people" required>
+      {peopleOptions.map((people) => <option value={people}>{people}</option>)}
+    </select>
+  </label>
+  <label>
+    Start
+    {startOptions.length > 0 ? (
+      <select name="start" required>
+        {startOptions.map((option) => <option value={option.value}>{option.label}</option>)}
+      </select>
+    ) : (
+      <input name="start" type="text" placeholder="2026-08-01T10:00:00+01:00" required />
+    )}
+  </label>
+  <label>
+    Pickup
+    <select name="pickupType" required>
+      {pickupTypes.map((pickupType) => <option value={pickupType}>{pickupType === 'custom' ? 'Custom pickup' : 'Meeting point'}</option>)}
+    </select>
+  </label>
+  <button type="submit">Continue to payment</button>
+  <p data-bookkit-error role="alert" hidden></p>
+</form>
+
+<script>
+  for (const form of document.querySelectorAll<HTMLFormElement>('[data-bookkit-checkout]')) {
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const error = form.querySelector<HTMLElement>('[data-bookkit-error]');
+      const data = new FormData(form);
+      const payload = {
+        tourSlug: String(data.get('tourSlug') ?? ''),
+        start: String(data.get('start') ?? ''),
+        people: Number(data.get('people')),
+        pickupType: String(data.get('pickupType') ?? ''),
+        locale: String(data.get('locale') ?? ''),
+      };
+      try {
+        const response = await fetch(form.dataset.endpoint ?? '/api/booking/checkout', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const result = await response.json() as { checkoutUrl?: string; error?: { message?: string } };
+        if (!response.ok || !result.checkoutUrl) throw new Error(result.error?.message ?? 'Checkout failed');
+        window.location.assign(result.checkoutUrl);
+      } catch (cause) {
+        if (error) {
+          error.textContent = cause instanceof Error ? cause.message : 'Checkout failed';
+          error.hidden = false;
+        }
+      }
+    });
+  }
+</script>
