@@ -53,6 +53,7 @@ export interface CloudflareBookkitRuntimeOptions<TEnv extends object = UntypedBo
   secretBindings?: ReadonlyArray<keyof TEnv & string>;
   verifyAccess?: (bindings: CloudflareRuntimeBindings<TEnv>) => boolean | Promise<boolean>;
   logger?: BookkitLogger | ((bindings: CloudflareRuntimeBindings<TEnv>) => BookkitLogger);
+  migrationsTable?: string;
 }
 
 function objectRecord(value: unknown): Record<string, unknown> | undefined {
@@ -113,6 +114,14 @@ function isD1Like(value: unknown): value is D1Database {
 }
 
 const D1_MIGRATIONS_TABLE = 'd1_migrations';
+const migrationsTableNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function requireMigrationsTableName(migrationsTable: string): string {
+  if (!migrationsTableNamePattern.test(migrationsTable)) {
+    throw new Error('Cloudflare migrationsTable must be a SQLite identifier containing only letters, numbers, and underscores');
+  }
+  return migrationsTable;
+}
 
 // The minimal D1 surface the migration check needs (rather than the full D1Database type), so it
 // can be exercised in tests against a lightweight fake without standing up a real binding.
@@ -123,20 +132,20 @@ export interface MigrationsQueryable {
 // Structural presence check rather than catching the SELECT's error: D1 error message text isn't
 // a stable contract to sniff, and coalescing every failure (including transient ones) into "zero
 // applied" would misreport a real DB error as a missing-migrations problem.
-async function migrationsTableExists(db: MigrationsQueryable): Promise<boolean> {
+async function migrationsTableExists(db: MigrationsQueryable, migrationsTable: string): Promise<boolean> {
   const result = await db
-    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='${D1_MIGRATIONS_TABLE}'`)
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='${migrationsTable}'`)
     .all<{ name: string }>();
   return result.results.length > 0;
 }
 
-async function appliedMigrationNames(db: MigrationsQueryable): Promise<Set<string>> {
+async function appliedMigrationNames(db: MigrationsQueryable, migrationsTable: string): Promise<Set<string>> {
   // `wrangler d1 migrations apply` creates d1_migrations on its first run; a database that has
   // never been migrated at all surfaces the same "nothing applied yet" guidance below. Once the
   // table exists, any error from the real query is a genuine DB failure and must propagate as-is.
-  const tableExists = await migrationsTableExists(db);
+  const tableExists = await migrationsTableExists(db, migrationsTable);
   if (!tableExists) return new Set();
-  const result = await db.prepare(`SELECT name FROM ${D1_MIGRATIONS_TABLE}`).all<{ name: string }>();
+  const result = await db.prepare(`SELECT name FROM ${migrationsTable}`).all<{ name: string }>();
   return new Set(result.results.map((row) => row.name));
 }
 
@@ -153,8 +162,11 @@ function migrationsErrorMessage(missing: readonly string[]): string {
 // missing column/table is the single most confusing failure mode for a new consumer, so this turns
 // it into a named list of missing migrations and the exact command to fix it. Tolerant of extra,
 // consumer-owned migrations — only bookkit's own filenames are asserted present.
-export async function checkBookkitMigrationsApplied(db: MigrationsQueryable): Promise<void> {
-  const applied = await appliedMigrationNames(db);
+export async function checkBookkitMigrationsApplied(
+  db: MigrationsQueryable,
+  migrationsTable = D1_MIGRATIONS_TABLE,
+): Promise<void> {
+  const applied = await appliedMigrationNames(db, requireMigrationsTableName(migrationsTable));
   const missing = BOOKKIT_MIGRATIONS.filter((name) => !applied.has(name));
   if (missing.length > 0) throw new Error(migrationsErrorMessage(missing));
 }
@@ -188,6 +200,7 @@ export function defineCloudflareBookkitRuntime<TEnv extends object>(
   options: CloudflareBookkitRuntimeOptions<TEnv>,
 ): BookkitRuntimeDefinition {
   const config = validateConfig(configInput);
+  const migrationsTable = requireMigrationsTableName(options.migrationsTable ?? D1_MIGRATIONS_TABLE);
   const secretBindings = new Set<string>(options.secretBindings ?? ['TOURFLOW_SHARED_SECRET']);
   const refundedPayments = new Set<string>();
   const confirmationLocks = new Map<string, Promise<void>>();
@@ -204,7 +217,7 @@ export function defineCloudflareBookkitRuntime<TEnv extends object>(
       // Cache success (steady-state healthy isolates check only once) but clear the memo on
       // rejection so a transient failure doesn't permanently poison the isolate — the next
       // request retries instead of getting a cached, misleading "run your migrations" error.
-      migrationsChecked ??= checkBookkitMigrationsApplied(db).catch((err) => {
+      migrationsChecked ??= checkBookkitMigrationsApplied(db, migrationsTable).catch((err) => {
         migrationsChecked = undefined;
         throw err;
       });

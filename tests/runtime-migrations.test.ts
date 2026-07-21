@@ -17,13 +17,15 @@ const payments = {
 // the check now issues both as separate statements.
 function fakeD1(
   appliedNames: string[],
-  options: { missingTable?: boolean; selectError?: Error } = {},
+  options: { missingTable?: boolean; selectError?: Error; tableName?: string; queries?: string[] } = {},
 ): MigrationsQueryable {
+  const tableName = options.tableName ?? 'd1_migrations';
   return {
     prepare: (query: string) => ({
       all: async <T>() => {
+        options.queries?.push(query);
         if (query.includes('sqlite_master')) {
-          return { results: (options.missingTable ? [] : [{ name: 'd1_migrations' }]) as T[] };
+          return { results: (options.missingTable ? [] : [{ name: tableName }]) as T[] };
         }
         if (options.selectError) throw options.selectError;
         return { results: appliedNames.map((name) => ({ name })) as T[] };
@@ -40,6 +42,37 @@ describe('checkBookkitMigrationsApplied', () => {
   it('is tolerant of extra, consumer-owned migrations', async () => {
     const applied = [...BOOKKIT_MIGRATIONS, '0004_consumer_custom_table.sql'];
     await expect(checkBookkitMigrationsApplied(fakeD1(applied))).resolves.toBeUndefined();
+  });
+
+  it('uses a configured migration table for both the probe and applied-names query', async () => {
+    const queries: string[] = [];
+    await expect(checkBookkitMigrationsApplied(
+      fakeD1([...BOOKKIT_MIGRATIONS], { tableName: 'bookkit_migrations', queries }),
+      'bookkit_migrations',
+    )).resolves.toBeUndefined();
+    expect(queries).toEqual([
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='bookkit_migrations'",
+      'SELECT name FROM bookkit_migrations',
+    ]);
+  });
+
+  it('reports missing migrations after querying a configured migration table', async () => {
+    const queries: string[] = [];
+    await expect(checkBookkitMigrationsApplied(
+      fakeD1([], { tableName: 'bookkit_migrations', queries }),
+      'bookkit_migrations',
+    )).rejects.toThrow(/is missing/);
+    expect(queries).toEqual([
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='bookkit_migrations'",
+      'SELECT name FROM bookkit_migrations',
+    ]);
+  });
+
+  it('rejects an unsafe configured migration table name', () => {
+    expect(() => defineCloudflareBookkitRuntime(config, {
+      providers: { payments },
+      migrationsTable: 'd1_migrations; DROP TABLE bookings',
+    })).toThrow(/migrationsTable.*SQLite identifier/);
   });
 
   it('names the missing migration and the apply command when one is unapplied', async () => {
