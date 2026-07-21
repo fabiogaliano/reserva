@@ -70,6 +70,23 @@ describe('validateRouteOptions (Zod, same throw-on-safeParse-failure style as va
   it('rejects a prefix containing ".." traversal segments', () => {
     expect(() => validateRouteOptions({ routePrefix: '/../etc' })).toThrow(/\.\./);
   });
+
+  it.each(['//other-host', '/en?x=1', '/en#f', 'https://evil.example', '/a\\b', '/en//fr'])(
+    'rejects URL or network-path syntax in %j',
+    (routePrefix) => {
+      expect(() => setup({ ...baseOptions, routePrefix })).toThrow();
+    },
+  );
+
+  it.each([
+    ['/en', '/en'],
+    ['en', '/en'],
+    ['/en/', '/en'],
+    ['/en/fr', '/en/fr'],
+  ])('accepts and normalizes safe prefix %j', (routePrefix, normalized) => {
+    expect(validateRouteOptions({ routePrefix })).toEqual({ routePrefix });
+    expect(normalizeRoutePrefix(routePrefix)).toBe(normalized);
+  });
 });
 
 describe('route table generation (astro:config:setup)', () => {

@@ -102,7 +102,12 @@ export function normalizeRoutePrefix(prefix: string): string {
 const routePrefixSchema = z
   .string()
   .refine((value) => !/\s/.test(value), { message: 'routePrefix must not contain whitespace' })
-  .refine((value) => !value.includes('..'), { message: 'routePrefix must not contain ".."' });
+  .refine((value) => !value.includes('..'), { message: 'routePrefix must not contain ".."' })
+  .refine((value) => !value.includes('?'), { message: 'routePrefix must not contain a query string' })
+  .refine((value) => !value.includes('#'), { message: 'routePrefix must not contain a fragment' })
+  .refine((value) => !value.includes('\\'), { message: 'routePrefix must not contain backslashes' })
+  .refine((value) => !value.includes(':'), { message: 'routePrefix must not contain a URL scheme' })
+  .refine((value) => !value.includes('//'), { message: 'routePrefix must not contain consecutive slashes' });
 
 const routeGroupFlagsInputSchema = z.object({
   admin: z.boolean().optional(),
