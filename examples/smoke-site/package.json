@@ -2,6 +2,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "astro build"
+    "build": "astro build",
+    "dev": "astro dev",
+    "db:migrate": "wrangler d1 migrations apply bookkit-smoke --local --config ./wrangler.jsonc",
+    "demo": "bun run db:migrate && bun run dev"
   }
 }

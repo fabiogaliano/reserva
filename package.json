@@ -10,6 +10,11 @@
     "examples/astro.config.ts",
     "examples/client-config.ts",
     "examples/runtime.ts",
+    "examples/smoke-site/astro.config.ts",
+    "examples/smoke-site/package.json",
+    "examples/smoke-site/README.md",
+    "examples/smoke-site/wrangler.jsonc",
+    "examples/smoke-site/src",
     "README.md"
   ],
   "exports": {

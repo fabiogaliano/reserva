@@ -82,6 +82,17 @@ The action accepts `tourSlug`, `start`, `people`, `pickupType`, and `locale` thr
 
 The package includes `BookingWidget.astro`, `ManageBooking.astro`, and `AdminDashboard.astro` reference components. They use native forms and controls without inline event handlers or inline styles, so applications can apply their own CSP and design system. Server-rendered management HTML is also available through `/booking/manage`. `BookingWidget.astro`'s `<script>` is a hoisted Astro module script rather than `is:inline`, so Astro emits it as an external hashed file — that is why the widget holds under a strict `script-src 'self'` CSP even though the source file shows a `<script>` tag.
 
+## Local interactive demo
+
+The fixture in `examples/smoke-site` runs the complete booking flow locally through Astro dev, Cloudflare workerd, and persistent local D1. Its payment, calendar, email, operations, analytics, refund, and Access providers are simulations, so it never contacts an external service.
+
+```bash
+cd examples/smoke-site
+bun run demo
+```
+
+Open <http://localhost:4321>. Create a booking, follow the simulated checkout confirmation, inspect `/booking/admin`, and use its manage links for operator actions. Customer and operator management URLs are also printed in the dev-server logs. See `examples/smoke-site/README.md` for the route list, feed token, and reset instructions.
+
 ## Deviations from and additions to the spec
 
 Bookkit's build contract is the reference spec, but the implementation deliberately goes beyond it in a few places. These are intentional hardening, recorded here so they aren't mistaken for scope creep or re-litigated later.
