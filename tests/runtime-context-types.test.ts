@@ -12,6 +12,11 @@ interface TestEnv {
   MY_SECRET: string;
 }
 
+interface CustomEnv {
+  MY_DB: D1Database;
+  MY_SECRET: string;
+}
+
 const payments = {
   createCheckout: async () => ({ url: 'https://checkout.test', sessionId: 'cs_test' }),
   parseWebhook: async () => ({ id: 'evt_test', type: 'unknown' as const }),
@@ -36,6 +41,20 @@ describe('defineCloudflareBookkitRuntime Env typing (compile-time)', () => {
       providers: { payments },
       // @ts-expect-error 'NOT_A_BINDING' is not a key of TestEnv, catching a typo'd binding name at compile time.
       db: 'NOT_A_BINDING',
+    });
+  });
+
+  it('accepts a custom-binding-only Env while preserving keyof binding checks', () => {
+    defineCloudflareBookkitRuntime<CustomEnv>(config, {
+      providers: { payments },
+      db: 'MY_DB',
+      secretBindings: ['MY_SECRET'],
+    });
+
+    defineCloudflareBookkitRuntime<CustomEnv>(config, {
+      providers: { payments },
+      // @ts-expect-error 'BOOKKIT_DB' is not a key of CustomEnv.
+      db: 'BOOKKIT_DB',
     });
   });
 

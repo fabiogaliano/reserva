@@ -36,17 +36,17 @@ export interface BookkitEnvShape {
 // bare-string binding-name options keep accepting arbitrary names, same as before this change.
 type UntypedBookkitEnv = BookkitEnvShape & Record<string, unknown>;
 
-export interface CloudflareRuntimeBindings<TEnv extends BookkitEnvShape = UntypedBookkitEnv> {
+export interface CloudflareRuntimeBindings<TEnv extends object = UntypedBookkitEnv> {
   env: TEnv;
   request: Request;
   locals?: unknown;
   config: ClientConfig;
 }
 
-export type CloudflareBinding<T, TEnv extends BookkitEnvShape = UntypedBookkitEnv> =
+export type CloudflareBinding<T, TEnv extends object = UntypedBookkitEnv> =
   (keyof TEnv & string) | ((bindings: CloudflareRuntimeBindings<TEnv>) => T | undefined);
 
-export interface CloudflareBookkitRuntimeOptions<TEnv extends BookkitEnvShape = UntypedBookkitEnv> {
+export interface CloudflareBookkitRuntimeOptions<TEnv extends object = UntypedBookkitEnv> {
   db?: CloudflareBinding<D1Database, TEnv>;
   cache?: CloudflareBinding<BookkitCache, TEnv> | null;
   providers: BookkitProviders | ((bindings: CloudflareRuntimeBindings<TEnv>) => BookkitProviders | Promise<BookkitProviders>);
@@ -66,7 +66,7 @@ export function getEnv(locals: unknown): Record<string, unknown> {
   throw new Error('Cloudflare environment bindings are unavailable in locals');
 }
 
-async function getWorkerEnv<TEnv extends BookkitEnvShape>(locals: unknown): Promise<TEnv> {
+async function getWorkerEnv<TEnv extends object>(locals: unknown): Promise<TEnv> {
   try {
     return getEnv(locals) as unknown as TEnv;
   } catch {
@@ -95,7 +95,7 @@ export function getCache(locals: unknown, binding = 'BOOKKIT_CACHE'): BookkitCac
   return workerCaches?.default;
 }
 
-function resolveBinding<T, TEnv extends BookkitEnvShape>(
+function resolveBinding<T, TEnv extends object>(
   binding: CloudflareBinding<T, TEnv> | undefined,
   input: CloudflareRuntimeBindings<TEnv>,
   name: string,
@@ -179,11 +179,11 @@ export function defineCloudflareBookkitRuntime(
   configInput: unknown,
   options: CloudflareBookkitRuntimeOptions<UntypedBookkitEnv>,
 ): BookkitRuntimeDefinition;
-export function defineCloudflareBookkitRuntime<TEnv extends BookkitEnvShape>(
+export function defineCloudflareBookkitRuntime<TEnv extends object>(
   configInput: unknown,
   options: CloudflareBookkitRuntimeOptions<TEnv>,
 ): BookkitRuntimeDefinition;
-export function defineCloudflareBookkitRuntime<TEnv extends BookkitEnvShape>(
+export function defineCloudflareBookkitRuntime<TEnv extends object>(
   configInput: unknown,
   options: CloudflareBookkitRuntimeOptions<TEnv>,
 ): BookkitRuntimeDefinition {
