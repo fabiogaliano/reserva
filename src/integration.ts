@@ -5,7 +5,15 @@ import type { AstroIntegration } from 'astro';
 import { envField } from 'astro/config';
 import type { Plugin } from 'vite';
 import { validateConfig, type ClientConfig } from './core/config';
-import { routeManifest, routePath } from './routes-manifest';
+import {
+  enabledRouteManifest,
+  normalizeRoutePrefix,
+  resolveRouteConfig,
+  routePath,
+  validateRouteOptions,
+  type BookkitResolvedRouteConfig,
+  type BookkitRouteGroupFlags,
+} from './routes-manifest';
 
 export interface BookkitIntegrationOptions {
   config: ClientConfig | unknown;
@@ -13,6 +21,15 @@ export interface BookkitIntegrationOptions {
   // Set to `false` to skip contributing bookkit's secret names to the `astro:env` schema, e.g. if
   // the consumer already declares its own schema for these names. Defaults to on.
   envSchema?: false;
+  // Prepended to every injected route pattern, and to every URL bookkit's own components/handlers
+  // render (widget endpoints, manage/admin page links and form actions, the Stripe webhook path).
+  // Normalized via `normalizeRoutePrefix` (leading slash, no trailing slash, ''/'/' => none);
+  // validated first via Zod (see `validateRouteOptions`) to reject obviously broken values.
+  routePrefix?: string;
+  // Feature groups that can be turned off. `admin` = the admin dashboard route; `ops` = the
+  // Tourflow feed/operator routes. Public booking API + customer manage routes are load-bearing and
+  // always mounted (see routes-manifest.ts's `isRouteEnabled`). Both default to `true`.
+  routes?: { admin?: boolean; ops?: boolean };
 }
 
 // Canonical secret names for bookkit's optional providers, sourced from scripts/manual-*.ts (the
@@ -44,6 +61,18 @@ const virtualRuntimeTypes = `declare module '${virtualRuntimeId}' {
 }
 `;
 
+const virtualConfigId = 'virtual:bookkit/config';
+const resolvedVirtualConfigId = '\0' + virtualConfigId;
+
+// Static declaration, like virtualRuntimeTypes above: the shape is fixed (resolved paths + group
+// flags), only the values differ per-consumer, so this never needs to be regenerated per-build.
+const virtualConfigTypes = `declare module '${virtualConfigId}' {
+  import type { BookkitResolvedRouteConfig } from 'bookkit';
+  const config: BookkitResolvedRouteConfig;
+  export default config;
+}
+`;
+
 function runtimePath(root: URL, entrypoint: string | URL): string {
   if (entrypoint instanceof URL) return fileURLToPath(entrypoint);
   if (entrypoint.startsWith('file://')) return fileURLToPath(new URL(entrypoint));
@@ -68,6 +97,23 @@ function routeEntrypoint(relativePath: string): string {
   return fileURLToPath(new URL(relativePath, import.meta.url));
 }
 
+// Resolved once per build/dev-server start from the (validated, normalized) prefix + group flags —
+// unlike virtual:bookkit/runtime, this has no dependency on the consumer's runtimeEntrypoint, so it
+// can be serialized directly instead of re-exporting a file path.
+function routeConfigVirtualPlugin(resolvedRouteConfig: BookkitResolvedRouteConfig): Plugin {
+  return {
+    name: 'bookkit-route-config',
+    enforce: 'pre',
+    resolveId(id) {
+      return id === virtualConfigId ? resolvedVirtualConfigId : undefined;
+    },
+    load(id) {
+      if (id !== resolvedVirtualConfigId) return undefined;
+      return `export default ${JSON.stringify(resolvedRouteConfig)};`;
+    },
+  };
+}
+
 export function bookkit(options: BookkitIntegrationOptions): AstroIntegration {
   return {
     name: 'bookkit',
@@ -80,6 +126,21 @@ export function bookkit(options: BookkitIntegrationOptions): AstroIntegration {
           throw error;
         }
 
+        let routeOptions: ReturnType<typeof validateRouteOptions>;
+        try {
+          routeOptions = validateRouteOptions({ routePrefix: options.routePrefix, routes: options.routes });
+        } catch (error) {
+          logger.error('Invalid Bookkit route options. Fix routePrefix/routes before building.');
+          throw error;
+        }
+
+        const prefix = normalizeRoutePrefix(routeOptions.routePrefix ?? '');
+        const groupFlags: BookkitRouteGroupFlags = {
+          admin: routeOptions.routes?.admin ?? true,
+          ops: routeOptions.routes?.ops ?? true,
+        };
+        const resolvedRouteConfig = resolveRouteConfig(prefix, groupFlags);
+
         const entrypoint = runtimePath(config.root, options.runtimeEntrypoint);
         if (!existsSync(entrypoint)) {
           throw new Error(`Bookkit runtimeEntrypoint does not exist: ${entrypoint}`);
@@ -87,7 +148,7 @@ export function bookkit(options: BookkitIntegrationOptions): AstroIntegration {
 
         updateConfig({
           vite: {
-            plugins: [runtimeVirtualPlugin(entrypoint)],
+            plugins: [runtimeVirtualPlugin(entrypoint), routeConfigVirtualPlugin(resolvedRouteConfig)],
           },
         });
 
@@ -95,9 +156,11 @@ export function bookkit(options: BookkitIntegrationOptions): AstroIntegration {
           updateConfig({ env: { schema: bookkitSecretEnvSchema } });
         }
 
-        for (const route of routeManifest) {
+        // Disabled groups are simply never injected; routePath already carries the resolved
+        // prefix, so every mounted pattern and every URL the components/handlers render agree.
+        for (const route of enabledRouteManifest(groupFlags)) {
           injectRoute({
-            pattern: routePath(route),
+            pattern: routePath(route, prefix),
             entrypoint: routeEntrypoint(route.entrypoint),
             prerender: false,
           });
@@ -120,12 +183,12 @@ export function bookkit(options: BookkitIntegrationOptions): AstroIntegration {
         // prerender:false injected routes on demand, so a static site can mount
         // Bookkit without switching its own pages to server rendering.
 
-        injectTypes({ filename: 'bookkit.d.ts', content: virtualRuntimeTypes });
+        injectTypes({ filename: 'bookkit.d.ts', content: virtualRuntimeTypes + virtualConfigTypes });
       },
     },
   };
 }
 
-export { virtualRuntimeId };
+export { virtualRuntimeId, virtualConfigId };
 export type { ClientConfig };
 export default bookkit;

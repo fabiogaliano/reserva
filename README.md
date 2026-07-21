@@ -103,6 +103,26 @@ Every route is server-only with `prerender: false`:
 
 The endpoint files are intentionally thin: they import `virtual:bookkit/runtime`, create a request-scoped context, and delegate to the handler exports. JSON errors use `{ error: { code, message } }`. Admin authorization is provided by Cloudflare Access through the runtime context.
 
+## Route customization
+
+Two `bookkit()` options adjust where routes are mounted, without renaming any individual route:
+
+- `routePrefix?: string` — prepended to every injected route pattern (and to every URL bookkit's own components and server-rendered pages produce: widget endpoint defaults, `ManageBooking`/`AdminDashboard` form actions, the manage/admin page's own links and redirects). Normalized (leading slash added, trailing slash stripped, `''`/`'/'` mean no prefix) and validated with Zod the same way `config` is — an obviously broken value (whitespace, a `..` segment) throws at `astro:config:setup` instead of building a broken route.
+- `routes?: { admin?: boolean; ops?: boolean }` — turns off the admin dashboard route and/or the Tourflow feed/operator routes. Both default to `true`. The public booking API and customer manage routes are load-bearing and cannot be disabled. A disabled group is simply never injected, and no server-rendered link ever points at it.
+
+```ts
+bookkit({
+  config,
+  runtimeEntrypoint: './src/bookkit-runtime.ts',
+  routePrefix: '/en', // mounts every route under /en/..., e.g. /en/api/booking/checkout
+  routes: { ops: false }, // this site doesn't use Tourflow; admin stays on
+})
+```
+
+With `routePrefix` set, the Stripe dashboard webhook URL is `<site><prefix>/api/booking/webhooks/stripe` (e.g. `https://example.com/en/api/booking/webhooks/stripe`), not the unprefixed path listed above.
+
+The local demo at `examples/smoke-site` is intentionally left unprefixed — it's the zero-config reference.
+
 ## Components
 
 The package includes `BookingWidget.astro`, `ManageBooking.astro`, and `AdminDashboard.astro` reference components. They use native forms and controls without inline event handlers or inline styles, so applications can apply their own CSP and design system. Server-rendered management HTML is also available through `/booking/manage`. `BookingWidget.astro`'s `<script>` is a hoisted Astro module script rather than `is:inline`, so Astro emits it as an external hashed file — that is why the widget holds under a strict `script-src 'self'` CSP even though the source file shows a `<script>` tag.

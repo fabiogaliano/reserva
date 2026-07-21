@@ -1,9 +1,9 @@
 import type { APIContext } from 'astro';
-import runtime from 'virtual:bookkit/runtime';
 import { handleAvailability } from '../../../handlers';
+import { createRouteContext } from '../../route-context';
 
 export const prerender = false;
 
 export async function GET({ request, locals }: APIContext): Promise<Response> {
-  return handleAvailability(request, await runtime.createContext({ request, locals }));
+  return handleAvailability(request, await createRouteContext({ request, locals }));
 }

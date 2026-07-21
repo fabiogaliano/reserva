@@ -1,7 +1,7 @@
 import type { APIContext } from 'astro';
-import runtime from 'virtual:bookkit/runtime';
 import { handleStatus } from '../handlers';
 import { escapeHtml } from '../http';
+import { createRouteContext } from './route-context';
 
 export const prerender = false;
 
@@ -20,11 +20,12 @@ function confirmationPage(payload: Record<string, unknown>, requestUrl: string):
 }
 
 export async function GET({ request, locals }: APIContext): Promise<Response> {
-  const statusUrl = new URL('/api/booking/status', request.url);
+  const context = await createRouteContext({ request, locals });
+  const statusUrl = new URL(context.routeConfig.paths.status, request.url);
   const sessionId = new URL(request.url).searchParams.get('session_id');
   if (sessionId) statusUrl.searchParams.set('session_id', sessionId);
   const statusRequest = new Request(statusUrl, { headers: request.headers });
-  const response = await handleStatus(statusRequest, await runtime.createContext({ request, locals }));
+  const response = await handleStatus(statusRequest, context);
   if (!response.headers.get('content-type')?.includes('application/json')) return response;
   const payload = await response.json() as Record<string, unknown>;
   return new Response(confirmationPage(payload, request.url), {

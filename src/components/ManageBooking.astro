@@ -1,10 +1,12 @@
 ---
+import routeConfig from 'virtual:bookkit/config';
+
 interface Props {
   token?: string;
   endpoint?: string;
 }
 
-const { token = '', endpoint = '/booking/manage' } = Astro.props;
+const { token = '', endpoint = routeConfig.paths.managePage } = Astro.props;
 ---
 
 <section aria-labelledby="bookkit-manage-title">

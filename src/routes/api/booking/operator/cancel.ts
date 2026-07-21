@@ -1,9 +1,9 @@
 import type { APIContext } from 'astro';
-import runtime from 'virtual:bookkit/runtime';
 import { handleOperatorCancel } from '../../../../handlers';
+import { createRouteContext } from '../../../route-context';
 
 export const prerender = false;
 
 export async function POST({ request, locals }: APIContext): Promise<Response> {
-  return handleOperatorCancel(request, await runtime.createContext({ request, locals }));
+  return handleOperatorCancel(request, await createRouteContext({ request, locals }));
 }

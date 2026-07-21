@@ -1,5 +1,4 @@
 import type { APIContext } from 'astro';
-import runtime from 'virtual:bookkit/runtime';
 import {
   handleCustomerCancel,
   handleCustomerReschedule,
@@ -11,15 +10,17 @@ import {
 import { renderManagePage } from '../../components/manage-page';
 import { localDateTimeToUtcIso } from '../../core/time';
 import { errorResponse, HttpError } from '../../http';
+import { createRouteContext } from '../route-context';
 
 export const prerender = false;
 
 export async function GET({ request, locals }: APIContext): Promise<Response> {
-  const response = await handleManage(request, await runtime.createContext({ request, locals }));
+  const context = await createRouteContext({ request, locals });
+  const response = await handleManage(request, context);
   if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) return response;
   const payload = await response.json() as Record<string, unknown>;
   payload.token = new URL(request.url).searchParams.get('token') ?? '';
-  return new Response(renderManagePage(payload), {
+  return new Response(renderManagePage(payload, context.routeConfig.paths.managePage), {
     status: 200,
     headers: {
       'content-type': 'text/html; charset=utf-8',
@@ -35,7 +36,7 @@ export async function POST({ request, locals }: APIContext): Promise<Response> {
     const action = String(form.get('action') ?? '');
     const token = String(form.get('token') ?? '');
     const operatorToken = String(form.get('operatorToken') ?? '');
-    const context = await runtime.createContext({ request, locals });
+    const context = await createRouteContext({ request, locals });
     let response: Response;
     if (action === 'cancel') {
       response = operatorToken
@@ -60,7 +61,7 @@ export async function POST({ request, locals }: APIContext): Promise<Response> {
       throw new HttpError(400, 'validation_failed', 'Unknown booking action');
     }
     if (!response.ok) return response;
-    const location = new URL('/booking/manage', request.url);
+    const location = new URL(context.routeConfig.paths.managePage, request.url);
     location.searchParams.set('token', operatorToken || token);
     return new Response(null, { status: 303, headers: { location: location.toString() } });
   } catch (error) {

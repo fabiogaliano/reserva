@@ -1,9 +1,9 @@
 import type { APIContext } from 'astro';
-import runtime from 'virtual:bookkit/runtime';
 import { handleCustomerReschedule } from '../../../handlers';
+import { createRouteContext } from '../../route-context';
 
 export const prerender = false;
 
 export async function POST({ request, locals }: APIContext): Promise<Response> {
-  return handleCustomerReschedule(request, await runtime.createContext({ request, locals }));
+  return handleCustomerReschedule(request, await createRouteContext({ request, locals }));
 }

@@ -1,5 +1,5 @@
 ---
-import { availabilityRoutePath, checkoutRoutePath } from '../routes-manifest';
+import routeConfig from 'virtual:bookkit/config';
 
 interface StartOption {
   value: string;
@@ -20,8 +20,8 @@ interface Props {
 
 const {
   tourSlug,
-  checkoutEndpoint = checkoutRoutePath,
-  availabilityEndpoint = availabilityRoutePath,
+  checkoutEndpoint = routeConfig.paths.checkout,
+  availabilityEndpoint = routeConfig.paths.availability,
   availabilityFrom,
   availabilityTo,
   locale = 'en',
@@ -135,7 +135,13 @@ const usesAvailability = availabilityFrom !== undefined && availabilityTo !== un
         locale: String(data.get('locale') ?? ''),
       };
       try {
-        const response = await fetch(form.dataset.endpoint ?? '/api/booking/checkout', {
+        // data-endpoint is always rendered by the component (checkoutEndpoint always has a
+        // resolved default), so a missing value here means the markup was hand-edited or the
+        // form is missing its wrapper — either way, falling back to an unprefixed literal would
+        // silently 404 under a routePrefix, so surface the error instead of guessing a URL.
+        const endpoint = form.dataset.endpoint;
+        if (!endpoint) throw new Error('Booking form is missing its endpoint');
+        const response = await fetch(endpoint, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(payload),

@@ -9,6 +9,7 @@ import type {
 } from './core/events';
 import { noopAnalyticsSink } from './core/events';
 import { createBookingRepository, type BookingRepository } from './repo';
+import { resolvedRoutePaths, type BookkitResolvedRouteConfig } from './routes-manifest';
 
 export interface BookkitCache {
   match(request: any): Promise<Response | undefined | null>;
@@ -44,13 +45,26 @@ export interface BookkitContext {
   waitUntil?: (promise: Promise<unknown>) => void;
   refundedPayments?: Set<string>;
   confirmationLocks?: Map<string, Promise<void>>;
+  // Resolved (prefix-applied) route paths + group flags, so handlers that render links/redirects
+  // (e.g. the admin page's manage links) agree with wherever the integration actually mounted
+  // routes. Always populated by createBookkitContext (defaulted below) — route entrypoints then
+  // overwrite it with the real per-build value from `virtual:bookkit/config` (see
+  // src/routes/route-context.ts), since a user-owned runtime module has no way to know the
+  // integration's `routePrefix`/`routes` options itself.
+  routeConfig: BookkitResolvedRouteConfig;
 }
 
-export interface BookkitContextInput extends Omit<BookkitContext, 'repo' | 'clock' | 'logger' | 'providers'> {
+// The unprefixed, all-groups-enabled default: today's behavior for any context built without an
+// explicit routeConfig (every existing test and any runtime module that doesn't go through
+// src/routes/route-context.ts), so adding this field can't change existing behavior.
+const defaultRouteConfig: BookkitResolvedRouteConfig = { paths: resolvedRoutePaths(), groups: { admin: true, ops: true } };
+
+export interface BookkitContextInput extends Omit<BookkitContext, 'repo' | 'clock' | 'logger' | 'providers' | 'routeConfig'> {
   providers: BookkitProviders;
   repo?: BookingRepository;
   clock?: BookkitClock;
   logger?: BookkitLogger;
+  routeConfig?: BookkitResolvedRouteConfig;
 }
 
 export function createBookkitContext(input: BookkitContextInput): BookkitContext {
@@ -66,6 +80,7 @@ export function createBookkitContext(input: BookkitContextInput): BookkitContext
     },
     refundedPayments: input.refundedPayments ?? new Set(),
     confirmationLocks: input.confirmationLocks ?? new Map(),
+    routeConfig: input.routeConfig ?? defaultRouteConfig,
   };
 }
 

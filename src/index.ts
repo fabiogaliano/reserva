@@ -1,4 +1,4 @@
-export { bookkit, virtualRuntimeId, type BookkitIntegrationOptions } from './integration';
+export { bookkit, virtualRuntimeId, virtualConfigId, type BookkitIntegrationOptions } from './integration';
 export { bookkit as default } from './integration';
 export { defineBookkitRuntime, defineCloudflareBookkitRuntime, getCache, getEnv } from './runtime-context';
 export type {
@@ -13,3 +13,7 @@ export type {
   CloudflareRuntimeBindings,
 } from './runtime-context';
 export type { ClientConfig } from './core/config';
+// Exposed so `virtual:bookkit/config`'s injected type declaration (integration.ts's
+// virtualConfigTypes) can reference the exact resolved-route-config shape via `bookkit`'s existing
+// "." export, without adding a dedicated "./routes-manifest" subpath just for this one type.
+export type { BookkitResolvedRouteConfig, BookkitRouteGroupFlags, BookkitRouteId } from './routes-manifest';

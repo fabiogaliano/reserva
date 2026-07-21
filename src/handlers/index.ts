@@ -534,7 +534,8 @@ function adminPage(
   fromDate: string,
   toDate: string,
 ): string {
-  const rows = bookings.map((booking) => `<tr><td>${escapeHtml(booking.reference)}</td><td>${escapeHtml(utcToLocalIso(booking.startsAt, context.config.business.timezone))}</td><td>${escapeHtml(booking.tourSlug)}</td><td>${booking.people}</td><td>${escapeHtml(booking.pickupType)}</td><td>${escapeHtml(booking.status)}</td><td><a href="/booking/manage?token=${encodeURIComponent(booking.operatorToken)}">manage</a></td></tr>`).join('');
+  const managePagePath = context.routeConfig.paths.managePage;
+  const rows = bookings.map((booking) => `<tr><td>${escapeHtml(booking.reference)}</td><td>${escapeHtml(utcToLocalIso(booking.startsAt, context.config.business.timezone))}</td><td>${escapeHtml(booking.tourSlug)}</td><td>${booking.people}</td><td>${escapeHtml(booking.pickupType)}</td><td>${escapeHtml(booking.status)}</td><td><a href="${escapeHtml(managePagePath)}?token=${encodeURIComponent(booking.operatorToken)}">manage</a></td></tr>`).join('');
   const overridesByDate = new Map(overrides.map((override) => [override.date, override]));
   const bookingCounts = new Map<string, number>();
   for (const booking of bookings) {
