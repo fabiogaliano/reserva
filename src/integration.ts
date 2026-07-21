@@ -89,9 +89,9 @@ export function bookkit(options: BookkitIntegrationOptions): AstroIntegration {
         if (!config.adapter?.name.toLowerCase().includes('cloudflare')) {
           throw new Error('Bookkit requires @astrojs/cloudflare and Cloudflare Workers deployment');
         }
-        if (config.output !== 'server') {
-          throw new Error("Bookkit requires Astro output: 'server'");
-        }
+        // Both output modes work: since Astro 5, 'static' plus an adapter renders
+        // prerender:false injected routes on demand, so a static site can mount
+        // Bookkit without switching its own pages to server rendering.
       },
     },
   };

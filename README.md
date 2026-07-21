@@ -4,7 +4,7 @@ Bookkit is an Astro 7 integration for server-rendered tour booking on Cloudflare
 
 ## Install and configure
 
-Use the package source directly or install the package from its published files. Configure the Astro Cloudflare adapter with server output, then pass the same validated client configuration to `bookkit()` and to a user-owned runtime module.
+Use the package source directly or install the package from its published files. Configure the Astro Cloudflare adapter, then pass the same validated client configuration to `bookkit()` and to a user-owned runtime module. Both `output: 'server'` and `output: 'static'` work: the injected booking routes declare `prerender: false`, so with the adapter present a static site renders them on demand without changing its own pages.
 
 ```ts
 import { defineConfig } from 'astro/config';
