@@ -80,7 +80,18 @@ The action accepts `tourSlug`, `start`, `people`, `pickupType`, and `locale` thr
 
 ## Components
 
-The package includes `BookingWidget.astro`, `ManageBooking.astro`, and `AdminDashboard.astro` reference components. They use native forms and controls without inline event handlers or inline styles, so applications can apply their own CSP and design system. Server-rendered management HTML is also available through `/booking/manage`.
+The package includes `BookingWidget.astro`, `ManageBooking.astro`, and `AdminDashboard.astro` reference components. They use native forms and controls without inline event handlers or inline styles, so applications can apply their own CSP and design system. Server-rendered management HTML is also available through `/booking/manage`. `BookingWidget.astro`'s `<script>` is a hoisted Astro module script rather than `is:inline`, so Astro emits it as an external hashed file — that is why the widget holds under a strict `script-src 'self'` CSP even though the source file shows a `<script>` tag.
+
+## Deviations from and additions to the spec
+
+Bookkit's build contract is the reference spec, but the implementation deliberately goes beyond it in a few places. These are intentional hardening, recorded here so they aren't mistaken for scope creep or re-litigated later.
+
+- **Confirmation lease.** The spec's `*_synced` flags are read-then-act, so a Stripe webhook and a `/status` poll can both read `calendarSynced=false` for the same booking and both create a calendar event. `migrations/0002_confirmation_lease.sql` adds a `confirmation_lease_token`/`confirmation_lease_until` pair; `src/confirmation.ts` acquires it with a compare-and-set (5-minute TTL) before running the confirm-plus-side-effects section, making that section mutually exclusive across concurrent callers. A blocked attempt returns `503 confirmation_in_progress`: from the webhook path, Stripe treats that as a failed delivery and redelivers (desired); `/status` instead catches the error and re-reads the booking rather than failing the customer.
+- **Webhook hardening guards.** The Stripe webhook handler (`src/handlers/index.ts`, around the `checkout.session.completed` branch) rejects two conditions the spec's error taxonomy doesn't name: `409 stripe_session_mismatch` when the event's session conflicts with the booking's stored session, and `409 stripe_amount_mismatch` when the captured amount doesn't equal `price_cents`. Both are non-2xx, so Stripe retries them; that's intentional — an amount mismatch should page someone via webhook-failure alerts, not silently confirm the booking.
+- **Per-IP hold cap storage.** The spec defines `maxHoldsPerIp` and a `429 too_many_holds` response, but its schema never stores the requesting IP. `migrations/0003_hold_ip.sql` adds a `hold_ip` column, and `src/repo.ts`'s `insertHold` does an atomic count-and-insert against it so the cap is actually enforceable.
+- **`payment.dispute_created` event.** The spec requires `charge.dispute.created` to become "log + ops event," but its own `BookingEvent` list has no member to carry it. `src/core/events.ts` adds `payment.dispute_created` to the `BookingEvent` union and explicitly excludes it from `EmailBookingEvent`, so it reaches ops and analytics sinks but can never reach the email provider.
+- **Refund exactly-once.** The durable guarantee is Stripe's idempotency key (`bookkit-refund-<paymentIntent>`, set in `src/providers/stripe.ts`); the in-memory `refundedPayments` set on the request context is a same-isolate fast path, and the already-cancelled early-return in the operator-cancel handler blocks re-entry on webhook redelivery.
+- **Brevo templates are inlined.** `src/providers/brevo.ts` keeps per-locale template objects, with fallback to the configured default locale, rather than the spec's `templates/{locale}/{event}.ts` file layout. Behavior is the same, only the packaging differs; add a locale by adding an entry to that file's `templates` map.
 
 ## Cloudflare setup runbook
 
@@ -91,7 +102,7 @@ The package includes `BookingWidget.astro`, `ManageBooking.astro`, and `AdminDas
 5. Configure Cloudflare Access for `/booking/admin` with the same team domain and audience in `config.admin`.
 6. Deploy with `output: 'server'` and `@astrojs/cloudflare`; do not prerender booking routes.
 7. Verify availability, checkout holds, webhook redelivery, status confirmation, customer cutoff behavior, operator actions, and feed authentication in a staging Worker.
-8. Monitor D1 sync flags and Stripe webhook responses. Calendar and confirmation-email failures intentionally return non-2xx so Stripe retries delivery.
+8. Monitor D1 sync flags and Stripe webhook responses. Calendar and confirmation-email failures intentionally return non-2xx so Stripe retries delivery. Also alert on persistent `confirmation_in_progress` 503s (a stuck lease), on `stripe_amount_mismatch` 409s (never expected in normal operation), and on the "confirming expired hold after payment" warning, which marks a possible one-slot oversell that may need a phone call to the customer.
 
 The local smoke fixture at `examples/smoke-site` imports `src/index.ts` directly and uses `@astrojs/cloudflare`; it is a build-only check and does not deploy externally.
 
