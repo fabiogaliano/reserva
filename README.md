@@ -67,17 +67,6 @@ Every route is server-only with `prerender: false`:
 
 The endpoint files are intentionally thin: they import `virtual:bookkit/runtime`, create a request-scoped context, and delegate to the handler exports. JSON errors use `{ error: { code, message } }`. Admin authorization is provided by Cloudflare Access through the runtime context.
 
-## Optional Astro Action
-
-Import `server` from `bookkit/actions` in the application's Astro action entrypoint to expose the typed `checkout` action. The plain checkout endpoint remains required for non-Astro clients and webhooks.
-
-```ts
-// src/actions/index.ts
-export { server } from 'bookkit/actions';
-```
-
-The action accepts `tourSlug`, `start`, `people`, `pickupType`, and `locale` through Astro's Zod input validation. Pickup addresses are intentionally absent because Stripe collects custom pickup details during checkout.
-
 ## Components
 
 The package includes `BookingWidget.astro`, `ManageBooking.astro`, and `AdminDashboard.astro` reference components. They use native forms and controls without inline event handlers or inline styles, so applications can apply their own CSP and design system. Server-rendered management HTML is also available through `/booking/manage`. `BookingWidget.astro`'s `<script>` is a hoisted Astro module script rather than `is:inline`, so Astro emits it as an external hashed file — that is why the widget holds under a strict `script-src 'self'` CSP even though the source file shows a `<script>` tag.

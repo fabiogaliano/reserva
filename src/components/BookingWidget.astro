@@ -1,4 +1,6 @@
 ---
+import { availabilityRoutePath, checkoutRoutePath } from '../routes-manifest';
+
 interface StartOption {
   value: string;
   label: string;
@@ -18,8 +20,8 @@ interface Props {
 
 const {
   tourSlug,
-  checkoutEndpoint = '/api/booking/checkout',
-  availabilityEndpoint = '/api/booking/availability',
+  checkoutEndpoint = checkoutRoutePath,
+  availabilityEndpoint = availabilityRoutePath,
   availabilityFrom,
   availabilityTo,
   locale = 'en',

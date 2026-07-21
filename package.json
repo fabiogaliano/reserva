@@ -19,7 +19,6 @@
   ],
   "exports": {
     ".": "./src/index.ts",
-    "./actions": "./src/actions.ts",
     "./core": "./src/core/index.ts",
     "./providers": "./src/providers/index.ts",
     "./providers/calendar-google": "./src/providers/calendar-google/index.ts",

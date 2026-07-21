@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import type { AstroIntegration } from 'astro';
 import type { Plugin } from 'vite';
 import { validateConfig, type ClientConfig } from './core/config';
+import { routeManifest, routePath } from './routes-manifest';
 
 export interface BookkitIntegrationOptions {
   config: ClientConfig | unknown;
@@ -12,23 +13,6 @@ export interface BookkitIntegrationOptions {
 
 const virtualRuntimeId = 'virtual:bookkit/runtime';
 const resolvedVirtualRuntimeId = '\0' + virtualRuntimeId;
-
-const routeEntries = [
-  ['/api/booking/availability', './routes/api/booking/availability.ts'],
-  ['/api/booking/checkout', './routes/api/booking/checkout.ts'],
-  ['/api/booking/webhooks/stripe', './routes/api/booking/webhooks/stripe.ts'],
-  ['/api/booking/status', './routes/api/booking/status.ts'],
-  ['/api/booking/manage', './routes/api/booking/manage.ts'],
-  ['/api/booking/cancel', './routes/api/booking/cancel.ts'],
-  ['/api/booking/reschedule', './routes/api/booking/reschedule.ts'],
-  ['/api/booking/operator/cancel', './routes/api/booking/operator/cancel.ts'],
-  ['/api/booking/operator/reschedule', './routes/api/booking/operator/reschedule.ts'],
-  ['/api/booking/operator/no-show', './routes/api/booking/operator/no-show.ts'],
-  ['/api/booking/feed', './routes/api/booking/feed.ts'],
-  ['/booking/admin', './routes/booking/admin.ts'],
-  ['/booking/manage', './routes/booking/manage.ts'],
-  ['/booking-confirmation', './routes/booking-confirmation.ts'],
-] as const;
 
 function runtimePath(root: URL, entrypoint: string | URL): string {
   if (entrypoint instanceof URL) return fileURLToPath(entrypoint);
@@ -77,10 +61,10 @@ export function bookkit(options: BookkitIntegrationOptions): AstroIntegration {
           },
         });
 
-        for (const [pattern, relativePath] of routeEntries) {
+        for (const route of routeManifest) {
           injectRoute({
-            pattern,
-            entrypoint: routeEntrypoint(relativePath),
+            pattern: routePath(route),
+            entrypoint: routeEntrypoint(route.entrypoint),
             prerender: false,
           });
         }
