@@ -40,7 +40,15 @@ export interface StripeProviderOptions {
   getProductName?: BookingCallback<string>;
   productName?: BookingCallback<string>;
   getLineItemName?: BookingCallback<string>;
+  // Shown under the name on Stripe's hosted checkout line item. Omitted when
+  // unset so the checkout stays name-only, matching prior behaviour.
+  productDescription?: string | BookingCallback<string>;
   pickupFieldLabel?: string | BookingCallback<string>;
+  // Stripe rejects consent collection unless the account has a Terms of Service
+  // URL in its public business details, which a not-yet-activated test account
+  // lacks. Defaults to 'required' so operators keep the chargeback-defense
+  // consent record; set 'none' to run against such an account.
+  termsOfService?: 'required' | 'none';
 }
 
 type PositionalOptions = Omit<StripeProviderOptions, 'secretKey' | 'webhookSecret'>;
@@ -213,6 +221,7 @@ export class StripeProvider implements PaymentProvider {
       ?? this.options.productName
       ?? this.options.getLineItemName;
     const name = resolveOption(nameCallback, booking, config, booking.tourSlug);
+    const description = resolveOption(this.options.productDescription, booking, config, '').trim();
     const successUrl = this.options.getSuccessUrl?.(booking, config)
       ?? resolveOption(this.options.successUrl, booking, config, defaultSuccessUrl(config));
     const cancelUrl = this.options.getCancelUrl?.(booking, config)
@@ -224,13 +233,12 @@ export class StripeProvider implements PaymentProvider {
       line_items: [{ quantity: 1, price_data: {
         currency: config.business.currency,
         unit_amount: priceFor(tour, booking.people, booking.pickupType),
-        product_data: { name },
+        product_data: { name, ...(description ? { description } : {}) },
       } }],
       expires_at: Math.floor(nowMs(this.now) / 1000) + expiresInMinutes * 60,
       locale: booking.locale as Stripe.Checkout.SessionCreateParams.Locale,
       payment_method_types: stripePaymentMethodTypes(config.payments.methods),
       phone_number_collection: { enabled: true },
-      consent_collection: { terms_of_service: 'required' },
       metadata: { bookingId: booking.id },
       payment_intent_data: { metadata: { bookingId: booking.id } },
       success_url: successUrl,
@@ -239,6 +247,9 @@ export class StripeProvider implements PaymentProvider {
     if (booking.pickupType === 'custom') params.custom_fields = [{
       key: 'pickup_address', label: { type: 'custom', custom: pickupLabel }, type: 'text',
     }];
+    if ((this.options.termsOfService ?? 'required') === 'required') {
+      params.consent_collection = { terms_of_service: 'required' };
+    }
     const session = await this.stripe.checkout.sessions.create(params);
     if (!session.url) throw new Error('Stripe Checkout Session did not include a URL');
     return { url: session.url, sessionId: session.id };

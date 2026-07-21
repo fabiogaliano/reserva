@@ -63,6 +63,27 @@ describe('StripeProvider', () => {
     expect(sessions.create).toHaveBeenCalledWith(expect.not.objectContaining({ custom_fields: expect.anything() }));
   });
 
+  it('adds a line-item description when productDescription is provided', async () => {
+    const { client, sessions } = makeClient();
+    const provider = new StripeProvider({
+      secretKey: 'sk_test', webhookSecret: 'whsec_test', client,
+      productDescription: (b) => `Tour of ${b.tourSlug} for ${b.people}`,
+    });
+    await provider.createCheckout(booking({ people: 4 }), config);
+    expect(sessions.create).toHaveBeenCalledWith(expect.objectContaining({
+      line_items: [expect.objectContaining({ price_data: expect.objectContaining({
+        product_data: expect.objectContaining({ description: 'Tour of vintage for 4' }),
+      }) })],
+    }));
+  });
+
+  it('omits terms-of-service consent when termsOfService is none', async () => {
+    const { client, sessions } = makeClient();
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client, termsOfService: 'none' });
+    await provider.createCheckout(booking(), config);
+    expect(sessions.create).toHaveBeenCalledWith(expect.not.objectContaining({ consent_collection: expect.anything() }));
+  });
+
   it('retrieves session status and performs a full refund', async () => {
     const { client } = makeClient();
     const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
