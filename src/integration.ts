@@ -175,9 +175,18 @@ export function bookkit(options: BookkitIntegrationOptions): AstroIntegration {
           + 'then run `bunx bookkit-migrate --local` (wraps `wrangler d1 migrations apply`) before your first request.',
         );
       },
-      'astro:config:done': ({ config, injectTypes }) => {
-        if (!config.adapter?.name.toLowerCase().includes('cloudflare')) {
-          throw new Error('Bookkit requires @astrojs/cloudflare and Cloudflare Workers deployment');
+      'astro:config:done': ({ config, injectTypes, logger }) => {
+        // Exact match only: a substring/case-insensitive check both false-positives on any
+        // adapter with "cloudflare" in its name and false-negatives on legitimate wrappers/forks
+        // around @astrojs/cloudflare with a different package name. The runtime itself already
+        // fails with descriptive errors when D1/env bindings are absent, so this is advisory,
+        // not a hard gate — untested adapters may still work.
+        if (config.adapter?.name !== '@astrojs/cloudflare') {
+          logger.warn(
+            `Bookkit is built for @astrojs/cloudflare >= 14 (Workers runtime, D1 bindings via `
+            + `'cloudflare:workers'). Detected adapter: ${config.adapter?.name ?? 'none'}. `
+            + 'Other adapters are untested and may not provide the bindings bookkit expects.',
+          );
         }
         // Both output modes work: since Astro 5, 'static' plus an adapter renders
         // prerender:false injected routes on demand, so a static site can mount
