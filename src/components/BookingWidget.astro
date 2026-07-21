@@ -7,6 +7,9 @@ interface StartOption {
 interface Props {
   tourSlug: string;
   checkoutEndpoint?: string;
+  availabilityEndpoint?: string;
+  availabilityFrom?: string;
+  availabilityTo?: string;
   locale?: string;
   peopleOptions?: number[];
   pickupTypes?: Array<'default' | 'custom'>;
@@ -16,14 +19,26 @@ interface Props {
 const {
   tourSlug,
   checkoutEndpoint = '/api/booking/checkout',
+  availabilityEndpoint = '/api/booking/availability',
+  availabilityFrom,
+  availabilityTo,
   locale = 'en',
   peopleOptions = [1, 2, 3, 4],
   pickupTypes = ['default', 'custom'],
   startOptions = [],
 } = Astro.props;
+
+const usesAvailability = availabilityFrom !== undefined && availabilityTo !== undefined;
 ---
 
-<form data-bookkit-checkout data-endpoint={checkoutEndpoint} aria-label="Book a tour">
+<form
+  data-bookkit-checkout
+  data-endpoint={checkoutEndpoint}
+  data-availability-endpoint={usesAvailability ? availabilityEndpoint : undefined}
+  data-availability-from={availabilityFrom}
+  data-availability-to={availabilityTo}
+  aria-label="Book a tour"
+>
   <input type="hidden" name="tourSlug" value={tourSlug} />
   <input type="hidden" name="locale" value={locale} />
   <label>
@@ -34,7 +49,11 @@ const {
   </label>
   <label>
     Start
-    {startOptions.length > 0 ? (
+    {usesAvailability ? (
+      <select name="start" required data-bookkit-start>
+        <option value="" disabled selected>Loading slots…</option>
+      </select>
+    ) : startOptions.length > 0 ? (
       <select name="start" required>
         {startOptions.map((option) => <option value={option.value}>{option.label}</option>)}
       </select>
@@ -53,10 +72,58 @@ const {
 </form>
 
 <script>
+  interface AvailabilityDay {
+    date: string;
+    slots: Array<{ start: string; remaining: number }>;
+  }
+
+  function showError(form: HTMLFormElement, cause: unknown, fallback: string): void {
+    const error = form.querySelector<HTMLElement>('[data-bookkit-error]');
+    if (!error) return;
+    error.textContent = cause instanceof Error ? cause.message : fallback;
+    error.hidden = false;
+  }
+
+  async function loadStartOptions(form: HTMLFormElement): Promise<void> {
+    const { availabilityEndpoint, availabilityFrom, availabilityTo } = form.dataset;
+    const select = form.querySelector<HTMLSelectElement>('[data-bookkit-start]');
+    if (!availabilityEndpoint || !availabilityFrom || !availabilityTo || !select) return;
+    const data = new FormData(form);
+    const query = new URLSearchParams({
+      tour: String(data.get('tourSlug') ?? ''),
+      people: String(data.get('people') ?? ''),
+      from: availabilityFrom,
+      to: availabilityTo,
+    });
+    const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+    select.disabled = true;
+    try {
+      const response = await fetch(`${availabilityEndpoint}?${query}`, { cache: 'no-store' });
+      const result = await response.json() as { days?: AvailabilityDay[]; error?: { message?: string } };
+      if (!response.ok || !result.days) throw new Error(result.error?.message ?? 'Could not load availability');
+      const slots = result.days.flatMap((day) => day.slots);
+      // Availability slot starts are local ISO strings with an explicit offset, so the
+      // value can be submitted to checkout verbatim and sliced directly for the label.
+      select.replaceChildren(...slots.map((slot) => new Option(`${slot.start.slice(0, 10)} at ${slot.start.slice(11, 16)}`, slot.start)));
+      if (slots.length === 0) {
+        const empty = new Option('No slots available', '');
+        empty.disabled = true;
+        empty.selected = true;
+        select.append(empty);
+      }
+      if (submit) submit.disabled = slots.length === 0;
+    } catch (cause) {
+      showError(form, cause, 'Could not load availability');
+    } finally {
+      select.disabled = false;
+    }
+  }
+
   for (const form of document.querySelectorAll<HTMLFormElement>('[data-bookkit-checkout]')) {
+    form.querySelector<HTMLSelectElement>('select[name="people"]')?.addEventListener('change', () => void loadStartOptions(form));
+    void loadStartOptions(form);
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      const error = form.querySelector<HTMLElement>('[data-bookkit-error]');
       const data = new FormData(form);
       const payload = {
         tourSlug: String(data.get('tourSlug') ?? ''),
@@ -75,10 +142,10 @@ const {
         if (!response.ok || !result.checkoutUrl) throw new Error(result.error?.message ?? 'Checkout failed');
         window.location.assign(result.checkoutUrl);
       } catch (cause) {
-        if (error) {
-          error.textContent = cause instanceof Error ? cause.message : 'Checkout failed';
-          error.hidden = false;
-        }
+        showError(form, cause, 'Checkout failed');
+        // A checkout rejection usually means the slot list went stale (e.g. it just filled),
+        // so reload the options rather than leaving the dead slot selectable.
+        void loadStartOptions(form);
       }
     });
   }

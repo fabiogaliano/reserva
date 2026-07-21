@@ -2,18 +2,10 @@
 import BookingWidget from '../../../../src/components/BookingWidget.astro';
 
 const title = 'Bookkit local demo';
-const firstStart = new Date();
-firstStart.setUTCDate(firstStart.getUTCDate() + 1);
-firstStart.setUTCHours(10, 0, 0, 0);
-const date = firstStart.toISOString().slice(0, 10);
-const startOptions = [0, 1, 2].map((offset) => {
-  const start = new Date(firstStart.getTime() + offset * 60 * 60_000);
-  return {
-    value: start.toISOString(),
-    label: `${date} at ${String(start.getUTCHours()).padStart(2, '0')}:00 UTC`,
-  };
-});
-const availabilityUrl = `/api/booking/availability?tour=oldTown&people=2&from=${date}&to=${date}`;
+// The demo runtime is configured with timezone UTC, so UTC date keys match business dates.
+const from = new Date().toISOString().slice(0, 10);
+const to = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
+const availabilityUrl = `/api/booking/availability?tour=oldTown&people=2&from=${from}&to=${to}`;
 ---
 
 <html lang="en">
@@ -32,7 +24,7 @@ const availabilityUrl = `/api/booking/availability?tour=oldTown&people=2&from=${
 
       <section>
         <h2>Create a booking</h2>
-        <BookingWidget tourSlug="oldTown" {startOptions} />
+        <BookingWidget tourSlug="oldTown" availabilityFrom={from} availabilityTo={to} />
         <p>Submitting redirects through the confirmation route. The simulated payment provider reports the session as paid, which exercises confirmation and every provider seam.</p>
       </section>
 
