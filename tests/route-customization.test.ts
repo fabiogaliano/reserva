@@ -6,6 +6,7 @@ import { handleAdminGet } from '../src/handlers';
 import { renderManagePage } from '../src/components/manage-page';
 import {
   normalizeRoutePrefix,
+  requireEnabledRoutePath,
   resolveRouteConfig,
   routeManifest,
   validateRouteOptions,
@@ -86,6 +87,19 @@ describe('validateRouteOptions (Zod, same throw-on-safeParse-failure style as va
   ])('accepts and normalizes safe prefix %j', (routePrefix, normalized) => {
     expect(validateRouteOptions({ routePrefix })).toEqual({ routePrefix });
     expect(normalizeRoutePrefix(routePrefix)).toBe(normalized);
+  });
+});
+
+describe('requireEnabledRoutePath', () => {
+  it('returns enabled route paths and rejects disabled groups with an actionable error', () => {
+    const enabled = resolveRouteConfig('/en');
+    expect(requireEnabledRoutePath(enabled, 'adminPage')).toBe('/en/booking/admin');
+    expect(requireEnabledRoutePath(enabled, 'managePage')).toBe('/en/booking/manage');
+
+    const withoutAdmin = resolveRouteConfig('/en', { admin: false, ops: true });
+    expect(() => requireEnabledRoutePath(withoutAdmin, 'adminPage'))
+      .toThrow(/routes: \{ admin: false \}.*explicit endpoint/);
+    expect(requireEnabledRoutePath(withoutAdmin, 'managePage')).toBe('/en/booking/manage');
   });
 });
 

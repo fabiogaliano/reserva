@@ -84,6 +84,14 @@ export function resolveRouteConfig(prefix = '', groups: BookkitRouteGroupFlags =
   return { paths: resolvedRoutePaths(prefix), groups };
 }
 
+export function requireEnabledRoutePath(routeConfig: BookkitResolvedRouteConfig, id: BookkitRouteId): string {
+  const entry = routeManifest.find((candidate) => candidate.id === id);
+  if (entry && !isRouteEnabled(entry, routeConfig.groups)) {
+    throw new Error(`Bookkit route "${id}" is disabled by routes: { ${entry.group}: false }. Enable routes.${entry.group} or provide an explicit endpoint.`);
+  }
+  return routeConfig.paths[id];
+}
+
 // Pure normalization only (leading slash, no trailing slash, ''/'/' => no prefix). Rejecting
 // malformed input (whitespace, "..") is integration.ts's job via Zod, mirroring how
 // `validateConfig` validates `options.config` — this function assumes it already received a
