@@ -109,8 +109,37 @@ function defaultConfigPath(): string | undefined {
     .find((candidate) => existsSync(candidate));
 }
 
+const usage = `Usage: bookkit-migrate [database_name] [options]
+
+Value options: -c, --config; --cwd; -e, --env; --env-file; --profile; --persist-to
+Boolean options: --local; --remote; --preview; --install-skills; -h, --help; -v, --version
+Use -- to pass all remaining arguments to wrangler verbatim.`;
+
+type OptionArity = 'value' | 'boolean';
+
+// Keep this list aligned with `wrangler d1 migrations apply --help` so values never become a
+// database positional argument before the command reaches Wrangler.
+const optionArity: Readonly<Record<string, OptionArity>> = {
+  '-c': 'value',
+  '--config': 'value',
+  '--cwd': 'value',
+  '-e': 'value',
+  '--env': 'value',
+  '--env-file': 'value',
+  '--profile': 'value',
+  '--persist-to': 'value',
+  '--local': 'boolean',
+  '--remote': 'boolean',
+  '--preview': 'boolean',
+  '--install-skills': 'boolean',
+  '-h': 'boolean',
+  '--help': 'boolean',
+  '-v': 'boolean',
+  '--version': 'boolean',
+};
+
 function fail(message: string): never {
-  console.error(`bookkit-migrate: ${message}`);
+  console.error(`bookkit-migrate: ${message}\n${usage}`);
   process.exit(1);
 }
 
@@ -120,16 +149,47 @@ function parseArgs(argv: string[]): { configPath: string | undefined; databaseNa
   const passthrough: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === '--config') {
-      const path = argv[index + 1];
-      if (!path || path.startsWith('--')) fail('`--config` requires a path argument');
-      configPath = path;
-      index += 1;
-    } else if (arg?.startsWith('--')) {
-      passthrough.push(arg);
-    } else if (arg && !databaseName) {
-      databaseName = arg;
+    if (!arg) continue;
+    if (arg === '--') {
+      // Consume the separator itself: wrangler treats a literal `--` as "stop parsing options",
+      // which would turn everything meant to pass through as flags into positional arguments.
+      passthrough.push(...argv.slice(index + 1));
+      break;
     }
+    if (arg.startsWith('-')) {
+      const equalsIndex = arg.indexOf('=');
+      const name = equalsIndex === -1 ? arg : arg.slice(0, equalsIndex);
+      const inlineValue = equalsIndex === -1 ? undefined : arg.slice(equalsIndex + 1);
+      const arity = optionArity[name];
+      if (!arity) fail(`unsupported option \`${name}\`. Supported options: ${Object.keys(optionArity).join(', ')}`);
+      if (arity === 'boolean') {
+        if (inlineValue !== undefined) fail(`boolean option \`${name}\` does not take a value`);
+        passthrough.push(arg);
+        continue;
+      }
+      const value = inlineValue ?? argv[index + 1];
+      // `--flag=value` is unambiguous, so a value that itself looks like a flag (e.g. a path
+      // starting with `-`) must be accepted; only the space-separated form is ambiguous with a
+      // following `--flag` and needs the lookahead guard.
+      if (inlineValue === undefined) {
+        if (!value || value.startsWith('-')) {
+          fail(name === '-c' || name === '--config' ? `\`${name}\` requires a path argument` : `\`${name}\` requires a value`);
+        }
+      } else if (!value) {
+        fail(name === '-c' || name === '--config' ? `\`${name}\` requires a path argument` : `\`${name}\` requires a value`);
+      }
+      if (name === '-c' || name === '--config') {
+        configPath = value;
+      } else if (inlineValue === undefined) {
+        passthrough.push(name, value);
+      } else {
+        passthrough.push(arg);
+      }
+      if (inlineValue === undefined) index += 1;
+      continue;
+    }
+    if (databaseName) fail(`unexpected database name \`${arg}\`; only one database name may be supplied`);
+    databaseName = arg;
   }
   return { configPath, databaseName, passthrough };
 }

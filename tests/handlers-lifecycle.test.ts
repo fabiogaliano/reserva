@@ -288,16 +288,21 @@ describe('Bookkit handlers', () => {
     expect(noShow.status).toBe(403);
   });
 
-  it('recovers from a reference collision reported by insertHold by retrying with the next sequence', async () => {
+  it('recovers from 11 consecutive reference collisions — beyond the old retry cap of 8 — without changing the reference format', async () => {
     const repo = fakeRepository();
     const realInsertHold = repo.insertHold;
     let insertAttempts = 0;
+    // 11 forced collisions exceeds the old retry cap (8, i.e. attempts 0-7 with an unconditional
+    // rethrow on attempt 7): this proves the cap was actually raised to 12, not just that some
+    // small number of collisions still fits under the old ceiling. Marking whatever reference
+    // was just attempted as taken (rather than pre-computing a fixed sequence range) keeps this
+    // deterministic regardless of the now-random 1-5 jump: each attempt is failed and blocked by
+    // reacting to its actual generated reference, not by guessing where the jump landed.
     repo.insertHold = async (input) => {
       insertAttempts += 1;
-      if (insertAttempts === 1) {
-        // Simulate a concurrent request winning the race for this exact reference: it lands
-        // in the table before we re-check, so our failure-classification finds it taken.
-        const winner: Booking = { ...booking(), id: 'winner', reference: input.reference, status: 'hold' };
+      if (insertAttempts <= 11) {
+        // Simulate concurrent requests winning each candidate before this request can insert it.
+        const winner: Booking = { ...booking(), id: `winner-${insertAttempts}`, reference: input.reference, status: 'hold' };
         repo.rows.set(winner.id, winner);
         throw new Error('UNIQUE constraint failed: bookings.reference');
       }
@@ -318,9 +323,9 @@ describe('Bookkit handlers', () => {
     }), context);
 
     expect(response.status).toBe(201);
-    expect(insertAttempts).toBe(2);
+    expect(insertAttempts).toBe(12);
     const payload = await response.json() as { reference: string };
-    expect(payload.reference).toBe('LVT-2026-002');
+    expect(payload.reference).toMatch(/^LVT-2026-\d{3,}$/);
   });
 
   it('logs a warning when a payment confirms an expired hold, but not on the normal hold path', async () => {

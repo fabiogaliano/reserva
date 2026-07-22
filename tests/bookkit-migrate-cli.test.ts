@@ -114,4 +114,68 @@ describe('bookkit-migrate CLI', () => {
     expect(result.status).toBe(0);
     expect(result.capturedArgs()).toContain('chosen');
   });
+
+  it('forwards --env with its value without treating it as a database name', () => {
+    const result = run('{ "d1_databases": [{ "binding": "BOOKKIT_DB", "database_name": "bookings" }] }', ['--env', 'production']);
+
+    expect(result.status).toBe(0);
+    expect(result.capturedArgs()).toContain('bookings');
+    expect(result.capturedArgs()).toContainEqual('--env');
+    expect(result.capturedArgs()).toContainEqual('production');
+  });
+
+  it('forwards --persist-to and value options written with =', () => {
+    const persistResult = run('{ "d1_databases": [{ "binding": "BOOKKIT_DB", "database_name": "bookings" }] }', ['--persist-to', '.wrangler/state']);
+    const equalsResult = run('{ "d1_databases": [{ "binding": "BOOKKIT_DB", "database_name": "bookings" }] }', ['--env=production']);
+
+    expect(persistResult.status).toBe(0);
+    expect(persistResult.capturedArgs()).toContainEqual('--persist-to');
+    expect(persistResult.capturedArgs()).toContainEqual('.wrangler/state');
+    expect(equalsResult.status).toBe(0);
+    expect(equalsResult.capturedArgs()).toContainEqual('--env=production');
+  });
+
+  it('keeps value options and the database name separate in either order', () => {
+    const before = run('{ "d1_databases": [{ "binding": "BOOKKIT_DB", "database_name": "configured" }] }', ['chosen', '--env', 'production']);
+    const after = run('{ "d1_databases": [{ "binding": "BOOKKIT_DB", "database_name": "configured" }] }', ['--env', 'production', 'chosen']);
+
+    expect(before.status).toBe(0);
+    expect(before.capturedArgs()).toContain('chosen');
+    expect(before.capturedArgs()).toContain('production');
+    expect(after.status).toBe(0);
+    expect(after.capturedArgs()).toContain('chosen');
+    expect(after.capturedArgs()).toContain('production');
+  });
+
+  it('rejects unknown options with the supported option list', () => {
+    const result = run('{ "d1_databases": [{ "binding": "BOOKKIT_DB", "database_name": "bookings" }] }', ['--unknown']);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/unsupported option `--unknown`.*Supported options:.*--env/s);
+  });
+
+  it('passes arguments after -- to wrangler verbatim, without forwarding the -- separator itself', () => {
+    // The first separator is consumed by Bun before it invokes the script under test.
+    const result = run('{ "d1_databases": [{ "binding": "BOOKKIT_DB", "database_name": "bookings" }] }', ['--', '--', '--future-option', 'future-value']);
+
+    expect(result.status).toBe(0);
+    expect(result.capturedArgs()).toEqual(expect.arrayContaining(['--future-option', 'future-value']));
+    // A literal -- reaching wrangler would make it stop parsing options, turning the
+    // passthrough flags into positional arguments instead.
+    expect(result.capturedArgs()).not.toContain('--');
+  });
+
+  it('accepts an equals-form value that begins with a dash without misreading it as another flag', () => {
+    const result = run('{ "d1_databases": [{ "binding": "BOOKKIT_DB", "database_name": "bookings" }] }', ['--persist-to=-x']);
+
+    expect(result.status).toBe(0);
+    expect(result.capturedArgs()).toContainEqual('--persist-to=-x');
+  });
+
+  it('rejects more than one database name', () => {
+    const result = run('{ "d1_databases": [{ "binding": "BOOKKIT_DB", "database_name": "bookings" }] }', ['first', 'second']);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/unexpected database name `second`/);
+  });
 });

@@ -42,10 +42,14 @@
     "test:workers": "vitest run --config vitest.workers.config.ts",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "check": "bun run typecheck && bun run test && bun run test:workers"
+    "audit": "bun audit",
+    "check": "bun run audit && bun run typecheck && bun run test && bun run test:workers"
   },
   "engines": {
     "node": ">=20"
+  },
+  "overrides": {
+    "sharp": "^0.35.0"
   },
   "peerDependencies": {
     "@astrojs/cloudflare": ">=14.0.0",
@@ -59,11 +63,11 @@
   },
   "devDependencies": {
     "@astrojs/cloudflare": "^14.1.4",
-    "@cloudflare/vitest-pool-workers": "^0.18.6",
+    "@cloudflare/vitest-pool-workers": "^0.18.7",
     "@cloudflare/workers-types": "^5.20260721.1",
     "astro": "^7.1.3",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10",
-    "wrangler": "^4.112.0"
+    "wrangler": "^4.113.0"
   }
 }

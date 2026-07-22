@@ -238,7 +238,7 @@ export function handleCheckout(request: Request, context: BookkitContext): Promi
       (await context.repo.getBookingByReference(candidateReference)) !== null;
     let sequence = await context.repo.countReferencesForYear(prefix) + 1;
     let booking: Booking | null = null;
-    for (let attempt = 0; attempt < 8; attempt += 1) {
+    for (let attempt = 0; attempt < 12; attempt += 1) {
       const reference = await generateUniqueReference(context.config.business.shortCode, year, sequence, referenceExists);
       try {
         const holdLimit = context.config.booking.maxHoldsPerIp;
@@ -256,8 +256,8 @@ export function handleCheckout(request: Request, context: BookkitContext): Promi
         }
         // Classify the insert failure by re-checking the DB rather than parsing the error
         // message: the table has other UNIQUE columns, so message-sniffing could misfire.
-        if (attempt === 7 || !(await referenceExists(reference))) throw error;
-        sequence += 1;
+        if (attempt === 11 || !(await referenceExists(reference))) throw error;
+        sequence += Math.floor(Math.random() * 5) + 1;
       }
     }
     if (!booking) throw new Error('Unable to create booking hold');
