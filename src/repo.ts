@@ -1,6 +1,6 @@
 import type { D1Database, D1Result } from '@cloudflare/workers-types';
 import type { Booking, BookingStatus, CancellationActor } from './core/booking';
-import type { DayCapacityOverride } from './core/occupancy';
+import type { CapacityDefault, DayCapacityOverride } from './core/occupancy';
 
 export interface BookingInsert {
   id: string;
@@ -70,6 +70,13 @@ export interface BookingRepository {
   listDayOverrides(from: string, to: string): Promise<DayCapacityOverride[]>;
   upsertDayOverride(date: string, capacity: number, reason: string | null): Promise<void>;
   deleteDayOverride(date: string): Promise<void>;
+  listCapacityDefaults(): Promise<CapacityDefault[]>;
+  upsertCapacityDefault(fromDate: string, capacity: number, reason: string | null): Promise<void>;
+  deleteCapacityDefault(fromDate: string): Promise<void>;
+  // Operator-editable config overrides (core/settings.ts): key -> JSON-encoded value.
+  listSettings(): Promise<Record<string, string>>;
+  upsertSetting(key: string, value: string): Promise<void>;
+  deleteSetting(key: string): Promise<void>;
 }
 
 interface BookingRow {
@@ -287,6 +294,33 @@ export function createBookingRepository(db: D1Database): BookingRepository {
     },
     async deleteDayOverride(date) {
       await db.prepare('DELETE FROM day_overrides WHERE date = ?').bind(date).run();
+    },
+    async listCapacityDefaults() {
+      const result = await db.prepare(
+        'SELECT from_date, capacity, reason FROM capacity_defaults ORDER BY from_date',
+      ).all<{ from_date: string; capacity: number; reason: string | null }>();
+      return result.results.map((row) => ({ fromDate: row.from_date, capacity: Number(row.capacity), reason: row.reason ?? null }));
+    },
+    async upsertCapacityDefault(fromDate, capacity, reason) {
+      await db.prepare(
+        `INSERT INTO capacity_defaults (from_date, capacity, reason) VALUES (?, ?, ?)
+         ON CONFLICT(from_date) DO UPDATE SET capacity = excluded.capacity, reason = excluded.reason`,
+      ).bind(fromDate, capacity, reason).run();
+    },
+    async deleteCapacityDefault(fromDate) {
+      await db.prepare('DELETE FROM capacity_defaults WHERE from_date = ?').bind(fromDate).run();
+    },
+    async listSettings() {
+      const result = await db.prepare('SELECT key, value FROM settings').all<{ key: string; value: string }>();
+      return Object.fromEntries(result.results.map((row) => [row.key, row.value]));
+    },
+    async upsertSetting(key, value) {
+      await db.prepare(
+        'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+      ).bind(key, value).run();
+    },
+    async deleteSetting(key) {
+      await db.prepare('DELETE FROM settings WHERE key = ?').bind(key).run();
     },
   };
 }

@@ -6,4 +6,6 @@ export const BOOKKIT_MIGRATIONS = [
   '0001_init.sql',
   '0002_confirmation_lease.sql',
   '0003_hold_ip.sql',
+  '0004_capacity_defaults.sql',
+  '0005_settings.sql',
 ] as const;

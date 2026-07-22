@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   availabilityForDay,
   capacityForDate,
+  defaultCapacityForDate,
   getOccupancyIntervals,
   isSlotAvailable,
   maxConcurrentOccupancy,
@@ -81,6 +82,20 @@ describe('core occupancy', () => {
     expect(full.status).toBe('closed');
     expect(full.closedReason).toBe('vacation');
     expect(full.slots).toEqual([]);
+  });
+
+  it('resolves the fleet default from the latest capacity default at or before the date', () => {
+    const defaults = [
+      { fromDate: '2026-06-10', capacity: 1, reason: 'van in repair' },
+      { fromDate: '2026-07-01', capacity: 2, reason: null },
+    ];
+    expect(defaultCapacityForDate('2026-06-09', 2, defaults)).toBe(2);
+    expect(defaultCapacityForDate('2026-06-10', 2, defaults)).toBe(1);
+    expect(defaultCapacityForDate('2026-06-30', 2, defaults)).toBe(1);
+    expect(defaultCapacityForDate('2026-07-01', 2, defaults)).toBe(2);
+    expect(defaultCapacityForDate('2026-06-15', 2, [])).toBe(2);
+    // A day override still trumps the ranged default.
+    expect(capacityForDate('2026-06-15', defaultCapacityForDate('2026-06-15', 2, defaults), [{ date: '2026-06-15', capacity: 0 }]).capacity).toBe(0);
   });
 
   it('returns closed for a non-operating day even when capacity is positive', () => {

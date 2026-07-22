@@ -205,6 +205,22 @@ export function resolveCapacity(defaultCapacity: number, override?: Pick<DayCapa
   return Math.max(0, Math.floor(value));
 }
 
+// A fleet-level default that applies from a date onwards ("a van is out of service starting
+// Aug 10"), until superseded by a later entry. Per-day overrides still trump the result.
+export interface CapacityDefault {
+  fromDate: string;
+  capacity: number;
+  reason: string | null;
+}
+
+export function defaultCapacityForDate(date: string, baseCapacity: number, defaults: readonly CapacityDefault[]): number {
+  let active: CapacityDefault | undefined;
+  for (const candidate of defaults) {
+    if (candidate.fromDate <= date && (!active || candidate.fromDate > active.fromDate)) active = candidate;
+  }
+  return active ? resolveCapacity(active.capacity) : resolveCapacity(baseCapacity);
+}
+
 export function capacityForDate(
   date: string,
   defaultCapacity: number,

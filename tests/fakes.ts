@@ -6,9 +6,10 @@ import { booking } from './fixtures';
 // Shared in-memory fake repository + provider harness for handler tests.
 // Kept general (seed bookings, override individual repo methods / providers)
 // so other test files can build on it without re-implementing this plumbing.
-export function fakeRepository(seed: Booking[] = []): BookingRepository & { rows: Map<string, Booking> } {
+export function fakeRepository(seed: Booking[] = []): BookingRepository & { rows: Map<string, Booking>; settings: Map<string, string> } {
   const rows = new Map(seed.map((item) => [item.id, item]));
   const holdIps = new Map<string, string>();
+  const settings = new Map<string, string>();
   const leases = new Map<string, { token: string; until: string }>();
   const find = (predicate: (item: Booking) => boolean) => [...rows.values()].find(predicate) ?? null;
   return {
@@ -81,6 +82,13 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & { rows
     listDayOverrides: async () => [],
     upsertDayOverride: async () => undefined,
     deleteDayOverride: async () => undefined,
+    listCapacityDefaults: async () => [],
+    upsertCapacityDefault: async () => undefined,
+    deleteCapacityDefault: async () => undefined,
+    settings,
+    listSettings: async () => Object.fromEntries(settings),
+    upsertSetting: async (key, value) => { settings.set(key, value); },
+    deleteSetting: async (key) => { settings.delete(key); },
   };
 }
 
