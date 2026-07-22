@@ -60,7 +60,10 @@ export class GoogleCalendarProvider implements CalendarProvider {
     if (!options.calendarId) throw new Error('Google calendarId is required');
     this.calendarId = options.calendarId;
     this.auth = options.auth ?? new GoogleServiceAccountAuth(options);
-    this.request = options.fetchImpl ?? options.fetch ?? fetch;
+    // A bare global fetch stored as a method throws "Illegal invocation" in
+    // workerd, which rebinds `this` to the instance; wrap it so `this` stays
+    // globalThis (auth.ts uses defaultFetch for the same reason).
+    this.request = options.fetchImpl ?? options.fetch ?? ((input, init) => fetch(input, init));
     this.apiBase = (options.apiBaseUrl ?? options.calendarApiUrl ?? options.apiBase ?? 'https://www.googleapis.com/calendar/v3').replace(/\/$/, '');
     this.timezone = options.timezone ?? 'UTC';
   }
