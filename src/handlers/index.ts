@@ -7,15 +7,30 @@ import {
   type Booking,
 } from '../core/booking';
 import { resolveTour, type PickupType } from '../core/config';
-import { availabilityForDay, capacityForDate } from '../core/occupancy';
+import { availabilityForDay, capacityForDate, defaultCapacityForDate, type CapacityDefault } from '../core/occupancy';
 import { priceFor } from '../core/pricing';
 import { generateUniqueReference } from '../core/reference';
+import {
+  SettingParseError,
+  parseSettingForm,
+  serializeSettingValue,
+  settingDefinitions,
+  settingSections,
+  settingValuesEqual,
+  type SettingDefinition,
+  type SettingSection,
+  type SettingValue,
+} from '../core/settings';
 import { generateSlots } from '../core/slots';
 import { addDaysToDateKey, enumerateDateKeys, localDateKey, localDateTimeToUtcIso, parseUtcInstant, utcToLocalIso } from '../core/time';
 import { ConfirmationInProgressError, confirmBookingFromPayment, dispatchMutation, dispatchNonCritical } from '../confirmation';
 import type { BookkitContext } from '../context';
 import { getSecret, nowIso } from '../context';
 import { HoldLimitExceededError } from '../repo';
+import { cssAssetHref, jsAssetHref } from '../ui/asset-hrefs';
+import { formatDateTime, formatDayDate, formatPrice } from '../ui/format';
+import { factList, pageShell, statusBadge, statusToneOf, themeToggle } from '../ui/layout';
+import { formatMessage, resolveMessages } from '../ui/messages';
 import {
   bearerToken,
   constantTimeEqual,
@@ -75,8 +90,9 @@ async function availabilityPayload(request: Request, context: BookkitContext, no
     : [];
   const overrides = await context.repo.listDayOverrides(firstDay, lastDay);
   const overridesByDate = new Map(overrides.map((override) => [override.date, override]));
+  const capacityDefaults = await context.repo.listCapacityDefaults();
   const days = dates.map((date) => {
-    const capacityInfo = capacityForDate(date, context.config.fleet.defaultCapacity, overridesByDate);
+    const capacityInfo = capacityForDate(date, defaultCapacityForDate(date, context.config.fleet.defaultCapacity, capacityDefaults), overridesByDate);
     if (generateSlots(tour, date, context.config.business.timezone).length === 0) {
       return {
         date,
@@ -162,6 +178,7 @@ async function checkSlot(
   const candidate = assertSlot(context.config, tourSlug, start, now);
   const localDate = localDateKey(candidate.startsAt, context.config.business.timezone);
   const override = await context.repo.getDayOverride(localDate);
+  const capacityDefaults = await context.repo.listCapacityDefaults();
   const lookback = Math.max(
     ...Object.values(context.config.tours).map((tour) => tour.durationMin + tour.turnaroundMin),
   );
@@ -175,7 +192,7 @@ async function checkSlot(
     date: localDate,
     timezone: context.config.business.timezone,
     tour: candidate.tour,
-    capacity: capacityForDate(localDate, context.config.fleet.defaultCapacity, override ? [override] : []).capacity,
+    capacity: capacityForDate(localDate, defaultCapacityForDate(localDate, context.config.fleet.defaultCapacity, capacityDefaults), override ? [override] : []).capacity,
     bookings,
     calendarEvents,
     tours: context.config.tours,
@@ -310,7 +327,22 @@ export function handleStripeWebhook(request: Request, context: BookkitContext): 
 
 function bookingSummary(context: BookkitContext, booking: Booking): Record<string, unknown> {
   const tour = resolveTour(context.config, booking.tourSlug);
-  return { reference: booking.reference, tourSlug: booking.tourSlug, start: utcToLocalIso(booking.startsAt, context.config.business.timezone), people: booking.people, meetingPoint: tour.meetingPoint };
+  return {
+    reference: booking.reference,
+    tourSlug: booking.tourSlug,
+    start: utcToLocalIso(booking.startsAt, context.config.business.timezone),
+    end: utcToLocalIso(booking.endsAt, context.config.business.timezone),
+    people: booking.people,
+    pickupType: booking.pickupType,
+    pickupAddress: booking.pickupAddress,
+    customerName: booking.customerName,
+    customerEmail: booking.customerEmail,
+    customerPhone: booking.customerPhone,
+    locale: booking.locale,
+    status: booking.status,
+    priceCents: booking.priceCents,
+    meetingPoint: tour.meetingPoint,
+  };
 }
 
 export function handleStatus(request: Request, context: BookkitContext): Promise<Response> {
@@ -527,34 +559,430 @@ async function accessAllowed(request: Request, context: BookkitContext): Promise
   }
 }
 
+interface AdminFilters {
+  q: string;
+  status: string;
+}
+
+const navIcons = {
+  bookings: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>',
+  days: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></svg>',
+  settings: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+};
+
+// The app-shell navigation shared by the admin and settings pages. Anchors deep-link into the
+// admin page's sections; everything stays plain links, no script.
+function adminSidebar(context: BookkitContext, messages: ReturnType<typeof resolveMessages>, active: 'admin' | 'settings'): string {
+  const adminPath = escapeHtml(context.routeConfig.paths.adminPage);
+  const link = (href: string, icon: string, label: string, isActive: boolean): string =>
+    `<a href="${href}"${isActive ? ' class="bk-active" aria-current="page"' : ''}>${icon} ${escapeHtml(label)}</a>`;
+  return `<p class="bk-sidebar-brand">${escapeHtml(context.config.business.name)}</p>`
+    + link(`${adminPath}#bk-bookings`, navIcons.bookings, messages['admin.navBookings'], active === 'admin')
+    + link(`${adminPath}#bk-days`, navIcons.days, messages['admin.navDays'], false)
+    + link(`${adminPath}?view=settings`, navIcons.settings, messages['admin.settings'], active === 'settings');
+}
+
+function matchesAdminFilters(booking: Booking, filters: AdminFilters): boolean {
+  if (filters.status && booking.status !== filters.status) return false;
+  if (filters.q) {
+    const needle = filters.q.toLowerCase();
+    const haystack = [booking.reference, booking.tourSlug, booking.pickupType, booking.pickupAddress ?? '', booking.customerName ?? '', booking.customerEmail ?? ''].join(' ').toLowerCase();
+    if (!haystack.includes(needle)) return false;
+  }
+  return true;
+}
+
 function adminPage(
   context: BookkitContext,
   bookings: Booking[],
   overrides: Awaited<ReturnType<BookkitContext['repo']['listDayOverrides']>>,
   fromDate: string,
   toDate: string,
+  filters: AdminFilters,
+  editDate: string,
+  capacityDefaults: CapacityDefault[],
+  saved: string,
 ): string {
+  // Admin is operator-facing (behind Cloudflare Access), so copy uses the business default locale.
+  const locale = context.config.locales.default;
+  const messages = resolveMessages(context.config, locale);
+  const timezone = context.config.business.timezone;
   const managePagePath = context.routeConfig.paths.managePage;
-  const rows = bookings.map((booking) => `<tr><td>${escapeHtml(booking.reference)}</td><td>${escapeHtml(utcToLocalIso(booking.startsAt, context.config.business.timezone))}</td><td>${escapeHtml(booking.tourSlug)}</td><td>${booking.people}</td><td>${escapeHtml(booking.pickupType)}</td><td>${escapeHtml(booking.status)}</td><td><a href="${escapeHtml(managePagePath)}?token=${encodeURIComponent(booking.operatorToken)}">manage</a></td></tr>`).join('');
-  const overridesByDate = new Map(overrides.map((override) => [override.date, override]));
-  const bookingCounts = new Map<string, number>();
-  for (const booking of bookings) {
-    const date = localDateKey(booking.startsAt, context.config.business.timezone);
-    bookingCounts.set(date, (bookingCounts.get(date) ?? 0) + 1);
-  }
-  const dayRows = enumerateDateKeys(fromDate, toDate).map((date) => {
-    const override = overridesByDate.get(date);
-    const capacity = override?.capacity ?? context.config.fleet.defaultCapacity;
-    const state = override ? 'override' : 'default';
-    return `<tr><td>${escapeHtml(date)}</td><td>${capacity}</td><td>${bookingCounts.get(date) ?? 0}</td><td>${state}</td><td>${escapeHtml(override?.reason ?? '')}</td></tr>`;
+  const filtered = bookings.filter((booking) => matchesAdminFilters(booking, filters));
+
+  // Operators scan by when → who → what, so the row leads with date and customer; secondary
+  // detail (reference, email, party size, pickup address) stacks as sub-lines instead of
+  // spreading into ever more columns.
+  const rows = filtered.map((booking) => {
+    const customerPrimary = booking.customerName ?? booking.customerEmail ?? '—';
+    const customerSub = booking.customerName && booking.customerEmail
+      ? `<span class="bk-sub">${escapeHtml(booking.customerEmail)}</span>`
+      : '';
+    const people = formatMessage(booking.people === 1 ? messages['widget.person'] : messages['widget.peopleCount'], { n: booking.people });
+    const price = formatPrice(booking.priceCents, locale, context.config.business.currency);
+    const pickupLabel = booking.pickupType === 'custom' ? messages['widget.pickupCustom'] : messages['widget.pickupDefault'];
+    const pickupSub = booking.pickupType === 'custom' && booking.pickupAddress
+      ? `<span class="bk-sub">${escapeHtml(booking.pickupAddress)}</span>`
+      : '';
+    return `<tr>`
+      + `<td>${escapeHtml(formatDateTime(utcToLocalIso(booking.startsAt, timezone), locale, timezone))}<span class="bk-sub bk-mono">${escapeHtml(booking.reference)}</span></td>`
+      + `<td><strong>${escapeHtml(customerPrimary)}</strong>${customerSub}</td>`
+      + `<td>${escapeHtml(booking.tourSlug)}<span class="bk-sub">${escapeHtml(people)} · ${escapeHtml(price)}</span></td>`
+      + `<td>${escapeHtml(pickupLabel)}${pickupSub}</td>`
+      + `<td>${statusBadge(booking.status, messages)}</td>`
+      + `<td><a href="${escapeHtml(managePagePath)}?token=${encodeURIComponent(booking.operatorToken)}">${escapeHtml(messages['admin.manage'])}</a></td>`
+      + `</tr>`;
   }).join('');
-  return `<!doctype html><html><head><title>${escapeHtml(context.config.business.name)} bookings</title></head><body><h1>Booking admin</h1><section><h2>Days</h2><table><thead><tr><th>Date</th><th>Capacity</th><th>Bookings</th><th>State</th><th>Reason</th></tr></thead><tbody>${dayRows}</tbody></table><form method="post"><label>Date <input name="date" type="date" required></label><label>Capacity <input name="capacity" type="number" min="0"></label><label>Reason <input name="reason"></label><button name="action" value="set">Save</button><button name="action" value="clear">Clear</button></form></section><section><h2>Upcoming bookings</h2><table><thead><tr><th>Reference</th><th>Start</th><th>Tour</th><th>People</th><th>Pickup</th><th>Status</th><th>Manage</th></tr></thead><tbody>${rows}</tbody></table></section></body></html>`;
+
+  const overridesByDate = new Map(overrides.map((override) => [override.date, override]));
+  const bookingsByDate = new Map<string, Booking[]>();
+  for (const booking of bookings) {
+    const date = localDateKey(booking.startsAt, timezone);
+    const list = bookingsByDate.get(date);
+    if (list) list.push(booking);
+    else bookingsByDate.set(date, [booking]);
+  }
+  const bookingCounts = new Map([...bookingsByDate].map(([date, list]) => [date, list.length]));
+  const formatDayTime = (startsAt: string): string =>
+    new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', timeZone: timezone }).format(new Date(startsAt));
+  const peopleText = (people: number): string =>
+    formatMessage(people === 1 ? messages['widget.person'] : messages['widget.peopleCount'], { n: people });
+  // The horizon rendered as month calendar grids instead of a day-per-row list: an operator's
+  // mental model of availability is a calendar, and 30 rows collapse into a screenful of cells
+  // where only exceptional days carry color. Each day links to the adjust form — still no JS.
+  const dowLabels = Array.from({ length: 7 }, (_, index) =>
+    // 2024-01-01 is a Monday; formatting it +index yields locale weekday names, Monday-first.
+    new Intl.DateTimeFormat(locale, { weekday: 'short', timeZone: 'UTC' }).format(new Date(Date.UTC(2024, 0, 1 + index))));
+  const byMonth = new Map<string, string[]>();
+  for (const date of enumerateDateKeys(fromDate, toDate)) {
+    const month = date.slice(0, 7);
+    const dates = byMonth.get(month);
+    if (dates) dates.push(date);
+    else byMonth.set(month, [date]);
+  }
+  const monthGrids = [...byMonth.values()].map((dates, monthIndex) => {
+    const first = new Date(`${dates[0]}T00:00:00Z`);
+    const monthTitle = new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(first);
+    const header = dowLabels.map((label) => `<span class="bk-dow">${escapeHtml(label)}</span>`).join('');
+    const blanks = '<span class="bk-day bk-day--empty"></span>'.repeat((first.getUTCDay() + 6) % 7);
+    let flagged = 0;
+    let containsSelected = false;
+    const cells = dates.map((date) => {
+      // Day links keep the active booking filters so selecting a day never resets the search.
+      const dayParams = new URLSearchParams();
+      if (filters.q) dayParams.set('q', filters.q);
+      if (filters.status) dayParams.set('status', filters.status);
+      dayParams.set('date', date);
+      const override = overridesByDate.get(date);
+      const dayDefault = defaultCapacityForDate(date, context.config.fleet.defaultCapacity, capacityDefaults);
+      const capacity = override?.capacity ?? dayDefault;
+      const booked = bookingCounts.get(date) ?? 0;
+      const tone = capacity === 0 ? ' bk-day--closed' : override ? ' bk-day--adjusted' : booked > 0 ? ' bk-day--booked' : ' bk-day--quiet';
+      if (override || capacity === 0) flagged += 1;
+      const selected = date === editDate;
+      if (selected) containsSelected = true;
+      // A changed fleet default is the "new normal" — no warning tint, but do show the numbers.
+      const load = booked > 0 || override || dayDefault !== context.config.fleet.defaultCapacity
+        ? `<span class="bk-day-load">${booked}/${capacity}</span>`
+        : '';
+      const title = override?.reason ? ` title="${escapeHtml(override.reason)}"` : '';
+      // data-* carries each day's effective values so the enhancer can prefill the form without a
+      // page load; the href stays as the no-JS path.
+      const dayData = ` data-date="${date}" data-capacity="${capacity}"${override?.reason ? ` data-reason="${escapeHtml(override.reason)}"` : ''}`;
+      return `<a class="bk-day${tone}${selected ? ' bk-day--selected' : ''}"${selected ? ' aria-current="date"' : ''} href="?${dayParams}#bk-override" aria-label="${escapeHtml(formatDayDate(date, locale))}"${title}${dayData}>`
+        + `<span class="bk-day-num">${Number(date.slice(8, 10))}</span>${load}</a>`;
+    }).join('');
+    const grid = `<div class="bk-monthgrid">${header}${blanks}${cells}</div>`;
+    // Near months stay expanded; later mostly-quiet months collapse so ~90 day cells don't all
+    // compete at once. A collapsed month auto-opens when it holds signal (adjusted/closed days or
+    // the day being edited), so disclosure never hides anything the operator needs to see.
+    if (monthIndex < 2) return `<div class="bk-month" data-label="${escapeHtml(monthTitle)}"><h3>${escapeHtml(monthTitle)}</h3>${grid}</div>`;
+    const flaggedBadge = flagged > 0
+      ? ` <span class="bk-badge bk-badge--warn">${escapeHtml(formatMessage(messages['admin.monthFlagged'], { n: flagged }))}</span>`
+      : '';
+    return `<details class="bk-month bk-disclosure" data-label="${escapeHtml(monthTitle)}"${flagged > 0 || containsSelected ? ' open' : ''}>`
+      + `<summary>${escapeHtml(monthTitle)}${flaggedBadge}</summary><div>${grid}</div></details>`;
+  }).join('');
+
+  const statusOptions = ['', 'confirmed', 'hold', 'cancelled', 'no_show'].map((value) => {
+    const label = value === '' ? messages['admin.all'] : (messages[`status.${value}` as keyof typeof messages] ?? value);
+    const selected = filters.status === value ? ' selected' : '';
+    return `<option value="${escapeHtml(value)}"${selected}>${escapeHtml(label)}</option>`;
+  }).join('');
+
+  // The hidden date field keeps the selected day when filters are (re)applied — the two workflows
+  // share one URL, so neither form may silently drop the other's state.
+  const filterForm = `<form method="get" class="bk-filters" role="search">`
+    + (editDate ? `<input type="hidden" name="date" value="${escapeHtml(editDate)}">` : '')
+    + `<label class="bk-field"><span>${escapeHtml(messages['admin.search'])}</span><input class="bk-input" type="search" name="q" value="${escapeHtml(filters.q)}" placeholder="${escapeHtml(messages['admin.searchPlaceholder'])}"></label>`
+    + `<label class="bk-field"><span>${escapeHtml(messages['admin.filterStatus'])}</span><select class="bk-select" name="status">${statusOptions}</select></label>`
+    + `<button type="submit" class="bk-btn bk-btn--secondary">${escapeHtml(messages['admin.apply'])}</button></form>`;
+
+  const resultsBadge = formatMessage(messages[filtered.length === 1 ? 'admin.resultsOne' : 'admin.results'], { n: filtered.length });
+  const bookingsSection = `<section class="bk-card" id="bk-bookings"><h2>${escapeHtml(messages['admin.bookings'])} <span class="bk-badge">${escapeHtml(resultsBadge)}</span></h2>`
+    + filterForm
+    + (filtered.length === 0
+      ? `<p class="bk-lead">${escapeHtml(messages['admin.noBookings'])}</p>`
+      : `<div class="bk-table-wrap"><table class="bk-table"><thead><tr><th>${escapeHtml(messages['common.date'])}</th><th>${escapeHtml(messages['common.customer'])}</th><th>${escapeHtml(messages['common.tour'])}</th><th>${escapeHtml(messages['common.pickup'])}</th><th>${escapeHtml(messages['common.status'])}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`)
+    + `</section>`;
+
+  // Row "Edit" links land here with ?date=…, prefilling the form with that day's current values —
+  // the whole edit flow stays plain GET/POST, no script.
+  const editOverride = editDate ? overridesByDate.get(editDate) : undefined;
+  const editDefault = defaultCapacityForDate(editDate || fromDate, context.config.fleet.defaultCapacity, capacityDefaults);
+  // Explicit post-save confirmation inside whichever form was just submitted — the POST redirects
+  // back with saved=day|default plus a hash so the operator lands on the form and sees it.
+  const savedAlert = (which: string): string => saved === which
+    ? `<p class="bk-alert bk-alert--ok" role="status">${escapeHtml(messages['admin.saved'])}</p>`
+    : '';
+  // Per-day booking summaries, display-ready (times/labels formatted server-side so the enhancer
+  // renders them without duplicating locale logic). Small: admin only lists upcoming bookings.
+  const byStart = (a: Booking, b: Booking): number => a.startsAt.localeCompare(b.startsAt);
+  const daySummaries: Record<string, Array<Record<string, string>>> = {};
+  for (const [date, list] of bookingsByDate) {
+    daySummaries[date] = [...list].sort(byStart).map((entry) => {
+      const tone = statusToneOf(entry.status);
+      return {
+        t: formatDayTime(entry.startsAt),
+        c: entry.customerName ?? entry.customerEmail ?? '—',
+        p: peopleText(entry.people),
+        s: messages[`status.${entry.status}` as keyof typeof messages] ?? entry.status,
+        ...(tone ? { sc: tone } : {}),
+        u: `${managePagePath}?token=${encodeURIComponent(entry.operatorToken)}`,
+      };
+    });
+  }
+  // Strings + day data the admin enhancer needs at runtime, shipped as a non-executable JSON
+  // island (same CSP-safe pattern as the manage page's reschedule island).
+  const adminIsland = `<script type="application/json" data-bookkit-i18n>${JSON.stringify({
+    selectedDays: messages['admin.selectedDays'],
+    close: messages['admin.close'],
+    closeMany: messages['admin.closeMany'],
+    title: messages['admin.overrideTitle'],
+    noBookings: messages['admin.dayNoBookings'],
+    manage: messages['admin.manage'],
+    prevMonth: messages['admin.prevMonth'],
+    nextMonth: messages['admin.nextMonth'],
+    days: daySummaries,
+  }).replace(/</g, '\\u003c')}</script>`;
+  // The day panel answers "what does this day actually have" — the bookings on the selected day,
+  // rendered server-side for the no-JS path and rebuilt client-side from the island on selection.
+  const dayBookingItem = (entry: Booking): string =>
+    `<li><span class="bk-mono">${escapeHtml(formatDayTime(entry.startsAt))}</span> <strong>${escapeHtml(entry.customerName ?? entry.customerEmail ?? '—')}</strong>`
+    + `<span class="bk-sub">${escapeHtml(peopleText(entry.people))}</span>${statusBadge(entry.status, messages)}`
+    + `<a href="${escapeHtml(managePagePath)}?token=${encodeURIComponent(entry.operatorToken)}">${escapeHtml(messages['admin.manage'])}</a></li>`;
+  const editDayBookings = editDate ? [...bookingsByDate.get(editDate) ?? []].sort(byStart) : [];
+  const dayDetail = `<div class="bk-day-detail" data-bookkit-day-detail>`
+    + (editDate
+      ? editDayBookings.length
+        ? `<ul class="bk-day-bookings">${editDayBookings.map(dayBookingItem).join('')}</ul>`
+        : `<p class="bk-hint">${escapeHtml(messages['admin.dayNoBookings'])}</p>`
+      : '')
+    + `</div>`;
+  // Capacity prefills with the day's effective value (override, else its default) so the operator
+  // sees what they're changing from. The optional To date is the no-JS bulk path — the POST expands
+  // the range server-side; the enhancer hides it and uses multi-select with repeated date inputs.
+  const editReason = editOverride?.reason ?? '';
+  const overrideForm = `<form method="post" id="bk-override" class="bk-day-form">${adminIsland}`
+    + `<h2 data-bookkit-day-title>${escapeHtml(editDate ? formatDayDate(editDate, locale) : messages['admin.overrideTitle'])}</h2>`
+    + savedAlert('day')
+    + dayDetail
+    + `<p class="bk-hint">${escapeHtml(messages['admin.overrideHint'])} ${escapeHtml(formatMessage(messages['admin.overrideDefault'], { n: editDefault }))}</p>`
+    + `<label class="bk-field"><span>${escapeHtml(messages['common.date'])}</span><input class="bk-input" name="date" type="date" required value="${escapeHtml(editDate)}"></label>`
+    + `<label class="bk-field" data-bookkit-to><span>${escapeHtml(messages['admin.overrideTo'])}</span><input class="bk-input" name="toDate" type="date"></label>`
+    + `<label class="bk-field"><span>${escapeHtml(messages['admin.capacity'])}</span><input class="bk-input" name="capacity" type="number" min="0" value="${editOverride ? editOverride.capacity : editDate ? editDefault : ''}"></label>`
+    + `<details class="bk-disclosure bk-disclosure--bare"${editReason ? ' open' : ''}><summary>${escapeHtml(messages['admin.addReason'])}</summary><div>`
+    + `<label class="bk-field"><span>${escapeHtml(messages['admin.reason'])}</span><input class="bk-input" name="reason" value="${escapeHtml(editReason)}"></label>`
+    + `</div></details>`
+    + `<div class="bk-actions">`
+    + `<button type="submit" class="bk-btn" name="action" value="set">${escapeHtml(messages['admin.save'])}</button>`
+    + `<button type="submit" class="bk-btn bk-btn--outline-danger" name="action" value="close">${escapeHtml(messages['admin.close'])}</button>`
+    + `<button type="submit" class="bk-btn bk-btn--secondary" name="action" value="clear">${escapeHtml(messages['admin.clear'])}</button>`
+    + `</div></form>`;
+
+  // Fleet-level changes ("a van broke down") apply from a date onwards, so operators never
+  // click 30 day cells one by one. Each scheduled change can be removed independently.
+  const defaultEntries = capacityDefaults.map((entry) =>
+    `<li><span>${escapeHtml(formatMessage(messages['admin.defaultEntry'], { n: entry.capacity, date: formatDayDate(entry.fromDate, locale) }))}`
+    + (entry.reason ? `<span class="bk-sub">${escapeHtml(entry.reason)}</span>` : '')
+    + `</span><form method="post"><input type="hidden" name="date" value="${escapeHtml(entry.fromDate)}">`
+    + `<button type="submit" class="bk-btn bk-btn--secondary bk-btn--sm" name="action" value="default-clear">${escapeHtml(messages['admin.remove'])}</button></form></li>`).join('');
+  // The fleet-default form is the rare, high-blast-radius task, so it sits behind a collapsed
+  // disclosure — one visible form (the day exception) instead of two near-identical ones. It must
+  // be open after its own POST so the saved confirmation is visible; the scheduled-change count in
+  // the summary keeps active rules discoverable while collapsed.
+  const scheduledBadge = capacityDefaults.length > 0
+    ? ` <span class="bk-badge">${escapeHtml(formatMessage(messages['admin.defaultScheduled'], { n: capacityDefaults.length }))}</span>`
+    : '';
+  const defaultForm = `<details class="bk-disclosure" id="bk-default"${saved === 'default' ? ' open' : ''}>`
+    + `<summary>${escapeHtml(messages['admin.defaultTitle'])}${scheduledBadge}</summary><div>`
+    + `<form method="post" class="bk-day-form">`
+    + savedAlert('default')
+    + `<p class="bk-hint">${escapeHtml(messages['admin.defaultHint'])}</p>`
+    + `<label class="bk-field"><span>${escapeHtml(messages['admin.defaultFrom'])}</span><input class="bk-input" name="date" type="date" required></label>`
+    + `<label class="bk-field"><span>${escapeHtml(messages['admin.capacity'])}</span><input class="bk-input" name="capacity" type="number" min="0" required></label>`
+    + `<label class="bk-field"><span>${escapeHtml(messages['admin.reason'])}</span><input class="bk-input" name="reason"></label>`
+    + `<div class="bk-actions"><button type="submit" class="bk-btn" name="action" value="default-set">${escapeHtml(messages['admin.save'])}</button></div></form>`
+    + (defaultEntries ? `<ul class="bk-defaults">${defaultEntries}</ul>` : '')
+    + `</div></details>`;
+
+  const legend = `<span class="bk-badge bk-badge--danger">${escapeHtml(messages['widget.closed'])}</span> `
+    + `<span class="bk-badge bk-badge--warn">${escapeHtml(messages['admin.stateOverride'])}</span>`;
+  const daysSection = `<section class="bk-card" id="bk-days"><h2>${escapeHtml(messages['admin.days'])}</h2>`
+    + `<p class="bk-hint">${escapeHtml(messages['admin.daysHint'])}</p>`
+    + `<p class="bk-legend">${legend}</p>`
+    + `<div class="bk-days-layout"><div class="bk-months">${monthGrids}</div><div>${overrideForm}${defaultForm}</div></div>`
+    + `</section>`;
+
+  return pageShell({
+    lang: locale,
+    title: `${messages['admin.title']} — ${context.config.business.name}`,
+    cssHref: cssAssetHref(context.routeConfig.paths.assetsCss),
+    scriptHref: jsAssetHref(context.routeConfig.paths.assetsJs),
+    sidebar: adminSidebar(context, messages, 'admin'),
+    theme: context.viewerTheme,
+    themeToggle: themeToggle(messages, context.viewerTheme),
+    body: `<div class="bk-toolbar"><h1>${escapeHtml(messages['admin.title'])}</h1></div>${bookingsSection}${daysSection}`,
+  });
+}
+
+// The admin settings page (?view=settings). Layout follows settings-page UX conventions: grouped
+// sections behind a tab bar (one section on screen at a time), single-column fields within a
+// section (multi-column forms measurably hurt comprehension), plain-language helper text per
+// setting, switches for booleans, a per-field "Reset" where a value deviates from the file config,
+// and a visible saved confirmation after POST. Tabs degrade to plain links without JS.
+function settingsPage(context: BookkitContext, storedRows: Record<string, string>, saved: boolean, sectionParam: string): string {
+  const locale = context.config.locales.default;
+  const messages = resolveMessages(context.config, locale);
+  const catalog = messages as Record<string, string>;
+  // One section visible at a time behind a tab bar; tabs are plain links (?section=) so switching
+  // works without JS, and the enhancer upgrades them to instant in-page toggles. The section query
+  // param survives save redirects because forms post to the current URL.
+  const activeSection = ([...settingSections, 'config'] as string[]).includes(sectionParam)
+    ? sectionParam
+    : settingSections[0] ?? 'policy';
+  // What the operator's values fall back to: the pristine file config when overrides are active.
+  const base = context.baseConfig ?? context.config;
+  const sectionTitles: Record<SettingSection, string> = {
+    policy: messages['admin.sectionPolicy'],
+    contact: messages['admin.sectionContact'],
+    payments: messages['admin.sectionPayments'],
+    legal: messages['admin.sectionLegal'],
+  };
+  const sectionHints: Record<SettingSection, string> = {
+    policy: messages['admin.sectionPolicyHint'],
+    contact: messages['admin.sectionContactHint'],
+    payments: messages['admin.sectionPaymentsHint'],
+    legal: messages['admin.sectionLegalHint'],
+  };
+  const methodLabel = (method: string): string =>
+    method === 'card' ? messages['setting.paymentsCard'] : messages['setting.paymentsMbway'];
+  const displayValue = (value: SettingValue): string => {
+    if (value === null) return messages['admin.none'];
+    if (typeof value === 'boolean') return value ? messages['admin.on'] : messages['admin.off'];
+    if (Array.isArray(value)) return value.map(methodLabel).join(', ');
+    return String(value);
+  };
+
+  const fieldMarkup = (definition: SettingDefinition): string => {
+    const label = catalog[definition.labelKey] ?? definition.key;
+    const helpText = catalog[`${definition.labelKey}.hint`];
+    const help = helpText ? `<span class="bk-hint">${escapeHtml(helpText)}</span>` : '';
+    const effective = definition.get(context.config);
+    // The deviation row: only where a DB override exists — shows what the value falls back to and
+    // resets just this field. The reset button lives outside the <label> so clicking it never
+    // toggles or focuses the control it belongs to.
+    const modified = storedRows[definition.key] !== undefined
+      ? `<span class="bk-modified"><span class="bk-badge bk-badge--accent">${escapeHtml(messages['admin.modified'])}</span>`
+        + `<span>${escapeHtml(formatMessage(messages['admin.default'], { v: displayValue(definition.get(base)) }))}</span>`
+        + `<button type="submit" class="bk-linkbtn" name="action" value="settings-reset:${escapeHtml(definition.key)}" formnovalidate>${escapeHtml(messages['admin.resetField'])}</button></span>`
+      : '';
+    const kind = definition.kind;
+    if (kind.type === 'boolean') {
+      return `<div class="bk-setting"><label class="bk-switch"><input type="checkbox" name="${escapeHtml(definition.key)}"${effective ? ' checked' : ''}><span>${escapeHtml(label)}</span></label>${help}${modified}</div>`;
+    }
+    if (kind.type === 'methods') {
+      const selected = new Set(effective as string[]);
+      const boxes = (['card', 'mb_way'] as const).map((method) =>
+        `<label class="bk-check"><input type="checkbox" name="${escapeHtml(definition.key)}" value="${method}"${selected.has(method) ? ' checked' : ''}><span>${escapeHtml(methodLabel(method))}</span></label>`).join('');
+      return `<div class="bk-setting"><fieldset class="bk-fieldset"><legend>${escapeHtml(label)}</legend>${boxes}</fieldset>${help}${modified}</div>`;
+    }
+    const inputType = kind.type === 'int' || kind.type === 'number' ? 'number' : kind.type === 'email' ? 'email' : kind.type === 'url' ? 'url' : 'text';
+    const constraints = kind.type === 'int' ? ` min="${kind.min}" step="1"${kind.optional ? '' : ' required'}`
+      : kind.type === 'number' ? ` min="${kind.min}" step="any" required`
+      : kind.type === 'text' && kind.optional ? '' : ' required';
+    const value = effective === null ? '' : String(effective);
+    return `<div class="bk-setting"><label class="bk-field"><span>${escapeHtml(label)}</span><input class="bk-input" type="${inputType}" name="${escapeHtml(definition.key)}" value="${escapeHtml(value)}"${constraints}></label>${help}${modified}</div>`;
+  };
+
+  const sections = settingSections.map((section) => {
+    let lastGroup: string | undefined;
+    const fields = settingDefinitions.filter((definition) => definition.section === section).map((definition) => {
+      const heading = definition.groupKey && definition.groupKey !== lastGroup
+        ? `<h3 class="bk-setting-group">${escapeHtml(catalog[definition.groupKey] ?? definition.groupKey)}</h3>`
+        : '';
+      lastGroup = definition.groupKey;
+      return heading + fieldMarkup(definition);
+    }).join('');
+    const hasOverrides = settingDefinitions.some((definition) => definition.section === section && storedRows[definition.key] !== undefined);
+    // formnovalidate on resets: emptied required fields must not block returning to config values.
+    const sectionReset = hasOverrides
+      ? `<button type="submit" class="bk-linkbtn" name="action" value="settings-reset" formnovalidate>${escapeHtml(messages['admin.resetSection'])}</button>`
+      : '';
+    return `<form method="post" class="bk-card" id="bk-s-${section}"${section === activeSection ? '' : ' hidden'}><h2>${escapeHtml(sectionTitles[section])}</h2>`
+      + `<p class="bk-hint bk-section-hint">${escapeHtml(sectionHints[section])}</p>`
+      + `<input type="hidden" name="section" value="${escapeHtml(section)}">${fields}`
+      + `<div class="bk-actions bk-actions--split"><button type="submit" class="bk-btn" name="action" value="settings-save">${escapeHtml(messages['admin.save'])}</button>${sectionReset}</div></form>`;
+  }).join('');
+
+  // Deploy-time values on their own tab: reference material, not daily controls.
+  const readonlySection = `<section class="bk-card" id="bk-s-config"${activeSection === 'config' ? '' : ' hidden'}><h2>${escapeHtml(messages['admin.sectionReadonly'])}</h2>`
+    + `<p class="bk-hint">${escapeHtml(messages['admin.readonlyHint'])}</p>`
+    + factList([
+      [messages['setting.timezone'], escapeHtml(context.config.business.timezone)],
+      [messages['setting.currency'], escapeHtml(context.config.business.currency.toUpperCase())],
+      [messages['setting.locales'], escapeHtml(context.config.locales.supported.join(', '))],
+      [messages['setting.shortCode'], escapeHtml(context.config.business.shortCode)],
+      [messages['setting.siteUrl'], escapeHtml(context.config.business.url)],
+      [messages['setting.tours'], escapeHtml(Object.keys(context.config.tours).join(', '))],
+      [messages['setting.fleetCapacity'], `${context.config.fleet.defaultCapacity}<span class="bk-sub">${escapeHtml(messages['admin.fleetCapacityNote'])}</span>`],
+    ])
+    + `</section>`;
+
+  const tabLink = (id: string, label: string): string =>
+    `<a href="?view=settings&section=${id}" data-bookkit-tab="${id}"${id === activeSection ? ' aria-current="page"' : ''}>${escapeHtml(label)}</a>`;
+  const tabs = `<nav class="bk-tabs" aria-label="${escapeHtml(messages['admin.settings'])}">`
+    + settingSections.map((section) => tabLink(section, sectionTitles[section])).join('')
+    + tabLink('config', messages['admin.sectionReadonly'])
+    + `</nav>`;
+
+  const savedAlert = saved ? `<p class="bk-alert bk-alert--ok" role="status">${escapeHtml(messages['admin.saved'])}</p>` : '';
+  return pageShell({
+    lang: locale,
+    title: `${messages['admin.settings']} — ${context.config.business.name}`,
+    cssHref: cssAssetHref(context.routeConfig.paths.assetsCss),
+    scriptHref: jsAssetHref(context.routeConfig.paths.assetsJs),
+    sidebar: adminSidebar(context, messages, 'settings'),
+    theme: context.viewerTheme,
+    themeToggle: themeToggle(messages, context.viewerTheme),
+    body: `<div class="bk-toolbar"><div><h1>${escapeHtml(messages['admin.settings'])}</h1><p class="bk-lead">${escapeHtml(messages['admin.settingsHint'])}</p></div></div>`
+      + savedAlert
+      + tabs
+      + `<div class="bk-settings-sections">${sections}${readonlySection}</div>`,
+  });
 }
 
 export function handleAdminGet(request: Request, context: BookkitContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     if (!await accessAllowed(request, context)) throw new HttpError(403, 'forbidden', 'Cloudflare Access authorization required');
+    const requestUrl = new URL(request.url);
+    if (requestUrl.searchParams.get('view') === 'settings') {
+      return html(settingsPage(context, await context.repo.listSettings(), requestUrl.searchParams.get('saved') === '1', requestUrl.searchParams.get('section') ?? ''), 200, {
+        'cache-control': 'no-store',
+        'referrer-policy': 'no-referrer',
+      });
+    }
     const now = nowIso(context);
     await context.repo.sweepExpiredHolds(now);
     const end = new Date(parseUtcInstant(now).getTime() + context.config.booking.maxHorizonDays * 86_400_000).toISOString();
@@ -562,7 +990,15 @@ export function handleAdminGet(request: Request, context: BookkitContext): Promi
     const fromDate = localDateKey(now, context.config.business.timezone);
     const toDate = localDateKey(end, context.config.business.timezone);
     const overrides = await context.repo.listDayOverrides(fromDate, toDate);
-    return html(adminPage(context, bookings, overrides, fromDate, toDate), 200, {
+    const capacityDefaults = await context.repo.listCapacityDefaults();
+    const url = new URL(request.url);
+    const filters: AdminFilters = {
+      q: url.searchParams.get('q')?.trim() ?? '',
+      status: url.searchParams.get('status')?.trim() ?? '',
+    };
+    const editDate = url.searchParams.get('date')?.trim() ?? '';
+    const saved = url.searchParams.get('saved') ?? '';
+    return html(adminPage(context, bookings, overrides, fromDate, toDate, filters, editDate, capacityDefaults, saved), 200, {
       'cache-control': 'no-store',
       'referrer-policy': 'no-referrer',
     });
@@ -574,14 +1010,78 @@ export function handleAdminPost(request: Request, context: BookkitContext): Prom
     if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     if (!await accessAllowed(request, context)) throw new HttpError(403, 'forbidden', 'Cloudflare Access authorization required');
     const form = await request.formData();
-    const date = parseDate(requireString(form.get('date'), 'date'), 'date');
     const action = requireString(form.get('action'), 'action');
-    if (action === 'clear') await context.repo.deleteDayOverride(date);
-    else if (action === 'set') {
+    if (action.startsWith('settings-')) {
+      // Redirect target carries saved=1 so the settings page can confirm the change visibly.
+      const location = new URL(request.url);
+      location.searchParams.set('saved', '1');
+      if (action.startsWith('settings-reset:')) {
+        const key = action.slice('settings-reset:'.length);
+        const definition = settingDefinitions.find((entry) => entry.key === key);
+        if (!definition) throw new HttpError(400, 'validation_failed', 'Unknown setting');
+        await context.repo.deleteSetting(definition.key);
+        return new Response(null, { status: 303, headers: { location: location.toString() } });
+      }
+      if (action !== 'settings-save' && action !== 'settings-reset') throw new HttpError(400, 'validation_failed', 'Unknown admin action');
+      const section = requireString(form.get('section'), 'section');
+      const definitions = settingDefinitions.filter((definition) => definition.section === section);
+      if (definitions.length === 0) throw new HttpError(400, 'validation_failed', 'Unknown settings section');
+      // Compare against the file config, not the merged one: a submitted value equal to the file
+      // default deletes the row, keeping "follow the config" the resting state (core/settings.ts).
+      const base = context.baseConfig ?? context.config;
+      for (const definition of definitions) {
+        if (action === 'settings-reset') {
+          await context.repo.deleteSetting(definition.key);
+          continue;
+        }
+        let value: SettingValue;
+        try {
+          value = parseSettingForm(definition, form);
+        } catch (error) {
+          if (error instanceof SettingParseError) throw new HttpError(400, 'validation_failed', error.message);
+          throw error;
+        }
+        if (settingValuesEqual(value, definition.get(base))) await context.repo.deleteSetting(definition.key);
+        else await context.repo.upsertSetting(definition.key, serializeSettingValue(value));
+      }
+      return new Response(null, { status: 303, headers: { location: location.toString() } });
+    }
+    // Day actions may target several days at once: repeated date fields (the enhancer's
+    // multi-select) and/or an optional toDate expanding to the contiguous range (the no-JS bulk
+    // path). Default-capacity actions always take a single date.
+    const dates = form.getAll('date').map((value) => parseDate(requireString(value, 'date'), 'date'));
+    const firstDate = dates[0];
+    if (firstDate === undefined) throw new HttpError(400, 'validation_failed', 'date is required');
+    const isDefault = action.startsWith('default-');
+    let dayDates = [...new Set(dates)].sort();
+    const earliest = dayDates[0] ?? firstDate;
+    if (!isDefault) {
+      const toRaw = form.get('toDate');
+      if (typeof toRaw === 'string' && toRaw.trim()) {
+        const toDate = parseDate(toRaw.trim(), 'toDate');
+        if (toDate < earliest) throw new HttpError(400, 'validation_failed', 'toDate must not be before date');
+        dayDates = [...new Set([...dayDates, ...enumerateDateKeys(earliest, toDate)])].sort();
+      }
+      if (dayDates.length > 366) throw new HttpError(400, 'validation_failed', 'Too many days in one request');
+    }
+    const reasonValue = form.get('reason');
+    const reason = typeof reasonValue === 'string' && reasonValue.trim() ? reasonValue.trim() : null;
+    if (action === 'clear') {
+      for (const date of dayDates) await context.repo.deleteDayOverride(date);
+    } else if (action === 'set' || action === 'close') {
+      const capacity = action === 'close' ? 0 : requireInteger(Number(form.get('capacity')), 'capacity', 0);
+      for (const date of dayDates) await context.repo.upsertDayOverride(date, capacity, reason);
+    } else if (action === 'default-clear') await context.repo.deleteCapacityDefault(firstDate);
+    else if (action === 'default-set') {
       const capacity = requireInteger(Number(form.get('capacity')), 'capacity', 0);
-      const reasonValue = form.get('reason');
-      await context.repo.upsertDayOverride(date, capacity, typeof reasonValue === 'string' && reasonValue.trim() ? reasonValue.trim() : null);
+      await context.repo.upsertCapacityDefault(firstDate, capacity, reason);
     } else throw new HttpError(400, 'validation_failed', 'Unknown admin action');
-    return new Response(null, { status: 303, headers: { location: request.url } });
+    // saved=day|default renders a confirmation inside the submitted form; the hash lands there.
+    // Day actions also pin ?date= to the first edited day so the form reflects what was just saved.
+    const location = new URL(request.url);
+    location.searchParams.set('saved', isDefault ? 'default' : 'day');
+    if (!isDefault) location.searchParams.set('date', earliest);
+    location.hash = isDefault ? 'bk-default' : 'bk-override';
+    return new Response(null, { status: 303, headers: { location: location.toString() } });
   });
 }

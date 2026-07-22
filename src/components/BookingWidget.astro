@@ -1,9 +1,17 @@
 ---
 import routeConfig from 'virtual:bookkit/config';
+import { defaultMessages, formatMessage, type BookkitMessages } from '../ui/messages';
+import '../ui/components.css';
 
 interface StartOption {
   value: string;
   label: string;
+}
+
+interface PricingRuleProp {
+  maxPeople: number;
+  pickup: 'default' | 'custom';
+  priceCents: number;
 }
 
 interface Props {
@@ -16,6 +24,12 @@ interface Props {
   peopleOptions?: number[];
   pickupTypes?: Array<'default' | 'custom'>;
   startOptions?: StartOption[];
+  // Pass the tour's pricing rules (config.tours[slug].pricing) to show a live price; omit to hide.
+  pricing?: PricingRuleProp[];
+  currency?: string;
+  // Partial overrides merged over the shipped English catalog — feed the page's locale copy here.
+  messages?: Partial<BookkitMessages>;
+  showTitle?: boolean;
 }
 
 const {
@@ -28,112 +42,329 @@ const {
   peopleOptions = [1, 2, 3, 4],
   pickupTypes = ['default', 'custom'],
   startOptions = [],
+  pricing,
+  currency = 'EUR',
+  messages: messageOverrides = {},
+  showTitle = true,
 } = Astro.props;
 
+const t: BookkitMessages = { ...defaultMessages, ...messageOverrides };
 const usesAvailability = availabilityFrom !== undefined && availabilityTo !== undefined;
+const peopleLabel = (n: number): string => formatMessage(n === 1 ? t['widget.person'] : t['widget.peopleCount'], { n });
+
+// Everything the client script needs that can vary per render (copy, pricing, locale) travels in
+// a JSON data island rather than an inline define:vars script, so no unhashed inline JS is ever
+// emitted and strict script-src CSPs keep working.
+const scriptData = {
+  locale,
+  currency,
+  pricing: pricing ?? null,
+  i18n: {
+    loadingSlots: t['widget.loadingSlots'],
+    noSlots: t['widget.noSlots'],
+    noDates: t['widget.noDates'],
+    closed: t['widget.closed'],
+    soldOut: t['widget.soldOut'],
+    limited: t['widget.limited'],
+    spotsLeft: t['widget.spotsLeft'],
+    submit: t['widget.submit'],
+    submitting: t['widget.submitting'],
+    errorAvailability: t['widget.errorAvailability'],
+    errorCheckout: t['widget.errorCheckout'],
+  },
+};
+
+const pickupCopy: Record<'default' | 'custom', { label: string; hint: string }> = {
+  default: { label: t['widget.pickupDefault'], hint: t['widget.pickupDefaultHint'] },
+  custom: { label: t['widget.pickupCustom'], hint: t['widget.pickupCustomHint'] },
+};
 ---
 
 <form
+  class="bk-widget"
   data-bookkit-checkout
   data-endpoint={checkoutEndpoint}
   data-availability-endpoint={usesAvailability ? availabilityEndpoint : undefined}
   data-availability-from={availabilityFrom}
   data-availability-to={availabilityTo}
-  aria-label="Book a tour"
+  aria-label={t['widget.title']}
 >
+  <script type="application/json" data-bookkit-data set:html={JSON.stringify(scriptData).replace(/</g, '\\u003c')} />
   <input type="hidden" name="tourSlug" value={tourSlug} />
   <input type="hidden" name="locale" value={locale} />
-  <label>
-    People
-    <select name="people" required>
-      {peopleOptions.map((people) => <option value={people}>{people}</option>)}
+
+  {showTitle && <h2 class="bkw-title">{t['widget.title']}</h2>}
+
+  <label class="bkw-field">
+    <span class="bkw-label">{t['widget.people']}</span>
+    <select class="bkw-select" name="people" required>
+      {peopleOptions.map((people) => <option value={people}>{peopleLabel(people)}</option>)}
     </select>
   </label>
-  <label>
-    Start
-    {usesAvailability ? (
-      <select name="start" required data-bookkit-start>
-        <option value="" disabled selected>Loading slots…</option>
-      </select>
-    ) : startOptions.length > 0 ? (
-      <select name="start" required>
+
+  {usesAvailability ? (
+    <>
+      <div class="bkw-field">
+        <span class="bkw-label" id="bkw-date-label">{t['widget.date']}</span>
+        <calendar-date
+          class="bkw-cal"
+          min={availabilityFrom}
+          max={availabilityTo}
+          locale={locale}
+          aria-labelledby="bkw-date-label"
+          data-bookkit-calendar
+        >
+          <svg aria-hidden="true" slot="previous" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
+          <svg aria-hidden="true" slot="next" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6" /></svg>
+          <calendar-month></calendar-month>
+        </calendar-date>
+        <p class="bkw-cal-status" data-bookkit-cal-status role="status">{t['widget.loadingSlots']}</p>
+      </div>
+      <fieldset class="bkw-field bkw-slots-field" data-bookkit-slots-wrap hidden>
+        <legend class="bkw-label">{t['widget.time']}</legend>
+        <div class="bkw-slots" data-bookkit-slots role="radiogroup" aria-label={t['widget.time']}></div>
+      </fieldset>
+    </>
+  ) : startOptions.length > 0 ? (
+    <label class="bkw-field">
+      <span class="bkw-label">{t['widget.start']}</span>
+      <select class="bkw-select" name="start" required>
         {startOptions.map((option) => <option value={option.value}>{option.label}</option>)}
       </select>
-    ) : (
-      <input name="start" type="text" placeholder="2026-08-01T10:00:00+01:00" required />
-    )}
-  </label>
-  <label>
-    Pickup
-    <select name="pickupType" required>
-      {pickupTypes.map((pickupType) => <option value={pickupType}>{pickupType === 'custom' ? 'Custom pickup' : 'Meeting point'}</option>)}
-    </select>
-  </label>
-  <button type="submit">Continue to payment</button>
-  <p data-bookkit-error role="alert" hidden></p>
+    </label>
+  ) : (
+    <label class="bkw-field">
+      <span class="bkw-label">{t['widget.start']}</span>
+      <input class="bkw-input" name="start" type="text" placeholder="2026-08-01T10:00:00+01:00" required />
+    </label>
+  )}
+
+  {pickupTypes.length === 1 ? (
+    <input type="hidden" name="pickupType" value={pickupTypes[0]} />
+  ) : (
+    <fieldset class="bkw-field">
+      <legend class="bkw-label">{t['widget.pickup']}</legend>
+      <div class="bkw-pickups">
+        {pickupTypes.map((pickupType, index) => (
+          <label class="bkw-pickup">
+            <input type="radio" name="pickupType" value={pickupType} required checked={index === 0} />
+            <span class="bkw-pickup-body">
+              <span class="bkw-pickup-label">{pickupCopy[pickupType].label}</span>
+              <span class="bkw-pickup-hint">{pickupCopy[pickupType].hint}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  )}
+
+  {pricing && (
+    <p class="bkw-price" data-bookkit-price aria-live="polite">
+      <span class="bkw-price-label">{t['common.price']}</span>
+      <strong class="bkw-price-value" data-bookkit-price-value></strong>
+      <span class="bkw-price-note">{t['widget.priceNote']}</span>
+    </p>
+  )}
+
+  {/* In availability mode the button stays disabled until slots render, so a fast click can never
+      post an empty start; the script re-enables it from renderSlots. */}
+  <button type="submit" class="bkw-submit" disabled={usesAvailability}>{t['widget.submit']}</button>
+  <p class="bkw-error" data-bookkit-error role="alert" hidden>
+    <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><path d="M12 8v4" /><path d="M12 16h.01" /></svg>
+    <span data-bookkit-error-text></span>
+  </p>
+  <button type="button" class="bkw-retry" data-bookkit-retry hidden>{t['widget.retry']}</button>
 </form>
 
 <script>
-  interface AvailabilityDay {
-    date: string;
-    slots: Array<{ start: string; remaining: number }>;
+  import 'cally';
+
+  interface CalendarDateElement extends HTMLElement {
+    value: string;
+    focusedDate: string;
+    isDateDisallowed: (date: Date) => boolean;
   }
 
-  function showError(form: HTMLFormElement, cause: unknown, fallback: string): void {
+  interface AvailabilitySlot { start: string; remaining: number }
+  interface AvailabilityDay { date: string; status: string; closedReason?: string; slots: AvailabilitySlot[] }
+  interface PricingRule { maxPeople: number; pickup: string; priceCents: number }
+  interface WidgetData {
+    locale: string;
+    currency: string;
+    pricing: PricingRule[] | null;
+    i18n: Record<string, string>;
+  }
+
+  function readData(form: HTMLFormElement): WidgetData {
+    const island = form.querySelector<HTMLScriptElement>('[data-bookkit-data]');
+    return JSON.parse(island?.textContent ?? '{}') as WidgetData;
+  }
+
+  function fill(template: string, vars: Record<string, string | number>): string {
+    return template.replace(/\{(\w+)\}/g, (match, name: string) => (name in vars ? String(vars[name]) : match));
+  }
+
+  function showError(form: HTMLFormElement, data: WidgetData, cause: unknown, fallbackKey: string): void {
     const error = form.querySelector<HTMLElement>('[data-bookkit-error]');
     if (!error) return;
-    error.textContent = cause instanceof Error ? cause.message : fallback;
+    const text = error.querySelector<HTMLElement>('[data-bookkit-error-text]') ?? error;
+    text.textContent = cause instanceof Error && cause.message ? cause.message : data.i18n[fallbackKey] ?? '';
     error.hidden = false;
   }
 
-  async function loadStartOptions(form: HTMLFormElement): Promise<void> {
+  function showRetry(form: HTMLFormElement): void {
+    const retry = form.querySelector<HTMLElement>('[data-bookkit-retry]');
+    if (retry) retry.hidden = false;
+  }
+
+  function clearError(form: HTMLFormElement): void {
+    const error = form.querySelector<HTMLElement>('[data-bookkit-error]');
+    if (error) error.hidden = true;
+    const retry = form.querySelector<HTMLElement>('[data-bookkit-retry]');
+    if (retry) retry.hidden = true;
+  }
+
+  function updatePrice(form: HTMLFormElement, data: WidgetData): void {
+    const target = form.querySelector<HTMLElement>('[data-bookkit-price-value]');
+    if (!target || !data.pricing) return;
+    const people = Number(new FormData(form).get('people'));
+    const pickup = String(new FormData(form).get('pickupType') ?? 'default');
+    const rule = data.pricing
+      .filter((candidate) => candidate.pickup === pickup && people <= candidate.maxPeople)
+      .sort((a, b) => a.maxPeople - b.maxPeople)[0];
+    target.textContent = rule
+      ? new Intl.NumberFormat(data.locale, { style: 'currency', currency: data.currency }).format(rule.priceCents / 100)
+      : '';
+  }
+
+  function dateKey(date: Date): string {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  }
+
+  function calStatus(form: HTMLFormElement, text: string): void {
+    const status = form.querySelector<HTMLElement>('[data-bookkit-cal-status]');
+    if (status) status.textContent = text;
+  }
+
+  function renderSlots(form: HTMLFormElement, day: AvailabilityDay | undefined, data: WidgetData): void {
+    const wrap = form.querySelector<HTMLElement>('[data-bookkit-slots-wrap]');
+    const container = form.querySelector<HTMLElement>('[data-bookkit-slots]');
+    const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+    if (!wrap || !container) return;
+    container.replaceChildren();
+    const slots = day?.slots ?? [];
+    wrap.hidden = false;
+    if (slots.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'bkw-empty';
+      empty.textContent = data.i18n.noSlots ?? '';
+      container.append(empty);
+      if (submit) submit.disabled = true;
+      return;
+    }
+    for (const [index, slot] of slots.entries()) {
+      const label = document.createElement('label');
+      label.className = 'bkw-slot';
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = 'start';
+      input.value = slot.start;
+      input.required = true;
+      if (index === 0) input.checked = true;
+      const time = document.createElement('span');
+      time.className = 'bkw-slot-time';
+      time.textContent = slot.start.slice(11, 16);
+      label.append(input, time);
+      if (slot.remaining > 0 && slot.remaining <= 3) {
+        const hint = document.createElement('span');
+        hint.className = 'bkw-slot-hint';
+        hint.textContent = fill(data.i18n.limited ?? '', { n: slot.remaining });
+        label.append(hint);
+      }
+      container.append(label);
+    }
+    if (submit) submit.disabled = false;
+  }
+
+  // keepError leaves the current error message (e.g. a checkout failure the user still needs to
+  // read) in place while the slot list refreshes underneath it.
+  async function loadAvailability(form: HTMLFormElement, data: WidgetData, keepError = false): Promise<void> {
     const { availabilityEndpoint, availabilityFrom, availabilityTo } = form.dataset;
-    const select = form.querySelector<HTMLSelectElement>('[data-bookkit-start]');
-    if (!availabilityEndpoint || !availabilityFrom || !availabilityTo || !select) return;
-    const data = new FormData(form);
+    const calendar = form.querySelector<CalendarDateElement>('[data-bookkit-calendar]');
+    if (!availabilityEndpoint || !availabilityFrom || !availabilityTo || !calendar) return;
+    const formData = new FormData(form);
     const query = new URLSearchParams({
-      tour: String(data.get('tourSlug') ?? ''),
-      people: String(data.get('people') ?? ''),
+      tour: String(formData.get('tourSlug') ?? ''),
+      people: String(formData.get('people') ?? ''),
       from: availabilityFrom,
       to: availabilityTo,
     });
     const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
-    select.disabled = true;
+    calendar.setAttribute('aria-busy', 'true');
+    calStatus(form, data.i18n.loadingSlots ?? '');
+    if (!keepError) clearError(form);
     try {
       const response = await fetch(`${availabilityEndpoint}?${query}`, { cache: 'no-store' });
       const result = await response.json() as { days?: AvailabilityDay[]; error?: { message?: string } };
-      if (!response.ok || !result.days) throw new Error(result.error?.message ?? 'Could not load availability');
-      const slots = result.days.flatMap((day) => day.slots);
-      // Availability slot starts are local ISO strings with an explicit offset, so the
-      // value can be submitted to checkout verbatim and sliced directly for the label.
-      select.replaceChildren(...slots.map((slot) => new Option(`${slot.start.slice(0, 10)} at ${slot.start.slice(11, 16)}`, slot.start)));
-      if (slots.length === 0) {
-        const empty = new Option('No slots available', '');
-        empty.disabled = true;
-        empty.selected = true;
-        select.append(empty);
+      if (!response.ok || !result.days) throw new Error(result.error?.message ?? data.i18n.errorAvailability);
+      const days = new Map(result.days.map((day) => [day.date, day]));
+      // Reassigning the property re-renders the month grid, so sold-out/closed days grey out as
+      // soon as availability (or the party size, which changes it) arrives.
+      calendar.isDateDisallowed = (date) => (days.get(dateKey(date))?.slots.length ?? 0) === 0;
+      const openDays = result.days.filter((day) => day.slots.length > 0);
+      const current = days.get(calendar.value);
+      const selected = current && current.slots.length > 0 ? current : openDays[0];
+      if (selected) {
+        calendar.value = selected.date;
+        calendar.focusedDate = selected.date;
+        calStatus(form, '');
+        renderSlots(form, selected, data);
+      } else {
+        calendar.value = '';
+        calStatus(form, data.i18n.noDates ?? '');
+        renderSlots(form, undefined, data);
+        if (submit) submit.disabled = true;
       }
-      if (submit) submit.disabled = slots.length === 0;
+      calendar.onchange = () => {
+        clearError(form);
+        renderSlots(form, days.get(calendar.value), data);
+      };
     } catch (cause) {
-      showError(form, cause, 'Could not load availability');
+      calStatus(form, '');
+      showError(form, data, cause, 'errorAvailability');
+      showRetry(form);
+      if (submit) submit.disabled = true;
     } finally {
-      select.disabled = false;
+      calendar.removeAttribute('aria-busy');
     }
   }
 
   for (const form of document.querySelectorAll<HTMLFormElement>('[data-bookkit-checkout]')) {
-    form.querySelector<HTMLSelectElement>('select[name="people"]')?.addEventListener('change', () => void loadStartOptions(form));
-    void loadStartOptions(form);
+    const data = readData(form);
+    form.querySelector<HTMLSelectElement>('select[name="people"]')?.addEventListener('change', () => {
+      updatePrice(form, data);
+      void loadAvailability(form, data);
+    });
+    for (const pickup of form.querySelectorAll<HTMLInputElement>('input[name="pickupType"]')) {
+      pickup.addEventListener('change', () => updatePrice(form, data));
+    }
+    form.querySelector<HTMLButtonElement>('[data-bookkit-retry]')?.addEventListener('click', () => {
+      void loadAvailability(form, data);
+    });
+    updatePrice(form, data);
+    void loadAvailability(form, data);
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      const data = new FormData(form);
+      const formData = new FormData(form);
       const payload = {
-        tourSlug: String(data.get('tourSlug') ?? ''),
-        start: String(data.get('start') ?? ''),
-        people: Number(data.get('people')),
-        pickupType: String(data.get('pickupType') ?? ''),
-        locale: String(data.get('locale') ?? ''),
+        tourSlug: String(formData.get('tourSlug') ?? ''),
+        start: String(formData.get('start') ?? ''),
+        people: Number(formData.get('people')),
+        pickupType: String(formData.get('pickupType') ?? ''),
+        locale: String(formData.get('locale') ?? ''),
       };
+      const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+      const idleLabel = submit?.textContent ?? '';
       try {
         // data-endpoint is always rendered by the component (checkoutEndpoint always has a
         // resolved default), so a missing value here means the markup was hand-edited or the
@@ -141,19 +372,29 @@ const usesAvailability = availabilityFrom !== undefined && availabilityTo !== un
         // silently 404 under a routePrefix, so surface the error instead of guessing a URL.
         const endpoint = form.dataset.endpoint;
         if (!endpoint) throw new Error('Booking form is missing its endpoint');
+        clearError(form);
+        if (submit) {
+          submit.disabled = true;
+          submit.textContent = data.i18n.submitting ?? idleLabel;
+        }
         const response = await fetch(endpoint, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(payload),
         });
         const result = await response.json() as { checkoutUrl?: string; error?: { message?: string } };
-        if (!response.ok || !result.checkoutUrl) throw new Error(result.error?.message ?? 'Checkout failed');
+        if (!response.ok || !result.checkoutUrl) throw new Error(result.error?.message ?? data.i18n.errorCheckout);
         window.location.assign(result.checkoutUrl);
       } catch (cause) {
-        showError(form, cause, 'Checkout failed');
-        // A checkout rejection usually means the slot list went stale (e.g. it just filled),
-        // so reload the options rather than leaving the dead slot selectable.
-        void loadStartOptions(form);
+        if (submit) {
+          submit.disabled = false;
+          submit.textContent = idleLabel;
+        }
+        showError(form, data, cause, 'errorCheckout');
+        // A checkout rejection usually means the slot list went stale (e.g. it just filled), so
+        // reload the options rather than leaving the dead slot selectable — keeping the error on
+        // screen, since the reload's own clearError would otherwise wipe it instantly.
+        void loadAvailability(form, data, true);
       }
     });
   }

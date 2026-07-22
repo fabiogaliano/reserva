@@ -1,22 +1,42 @@
 ---
 import routeConfig from 'virtual:bookkit/config';
 import { requireEnabledRoutePath } from '../routes-manifest';
+import { defaultMessages, type BookkitMessages } from '../ui/messages';
+import '../ui/components.css';
+
+// Embeddable fragment for setting day-capacity overrides from a consumer's own admin page. The
+// full dashboard (tables, filters, operator actions) lives on the injected /booking/admin route —
+// this fragment links there and only duplicates the quick override form.
 
 interface Props {
   endpoint?: string;
+  messages?: Partial<BookkitMessages>;
 }
 
-const { endpoint } = Astro.props;
+const { endpoint, messages: messageOverrides = {} } = Astro.props;
 const action = endpoint === undefined ? requireEnabledRoutePath(routeConfig, 'adminPage') : endpoint;
+const t: BookkitMessages = { ...defaultMessages, ...messageOverrides };
 ---
 
-<section aria-labelledby="bookkit-admin-title">
-  <h2 id="bookkit-admin-title">Booking administration</h2>
+<section class="bk-embed bk-embed--admin" aria-labelledby="bookkit-admin-title">
+  <h2 id="bookkit-admin-title" class="bke-title">{t['admin.overrideTitle']}</h2>
+  <p class="bke-hint">{t['admin.overrideHint']} <a href={action}>{t['admin.title']} →</a></p>
   <form method="post" action={action}>
-    <label>Date <input name="date" type="date" required /></label>
-    <label>Capacity <input name="capacity" type="number" min="0" /></label>
-    <label>Reason <input name="reason" /></label>
-    <button type="submit" name="action" value="set">Save override</button>
-    <button type="submit" name="action" value="clear">Clear override</button>
+    <label class="bke-field">
+      <span class="bke-label">{t['common.date']}</span>
+      <input class="bke-input" name="date" type="date" required />
+    </label>
+    <label class="bke-field">
+      <span class="bke-label">{t['admin.capacity']}</span>
+      <input class="bke-input" name="capacity" type="number" min="0" />
+    </label>
+    <label class="bke-field">
+      <span class="bke-label">{t['admin.reason']}</span>
+      <input class="bke-input" name="reason" />
+    </label>
+    <div class="bke-actions">
+      <button type="submit" class="bke-submit" name="action" value="set">{t['admin.save']}</button>
+      <button type="submit" class="bke-submit bke-submit--secondary" name="action" value="clear">{t['admin.clear']}</button>
+    </div>
   </form>
 </section>

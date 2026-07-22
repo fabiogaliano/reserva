@@ -73,6 +73,11 @@ export interface ClientConfig {
   legal: {
     termsUrl: string;
   };
+  ui?: {
+    // Per-locale overrides for bookkit's rendered copy, merged over the English defaults in
+    // src/ui/messages.ts. Keys are locale tags ('pt', 'fr', …); values are partial message maps.
+    messages?: Record<string, Record<string, string>>;
+  };
 }
 
 export const stripeSupportedLocales = new Set([
@@ -141,6 +146,9 @@ export const clientConfigSchema = z.object({
   }),
   payments: z.object({ methods: z.array(z.enum(['card', 'mb_way'])).min(1) }),
   legal: z.object({ termsUrl: z.string().url() }),
+  ui: z.object({
+    messages: z.record(z.string(), z.record(z.string(), z.string())).optional(),
+  }).optional(),
 });
 
 function addIssue(ctx: { addIssue: (issue: { code: 'custom'; path: (string | number)[]; message: string }) => void }, path: (string | number)[], message: string): void {

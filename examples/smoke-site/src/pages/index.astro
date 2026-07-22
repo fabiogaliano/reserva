@@ -1,5 +1,7 @@
 ---
 import BookingWidget from '../../../../src/components/BookingWidget.astro';
+import ManageBooking from '../../../../src/components/ManageBooking.astro';
+import AdminDashboard from '../../../../src/components/AdminDashboard.astro';
 
 const title = 'Bookkit local demo';
 // The demo runtime is configured with timezone UTC, so UTC date keys match business dates.
@@ -43,6 +45,12 @@ const availabilityUrl = `/api/booking/availability?tour=oldTown&people=2&from=${
       </section>
 
       <section>
+        <h2>Embeddable fragments</h2>
+        <ManageBooking />
+        <AdminDashboard />
+      </section>
+
+      <section>
         <h2>Local credentials</h2>
         <p>The admin bypass is enabled only in this demo runtime. The feed bearer token is <code>local-tourflow-secret</code>.</p>
       </section>
@@ -60,9 +68,5 @@ const availabilityUrl = `/api/booking/availability?tour=oldTown&people=2&from=${
   nav { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
   a, button { border-radius: 8px; }
   a { display: inline-block; padding: 10px 14px; background: #1769e0; color: white; font-weight: 650; text-decoration: none; }
-  :global([data-bookkit-checkout]) { display: grid; gap: 16px; }
-  :global([data-bookkit-checkout] label) { display: grid; gap: 6px; font-weight: 650; }
-  :global([data-bookkit-checkout] select), :global([data-bookkit-checkout] input), :global([data-bookkit-checkout] button) { min-height: 44px; padding: 9px 11px; border: 1px solid #aab4be; border-radius: 8px; font: inherit; }
-  :global([data-bookkit-checkout] button) { border-color: #1769e0; background: #1769e0; color: white; cursor: pointer; font-weight: 700; }
   code { padding: 2px 5px; border-radius: 4px; background: #edf1f5; }
 </style>

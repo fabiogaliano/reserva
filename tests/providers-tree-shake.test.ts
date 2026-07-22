@@ -15,8 +15,11 @@ const providerSubpaths = Object.entries(packageJson.exports as Record<string, st
   .filter(([specifier]) => specifier.startsWith('./providers/'));
 
 describe('providers barrel tree-shake guardrail', () => {
-  it('declares sideEffects: false so bundlers may drop unused provider exports', () => {
-    expect(packageJson.sideEffects).toBe(false);
+  it('declares only CSS as side-effectful so bundlers may drop unused provider exports', () => {
+    // The array form must never grow a JS/TS pattern: listing any script file would revoke the
+    // bundler's licence to drop unused provider code. CSS is the one legitimate side effect
+    // (src/ui/components.css is imported bare by the shipped Astro components).
+    expect(packageJson.sideEffects).toEqual(['**/*.css']);
   });
 
   it('has at least one narrow provider subpath to guard', () => {

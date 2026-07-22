@@ -1,0 +1,28 @@
+import { themeCss } from './theme';
+import { manageEnhancerJs } from './manage-enhancer';
+import { adminEnhancerJs } from './admin-enhancer';
+import { settingsEnhancerJs } from './settings-enhancer';
+import { themeToggleJs } from './theme-toggle';
+import { callyBundleJs } from './vendor/cally-bundle';
+
+// Content-derived version in the query string so pages always reference the exact asset build they
+// were rendered against: any change to the CSS/JS produces a new URL, which lets the asset routes
+// serve long-lived immutable cache headers without ever showing a browser stale styles.
+function contentVersion(source: string): string {
+  let hash = 5381;
+  for (let index = 0; index < source.length; index += 1) {
+    hash = ((hash << 5) + hash + source.charCodeAt(index)) >>> 0;
+  }
+  return hash.toString(36);
+}
+
+export const themeCssVersion = contentVersion(themeCss);
+export const bundleJsVersion = contentVersion(callyBundleJs + manageEnhancerJs + adminEnhancerJs + settingsEnhancerJs + themeToggleJs);
+
+export function cssAssetHref(assetsCssPath: string): string {
+  return `${assetsCssPath}?v=${themeCssVersion}`;
+}
+
+export function jsAssetHref(assetsJsPath: string): string {
+  return `${assetsJsPath}?v=${bundleJsVersion}`;
+}

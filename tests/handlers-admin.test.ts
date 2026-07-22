@@ -11,7 +11,7 @@ function adminGetRequest(): Request {
   return new Request('https://example.test/api/booking/admin');
 }
 
-function adminPostRequest(fields: Record<string, string>): Request {
+function adminPostRequest(fields: Record<string, string> | Array<[string, string]>): Request {
   return new Request('https://example.test/api/booking/admin', {
     method: 'POST',
     body: new URLSearchParams(fields),
@@ -87,7 +87,7 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
 });
 
 describe('POST /admin day overrides (spec §11)', () => {
-  it('action=set calls upsertDayOverride with a trimmed reason and redirects (303) back to the request URL', async () => {
+  it('action=set calls upsertDayOverride with a trimmed reason and redirects (303) back with a saved confirmation', async () => {
     const repo = fakeRepository();
     const calls: Array<[string, number, string | null]> = [];
     repo.upsertDayOverride = async (date, capacity, reason) => { calls.push([date, capacity, reason]); };
@@ -96,8 +96,44 @@ describe('POST /admin day overrides (spec §11)', () => {
     const request = adminPostRequest({ date: '2026-06-20', capacity: '3', reason: '  closed for maintenance  ', action: 'set' });
     const response = await handleAdminPost(request, context);
     expect(response.status).toBe(303);
-    expect(response.headers.get('location')).toBe(request.url);
+    expect(response.headers.get('location')).toBe(`${request.url}?saved=day&date=2026-06-20#bk-override`);
     expect(calls).toEqual([['2026-06-20', 3, 'closed for maintenance']]);
+  });
+
+  it('action=close writes capacity 0 to every submitted date (repeated date fields)', async () => {
+    const repo = fakeRepository();
+    const calls: Array<[string, number, string | null]> = [];
+    repo.upsertDayOverride = async (date, capacity, reason) => { calls.push([date, capacity, reason]); };
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers() });
+
+    const response = await handleAdminPost(adminPostRequest([
+      ['date', '2026-06-22'], ['date', '2026-06-20'], ['date', '2026-06-20'], ['reason', 'holiday'], ['action', 'close'],
+    ]), context);
+    expect(response.status).toBe(303);
+    // Deduplicated, sorted, and the redirect pins ?date= to the earliest edited day.
+    expect(new URL(response.headers.get('location') ?? '').searchParams.get('date')).toBe('2026-06-20');
+    expect(calls).toEqual([['2026-06-20', 0, 'holiday'], ['2026-06-22', 0, 'holiday']]);
+  });
+
+  it('toDate expands date into a contiguous range for set/close/clear', async () => {
+    const repo = fakeRepository();
+    const upserts: Array<[string, number]> = [];
+    const deletes: string[] = [];
+    repo.upsertDayOverride = async (date, capacity) => { upserts.push([date, capacity]); };
+    repo.deleteDayOverride = async (date) => { deletes.push(date); };
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers() });
+
+    await handleAdminPost(adminPostRequest({ date: '2026-06-20', toDate: '2026-06-22', capacity: '1', action: 'set' }), context);
+    expect(upserts).toEqual([['2026-06-20', 1], ['2026-06-21', 1], ['2026-06-22', 1]]);
+    await handleAdminPost(adminPostRequest({ date: '2026-06-20', toDate: '2026-06-21', action: 'clear' }), context);
+    expect(deletes).toEqual(['2026-06-20', '2026-06-21']);
+  });
+
+  it('rejects toDate before date with 400 validation_failed', async () => {
+    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, verifyAccess: async () => true, providers: providers() });
+    const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', toDate: '2026-06-19', capacity: '1', action: 'set' }), context);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed' } });
   });
 
   it('action=set with a blank reason passes null', async () => {
@@ -134,5 +170,97 @@ describe('POST /admin day overrides (spec §11)', () => {
     const response = await handleAdminPost(adminPostRequest({ date: 'not-a-date', action: 'clear' }), context);
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed' } });
+  });
+});
+
+describe('admin settings (?view=settings + settings-save/settings-reset actions)', () => {
+  function settingsGetRequest(): Request {
+    return new Request('https://example.test/api/booking/admin?view=settings');
+  }
+
+  it('renders the settings page with editable fields and marks overridden settings', async () => {
+    const repo = fakeRepository();
+    repo.settings.set('booking.minNoticeHours', '2');
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers() });
+    const response = await handleAdminGet(settingsGetRequest(), context);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    const body = await response.text();
+    expect(body).toContain('name="booking.minNoticeHours"');
+    expect(body).toContain('name="payments.methods"');
+    expect(body).toContain('Modified');
+    expect(body).toContain('Default: 24');
+    // The overridden field offers a per-field reset action.
+    expect(body).toContain('value="settings-reset:booking.minNoticeHours"');
+    // The deploy-time card lists file-only values.
+    expect(body).toContain(config.business.timezone);
+  });
+
+  it('shows a saved confirmation after the post-save redirect and resets a single field', async () => {
+    const repo = fakeRepository();
+    repo.settings.set('booking.minNoticeHours', '2');
+    repo.settings.set('booking.maxHorizonDays', '120');
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers() });
+
+    const reset = await handleAdminPost(adminPostRequest({ action: 'settings-reset:booking.minNoticeHours' }), context);
+    expect(reset.status).toBe(303);
+    expect(reset.headers.get('location')).toContain('saved=1');
+    expect(repo.settings.has('booking.minNoticeHours')).toBe(false);
+    // Only the named field resets; the rest of the section keeps its overrides.
+    expect(repo.settings.has('booking.maxHorizonDays')).toBe(true);
+
+    const confirmation = await handleAdminGet(new Request('https://example.test/api/booking/admin?view=settings&saved=1'), context);
+    expect(await confirmation.text()).toContain('role="status"');
+  });
+
+  it('settings-save stores only values that differ from the file config and deletes ones equal to it', async () => {
+    const repo = fakeRepository();
+    // Pre-existing override that the save sets back to the config value (24) — must be deleted.
+    repo.settings.set('booking.minNoticeHours', '2');
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers() });
+    const request = adminPostRequest({
+      action: 'settings-save',
+      section: 'policy',
+      'booking.minNoticeHours': '24',
+      'booking.maxHorizonDays': '90',
+      'booking.holdMinutes': String(config.booking.holdMinutes),
+      'booking.cancelCutoffHours': String(config.booking.cancelCutoffHours),
+      'booking.reschedule.cutoffHours': String(config.booking.reschedule.cutoffHours),
+      'booking.limitedThreshold': String(config.booking.limitedThreshold),
+      'booking.maxHoldsPerIp': '',
+      // reschedule.enabled checkbox absent => false
+    });
+    const response = await handleAdminPost(request, context);
+    expect(response.status).toBe(303);
+    expect(repo.settings.has('booking.minNoticeHours')).toBe(false);
+    expect(repo.settings.get('booking.maxHorizonDays')).toBe('90');
+    // Fixture config has reschedule.enabled: true; the absent checkbox stores an explicit false.
+    expect(repo.settings.get('booking.reschedule.enabled')).toBe('false');
+    expect(repo.settings.has('booking.holdMinutes')).toBe(false);
+  });
+
+  it('settings-reset deletes every key in the section', async () => {
+    const repo = fakeRepository();
+    repo.settings.set('booking.minNoticeHours', '2');
+    repo.settings.set('booking.maxHorizonDays', '120');
+    repo.settings.set('legal.termsUrl', '"https://elsewhere.test/terms"');
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers() });
+    const response = await handleAdminPost(adminPostRequest({ action: 'settings-reset', section: 'policy' }), context);
+    expect(response.status).toBe(303);
+    expect(repo.settings.has('booking.minNoticeHours')).toBe(false);
+    expect(repo.settings.has('booking.maxHorizonDays')).toBe(false);
+    // Other sections are untouched.
+    expect(repo.settings.has('legal.termsUrl')).toBe(true);
+  });
+
+  it('rejects invalid values and unknown sections with 400 validation_failed', async () => {
+    const repo = fakeRepository();
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers() });
+    const bad = await handleAdminPost(adminPostRequest({ action: 'settings-save', section: 'legal', 'legal.termsUrl': 'not a url' }), context);
+    expect(bad.status).toBe(400);
+    await expect(bad.json()).resolves.toMatchObject({ error: { code: 'validation_failed' } });
+    expect(repo.settings.size).toBe(0);
+    const unknown = await handleAdminPost(adminPostRequest({ action: 'settings-save', section: 'nope' }), context);
+    expect(unknown.status).toBe(400);
   });
 });

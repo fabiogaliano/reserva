@@ -10,6 +10,7 @@ import type {
 import { noopAnalyticsSink } from './core/events';
 import { createBookingRepository, type BookingRepository } from './repo';
 import { resolvedRoutePaths, type BookkitResolvedRouteConfig } from './routes-manifest';
+import type { ThemePreference } from './ui/theme';
 
 export interface BookkitCache {
   match(request: any): Promise<Response | undefined | null>;
@@ -34,6 +35,10 @@ export interface BookkitLogger {
 
 export interface BookkitContext {
   config: ClientConfig;
+  // The pristine file config, set by createRouteContext when DB-backed setting overrides were
+  // merged into `config` (core/settings.ts). The admin settings page reads it to show what each
+  // value falls back to; absent when no overrides exist.
+  baseConfig?: ClientConfig;
   db: D1Database;
   repo: BookingRepository;
   providers: BookkitProviders;
@@ -52,6 +57,9 @@ export interface BookkitContext {
   // src/routes/route-context.ts), since a user-owned runtime module has no way to know the
   // integration's `routePrefix`/`routes` options itself.
   routeConfig: BookkitResolvedRouteConfig;
+  // The viewer's forced light/dark choice, parsed from the bk_theme cookie by createRouteContext so
+  // every server-rendered page can set <html data-theme> up front. Absent = follow the OS.
+  viewerTheme?: ThemePreference;
 }
 
 // The unprefixed, all-groups-enabled default: today's behavior for any context built without an

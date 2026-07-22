@@ -1,21 +1,26 @@
 ---
 import routeConfig from 'virtual:bookkit/config';
+import { defaultMessages, type BookkitMessages } from '../ui/messages';
+import '../ui/components.css';
 
 interface Props {
   token?: string;
   endpoint?: string;
+  messages?: Partial<BookkitMessages>;
 }
 
-const { token = '', endpoint = routeConfig.paths.managePage } = Astro.props;
+const { token = '', endpoint = routeConfig.paths.managePage, messages: messageOverrides = {} } = Astro.props;
+const t: BookkitMessages = { ...defaultMessages, ...messageOverrides };
 ---
 
-<section aria-labelledby="bookkit-manage-title">
-  <h2 id="bookkit-manage-title">Manage your booking</h2>
+<section class="bk-embed" aria-labelledby="bookkit-manage-title">
+  <h2 id="bookkit-manage-title" class="bke-title">{t['manage.entryTitle']}</h2>
+  <p class="bke-hint">{t['manage.entryHint']}</p>
   <form method="get" action={endpoint}>
-    <label>
-      Booking token
-      <input name="token" value={token} autocomplete="off" required />
+    <label class="bke-field">
+      <span class="bke-label">{t['manage.entryToken']}</span>
+      <input class="bke-input" name="token" value={token} autocomplete="off" required />
     </label>
-    <button type="submit">Open booking</button>
+    <button type="submit" class="bke-submit">{t['manage.entryOpen']}</button>
   </form>
 </section>
