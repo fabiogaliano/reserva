@@ -1,4 +1,5 @@
-import type { ClientConfig, PaymentMethod } from './config';
+import { ZodError } from 'astro/zod';
+import { validateConfig, type ClientConfig, type PaymentMethod } from './config';
 
 // Operator-editable settings: the runtime-safe scalar dials of ClientConfig, stored as JSON in the
 // `settings` table and merged over the file config per request (see routes/route-context.ts).
@@ -17,7 +18,10 @@ export type SettingSection = 'policy' | 'contact' | 'payments' | 'legal';
 export type SettingKind =
   // `optional: true` allows clearing the field: an empty submission stores an explicit null,
   // which merges as `undefined` (e.g. maxHoldsPerIp = unlimited, no WhatsApp number).
-  | { type: 'int'; min: number; optional?: boolean }
+  // `max` is optional because most int settings have no validateConfig-side upper bound; set it
+  // wherever one exists (see holdMinutes below) so the form/parse/decode layers fail as fast as
+  // the merge-then-validate backstop would anyway.
+  | { type: 'int'; min: number; max?: number; optional?: boolean }
   | { type: 'number'; min: number }
   | { type: 'boolean' }
   | { type: 'text'; optional?: boolean }
@@ -80,7 +84,10 @@ export const settingDefinitions: readonly SettingDefinition[] = [
   {
     key: 'booking.holdMinutes', section: 'policy', labelKey: 'setting.holdMinutes',
     groupKey: 'settingGroup.holds',
-    kind: { type: 'int', min: 0 },
+    // Mirrors validateConfig's holdMinutes bound (core/config.ts): below 35, the D1 hold can
+    // expire while the Stripe session is still payable (oversell); above 1440, expires_at can
+    // exceed Stripe's 24h checkout-session cap.
+    kind: { type: 'int', min: 35, max: 1440 },
     get: (config) => config.booking.holdMinutes,
     set: (config, value) => { config.booking.holdMinutes = value as number; },
   },
@@ -161,7 +168,8 @@ function decodeStoredValue(definition: SettingDefinition, raw: unknown): Setting
   switch (kind.type) {
     case 'int':
       if (raw === null) return kind.optional ? null : undefined;
-      return typeof raw === 'number' && Number.isInteger(raw) && raw >= kind.min ? raw : undefined;
+      if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < kind.min) return undefined;
+      return kind.max === undefined || raw <= kind.max ? raw : undefined;
     case 'number':
       return typeof raw === 'number' && Number.isFinite(raw) && raw >= kind.min ? raw : undefined;
     case 'boolean':
@@ -184,7 +192,15 @@ function decodeStoredValue(definition: SettingDefinition, raw: unknown): Setting
 // Merges stored overrides (key -> JSON string, as returned by repo.listSettings) over the file
 // config. Clones only the branches settings can touch — a deep clone is off the table because
 // tours carry the occupancyFor function.
-export function applySettingOverrides(config: ClientConfig, rows: Record<string, string>): ClientConfig {
+// `onInvalidRow` is called for a row that fails to decode (bad JSON or fails its SettingKind
+// bounds) — optional because the save path already validates freshly-submitted values up front
+// and has nothing useful to report, while the load path (loadMergedConfig below) uses it to
+// attribute a warning to the row it's about to silently drop.
+export function applySettingOverrides(
+  config: ClientConfig,
+  rows: Record<string, string>,
+  onInvalidRow?: (key: string, reason: string) => void,
+): ClientConfig {
   const keys = Object.keys(rows);
   if (keys.length === 0) return config;
   const next: ClientConfig = {
@@ -201,12 +217,86 @@ export function applySettingOverrides(config: ClientConfig, rows: Record<string,
     try {
       raw = JSON.parse(stored);
     } catch {
+      onInvalidRow?.(definition.key, 'stored value is not valid JSON');
       continue;
     }
     const value = decodeStoredValue(definition, raw);
     if (value !== undefined) definition.set(next, value);
+    else onInvalidRow?.(definition.key, 'stored value fails its current bounds');
   }
   return next;
+}
+
+function zodIssues(error: unknown): Array<{ path: (string | number)[]; message: string }> {
+  if (!(error instanceof ZodError)) throw error;
+  return error.issues.map((issue) => ({ path: issue.path as (string | number)[], message: issue.message }));
+}
+
+export class SettingsMergeError extends Error {
+  readonly issues: Array<{ path: (string | number)[]; message: string }>;
+
+  constructor(issues: Array<{ path: (string | number)[]; message: string }>) {
+    super(issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; '));
+    this.name = 'SettingsMergeError';
+    this.issues = issues;
+  }
+}
+
+// Save-path backstop (BK-CONFIG-001): a SettingDefinition's kind bounds a field on its own, but
+// only validateConfig knows the cross-field and tour-level rules (e.g. locales.default must be in
+// locales.supported), so the section being saved is merged over every OTHER currently stored
+// override plus the file config and re-validated as a whole before anything is written. Throws
+// SettingsMergeError (same {path, message} shape as validateConfig's own issues) so the handler
+// can reject the save with field-attributed errors instead of silently corrupting the config.
+export function mergeAndValidateSettings(config: ClientConfig, rows: Record<string, string>): ClientConfig {
+  const merged = applySettingOverrides(config, rows);
+  try {
+    return validateConfig(merged);
+  } catch (error) {
+    throw new SettingsMergeError(zodIssues(error));
+  }
+}
+
+export interface SettingsLoadWarning {
+  key: string;
+  reason: string;
+}
+
+// Load-path counterpart of mergeAndValidateSettings (routes/route-context.ts, on every request):
+// stored rows are never re-checked against today's rules once written, so a row saved before a
+// SettingKind bound was tightened — or, in principle, one that individually passes its kind but
+// breaks a cross-field validateConfig rule the way locales.default/supported can — must not be
+// allowed to serve an invalid config or fail every request. Offending rows are dropped and
+// reported via `onWarn` instead: applySettingOverrides already drops rows that fail their own
+// kind; this additionally re-validates the merged result and, if that still fails, isolates and
+// drops whichever stored keys map to the failing paths (falling back to the pristine file config
+// if a failure can't be attributed to a specific key) and retries.
+export function loadMergedConfig(
+  config: ClientConfig,
+  rows: Record<string, string>,
+  onWarn?: (warning: SettingsLoadWarning) => void,
+): ClientConfig {
+  if (Object.keys(rows).length === 0) return config;
+  let candidateRows = rows;
+  for (let guard = 0; guard <= Object.keys(rows).length; guard += 1) {
+    const merged = applySettingOverrides(config, candidateRows, (key, reason) => onWarn?.({ key, reason }));
+    try {
+      return validateConfig(merged);
+    } catch (error) {
+      const issues = zodIssues(error);
+      const offendingKeys = [...new Set(issues.map((issue) => issue.path.join('.')))]
+        .filter((key) => candidateRows[key] !== undefined);
+      if (offendingKeys.length === 0) {
+        onWarn?.({ key: '*', reason: `merged config failed validation: ${issues.map((issue) => issue.message).join('; ')}` });
+        return config;
+      }
+      for (const key of offendingKeys) {
+        onWarn?.({ key, reason: 'stored value produces an invalid merged config (validateConfig rejected the combination)' });
+      }
+      candidateRows = Object.fromEntries(Object.entries(candidateRows).filter(([key]) => !offendingKeys.includes(key)));
+    }
+  }
+  return config;
 }
 
 export class SettingParseError extends Error {}
@@ -236,8 +326,10 @@ export function parseSettingForm(definition: SettingDefinition, form: FormLike):
   switch (kind.type) {
     case 'int': {
       const value = Number(text);
-      if (!Number.isInteger(value) || value < kind.min) {
-        throw new SettingParseError(`${definition.key}: must be an integer of at least ${kind.min}`);
+      const withinMax = kind.max === undefined || value <= kind.max;
+      if (!Number.isInteger(value) || value < kind.min || !withinMax) {
+        const range = kind.max === undefined ? `of at least ${kind.min}` : `between ${kind.min} and ${kind.max}`;
+        throw new SettingParseError(`${definition.key}: must be an integer ${range}`);
       }
       return value;
     }

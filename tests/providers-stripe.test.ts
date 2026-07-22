@@ -57,6 +57,20 @@ describe('StripeProvider', () => {
     }));
   });
 
+  // BK-CONFIG-001: expiresInMinutes = max(30, holdMinutes - 5), so holdMinutes at its validateConfig
+  // upper bound (1440) must still leave expires_at strictly below Stripe's 24h-from-creation cap —
+  // the 5-minute margin is the whole point of capping holdMinutes at 1440 rather than 1445.
+  it('keeps expires_at strictly below now + 24h when holdMinutes is at its 1440 upper bound', async () => {
+    const { client, sessions } = makeClient();
+    const now = new Date('2026-01-01T00:00:00.000Z');
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client, now: () => now });
+    const nowSec = Math.floor(now.getTime() / 1000);
+    await provider.createCheckout(booking(), { ...config, booking: { ...config.booking, holdMinutes: 1440 } });
+    const expiresAt = sessions.create.mock.calls[0]?.[0].expires_at;
+    expect(expiresAt).toBe(nowSec + 1435 * 60);
+    expect(expiresAt).toBeLessThan(nowSec + 24 * 60 * 60);
+  });
+
   it('uses the resolved confirmation path for its default success URL and preserves the unprefixed fallback', async () => {
     const prefixed = makeClient();
     const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client: prefixed.client });

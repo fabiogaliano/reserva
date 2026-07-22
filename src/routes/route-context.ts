@@ -1,7 +1,7 @@
 import runtime from 'virtual:bookkit/runtime';
 import routeConfig from 'virtual:bookkit/config';
 import type { BookkitContext } from '../context';
-import { applySettingOverrides } from '../core/settings';
+import { loadMergedConfig } from '../core/settings';
 import { readThemePreference } from '../ui/theme';
 import type { BookkitRuntimeRequest } from '../runtime-context';
 
@@ -21,5 +21,12 @@ export async function createRouteContext(input: BookkitRuntimeRequest): Promise<
   // `baseConfig` keeps the pristine file values for the settings page's "config default" hints.
   const overrides = await context.repo.listSettings();
   if (Object.keys(overrides).length === 0) return { ...context, routeConfig, viewerTheme };
-  return { ...context, routeConfig, viewerTheme, baseConfig: context.config, config: applySettingOverrides(context.config, overrides) };
+  // Stored rows are never re-checked against today's rules once written (BK-CONFIG-001): a row
+  // saved before a bound tightened must degrade to the file config for this request, not serve an
+  // invalid config or take the whole site down — loadMergedConfig drops offending rows and reports
+  // them here so they show up in logs instead of silently persisting.
+  const merged = loadMergedConfig(context.config, overrides, (warning) => {
+    context.logger.warn?.('bookkit.settings.invalid_override', { key: warning.key, reason: warning.reason });
+  });
+  return { ...context, routeConfig, viewerTheme, baseConfig: context.config, config: merged };
 }

@@ -1,6 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createBookkitContext } from '../src/context';
+import type { ClientConfig } from '../src/core/config';
 import { handleAdminGet, handleAdminPost } from '../src/handlers';
 import { booking, config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
@@ -196,6 +197,18 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     expect(body).toContain(config.business.timezone);
   });
 
+  // BK-CONFIG-001: the holdMinutes kind declares max: 1440 (core/settings.ts); the rendered input
+  // must carry it as an HTML max= constraint, mirroring min=, so a value like 1441 is rejected
+  // client-side too — not just at parseSettingForm/mergeAndValidateSettings.
+  it('renders min and max attributes on the holdMinutes number input', async () => {
+    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, verifyAccess: async () => true, providers: providers() });
+    const response = await handleAdminGet(settingsGetRequest(), context);
+    const body = await response.text();
+    const holdMinutesInput = /<input[^>]*name="booking\.holdMinutes"[^>]*>/.exec(body)?.[0] ?? '';
+    expect(holdMinutesInput).toContain('min="35"');
+    expect(holdMinutesInput).toContain('max="1440"');
+  });
+
   it('shows a saved confirmation after the post-save redirect and resets a single field', async () => {
     const repo = fakeRepository();
     repo.settings.set('booking.minNoticeHours', '2');
@@ -262,5 +275,80 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     expect(repo.settings.size).toBe(0);
     const unknown = await handleAdminPost(adminPostRequest({ action: 'settings-save', section: 'nope' }), context);
     expect(unknown.status).toBe(400);
+  });
+
+  // BK-CONFIG-001: holdMinutes outside [35, 1440] must be unsaveable, not just clamped elsewhere
+  // (a value below 35 lets the Stripe hold outlive the D1 hold; above 1440 breaks checkout entirely).
+  function policyFields(overrides: Record<string, string> = {}): Record<string, string> {
+    return {
+      action: 'settings-save',
+      section: 'policy',
+      'booking.minNoticeHours': String(config.booking.minNoticeHours),
+      'booking.maxHorizonDays': String(config.booking.maxHorizonDays),
+      'booking.holdMinutes': String(config.booking.holdMinutes),
+      'booking.cancelCutoffHours': String(config.booking.cancelCutoffHours),
+      'booking.reschedule.cutoffHours': String(config.booking.reschedule.cutoffHours),
+      'booking.limitedThreshold': String(config.booking.limitedThreshold),
+      'booking.maxHoldsPerIp': '',
+      ...overrides,
+    };
+  }
+
+  it('rejects settings-save with holdMinutes=0 (400, no row written) and accepts a valid holdMinutes', async () => {
+    const repo = fakeRepository();
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers() });
+
+    const bad = await handleAdminPost(adminPostRequest(policyFields({ 'booking.holdMinutes': '0' })), context);
+    expect(bad.status).toBe(400);
+    // The message names the offending field (parseSettingForm's `${key}: ...` shape) — see the
+    // field-attribution finding below for the mergeAndValidateSettings/SettingsMergeError case.
+    await expect(bad.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('booking.holdMinutes') } });
+    expect(repo.settings.size).toBe(0);
+
+    const good = await handleAdminPost(adminPostRequest(policyFields({ 'booking.holdMinutes': '40' })), context);
+    expect(good.status).toBe(303);
+    expect(repo.settings.get('booking.holdMinutes')).toBe('40');
+  });
+
+  // [P2 finding 1] handleAdminPost has no "re-render the page with field errors" convention for
+  // ANY admin action (day overrides, capacity defaults, settings) — every action uniformly throws
+  // HttpError and the client gets a JSON error body, never an HTML re-render. That's the
+  // established convention this repo uses, so mapping SettingsMergeError to HttpError(400, ...) is
+  // consistent with it; the bar to clear is that the message names which field(s) failed.
+  // SettingsMergeError's constructor already formats `path.join('.'): message` per issue, so the
+  // HttpError message an operator sees is field-attributed. This exercises that via a genuinely
+  // cross-field validateConfig rejection (see core-settings.test.ts for why locales is the only
+  // reachable one), reaching mergeAndValidateSettings — not just a single field's SettingKind bound.
+  it('field-attributes a mergeAndValidateSettings cross-field rejection in the HttpError message', async () => {
+    const repo = fakeRepository();
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers() });
+    // createBookkitContext runs `config` through validateConfig, so it can't hold a broken value —
+    // but `baseConfig` (the pristine file config the handler merges over, src/handlers/index.ts
+    // `base = context.baseConfig ?? context.config`) isn't re-validated there. Setting it directly
+    // is the most direct way to exercise the handler's SettingsMergeError branch (see
+    // core-settings.test.ts for why locales is the only reachable cross-field rule).
+    const brokenLocalesConfig: ClientConfig = { ...config, locales: { supported: ['pt-BR'], default: 'en' } };
+    context.baseConfig = brokenLocalesConfig;
+
+    const response = await handleAdminPost(adminPostRequest({ action: 'settings-save', section: 'legal', 'legal.termsUrl': 'https://example.test/terms' }), context);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('locales.default') } });
+    expect(repo.settings.size).toBe(0);
+  });
+
+  // Handler-level error-path test: proves handleAdminPost surfaces an applySettingsBatch failure
+  // as a 500 and never redirects to a saved state. This does NOT by itself prove atomicity — a
+  // fake repo that throws before touching `settings` trivially "applies nothing" either way. The
+  // real atomicity guarantee (every key of a section travels in exactly one db.batch() call, so
+  // D1's single-transaction batch semantics make the write all-or-nothing) is proven at the unit
+  // level in tests/repo.test.ts, which exercises the actual createBookingRepository implementation.
+  it('propagates an applySettingsBatch failure as a 500 without redirecting to a saved state', async () => {
+    const repo = fakeRepository();
+    repo.applySettingsBatch = async () => { throw new Error('D1 batch failed'); };
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers() });
+
+    const response = await handleAdminPost(adminPostRequest(policyFields({ 'booking.minNoticeHours': '2', 'booking.maxHorizonDays': '90' })), context);
+    expect(response.status).toBe(500);
+    expect(repo.settings.size).toBe(0);
   });
 });

@@ -21,6 +21,12 @@ export interface BookingInsert {
   updatedAt: string;
 }
 
+// One section save = one atomic D1 batch, so a mid-save failure never leaves a mixed revision
+// (BK-CONFIG-001 task 4). `value` is already the JSON-encoded SettingValue (serializeSettingValue).
+export type SettingsBatchOperation =
+  | { type: 'upsert'; key: string; value: string }
+  | { type: 'delete'; key: string };
+
 export class HoldLimitExceededError extends Error {
   constructor() {
     super('Too many active holds from this IP');
@@ -111,6 +117,9 @@ export interface BookingRepository {
   listSettings(): Promise<Record<string, string>>;
   upsertSetting(key: string, value: string): Promise<void>;
   deleteSetting(key: string): Promise<void>;
+  // Applies every key of a settings section in one D1 batch (all-or-nothing) — see
+  // core/settings.ts mergeAndValidateSettings, which the admin save path runs first.
+  applySettingsBatch(operations: SettingsBatchOperation[]): Promise<void>;
 }
 
 interface BookingRow {
@@ -405,6 +414,14 @@ export function createBookingRepository(db: D1Database): BookingRepository {
     },
     async deleteSetting(key) {
       await db.prepare('DELETE FROM settings WHERE key = ?').bind(key).run();
+    },
+    async applySettingsBatch(operations) {
+      if (operations.length === 0) return;
+      // D1's batch() runs its statements in an implicit transaction — if any fails, none commit.
+      const statements = operations.map((operation) => operation.type === 'upsert'
+        ? db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').bind(operation.key, operation.value)
+        : db.prepare('DELETE FROM settings WHERE key = ?').bind(operation.key));
+      await db.batch(statements);
     },
   };
 }

@@ -28,6 +28,11 @@ describe('core config and pricing validation', () => {
     expect(() => validateConfig({ ...config, booking: { ...config.booking, holdMinutes: 34 } })).toThrow(/at least 35/);
   });
 
+  it('rejects a hold above the Stripe 24h checkout-session cap (BK-CONFIG-001) and accepts the boundary', () => {
+    expect(() => validateConfig({ ...config, booking: { ...config.booking, holdMinutes: 1441 } })).toThrow(/at most 1440/);
+    expect(() => validateConfig({ ...config, booking: { ...config.booking, holdMinutes: 1440 } })).not.toThrow();
+  });
+
   it('rejects a locale outside Stripe Checkout support', () => {
     expect(() => validateConfig({ ...config, locales: { supported: ['en', 'xx'], default: 'en' } })).toThrow(/not supported by Stripe/);
   });

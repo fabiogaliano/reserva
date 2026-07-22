@@ -123,6 +123,14 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & { rows
     listSettings: async () => Object.fromEntries(settings),
     upsertSetting: async (key, value) => { settings.set(key, value); },
     deleteSetting: async (key) => { settings.delete(key); },
+    // Real D1 runs these in one implicit transaction (see src/repo.ts); tests that need to prove
+    // atomicity override this whole method to reject before touching `settings` at all.
+    applySettingsBatch: async (operations) => {
+      for (const operation of operations) {
+        if (operation.type === 'upsert') settings.set(operation.key, operation.value);
+        else settings.delete(operation.key);
+      }
+    },
   };
 }
 

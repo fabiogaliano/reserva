@@ -242,6 +242,12 @@ export function validateConfig(input: unknown): ClientConfig {
   }
   if (config.booking.holdMinutes < 35) {
     add(['booking', 'holdMinutes'], 'must be at least 35 minutes');
+  } else if (config.booking.holdMinutes > 1440) {
+    // 1440 (not Stripe's exact 1445min cap) keeps expires_at 5 minutes under Stripe's 24h-from-
+    // creation limit, since expires_at is computed from Bookkit's clock, not Stripe's — a
+    // holdMinutes=1445 session would sit exactly on the edge and fail intermittently under clock
+    // skew (see providers/stripe.ts expiresInMinutes).
+    add(['booking', 'holdMinutes'], 'must be at most 1440 minutes (Stripe checkout sessions cannot stay open longer than 24 hours)');
   }
   if (!config.locales.supported.includes(config.locales.default)) {
     add(['locales', 'default'], 'must be included in locales.supported');

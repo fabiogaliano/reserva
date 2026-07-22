@@ -12,6 +12,8 @@ import { priceFor } from '../core/pricing';
 import { generateUniqueReference } from '../core/reference';
 import {
   SettingParseError,
+  SettingsMergeError,
+  mergeAndValidateSettings,
   parseSettingForm,
   serializeSettingValue,
   settingDefinitions,
@@ -26,7 +28,7 @@ import { addDaysToDateKey, enumerateDateKeys, localDateKey, localDateTimeToUtcIs
 import { ConfirmationInProgressError, confirmBookingFromPayment, dispatchMutation, dispatchNonCritical } from '../confirmation';
 import type { BookkitContext } from '../context';
 import { getSecret, nowIso } from '../context';
-import { HoldLimitExceededError } from '../repo';
+import { HoldLimitExceededError, type SettingsBatchOperation } from '../repo';
 import { cssAssetHref, jsAssetHref } from '../ui/asset-hrefs';
 import { formatDateTime, formatDayDate, formatPrice } from '../ui/format';
 import { factList, pageShell, statusBadge, statusToneOf, themeToggle } from '../ui/layout';
@@ -955,7 +957,7 @@ function settingsPage(context: BookkitContext, storedRows: Record<string, string
       return `<div class="bk-setting"><fieldset class="bk-fieldset"><legend>${escapeHtml(label)}</legend>${boxes}</fieldset>${help}${modified}</div>`;
     }
     const inputType = kind.type === 'int' || kind.type === 'number' ? 'number' : kind.type === 'email' ? 'email' : kind.type === 'url' ? 'url' : 'text';
-    const constraints = kind.type === 'int' ? ` min="${kind.min}" step="1"${kind.optional ? '' : ' required'}`
+    const constraints = kind.type === 'int' ? ` min="${kind.min}"${kind.max !== undefined ? ` max="${kind.max}"` : ''} step="1"${kind.optional ? '' : ' required'}`
       : kind.type === 'number' ? ` min="${kind.min}" step="any" required`
       : kind.type === 'text' && kind.optional ? '' : ' required';
     const value = effective === null ? '' : String(effective);
@@ -1076,9 +1078,15 @@ export function handleAdminPost(request: Request, context: BookkitContext): Prom
       // Compare against the file config, not the merged one: a submitted value equal to the file
       // default deletes the row, keeping "follow the config" the resting state (core/settings.ts).
       const base = context.baseConfig ?? context.config;
+      // candidateRows starts from every currently stored override (not just this section) so the
+      // merge-then-validate check below sees the config the way a request would actually merge it,
+      // catching cross-field rules that no single field's SettingKind bound can (BK-CONFIG-001).
+      const candidateRows = await context.repo.listSettings();
+      const operations: SettingsBatchOperation[] = [];
       for (const definition of definitions) {
         if (action === 'settings-reset') {
-          await context.repo.deleteSetting(definition.key);
+          delete candidateRows[definition.key];
+          operations.push({ type: 'delete', key: definition.key });
           continue;
         }
         let value: SettingValue;
@@ -1088,9 +1096,24 @@ export function handleAdminPost(request: Request, context: BookkitContext): Prom
           if (error instanceof SettingParseError) throw new HttpError(400, 'validation_failed', error.message);
           throw error;
         }
-        if (settingValuesEqual(value, definition.get(base))) await context.repo.deleteSetting(definition.key);
-        else await context.repo.upsertSetting(definition.key, serializeSettingValue(value));
+        if (settingValuesEqual(value, definition.get(base))) {
+          delete candidateRows[definition.key];
+          operations.push({ type: 'delete', key: definition.key });
+        } else {
+          const serialized = serializeSettingValue(value);
+          candidateRows[definition.key] = serialized;
+          operations.push({ type: 'upsert', key: definition.key, value: serialized });
+        }
       }
+      if (action === 'settings-save') {
+        try {
+          mergeAndValidateSettings(base, candidateRows);
+        } catch (error) {
+          if (error instanceof SettingsMergeError) throw new HttpError(400, 'validation_failed', error.message);
+          throw error;
+        }
+      }
+      if (operations.length > 0) await context.repo.applySettingsBatch(operations);
       return new Response(null, { status: 303, headers: { location: location.toString() } });
     }
     // Day actions may target several days at once: repeated date fields (the enhancer's
