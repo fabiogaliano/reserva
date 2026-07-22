@@ -1,10 +1,10 @@
 # Bookkit
 
-Bookkit is an Astro 7 integration for server-rendered tour booking on Cloudflare Workers with D1, Cache API, and Stripe-compatible payment providers.
+Bookkit is an Astro 7 integration for server-rendered tour booking. It runs on Cloudflare Workers with D1, the Cache API, and Stripe-compatible payment providers.
 
 ## Install and configure
 
-Use the package source directly or install the package from its published files. Configure the Astro Cloudflare adapter, then pass the same validated client configuration to `bookkit()` and to a user-owned runtime module. Both `output: 'server'` and `output: 'static'` work: the injected booking routes declare `prerender: false`, so with the adapter present a static site renders them on demand without changing its own pages.
+Install the package, or use its source directly. Configure the Astro Cloudflare adapter. Pass the same validated client configuration to `bookkit()` and to a user-owned runtime module. Both `output: 'server'` and `output: 'static'` work: the injected booking routes declare `prerender: false`, so with the adapter present a static site renders them on demand without changing its own pages.
 
 ```ts
 import { defineConfig } from 'astro/config';
@@ -19,13 +19,13 @@ export default defineConfig({
 });
 ```
 
-`runtimeEntrypoint` is deliberate. Astro serializes and evaluates integration configuration during its build pipeline, while provider instances commonly contain functions, sockets, or secret-backed clients that cannot safely be serialized into a deployed Worker. Bookkit therefore validates the public config during `astro:config:setup`, but resolves a user-owned runtime module through `virtual:bookkit/runtime` for request-time provider creation.
+`runtimeEntrypoint` is required because Astro serializes integration configuration during its build pipeline. Provider instances often contain functions, sockets, or secret-backed clients. These cannot be serialized safely into a deployed Worker. Bookkit therefore validates the public config during `astro:config:setup`, and resolves the user-owned runtime module through `virtual:bookkit/runtime` to create providers at request time.
 
 ## Runtime module
 
-`defineCloudflareBookkitRuntime()` reads production bindings from `cloudflare:workers` (`import { env } from 'cloudflare:workers'`), which is the current `@astrojs/cloudflare` v14 runtime API. Direct `locals.env` is accepted only as an explicit test harness seam. The environment is kept inside the context factory and is never returned as page data.
+`defineCloudflareBookkitRuntime()` reads production bindings from `cloudflare:workers` (`import { env } from 'cloudflare:workers'`). This is the current `@astrojs/cloudflare` v14 runtime API. `locals.env` is accepted only as an explicit test-harness seam. The environment stays inside the context factory and is never returned as page data.
 
-If you're debugging a missing binding and find older tutorials or blog posts pointing you at `locals.runtime.env`: on `@astrojs/cloudflare` v14, `locals.runtime` still exists but accessing `.env` (or `.cf`, `.caches`, `.ctx`) on it throws `Astro.locals.runtime.env has been removed in Astro v6. Use 'import { env } from "cloudflare:workers"' instead.` Don't reach for `locals.runtime.env` — bookkit already reads bindings from `cloudflare:workers`'s `env` export (or the `locals.env` test seam above).
+Older tutorials and blog posts point to `locals.runtime.env`. On `@astrojs/cloudflare` v14, `locals.runtime` still exists, but access to `.env` (or `.cf`, `.caches`, `.ctx`) throws: `Astro.locals.runtime.env has been removed in Astro v6. Use 'import { env } from "cloudflare:workers"' instead.` Do not use `locals.runtime.env`. Bookkit already reads bindings from the `cloudflare:workers` `env` export, or from the `locals.env` test seam above.
 
 ```ts
 import { defineCloudflareBookkitRuntime } from 'bookkit/runtime';
@@ -39,13 +39,13 @@ export default defineCloudflareBookkitRuntime<Env>(config, {
 });
 ```
 
-The default D1 binding name is `BOOKKIT_DB`. The default Cache binding is `BOOKKIT_CACHE`, with a fallback to `caches.default` when the Worker provides it. Set `cache: null` to disable caching. Provider factories run per request, so construct Stripe, calendar, email, and ops clients there or in a user-owned module that receives the current bindings.
+The default D1 binding name is `BOOKKIT_DB`. The default Cache binding is `BOOKKIT_CACHE`, with a fallback to `caches.default` when the Worker provides it. Set `cache: null` to disable caching. Provider factories run once per request. Construct Stripe, calendar, email, and ops clients there, or in a user-owned module that receives the current bindings.
 
-Do not put Stripe keys, service-account material, Access secrets, or Tourflow shared secrets in `ClientConfig`, checked-in examples, or component props. Store them in Worker secrets and expose only the names through `secretBindings`.
+Do not put Stripe keys, service-account material, Access secrets, or Tourflow shared secrets in `ClientConfig`, checked-in examples, or component props. Store them in Worker secrets. Expose only the names through `secretBindings`.
 
 ### Typed environment bindings
 
-Run `wrangler types` to generate `worker-configuration.d.ts` from your `wrangler.jsonc` bindings; wire it up as a `pretypes` (or `predev`) script so it stays current:
+Run `wrangler types` to generate `worker-configuration.d.ts` from your `wrangler.jsonc` bindings. Add it as a `pretypes` (or `predev`) script so it stays current:
 
 ```json
 {
@@ -56,13 +56,13 @@ Run `wrangler types` to generate `worker-configuration.d.ts` from your `wrangler
 }
 ```
 
-Pass the generated `Env` as `defineCloudflareBookkitRuntime<Env>(config, options)`'s type argument (as in the snippet above). This threads `Env` through the whole runtime factory: `providers`, `verifyAccess`, and `logger` factories all receive a typed `env` instead of `Record<string, unknown>`, and the `db`, `cache`, and `secretBindings` binding-name options are constrained to `keyof Env`, so a typo'd binding name (e.g. `BOOKKIT_DB` misspelled) is a compile error instead of the runtime "is not configured" error. Omitting the type argument still compiles and behaves identically — `defineCloudflareBookkitRuntime(config, { providers })` is unaffected, it only loses the extra type-checking.
+Pass the generated `Env` as the type argument: `defineCloudflareBookkitRuntime<Env>(config, options)`, as in the snippet above. This types the whole runtime factory. The `providers`, `verifyAccess`, and `logger` factories receive a typed `env` instead of `Record<string, unknown>`. The `db`, `cache`, and `secretBindings` binding-name options are constrained to `keyof Env`. A misspelled binding name (for example, a typo in `BOOKKIT_DB`) becomes a compile error instead of the runtime "is not configured" error. The type argument is optional: `defineCloudflareBookkitRuntime(config, { providers })` compiles and behaves identically, but loses the extra type checks.
 
-`bookkit()` also calls `injectTypes()` during `astro:config:done`, so `virtual:bookkit/runtime` — the module the injected routes import — is typed as `BookkitRuntime` (exported from `bookkit/runtime`) once you run `astro sync` (or `astro dev`/`astro build`, which run it implicitly).
+`bookkit()` also calls `injectTypes()` during `astro:config:done`. After you run `astro sync` (or `astro dev`/`astro build`, which run it implicitly), `virtual:bookkit/runtime` — the module the injected routes import — is typed as `BookkitRuntime`, exported from `bookkit/runtime`.
 
 ### Secrets and `astro:env`
 
-`bookkit()` also declares its providers' secret names in Astro's [`env.schema`](https://docs.astro.build/en/guides/environment-variables/#type-safe-environment-variables) during `astro:config:setup`, each as `envField.string({ context: 'server', access: 'secret', optional: true })`:
+`bookkit()` also declares its providers' secret names in Astro's [`env.schema`](https://docs.astro.build/en/guides/environment-variables/#type-safe-environment-variables) during `astro:config:setup`. Each entry is `envField.string({ context: 'server', access: 'secret', optional: true })`:
 
 | Declared name | Provider | Set with |
 | --- | --- | --- |
@@ -74,19 +74,19 @@ Pass the generated `Env` as `defineCloudflareBookkitRuntime<Env>(config, options
 | `GOOGLE_SA_PRIVATE_KEY` | `providers/calendar-google` | `wrangler secret put GOOGLE_SA_PRIVATE_KEY` |
 | `GOOGLE_IMPERSONATE_EMAIL` | `providers/calendar-google` | `wrangler secret put GOOGLE_IMPERSONATE_EMAIL` |
 
-Every entry is `optional`: providers are opt-in, so a Stripe-only integration must not fail env validation over a missing Brevo key. This declaration only buys typed access and build-time visibility (`astro:env/server`); it does not change how bookkit reads secrets at runtime. Providers still receive credentials as constructor options from your runtime module, and the runtime's `secrets()` accessor still only exposes names listed in `secretBindings` (see "Runtime module" above) — if a custom provider reads a secret through `secrets()`, add its name to `secretBindings` regardless of whether it also appears in this table.
+Every entry is `optional` because providers are opt-in: a Stripe-only integration must not fail env validation over a missing Brevo key. The declaration gives typed access and build-time visibility through `astro:env/server`. It does not change how bookkit reads secrets at runtime. Providers still receive credentials as constructor options from your runtime module. The runtime's `secrets()` accessor still exposes only the names listed in `secretBindings` (see "Runtime module" above). If a custom provider reads a secret through `secrets()`, add its name to `secretBindings`, even when the name also appears in this table.
 
-Pass `bookkit({ ..., envSchema: false })` to skip this contribution, e.g. if your project already declares its own `env.schema` for these names.
+Pass `bookkit({ ..., envSchema: false })` to skip this contribution, for example when your project already declares its own `env.schema` for these names.
 
 ## Providers
 
-Import each provider from its own narrow subpath — `bookkit/providers/payments-stripe`, `bookkit/providers/email-brevo`, `bookkit/providers/email-none`, `bookkit/providers/ops-tourflow`, `bookkit/providers/calendar-google` — rather than the bare `bookkit/providers` barrel. `bookkit/providers` re-exports every provider from one module, which means importing it pulls every provider's SDK dependency (e.g. `stripe`) into the module graph together; the narrow subpaths import only the one provider (and its one SDK) you actually construct in your runtime module. `bookkit/providers` still exists as a convenience for quick prototyping, and the package sets `"sideEffects": false` so a bundler *can* still tree-shake the unused ones out of the barrel import — but the subpaths make that guarantee structural instead of relying on bundler dead-code elimination.
+Import each provider from its own narrow subpath: `bookkit/providers/payments-stripe`, `bookkit/providers/email-brevo`, `bookkit/providers/email-none`, `bookkit/providers/ops-tourflow`, `bookkit/providers/calendar-google`. Avoid the bare `bookkit/providers` barrel. The barrel re-exports every provider from one module, so importing it pulls every provider's SDK dependency (for example `stripe`) into the module graph together. The narrow subpaths import only the one provider, and its one SDK, that you construct in your runtime module. `bookkit/providers` remains available for quick prototyping. The package sets `"sideEffects": false`, so a bundler can still tree-shake the unused providers out of the barrel import — but the subpaths make that guarantee structural instead of dependent on bundler dead-code elimination.
 
 ## Config validation
 
-`bookkit()` runs `validateConfig()` during `astro:config:setup`. Build-time failures include malformed schedules, invalid IANA timezones, unsupported Stripe locales, `holdMinutes < 35`, and pricing gaps for any widget-generated party-size and pickup combination. The thrown Zod error includes the field paths Astro reports during configuration.
+`bookkit()` runs `validateConfig()` during `astro:config:setup`. Build-time failures include malformed schedules, invalid IANA timezones, unsupported Stripe locales, `holdMinutes < 35`, and pricing gaps for any widget-generated party-size and pickup combination. The thrown Zod error includes the field paths that Astro reports during configuration.
 
-The config shape includes business details, fleet capacity, tour schedules and pricing, admin Access identifiers, booking cutoffs and horizon, supported locales, payment methods, and legal URLs. A complete example is in `examples/client-config.ts`.
+The config shape includes business details, fleet capacity, tour schedules and pricing, admin Access identifiers, booking cutoffs and horizon, supported locales, payment methods, and legal URLs. See `examples/client-config.ts` for a complete example.
 
 ## Injected routes
 
@@ -107,16 +107,16 @@ Every route is server-only with `prerender: false`:
 - `GET /booking/manage?token=`
 - `GET /booking-confirmation?session_id=`
 
-The endpoint files are intentionally thin: they import `virtual:bookkit/runtime`, create a request-scoped context, and delegate to the handler exports. JSON errors use `{ error: { code, message } }`. Admin authorization is provided by Cloudflare Access through the runtime context.
+The endpoint files are intentionally thin. They import `virtual:bookkit/runtime`, create a request-scoped context, and delegate to the handler exports. JSON errors use `{ error: { code, message } }`. Cloudflare Access provides admin authorization through the runtime context.
 
-Bookkit's own routes are mounted via `injectRoute()`, never through a project-level `src/fetch.ts` — so nothing here needs that file. Keep in mind, though, that Astro 7's `fetchFile` config option defaults to `'fetch'`, meaning Astro looks for `src/fetch.ts` (or `.js`/`.mjs`/`.mts`) in your project as a custom fetch-handler entrypoint; don't repurpose that filename for unrelated code in a project that also uses bookkit.
+Bookkit mounts its routes with `injectRoute()`, never through a project-level `src/fetch.ts`, so nothing here needs that file. Note that Astro 7's `fetchFile` config option defaults to `'fetch'`: Astro treats `src/fetch.ts` (or `.js`/`.mjs`/`.mts`) in your project as a custom fetch-handler entrypoint. Do not use that filename for unrelated code in a project that also uses bookkit.
 
 ## Route customization
 
-Two `bookkit()` options adjust where routes are mounted, without renaming any individual route:
+Two `bookkit()` options change where routes are mounted. Neither renames an individual route:
 
-- `routePrefix?: string` — prepended to every injected route pattern (and to every URL bookkit's own components and server-rendered pages produce: widget endpoint defaults, `ManageBooking`/`AdminDashboard` form actions, the manage/admin page's own links and redirects). Normalized (leading slash added, trailing slash stripped, `''`/`'/'` mean no prefix) and validated with Zod the same way `config` is — whitespace, `..` traversal, URL syntax (`:`, `?`, `#`, `\\`), and repeated slashes throw at `astro:config:setup` instead of building a broken route.
-- `routes?: { admin?: boolean; ops?: boolean }` — turns off the admin dashboard route and/or the Tourflow feed/operator routes. Both default to `true`. The public booking API and customer manage routes are load-bearing and cannot be disabled. A disabled group is simply never injected, and no server-rendered link ever points at it.
+- `routePrefix?: string` — prepended to every injected route pattern, and to every URL that bookkit's components and server-rendered pages produce: widget endpoint defaults, `ManageBooking`/`AdminDashboard` form actions, and the manage/admin pages' own links and redirects. The value is normalized: a leading slash is added, a trailing slash is stripped, and `''` or `'/'` mean no prefix. It is validated with Zod the same way `config` is: whitespace, `..` traversal, URL syntax characters (`:`, `?`, `#`, `\`), and repeated slashes throw at `astro:config:setup` instead of building a broken route.
+- `routes?: { admin?: boolean; ops?: boolean }` — turns off the admin dashboard route and/or the Tourflow feed and operator routes. Both default to `true`. The public booking API and customer manage routes are load-bearing and cannot be disabled. A disabled group is never injected, and no server-rendered link points at it.
 
 ```ts
 bookkit({
@@ -127,53 +127,53 @@ bookkit({
 })
 ```
 
-With `routePrefix` set, the Stripe dashboard webhook URL is `<site><prefix>/api/booking/webhooks/stripe` (e.g. `https://example.com/en/api/booking/webhooks/stripe`), not the unprefixed path listed above.
+With `routePrefix` set, the Stripe dashboard webhook URL is `<site><prefix>/api/booking/webhooks/stripe` (for example `https://example.com/en/api/booking/webhooks/stripe`), not the unprefixed path listed above.
 
-The local demo at `examples/smoke-site` is intentionally left unprefixed — it's the zero-config reference.
+The local demo at `examples/smoke-site` is intentionally unprefixed. It is the zero-config reference.
 
 ## Components
 
-The package includes `BookingWidget.astro`, `ManageBooking.astro`, and `AdminDashboard.astro` reference components. They use native forms and controls without inline event handlers or inline styles, so applications can apply their own CSP and design system. Server-rendered management HTML is also available through `/booking/manage`. `BookingWidget.astro`'s `<script>` is a hoisted Astro module script rather than `is:inline`, so Astro emits it as an external hashed file — that is why the widget holds under a strict `script-src 'self'` CSP even though the source file shows a `<script>` tag.
+The package includes three reference components: `BookingWidget.astro`, `ManageBooking.astro`, and `AdminDashboard.astro`. They use native forms and controls, with no inline event handlers and no inline styles, so applications can apply their own CSP and design system. Server-rendered management HTML is also available through `/booking/manage`. `BookingWidget.astro`'s `<script>` is a hoisted Astro module script, not `is:inline`. Astro emits it as an external hashed file, so the widget holds under a strict `script-src 'self'` CSP even though the source file shows a `<script>` tag.
 
 ## Local interactive demo
 
-The fixture in `examples/smoke-site` runs the complete booking flow locally through Astro dev, Cloudflare workerd, and persistent local D1. Its payment, calendar, email, operations, analytics, refund, and Access providers are simulations, so it never contacts an external service.
+The fixture in `examples/smoke-site` runs the complete booking flow locally through Astro dev, Cloudflare workerd, and persistent local D1. Its payment, calendar, email, operations, analytics, refund, and Access providers are simulations. It never contacts an external service.
 
 ```bash
 cd examples/smoke-site
 bun run demo
 ```
 
-Open <http://localhost:4321>. Create a booking, follow the simulated checkout confirmation, inspect `/booking/admin`, and use its manage links for operator actions. Customer and operator management URLs are also printed in the dev-server logs. See `examples/smoke-site/README.md` for the route list, feed token, and reset instructions.
+Open <http://localhost:4321>. Create a booking, follow the simulated checkout confirmation, inspect `/booking/admin`, and use its manage links for operator actions. The dev-server logs also print customer and operator management URLs. See `examples/smoke-site/README.md` for the route list, feed token, and reset instructions.
 
 ## Deviations from and additions to the spec
 
-Bookkit's build contract is the reference spec, but the implementation deliberately goes beyond it in a few places. These are intentional hardening, recorded here so they aren't mistaken for scope creep or re-litigated later.
+Bookkit's build contract is the reference spec, but the implementation deliberately goes beyond it in a few places. These are intentional hardening, recorded here so they are not mistaken for scope creep or re-litigated later.
 
-- **Confirmation lease.** The spec's `*_synced` flags are read-then-act, so a Stripe webhook and a `/status` poll can both read `calendarSynced=false` for the same booking and both create a calendar event. `migrations/0002_confirmation_lease.sql` adds a `confirmation_lease_token`/`confirmation_lease_until` pair; `src/confirmation.ts` acquires it with a compare-and-set (5-minute TTL) before running the confirm-plus-side-effects section, making that section mutually exclusive across concurrent callers. A blocked attempt returns `503 confirmation_in_progress`: from the webhook path, Stripe treats that as a failed delivery and redelivers (desired); `/status` instead catches the error and re-reads the booking rather than failing the customer.
-- **Webhook hardening guards.** The Stripe webhook handler (`src/handlers/index.ts`, around the `checkout.session.completed` branch) rejects two conditions the spec's error taxonomy doesn't name: `409 stripe_session_mismatch` when the event's session conflicts with the booking's stored session, and `409 stripe_amount_mismatch` when the captured amount doesn't equal `price_cents`. Both are non-2xx, so Stripe retries them; that's intentional — an amount mismatch should page someone via webhook-failure alerts, not silently confirm the booking.
-- **Per-IP hold cap storage.** The spec defines `maxHoldsPerIp` and a `429 too_many_holds` response, but its schema never stores the requesting IP. `migrations/0003_hold_ip.sql` adds a `hold_ip` column, and `src/repo.ts`'s `insertHold` does an atomic count-and-insert against it so the cap is actually enforceable.
-- **`payment.dispute_created` event.** The spec requires `charge.dispute.created` to become "log + ops event," but its own `BookingEvent` list has no member to carry it. `src/core/events.ts` adds `payment.dispute_created` to the `BookingEvent` union and explicitly excludes it from `EmailBookingEvent`, so it reaches ops and analytics sinks but can never reach the email provider.
-- **Refund exactly-once.** The durable guarantee is Stripe's idempotency key (`bookkit-refund-<paymentIntent>`, set in `src/providers/stripe.ts`); the in-memory `refundedPayments` set on the request context is a same-isolate fast path, and the already-cancelled early-return in the operator-cancel handler blocks re-entry on webhook redelivery.
-- **Brevo templates are inlined.** `src/providers/brevo.ts` keeps per-locale template objects, with fallback to the configured default locale, rather than the spec's `templates/{locale}/{event}.ts` file layout. Behavior is the same, only the packaging differs; add a locale by adding an entry to that file's `templates` map.
+- **Confirmation lease.** The spec's `*_synced` flags are read-then-act: a Stripe webhook and a `/status` poll can both read `calendarSynced=false` for the same booking and both create a calendar event. `migrations/0002_confirmation_lease.sql` adds a `confirmation_lease_token`/`confirmation_lease_until` pair. `src/confirmation.ts` acquires the lease with a compare-and-set (5-minute TTL) before the confirm-plus-side-effects section, which makes that section mutually exclusive across concurrent callers. A blocked attempt returns `503 confirmation_in_progress`. On the webhook path, Stripe treats the 503 as a failed delivery and redelivers, which is the desired behavior. On the `/status` path, the handler catches the error and re-reads the booking instead of failing the customer.
+- **Webhook hardening guards.** The Stripe webhook handler (`src/handlers/index.ts`, around the `checkout.session.completed` branch) rejects two conditions the spec's error taxonomy does not name: `409 stripe_session_mismatch` when the event's session conflicts with the booking's stored session, and `409 stripe_amount_mismatch` when the captured amount does not equal `price_cents`. Both are non-2xx, so Stripe retries them. That is intentional: an amount mismatch must page someone through webhook-failure alerts, not silently confirm the booking.
+- **Per-IP hold cap storage.** The spec defines `maxHoldsPerIp` and a `429 too_many_holds` response, but its schema never stores the requesting IP. `migrations/0003_hold_ip.sql` adds a `hold_ip` column. `insertHold` in `src/repo.ts` does an atomic count-and-insert against it, so the cap is actually enforceable.
+- **`payment.dispute_created` event.** The spec requires `charge.dispute.created` to become "log + ops event," but its own `BookingEvent` list has no member to carry it. `src/core/events.ts` adds `payment.dispute_created` to the `BookingEvent` union and explicitly excludes it from `EmailBookingEvent`. The event reaches ops and analytics sinks but can never reach the email provider.
+- **Refund exactly-once.** The durable guarantee is Stripe's idempotency key (`bookkit-refund-<paymentIntent>`, set in `src/providers/stripe.ts`). The in-memory `refundedPayments` set on the request context is a same-isolate fast path. The already-cancelled early return in the operator-cancel handler blocks re-entry on webhook redelivery.
+- **Brevo templates are inlined.** `src/providers/brevo.ts` keeps per-locale template objects, with fallback to the configured default locale, instead of the spec's `templates/{locale}/{event}.ts` file layout. Behavior is the same; only the packaging differs. To add a locale, add an entry to that file's `templates` map.
 
 ## Why not Astro sessions?
 
-Bookkit deliberately does not use Astro's `session` API for booking-flow state (holds, checkout progress, confirmation). That state lives in D1 instead, keyed by booking id and the tokens in `Booking`, and is read back through `context.repo` rather than a session store. Astro sessions on Cloudflare are backed by Workers KV, and KV is only eventually consistent across regions (Cloudflare documents propagation of up to about 60 seconds); a customer who creates a hold in one region and completes Stripe Checkout redirected through another could have their session read a stale pre-hold or pre-payment state within that window. Booking correctness — not overselling a slot, not losing a paid hold — needs strong read-after-write consistency, which D1 provides and KV-backed sessions do not.
+Bookkit deliberately does not use Astro's `session` API for booking-flow state (holds, checkout progress, confirmation). That state lives in D1, keyed by booking id and the tokens in `Booking`, and is read back through `context.repo` rather than a session store. Astro sessions on Cloudflare are backed by Workers KV, and KV is only eventually consistent across regions: Cloudflare documents propagation of up to about 60 seconds. A customer can create a hold in one region and complete Stripe Checkout redirected through another. Within that window, the session can read stale pre-hold or pre-payment state. Booking correctness — not overselling a slot, not losing a paid hold — needs strong read-after-write consistency. D1 provides it; KV-backed sessions do not.
 
 ## Cloudflare setup runbook
 
-1. Apply bookkit's migrations to the D1 database, in filename order: run `bunx bookkit-migrate --local` for the local dev database (`bunx bookkit-migrate` for the remote one), which wraps `wrangler d1 migrations apply` using the `d1_databases[].database_name` and `--config` it finds in your `wrangler.jsonc`/`wrangler.json` — or point `migrations_dir` at the installed `migrations/` folder and run `wrangler d1 migrations apply` yourself. `defineCloudflareBookkitRuntime` also checks this once per isolate at the first request and throws a descriptive error naming any migration that hasn't been applied yet, instead of a raw D1 SQL error. If your D1 binding sets Wrangler's `migrations_table`, pass the same table name as `migrationsTable` to `defineCloudflareBookkitRuntime`; it defaults to `d1_migrations`.
-2. Set `BOOKKIT_DB` in the Worker bindings and optionally expose `BOOKKIT_CACHE`.
-3. Add Stripe, Google Calendar, email, and Tourflow credentials as Worker secrets (`wrangler secret put <NAME>`; see "Secrets and astro:env" above for the canonical names); keep them out of the config module.
-4. Run `wrangler types` (wire it up as `pretypes`/`predev`) and pass the generated `Env` to `defineCloudflareBookkitRuntime<Env>()` in the runtime module, see "Typed environment bindings" above.
+1. Apply bookkit's migrations to the D1 database, in filename order. Run `bunx bookkit-migrate --local` for the local dev database, or `bunx bookkit-migrate` for the remote one. The command wraps `wrangler d1 migrations apply` with the `d1_databases[].database_name` and `--config` it finds in your `wrangler.jsonc`/`wrangler.json`. Alternatively, point `migrations_dir` at the installed `migrations/` folder and run `wrangler d1 migrations apply` yourself. At the first request in each isolate, `defineCloudflareBookkitRuntime` checks the migrations and throws a descriptive error that names any unapplied migration, instead of a raw D1 SQL error. If your D1 binding sets Wrangler's `migrations_table`, pass the same table name as `migrationsTable` to `defineCloudflareBookkitRuntime`; it defaults to `d1_migrations`.
+2. Set `BOOKKIT_DB` in the Worker bindings. Optionally expose `BOOKKIT_CACHE`.
+3. Add Stripe, Google Calendar, email, and Tourflow credentials as Worker secrets with `wrangler secret put <NAME>`; see "Secrets and `astro:env`" above for the canonical names. Keep them out of the config module.
+4. Run `wrangler types` (wired as `pretypes`/`predev`) and pass the generated `Env` to `defineCloudflareBookkitRuntime<Env>()` in the runtime module; see "Typed environment bindings" above.
 5. Implement or import the provider adapters in the user-owned runtime module.
-6. Configure Cloudflare Access for `/booking/admin` with the same team domain and audience in `config.admin`.
-7. Deploy with `output: 'server'` and `@astrojs/cloudflare`; do not prerender booking routes.
-8. Verify availability, checkout holds, webhook redelivery, status confirmation, customer cutoff behavior, operator actions, and feed authentication in a staging Worker.
-9. Monitor D1 sync flags and Stripe webhook responses. Calendar and confirmation-email failures intentionally return non-2xx so Stripe retries delivery. Also alert on persistent `confirmation_in_progress` 503s (a stuck lease), on `stripe_amount_mismatch` 409s (never expected in normal operation), and on the "confirming expired hold after payment" warning, which marks a possible one-slot oversell that may need a phone call to the customer.
-10. If the webhook route returns `400 invalid_stripe_signature` (`{ error: { code: 'invalid_stripe_signature', message: 'Stripe webhook signature verification failed' } }`, thrown by `StripeProvider.parseWebhook` in `src/providers/stripe.ts`), that's Stripe's signature verification failing, not a bookkit bug. Verification runs through Stripe's async WebCrypto path (`stripe.webhooks.constructEventAsync`, using `Stripe.createSubtleCryptoProvider()`) since Workers don't have Node's `crypto` module. The most common cause is a test-mode/live-mode signing-secret mismatch: the `STRIPE_WEBHOOK_SECRET` Worker secret must come from the *same* Stripe Dashboard webhook endpoint (test or live) as the events actually being sent — a live endpoint's signing secret will never verify a test-mode event and vice versa.
+6. Configure Cloudflare Access for `/booking/admin` with the same team domain and audience as `config.admin`.
+7. Deploy with `output: 'server'` and `@astrojs/cloudflare`. Do not prerender booking routes.
+8. In a staging Worker, verify availability, checkout holds, webhook redelivery, status confirmation, customer cutoff behavior, operator actions, and feed authentication.
+9. Monitor D1 sync flags and Stripe webhook responses. Calendar and confirmation-email failures intentionally return non-2xx so that Stripe retries delivery. Also alert on persistent `confirmation_in_progress` 503s (a stuck lease), on `stripe_amount_mismatch` 409s (never expected in normal operation), and on the "confirming expired hold after payment" warning, which marks a possible one-slot oversell that may need a phone call to the customer.
+10. A `400 invalid_stripe_signature` response from the webhook route (`{ error: { code: 'invalid_stripe_signature', message: 'Stripe webhook signature verification failed' } }`, thrown by `StripeProvider.parseWebhook` in `src/providers/stripe.ts`) means Stripe's signature verification failed. It is not a bookkit bug. Verification runs through Stripe's async WebCrypto path (`stripe.webhooks.constructEventAsync`, using `Stripe.createSubtleCryptoProvider()`) because Workers do not have Node's `crypto` module. The most common cause is a test-mode/live-mode signing-secret mismatch: the `STRIPE_WEBHOOK_SECRET` Worker secret must come from the *same* Stripe Dashboard webhook endpoint (test or live) that sends the events. A live endpoint's signing secret never verifies a test-mode event, and vice versa.
 
-The local smoke fixture at `examples/smoke-site` imports `src/index.ts` directly and uses `@astrojs/cloudflare`; it is a build-only check and does not deploy externally.
+The local smoke fixture at `examples/smoke-site` imports `src/index.ts` directly and uses `@astrojs/cloudflare`. It is a build-only check and does not deploy externally.
 
-Run `bun run check` before publishing, then run `bun run build` from `examples/smoke-site`. The standard Vitest suite covers the pure core, handlers, provider adapters, and Access verification. `bun run test:workers` applies the real D1 migrations and exercises repository leases, durable per-IP hold limits, and runtime bindings through Cloudflare's current `@cloudflare/vitest-pool-workers` workerd integration; it does not use the deprecated standalone Miniflare 2 package.
+Run `bun run check` before publishing, then run `bun run build` from `examples/smoke-site`. The standard Vitest suite covers the pure core, handlers, provider adapters, and Access verification. `bun run test:workers` applies the real D1 migrations and exercises repository leases, durable per-IP hold limits, and runtime bindings through Cloudflare's current `@cloudflare/vitest-pool-workers` workerd integration. It does not use the deprecated standalone Miniflare 2 package.
