@@ -92,7 +92,7 @@ describe('D1 booking repository', () => {
     await expect(repo.acquireConfirmationLease(created.id, 'lease-c', '2026-07-21T10:00:01.000Z', '2026-07-21T10:05:01.000Z')).resolves.toBe(true);
     await repo.releaseConfirmationLease(created.id, 'lease-c');
 
-    await repo.updateBooking(created.id, { status: 'confirmed', holdExpiresAt: null, updatedAt: '2026-07-21T10:01:00.000Z' });
+    await repo.transitionToConfirmed(created.id, { expectedStatusIn: ['hold'], updatedAt: '2026-07-21T10:01:00.000Z' });
     await expect(repo.expireHold(created.id, '2026-07-21T10:02:00.000Z')).resolves.toBeNull();
     await expect(repo.getBookingById(created.id)).resolves.toMatchObject({ status: 'confirmed' });
   });

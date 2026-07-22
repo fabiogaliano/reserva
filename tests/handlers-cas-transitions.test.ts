@@ -1,0 +1,282 @@
+import type { D1Database } from '@cloudflare/workers-types';
+import { describe, expect, it } from 'vitest';
+import { createBookkitContext } from '../src/context';
+import {
+  handleCustomerCancel,
+  handleCustomerReschedule,
+  handleOperatorCancel,
+  handleOperatorNoShow,
+  handleOperatorReschedule,
+  handleStripeWebhook,
+} from '../src/handlers';
+import { booking, config } from './fixtures';
+import { fakeRepository, providers } from './fakes';
+
+// BK-DATA-001: every status-changing handler now writes through a compare-and-set repo
+// method. These tests force the exact race the CAS closes — a concurrent transition lands
+// between the handler's in-memory read and its DB write — by hooking the fake repo's
+// transition method to mutate the row (as if a racing request won) right before the real
+// CAS runs. The stale caller must lose (409, row untouched by it) instead of corrupting the
+// row with a mix of both transitions' fields.
+
+const clock = () => new Date('2026-06-14T08:00:00.000Z');
+const validNewStart = '2026-06-15T08:00:00.000Z';
+
+function cancelRequest(token: string): Request {
+  return new Request('https://example.test/api/booking/cancel', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+}
+
+function rescheduleRequest(token: string, newStart: string): Request {
+  return new Request('https://example.test/api/booking/reschedule', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token, newStart }),
+  });
+}
+
+function operatorRequest(path: string, body: Record<string, unknown>): Request {
+  return new Request(`https://example.test/api/booking/operator/${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+describe('stale compare-and-set transitions', () => {
+  it('a customer cancel that loses a race to a concurrent operator no-show gets 409 instead of corrupting the row', async () => {
+    const seeded = booking({ id: 'b-cancel-vs-noshow', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z' });
+    const repo = fakeRepository([seeded]);
+    const realTransition = repo.transitionToCancelled;
+    repo.transitionToCancelled = async (id, input) => {
+      const current = repo.rows.get(id);
+      if (current) repo.rows.set(id, { ...current, status: 'no_show', updatedAt: '2026-06-14T08:00:01.000Z' });
+      return realTransition(id, input);
+    };
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+
+    const response = await handleCustomerCancel(cancelRequest(seeded.cancelToken), context);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'invalid_transition' } });
+    const row = repo.rows.get(seeded.id);
+    expect(row?.status).toBe('no_show');
+    expect(row?.cancelledBy).toBeNull();
+    expect(row?.cancelledAt).toBeNull();
+  });
+
+  it('an operator cancel that loses a race to a concurrent no-show gets 409 instead of corrupting the row', async () => {
+    const seeded = booking({ id: 'b-op-cancel-vs-noshow' });
+    const repo = fakeRepository([seeded]);
+    const realTransition = repo.transitionToCancelled;
+    repo.transitionToCancelled = async (id, input) => {
+      const current = repo.rows.get(id);
+      if (current) repo.rows.set(id, { ...current, status: 'no_show', updatedAt: '2026-06-14T08:00:01.000Z' });
+      return realTransition(id, input);
+    };
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+
+    const response = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'none' }), context);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'invalid_transition' } });
+    const row = repo.rows.get(seeded.id);
+    expect(row?.status).toBe('no_show');
+    expect(row?.cancelledBy).toBeNull();
+  });
+
+  it('an operator no-show that loses a race to a concurrent cancel gets 409 instead of corrupting the row', async () => {
+    // The corrupted-row example from the spec: a losing no-show must never leave
+    // status='no_show' while cancelled_at/cancelled_by are still set from the winner.
+    const seeded = booking({ id: 'b-noshow-vs-cancel', status: 'confirmed', startsAt: '2026-06-14T07:00:00.000Z', endsAt: '2026-06-14T07:30:00.000Z' });
+    const repo = fakeRepository([seeded]);
+    const realTransition = repo.transitionToNoShow;
+    repo.transitionToNoShow = async (id, input) => {
+      const current = repo.rows.get(id);
+      if (current) repo.rows.set(id, { ...current, status: 'cancelled', cancelledAt: '2026-06-14T08:00:00.000Z', cancelledBy: 'customer' });
+      return realTransition(id, input);
+    };
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+
+    const response = await handleOperatorNoShow(operatorRequest('no-show', { operatorToken: seeded.operatorToken }), context);
+    expect(response.status).toBe(409);
+    const row = repo.rows.get(seeded.id);
+    expect(row?.status).toBe('cancelled');
+    expect(row?.cancelledBy).toBe('customer');
+  });
+
+  it('a reschedule that loses a race to a concurrent cancel gets 409 instead of moving the row', async () => {
+    const seeded = booking({ id: 'b-reschedule-vs-cancel', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z' });
+    const repo = fakeRepository([seeded]);
+    const realTransition = repo.transitionReschedule;
+    repo.transitionReschedule = async (id, input) => {
+      const current = repo.rows.get(id);
+      if (current) repo.rows.set(id, { ...current, status: 'cancelled', cancelledAt: '2026-06-14T08:00:00.000Z', cancelledBy: 'customer' });
+      return realTransition(id, input);
+    };
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+
+    const response = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, validNewStart), context);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'invalid_transition' } });
+    const row = repo.rows.get(seeded.id);
+    expect(row?.startsAt).toBe(seeded.startsAt);
+    expect(row?.status).toBe('cancelled');
+  });
+
+  it('an operator reschedule that loses a race to a concurrent cancel gets 409 instead of moving the row', async () => {
+    // Mirrors the customer-reschedule-vs-cancel test above, but through the operator entrypoint
+    // (handleOperatorReschedule) — both go through rescheduleWithToken, but the spec calls for a
+    // stale-transition test per converted handler, and the operator one wasn't covered yet.
+    const seeded = booking({ id: 'b-op-reschedule-vs-cancel', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z' });
+    const repo = fakeRepository([seeded]);
+    const realTransition = repo.transitionReschedule;
+    repo.transitionReschedule = async (id, input) => {
+      const current = repo.rows.get(id);
+      if (current) repo.rows.set(id, { ...current, status: 'cancelled', cancelledAt: '2026-06-14T08:00:00.000Z', cancelledBy: 'operator' });
+      return realTransition(id, input);
+    };
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+
+    const response = await handleOperatorReschedule(operatorRequest('reschedule', { operatorToken: seeded.operatorToken, newStart: validNewStart }), context);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'invalid_transition' } });
+    const row = repo.rows.get(seeded.id);
+    expect(row?.startsAt).toBe(seeded.startsAt);
+    expect(row?.status).toBe('cancelled');
+  });
+
+  it('a reschedule that loses a race to a concurrent reschedule gets 409 slot_unavailable instead of clobbering the winner', async () => {
+    const seeded = booking({ id: 'b-reschedule-vs-reschedule', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z' });
+    const repo = fakeRepository([seeded]);
+    const realTransition = repo.transitionReschedule;
+    repo.transitionReschedule = async (id, input) => {
+      const current = repo.rows.get(id);
+      if (current) {
+        repo.rows.set(id, {
+          ...current,
+          startsAt: '2026-06-16T09:00:00.000Z',
+          endsAt: '2026-06-16T10:00:00.000Z',
+          rescheduledFrom: current.startsAt,
+        });
+      }
+      return realTransition(id, input);
+    };
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+
+    const response = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, validNewStart), context);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'slot_unavailable' } });
+    const row = repo.rows.get(seeded.id);
+    expect(row?.status).toBe('confirmed');
+    expect(row?.startsAt).toBe('2026-06-16T09:00:00.000Z');
+  });
+
+  it('a charge.refunded cancellation that loses a race to a concurrent customer cancel does not overwrite cancelledBy', async () => {
+    const seeded = booking({ id: 'b-refund-vs-cancel', stripePaymentIntent: 'pi_refund_stale' });
+    const repo = fakeRepository([seeded]);
+    const realTransition = repo.transitionToCancelled;
+    repo.transitionToCancelled = async (id, input) => {
+      const current = repo.rows.get(id);
+      if (current) repo.rows.set(id, { ...current, status: 'cancelled', cancelledAt: '2026-06-14T08:00:00.000Z', cancelledBy: 'customer' });
+      return realTransition(id, input);
+    };
+    const emails: string[] = [];
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock,
+      providers: providers({
+        payments: {
+          createCheckout: async () => ({ url: '', sessionId: '' }),
+          parseWebhook: async () => ({
+            id: 'evt_refund_stale',
+            type: 'charge.refunded',
+            paymentIntent: 'pi_refund_stale',
+            amountCaptured: seeded.priceCents,
+            amountRefunded: seeded.priceCents,
+          }),
+          getSession: async () => ({ status: 'open' }),
+          refund: async () => undefined,
+        },
+        email: { send: async (event) => { emails.push(event); } },
+      }),
+    });
+
+    const response = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    expect(response.status).toBe(200);
+    const row = repo.rows.get(seeded.id);
+    expect(row?.status).toBe('cancelled');
+    expect(row?.cancelledBy).toBe('customer');
+    expect(emails).not.toContain('booking.cancelled_by_operator');
+  });
+
+  it('a payment confirmation that loses a race to a concurrent operator cancel does not resurrect the booking', async () => {
+    const seeded = booking({
+      id: 'b-confirm-vs-cancel',
+      status: 'hold',
+      holdExpiresAt: '2026-06-14T09:00:00.000Z',
+      stripeSessionId: 'cs_confirm_stale',
+      stripePaymentIntent: null,
+      calendarSynced: false,
+      emailSynced: false,
+      tourflowSynced: false,
+    });
+    const repo = fakeRepository([seeded]);
+    const realTransition = repo.transitionToConfirmed;
+    repo.transitionToConfirmed = async (id, input) => {
+      const current = repo.rows.get(id);
+      if (current) {
+        repo.rows.set(id, {
+          ...current,
+          status: 'cancelled',
+          cancelledAt: '2026-06-14T08:00:00.000Z',
+          cancelledBy: 'operator',
+          holdExpiresAt: null,
+        });
+      }
+      return realTransition(id, input);
+    };
+    let calendarCreates = 0;
+    let emails = 0;
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock,
+      providers: providers({
+        payments: {
+          createCheckout: async () => ({ url: '', sessionId: '' }),
+          parseWebhook: async () => ({
+            id: 'evt_confirm_stale',
+            type: 'checkout.session.completed',
+            bookingId: seeded.id,
+            sessionId: 'cs_confirm_stale',
+            paymentIntent: 'pi_confirm_stale',
+            paid: true,
+            amountCaptured: seeded.priceCents,
+          }),
+          getSession: async () => ({ status: 'open' }),
+          refund: async () => undefined,
+        },
+        calendar: {
+          listEvents: async () => [],
+          createEvent: async () => { calendarCreates += 1; return 'cal_confirm_stale'; },
+          patchEvent: async () => undefined,
+          deleteEvent: async () => undefined,
+        },
+        email: { send: async () => { emails += 1; } },
+      }),
+    });
+
+    const response = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    expect(response.status).toBe(200);
+    const row = repo.rows.get(seeded.id);
+    expect(row?.status).toBe('cancelled');
+    expect(row?.cancelledBy).toBe('operator');
+    expect(calendarCreates).toBe(0);
+    expect(emails).toBe(0);
+  });
+});

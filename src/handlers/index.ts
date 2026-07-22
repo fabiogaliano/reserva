@@ -307,10 +307,16 @@ export function handleStripeWebhook(request: Request, context: BookkitContext): 
         if (booking && booking.status !== 'cancelled') {
           await calendarDelete(context, booking);
           const timestamp = nowIso(context);
-          const updated = await context.repo.updateBooking(booking.id, {
-            status: 'cancelled', cancelledAt: timestamp, cancelledBy: 'operator', updatedAt: timestamp,
+          const updated = await context.repo.transitionToCancelled(booking.id, {
+            // no_show and cancelled are terminal: a refund arriving after either must not
+            // resurrect/overwrite them (spec item 4). CAS loss here is an idempotent no-op —
+            // Stripe still gets 200 below, so a retry never causes redelivery storms.
+            expectedStatusIn: ['hold', 'confirmed', 'expired'],
+            cancelledAt: timestamp, cancelledBy: 'operator', updatedAt: timestamp,
           });
-          await dispatchMutation(context, 'booking.cancelled_by_operator', updated);
+          // A concurrent transition (e.g. a customer cancel) can win this race; when it does,
+          // the booking already reached a terminal state, so there is nothing left to dispatch.
+          if (updated) await dispatchMutation(context, 'booking.cancelled_by_operator', updated);
         }
       }
     } else if (event.type === 'charge.dispute.created') {
@@ -415,7 +421,20 @@ export function handleCustomerCancel(request: Request, context: BookkitContext):
     if (!canCancelBooking(booking, nowIso(context), context.config.booking.cancelCutoffHours)) throw new HttpError(403, 'past_cutoff', 'The cancellation deadline has passed');
     await calendarDelete(context, booking);
     const cancelled = cancelBooking(booking, 'customer', nowIso(context));
-    const updated = await context.repo.updateBooking(cancelled.id, { status: 'cancelled', cancelledAt: cancelled.cancelledAt, cancelledBy: 'customer', updatedAt: cancelled.updatedAt });
+    const updated = await context.repo.transitionToCancelled(cancelled.id, {
+      expectedStatusIn: ['confirmed'], expectedStartsAt: booking.startsAt,
+      cancelledAt: cancelled.updatedAt, cancelledBy: 'customer', updatedAt: cancelled.updatedAt,
+    });
+    if (!updated) {
+      // CAS loss always surfaces as a conflict here (never an idempotent 200): a concurrent
+      // reschedule leaves status='confirmed' but a different starts_at — the customer's cancel
+      // decision was computed against the stale start time, so it must not silently succeed.
+      const fresh = await context.repo.getBookingById(cancelled.id);
+      if (fresh?.status === 'confirmed' && fresh.startsAt !== booking.startsAt) {
+        throw new HttpError(409, 'slot_unavailable', 'The selected slot is no longer available');
+      }
+      throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
+    }
     await dispatchMutation(context, 'booking.cancelled_by_customer', updated);
     return json({ ok: true });
   });
@@ -431,7 +450,20 @@ async function rescheduleWithToken(context: BookkitContext, booking: Booking, ne
   if (!operator && !canRescheduleBooking(booking, now, context.config.booking.reschedule.cutoffHours, context.config.booking.reschedule.enabled)) throw new HttpError(403, 'past_cutoff', 'The reschedule deadline has passed');
   const candidate = await checkSlot(context, booking.tourSlug, booking.people, newStart, now, booking.id);
   const next = rescheduleBooking(booking, candidate.startsAt, candidate.tour.durationMin, now);
-  const updated = await context.repo.updateBooking(next.id, { startsAt: next.startsAt, endsAt: next.endsAt, rescheduledFrom: next.rescheduledFrom, updatedAt: next.updatedAt });
+  const updated = await context.repo.transitionReschedule(next.id, {
+    expectedStatus: 'confirmed',
+    expectedStartsAt: booking.startsAt,
+    startsAt: next.startsAt,
+    endsAt: next.endsAt,
+    rescheduledFrom: booking.startsAt,
+    updatedAt: next.updatedAt,
+  });
+  if (!updated) {
+    const fresh = await context.repo.getBookingById(next.id);
+    if (!fresh || fresh.status !== 'confirmed') throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be rescheduled');
+    // Status is still confirmed but starts_at moved under us — a concurrent reschedule won.
+    throw new HttpError(409, 'slot_unavailable', 'The selected slot is no longer available');
+  }
   await calendarPatch(context, updated);
   await dispatchMutation(context, 'booking.rescheduled', updated);
   return updated;
@@ -474,7 +506,19 @@ export function handleOperatorCancel(request: Request, context: BookkitContext):
       context.refundedPayments?.add(booking.id);
     }
     const cancelled = cancelBooking(booking, 'operator', nowIso(context));
-    const updated = await context.repo.updateBooking(cancelled.id, { status: 'cancelled', cancelledAt: cancelled.cancelledAt, cancelledBy: 'operator', updatedAt: cancelled.updatedAt });
+    const updated = await context.repo.transitionToCancelled(cancelled.id, {
+      expectedStatusIn: ['confirmed'], expectedStartsAt: booking.startsAt,
+      cancelledAt: cancelled.updatedAt, cancelledBy: 'operator', updatedAt: cancelled.updatedAt,
+    });
+    if (!updated) {
+      // Same conflict-only rule as the customer cancel path: a concurrent reschedule (still
+      // confirmed, different starts_at) is a slot conflict, anything else is a wrong-state 409.
+      const fresh = await context.repo.getBookingById(cancelled.id);
+      if (fresh?.status === 'confirmed' && fresh.startsAt !== booking.startsAt) {
+        throw new HttpError(409, 'slot_unavailable', 'The selected slot is no longer available');
+      }
+      throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
+    }
     await dispatchMutation(context, 'booking.cancelled_by_operator', updated);
     return json({ ok: true });
   });
@@ -498,7 +542,10 @@ export function handleOperatorNoShow(request: Request, context: BookkitContext):
     if (booking.status === 'no_show') return json({ ok: true });
     try {
       const next = markNoShow(booking, nowIso(context));
-      const updated = await context.repo.updateBooking(next.id, { status: 'no_show', updatedAt: next.updatedAt });
+      const updated = await context.repo.transitionToNoShow(next.id, { expectedStatusIn: ['confirmed'], updatedAt: next.updatedAt });
+      // CAS loss is always a conflict here, not an idempotent 200 — the caught error below
+      // converts it to the same 409 invalid_transition the wrong-state check already uses.
+      if (!updated) throw new Error('Booking cannot be marked no-show');
       await dispatchMutation(context, 'booking.no_show', updated);
       return json({ ok: true });
     } catch (error) {

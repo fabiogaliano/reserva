@@ -1,4 +1,4 @@
-import { confirmBooking, type Booking } from './core/booking';
+import type { Booking } from './core/booking';
 import type { BookingEvent, EmailBookingEvent, StripeCustomerDetails } from './core/events';
 import type { BookkitContext } from './context';
 import { nowIso } from './context';
@@ -40,17 +40,16 @@ async function confirmBookingFromPaymentUnlocked(
         startsAt: current.startsAt,
       });
     }
-    current = confirmBooking(current, now, paymentIntent === undefined ? customerPatch : {
+    const result = await context.repo.transitionToConfirmed(current.id, {
+      expectedStatusIn: ['hold', 'expired'],
+      ...(paymentIntent !== undefined ? { stripePaymentIntent: paymentIntent } : {}),
       ...customerPatch,
-      stripePaymentIntent: paymentIntent,
+      updatedAt: now,
     });
-    current = await context.repo.updateBooking(current.id, {
-      status: current.status,
-      holdExpiresAt: null,
-      stripePaymentIntent: paymentIntent === undefined ? current.stripePaymentIntent : paymentIntent,
-      ...customerPatch,
-      updatedAt: current.updatedAt,
-    });
+    // A concurrent cancel/no-show doesn't take the confirmation lease, so it can win this
+    // race; re-read and fall through — the status !== 'confirmed' check below then returns
+    // the terminal row as-is instead of resurrecting it.
+    current = result ?? await context.repo.getBookingById(current.id) ?? current;
   } else if (paymentIntent || Object.keys(customerPatch).length > 0) {
     current = await context.repo.updateBooking(current.id, {
       ...(paymentIntent ? { stripePaymentIntent: paymentIntent } : {}),

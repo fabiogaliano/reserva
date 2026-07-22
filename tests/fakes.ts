@@ -69,6 +69,40 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & { rows
       rows.set(id, updated);
       return updated;
     },
+    // Mirrors src/repo.ts's conditional UPDATE ... WHERE id = ? AND status IN (...): only
+    // apply the mutation (and return the new row) when the current status still matches;
+    // otherwise report the loss (null) instead of clobbering whatever won the race.
+    transitionToCancelled: async (id, input) => {
+      const current = rows.get(id);
+      if (!current || !input.expectedStatusIn.includes(current.status)) return null;
+      if (input.expectedStartsAt !== undefined && current.startsAt !== input.expectedStartsAt) return null;
+      const updated: Booking = { ...current, status: 'cancelled', cancelledAt: input.cancelledAt, cancelledBy: input.cancelledBy, updatedAt: input.updatedAt };
+      rows.set(id, updated);
+      return updated;
+    },
+    transitionToNoShow: async (id, input) => {
+      const current = rows.get(id);
+      if (!current || !input.expectedStatusIn.includes(current.status)) return null;
+      const updated: Booking = { ...current, status: 'no_show', updatedAt: input.updatedAt };
+      rows.set(id, updated);
+      return updated;
+    },
+    transitionToConfirmed: async (id, input) => {
+      const current = rows.get(id);
+      if (!current || !input.expectedStatusIn.includes(current.status)) return null;
+      const { expectedStatusIn, updatedAt, ...patch } = input;
+      const defined = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
+      const updated: Booking = { ...current, ...defined, status: 'confirmed', holdExpiresAt: null, updatedAt };
+      rows.set(id, updated);
+      return updated;
+    },
+    transitionReschedule: async (id, input) => {
+      const current = rows.get(id);
+      if (!current || current.status !== input.expectedStatus || current.startsAt !== input.expectedStartsAt) return null;
+      const updated: Booking = { ...current, startsAt: input.startsAt, endsAt: input.endsAt, rescheduledFrom: input.rescheduledFrom, updatedAt: input.updatedAt };
+      rows.set(id, updated);
+      return updated;
+    },
     listOccupancyBookings: async (from, to) => [...rows.values()].filter((item) => item.startsAt >= from && item.startsAt < to),
     // Mirrors src/repo.ts:260-267 — starts_at >= now AND (confirmed OR (hold AND hold_expires_at > now)), ordered by starts_at.
     listUpcoming: async (now) => [...rows.values()]

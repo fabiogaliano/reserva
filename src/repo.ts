@@ -29,7 +29,6 @@ export class HoldLimitExceededError extends Error {
 }
 
 export interface BookingUpdate {
-  status?: BookingStatus;
   pickupAddress?: string | null;
   customerName?: string | null;
   customerEmail?: string | null;
@@ -63,6 +62,41 @@ export interface BookingRepository {
   countReferencesForYear(prefix: string): Promise<number>;
   insertHold(input: BookingInsert): Promise<Booking>;
   updateBooking(id: string, patch: BookingUpdate): Promise<Booking>;
+  // Compare-and-set status transitions: each issues a single conditional UPDATE scoped to
+  // expectedStatusIn (or, for reschedule, status + starts_at) and returns null when the
+  // predicate didn't match (the caller lost the race), so a stale in-memory read can never
+  // overwrite a row that has already moved to a different state.
+  transitionToCancelled(id: string, input: {
+    expectedStatusIn: BookingStatus[];
+    // Optional guard against a concurrent reschedule: when set, the UPDATE also requires
+    // starts_at to still match, so a cancel decision computed against a stale start time
+    // (refund/notice windows) can never land after the booking has already moved.
+    expectedStartsAt?: string;
+    cancelledAt: string;
+    cancelledBy: CancellationActor;
+    updatedAt: string;
+  }): Promise<Booking | null>;
+  transitionToNoShow(id: string, input: {
+    expectedStatusIn: BookingStatus[];
+    updatedAt: string;
+  }): Promise<Booking | null>;
+  transitionToConfirmed(id: string, input: {
+    expectedStatusIn: BookingStatus[];
+    stripePaymentIntent?: string | null;
+    customerName?: string | null;
+    customerEmail?: string | null;
+    customerPhone?: string | null;
+    pickupAddress?: string | null;
+    updatedAt: string;
+  }): Promise<Booking | null>;
+  transitionReschedule(id: string, input: {
+    expectedStatus: BookingStatus;
+    expectedStartsAt: string;
+    startsAt: string;
+    endsAt: string;
+    rescheduledFrom: string;
+    updatedAt: string;
+  }): Promise<Booking | null>;
   listOccupancyBookings(from: string, to: string): Promise<Booking[]>;
   listUpcoming(now: string): Promise<Booking[]>;
   listSince(since: string): Promise<Booking[]>;
@@ -236,7 +270,7 @@ export function createBookingRepository(db: D1Database): BookingRepository {
         return unchanged;
       }
       const columnMap: Record<string, string> = {
-        status: 'status', pickupAddress: 'pickup_address', customerName: 'customer_name',
+        pickupAddress: 'pickup_address', customerName: 'customer_name',
         customerEmail: 'customer_email', customerPhone: 'customer_phone', startsAt: 'starts_at',
         endsAt: 'ends_at', holdExpiresAt: 'hold_expires_at', stripeSessionId: 'stripe_session_id',
         stripePaymentIntent: 'stripe_payment_intent', calendarEventId: 'calendar_event_id',
@@ -255,6 +289,56 @@ export function createBookingRepository(db: D1Database): BookingRepository {
       const updated = await oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
       if (!updated) throw new Error('Booking not found');
       return updated;
+    },
+    async transitionToCancelled(id, input) {
+      const placeholders = input.expectedStatusIn.map(() => '?').join(', ');
+      // starts_at clause is appended only when the caller supplies it, so callers that don't
+      // care about a concurrent reschedule (e.g. the refund webhook) keep the original scope.
+      const startsAtClause = input.expectedStartsAt !== undefined ? ' AND starts_at = ?' : '';
+      const params = [
+        input.cancelledAt, input.cancelledBy, input.updatedAt, id, ...input.expectedStatusIn,
+        ...(input.expectedStartsAt !== undefined ? [input.expectedStartsAt] : []),
+      ];
+      const result = await db.prepare(
+        `UPDATE bookings SET status = 'cancelled', cancelled_at = ?, cancelled_by = ?, updated_at = ?
+         WHERE id = ? AND status IN (${placeholders})${startsAtClause}`,
+      ).bind(...params).run();
+      if (result.meta.changes === 0) return null;
+      return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
+    },
+    async transitionToNoShow(id, input) {
+      const placeholders = input.expectedStatusIn.map(() => '?').join(', ');
+      const result = await db.prepare(
+        `UPDATE bookings SET status = 'no_show', updated_at = ?
+         WHERE id = ? AND status IN (${placeholders})`,
+      ).bind(input.updatedAt, id, ...input.expectedStatusIn).run();
+      if (result.meta.changes === 0) return null;
+      return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
+    },
+    async transitionToConfirmed(id, input) {
+      const { expectedStatusIn, updatedAt, ...patch } = input;
+      const columnMap: Record<string, string> = {
+        stripePaymentIntent: 'stripe_payment_intent', customerName: 'customer_name',
+        customerEmail: 'customer_email', customerPhone: 'customer_phone', pickupAddress: 'pickup_address',
+      };
+      const entries = Object.entries(patch).filter(([, value]) => value !== undefined);
+      const columns = entries.map(([key]) => columnMap[key]);
+      if (columns.some((column) => !column)) throw new Error('Unsupported confirmation field');
+      const placeholders = expectedStatusIn.map(() => '?').join(', ');
+      const setClauses = [`status = 'confirmed'`, 'hold_expires_at = NULL', ...columns.map((column) => `${column} = ?`), 'updated_at = ?'];
+      const result = await db.prepare(
+        `UPDATE bookings SET ${setClauses.join(', ')} WHERE id = ? AND status IN (${placeholders})`,
+      ).bind(...entries.map(([, value]) => value), updatedAt, id, ...expectedStatusIn).run();
+      if (result.meta.changes === 0) return null;
+      return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
+    },
+    async transitionReschedule(id, input) {
+      const result = await db.prepare(
+        `UPDATE bookings SET starts_at = ?, ends_at = ?, rescheduled_from = ?, updated_at = ?
+         WHERE id = ? AND status = ? AND starts_at = ?`,
+      ).bind(input.startsAt, input.endsAt, input.rescheduledFrom, input.updatedAt, id, input.expectedStatus, input.expectedStartsAt).run();
+      if (result.meta.changes === 0) return null;
+      return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
     },
     async listOccupancyBookings(from, to) {
       const result = await db.prepare(
