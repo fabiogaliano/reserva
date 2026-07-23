@@ -40,6 +40,61 @@ export class HoldLimitExceededError extends Error {
   }
 }
 
+// BK-SCHEMA-001 (task 12): thrown wherever a write would set stripe_payment_intent to a value
+// already claimed by a different booking, translating the D1 UNIQUE-violation on the new partial
+// index (migrations/0011_schema_constraints.sql idx_bookings_payment_intent) into a typed error
+// instead of an opaque D1 error bubbling up as an unhandled 500. status/code follow the same
+// self-describing-error convention as ConfirmationInProgressError (src/confirmation.ts) and
+// AccessVerificationError (src/access.ts) -- src/http.ts's errorResponse already knows how to turn
+// any `Error & {status, code}` into a clean JSON response, so no handler-level catch is needed.
+export class DuplicatePaymentIntentError extends Error {
+  readonly status = 409;
+  readonly code = 'duplicate_payment_intent';
+  constructor(paymentIntent: string) {
+    super(`stripe_payment_intent ${paymentIntent} already confirmed a different booking`);
+    this.name = 'DuplicatePaymentIntentError';
+  }
+}
+
+// BK-SCHEMA-001 (task 12): migrations/0011_schema_constraints.sql adds CHECK constraints for the
+// domain invariants below, but they only guard rows written (or rewritten) after that migration
+// ran -- a pre-rebuild row already sitting in D1, or a future write that bypasses this repository
+// (a manual UPDATE, a restored backup), could still violate them. mapBooking throws this rather
+// than silently handing a corrupt row to callers that assume it's valid (pricing, capacity,
+// calendar-window math), so the bad data surfaces immediately at the one place every row becomes a
+// Booking, instead of producing a confusing failure two layers downstream.
+export class InvalidBookingRowError extends Error {
+  constructor(bookingId: string, reason: string) {
+    super(`booking ${bookingId} violates a domain invariant: ${reason}`);
+    this.name = 'InvalidBookingRowError';
+  }
+}
+
+// SQLite reports a UNIQUE-index violation the same way regardless of whether the index is partial
+// or a plain column UNIQUE -- "UNIQUE constraint failed: <table>.<column>" -- so this doesn't need
+// to special-case the partial WHERE clause on idx_bookings_payment_intent.
+function isPaymentIntentUniqueViolation(error: unknown): boolean {
+  return error instanceof Error && /UNIQUE constraint failed:.*\bstripe_payment_intent\b/i.test(error.message);
+}
+
+// Shared by every repo method that can write stripe_payment_intent (updateBooking,
+// transitionToConfirmed, confirmWithSideEffectOperations, applyConfirmedPaymentDetails): runs the
+// D1 write and reclassifies a UNIQUE-violation on the new partial index into DuplicatePaymentIntentError,
+// leaving every other error (a different column's constraint, a transient D1 failure) untouched.
+async function guardDuplicatePaymentIntent<T>(paymentIntent: string | null | undefined, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    // Non-null (NOT falsy): the partial index's WHERE stripe_payment_intent IS NOT NULL clause
+    // covers '' just like any other non-null value, so a truthiness check here would wrongly skip
+    // reclassifying a collision on the empty string, letting it surface as an unhandled 500.
+    if (paymentIntent !== null && paymentIntent !== undefined && isPaymentIntentUniqueViolation(error)) {
+      throw new DuplicatePaymentIntentError(paymentIntent);
+    }
+    throw error;
+  }
+}
+
 // BK-CAP-001 / AR-001 (handoff 05): shared inputs for the atomic capacity guard used by both
 // insertHoldWithCapacity and rescheduleWithCapacity. occupancyUnits/occupancyEndsAt describe the
 // interval the *requesting* write needs (occupancyFor(tour, people) units, and endsAt + that
@@ -381,7 +436,28 @@ interface BookingRow {
   updated_at: string;
 }
 
+// BK-SCHEMA-001 (task 12): the invariants migrations/0011_schema_constraints.sql's CHECK
+// constraints enforce at write time, re-checked here at read time -- see InvalidBookingRowError
+// above for why. String comparison of ends_at > starts_at mirrors the SQL CHECK exactly: both
+// columns are consistently-formatted ISO 8601 UTC instants (e.g. '2026-08-01T09:00:00.000Z'), so
+// lexical order matches chronological order, same as the CHECK constraint's own TEXT comparison.
+function assertValidBookingRow(row: BookingRow): void {
+  if (row.people <= 0) throw new InvalidBookingRowError(row.id, `people must be > 0, got ${row.people}`);
+  if (row.price_cents < 0) throw new InvalidBookingRowError(row.id, `price_cents must be >= 0, got ${row.price_cents}`);
+  if (!(row.ends_at > row.starts_at)) {
+    throw new InvalidBookingRowError(row.id, `ends_at (${row.ends_at}) must be after starts_at (${row.starts_at})`);
+  }
+  for (const [column, value] of [
+    ['calendar_synced', row.calendar_synced],
+    ['email_synced', row.email_synced],
+    ['tourflow_synced', row.tourflow_synced],
+  ] as const) {
+    if (value !== 0 && value !== 1) throw new InvalidBookingRowError(row.id, `${column} must be 0 or 1, got ${value}`);
+  }
+}
+
 function mapBooking(row: BookingRow): Booking {
+  assertValidBookingRow(row);
   return {
     id: row.id,
     reference: row.reference,
@@ -941,8 +1017,9 @@ export function createBookingRepository(
         if (key === 'calendarSynced' || key === 'emailSynced' || key === 'tourflowSynced') return value ? 1 : 0;
         return value;
       });
-      await db.prepare(`UPDATE bookings SET ${columns.map((column) => `${column} = ?`).join(', ')} WHERE id = ?`)
-        .bind(...values, id).run();
+      await guardDuplicatePaymentIntent(patch.stripePaymentIntent, () =>
+        db.prepare(`UPDATE bookings SET ${columns.map((column) => `${column} = ?`).join(', ')} WHERE id = ?`)
+          .bind(...values, id).run());
       const updated = await oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
       if (!updated) throw new Error('Booking not found');
       return updated;
@@ -1006,9 +1083,10 @@ export function createBookingRepository(
       if (columns.some((column) => !column)) throw new Error('Unsupported confirmation field');
       const placeholders = expectedStatusIn.map(() => '?').join(', ');
       const setClauses = [`status = 'confirmed'`, 'hold_expires_at = NULL', ...columns.map((column) => `${column} = ?`), 'updated_at = ?'];
-      const result = await db.prepare(
-        `UPDATE bookings SET ${setClauses.join(', ')} WHERE id = ? AND status IN (${placeholders})`,
-      ).bind(...entries.map(([, value]) => value), updatedAt, id, ...expectedStatusIn).run();
+      const result = await guardDuplicatePaymentIntent(patch.stripePaymentIntent, () =>
+        db.prepare(
+          `UPDATE bookings SET ${setClauses.join(', ')} WHERE id = ? AND status IN (${placeholders})`,
+        ).bind(...entries.map(([, value]) => value), updatedAt, id, ...expectedStatusIn).run());
       if (result.meta.changes === 0) return null;
       return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
     },
@@ -1034,15 +1112,16 @@ export function createBookingRepository(
          )
          ON CONFLICT(booking_id, kind) DO NOTHING`,
       ).bind(id, kind, status, providerResultId, resolvedAt, updatedAt, updatedAt, id, leaseToken);
-      const results = await db.batch([
-        db.prepare(
-          `UPDATE bookings SET ${setClauses.join(', ')}
-           WHERE id = ? AND status IN (${placeholders}) AND confirmation_lease_token = ?`,
-        ).bind(...entries.map(([, value]) => value), updatedAt, id, ...expectedStatusIn, leaseToken),
-        operation('calendar_create', 'pending', null, null),
-        operation('email_confirmation', 'pending', null, null),
-        ...(oversold ? [operation('oversell', 'succeeded', 'capacity_exceeded', updatedAt)] : []),
-      ]);
+      const results = await guardDuplicatePaymentIntent(patch.stripePaymentIntent, () =>
+        db.batch([
+          db.prepare(
+            `UPDATE bookings SET ${setClauses.join(', ')}
+             WHERE id = ? AND status IN (${placeholders}) AND confirmation_lease_token = ?`,
+          ).bind(...entries.map(([, value]) => value), updatedAt, id, ...expectedStatusIn, leaseToken),
+          operation('calendar_create', 'pending', null, null),
+          operation('email_confirmation', 'pending', null, null),
+          ...(oversold ? [operation('oversell', 'succeeded', 'capacity_exceeded', updatedAt)] : []),
+        ]));
       if ((results[0]?.meta.changes ?? 0) === 0) return null;
       return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
     },
@@ -1055,10 +1134,11 @@ export function createBookingRepository(
       if (entries.length === 0) return false;
       const columns = entries.map(([key]) => columnMap[key]);
       if (columns.some((column) => !column)) throw new Error('Unsupported confirmation field');
-      const result = await db.prepare(
-        `UPDATE bookings SET ${columns.map((column) => `${column} = COALESCE(${column}, ?)`).join(', ')}, updated_at = ?
-         WHERE id = ? AND status = 'confirmed' AND confirmation_lease_token = ?`,
-      ).bind(...entries.map(([, value]) => value), updatedAt, id, leaseToken).run();
+      const result = await guardDuplicatePaymentIntent(patch.stripePaymentIntent, () =>
+        db.prepare(
+          `UPDATE bookings SET ${columns.map((column) => `${column} = COALESCE(${column}, ?)`).join(', ')}, updated_at = ?
+           WHERE id = ? AND status = 'confirmed' AND confirmation_lease_token = ?`,
+        ).bind(...entries.map(([, value]) => value), updatedAt, id, leaseToken).run());
       return result.meta.changes > 0;
     },
     async ensureConfirmationSideEffectOperations(id, leaseToken, now) {

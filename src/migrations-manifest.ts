@@ -13,4 +13,5 @@ export const BOOKKIT_MIGRATIONS = [
   '0008_occupancy_capacity.sql',
   '0009_token_hashing.sql',
   '0010_mutation_side_effect_outbox.sql',
+  '0011_schema_constraints.sql',
 ] as const;
