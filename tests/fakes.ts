@@ -22,9 +22,8 @@ import {
 } from '../src/repo';
 import { booking } from './fixtures';
 
-// BK-SEC-002: mirrors the DB-side token columns while keeping the usable values separate from
-// `rows`, which is the fake's at-rest representation. The optional encryption key represents
-// whether a real repository could decrypt *_token_enc on hydrated reads.
+// BK-SEC-002: mirrors the DB-side token columns. `tokenState` retains presented values for
+// hash lookup and, when configured, the fake encryption/decryption path on hydrated reads.
 interface FakeTokenState {
   cancelToken: string;
   operatorToken: string;
@@ -55,12 +54,13 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     cancelToken: placeholderToken(item.id, 'cancel'),
     operatorToken: placeholderToken(item.id, 'operator'),
   });
-  const rows = new Map(seed.map((item) => [item.id, storeTokens(item)]));
+  const rows = new Map(seed.map((item) => [item.id, item]));
   const holdIps = new Map<string, string>();
   const settings = new Map<string, string>();
   const leases = new Map<string, { token: string; until: string }>();
-  // Seeded rows model a legacy hash-null row for lookup compatibility, but their raw token
-  // columns remain unusable placeholders so non-hydrated reads cannot render live links.
+  // Seeded rows model pre-migration legacy rows: their hash columns are null and their raw
+  // token columns retain plaintext. Rows created by insertHold* use nohash placeholders at rest,
+  // so only hydrated reads with a configured key can recover their presented values.
   const tokenState = new Map<string, FakeTokenState>(
     seed.map((item) => [item.id, {
       cancelToken: item.cancelToken,
