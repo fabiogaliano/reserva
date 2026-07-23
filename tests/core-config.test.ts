@@ -10,6 +10,49 @@ describe('core config and pricing validation', () => {
     expect(priceFor(tour, 5, 'custom')).toBe(20000);
   });
 
+  it('canonicalizes out-of-order pricing tiers for each pickup type', () => {
+    const validated = validateConfig({
+      ...config,
+      tours: {
+        ...config.tours,
+        vintage: {
+          ...tour,
+          pricing: [
+            { maxPeople: 8, pickup: 'custom', priceCents: 20000 },
+            { maxPeople: 8, pickup: 'default', priceCents: 18000 },
+            { maxPeople: 4, pickup: 'custom', priceCents: 12000 },
+            { maxPeople: 4, pickup: 'default', priceCents: 10000 },
+          ],
+        },
+      },
+    });
+    const canonicalTour = validated.tours.vintage;
+    if (!canonicalTour) throw new Error('expected vintage tour');
+
+    expect(canonicalTour.pricing).toEqual([
+      { maxPeople: 4, pickup: 'custom', priceCents: 12000 },
+      { maxPeople: 4, pickup: 'default', priceCents: 10000 },
+      { maxPeople: 8, pickup: 'custom', priceCents: 20000 },
+      { maxPeople: 8, pickup: 'default', priceCents: 18000 },
+    ]);
+    expect(priceFor(canonicalTour, 2, 'default')).toBe(10000);
+  });
+
+  it('rejects a duplicate breakpoint that would shadow a pricing rule with an actionable diagnostic', () => {
+    const invalid = {
+      ...config,
+      tours: {
+        ...config.tours,
+        vintage: {
+          ...tour,
+          pricing: [...tour.pricing, { maxPeople: 4, pickup: 'default', priceCents: 9000 }],
+        },
+      },
+    };
+
+    expect(() => validateConfig(invalid)).toThrow(/tour vintage pricing rule 4 \(pickup=default, maxPeople=4\) duplicates and shadows rule 0; remove or change one breakpoint/);
+  });
+
   it('rejects a missing pickup variant for a supported people count', () => {
     const invalid = {
       ...config,

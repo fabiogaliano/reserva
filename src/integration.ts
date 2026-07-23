@@ -119,6 +119,13 @@ export function bookkit(options: BookkitIntegrationOptions): AstroIntegration {
     name: 'bookkit',
     hooks: {
       'astro:config:setup': ({ config, injectRoute, logger, updateConfig }) => {
+        // Fail-fast only: this hook runs during `astro build`/`astro dev` config resolution, a
+        // separate process/lifecycle phase from request-time Worker execution, so its canonical
+        // (sorted) return value has no path to the runtime config — defineBookkitRuntime /
+        // defineCloudflareBookkitRuntime independently call validateConfig on the consumer's
+        // runtime entrypoint and thread THAT return value through context.config (see
+        // runtime-context.ts), which is what actually backs priceFor/checkout. Discarding the
+        // return here is intentional, not the source of stale/unsorted pricing at runtime.
         try {
           validateConfig(options.config);
         } catch (error) {

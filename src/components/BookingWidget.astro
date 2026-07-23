@@ -1,5 +1,6 @@
 ---
 import routeConfig from 'virtual:bookkit/config';
+import { resolvedPriceTableFor } from '../core/pricing';
 import { defaultMessages, formatMessage, type BookkitMessages } from '../ui/messages';
 import '../ui/components.css';
 
@@ -51,6 +52,7 @@ const {
 const t: BookkitMessages = { ...defaultMessages, ...messageOverrides };
 const usesAvailability = availabilityFrom !== undefined && availabilityTo !== undefined;
 const peopleLabel = (n: number): string => formatMessage(n === 1 ? t['widget.person'] : t['widget.peopleCount'], { n });
+const resolvedPrices = pricing ? resolvedPriceTableFor({ pricing }) : null;
 
 // Everything the client script needs that can vary per render (copy, pricing, locale) travels in
 // a JSON data island rather than an inline define:vars script, so no unhashed inline JS is ever
@@ -58,7 +60,7 @@ const peopleLabel = (n: number): string => formatMessage(n === 1 ? t['widget.per
 const scriptData = {
   locale,
   currency,
-  pricing: pricing ?? null,
+  resolvedPrices,
   i18n: {
     loadingSlots: t['widget.loadingSlots'],
     noSlots: t['widget.noSlots'],
@@ -187,11 +189,14 @@ const pickupCopy: Record<'default' | 'custom', { label: string; hint: string }> 
 
   interface AvailabilitySlot { start: string; remaining: number }
   interface AvailabilityDay { date: string; status: string; closedReason?: string; slots: AvailabilitySlot[] }
-  interface PricingRule { maxPeople: number; pickup: string; priceCents: number }
+  interface ResolvedPriceTable {
+    default: number[];
+    custom: number[];
+  }
   interface WidgetData {
     locale: string;
     currency: string;
-    pricing: PricingRule[] | null;
+    resolvedPrices: ResolvedPriceTable | null;
     i18n: Record<string, string>;
   }
 
@@ -226,15 +231,13 @@ const pickupCopy: Record<'default' | 'custom', { label: string; hint: string }> 
 
   function updatePrice(form: HTMLFormElement, data: WidgetData): void {
     const target = form.querySelector<HTMLElement>('[data-bookkit-price-value]');
-    if (!target || !data.pricing) return;
+    if (!target || !data.resolvedPrices) return;
     const people = Number(new FormData(form).get('people'));
-    const pickup = String(new FormData(form).get('pickupType') ?? 'default');
-    const rule = data.pricing
-      .filter((candidate) => candidate.pickup === pickup && people <= candidate.maxPeople)
-      .sort((a, b) => a.maxPeople - b.maxPeople)[0];
-    target.textContent = rule
-      ? new Intl.NumberFormat(data.locale, { style: 'currency', currency: data.currency }).format(rule.priceCents / 100)
-      : '';
+    const pickup = new FormData(form).get('pickupType') === 'custom' ? 'custom' : 'default';
+    const priceCents = data.resolvedPrices[pickup][people];
+    target.textContent = priceCents === undefined
+      ? ''
+      : new Intl.NumberFormat(data.locale, { style: 'currency', currency: data.currency }).format(priceCents / 100);
   }
 
   function dateKey(date: Date): string {

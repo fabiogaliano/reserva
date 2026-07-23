@@ -187,6 +187,22 @@ function isValidMonthDay(value: string): boolean {
 }
 
 function validateTour(tour: TourConfig, tourSlug: string, add: (path: (string | number)[], message: string) => void): void {
+  const pricingBreakpoints: Record<PickupType, Map<number, number>> = {
+    default: new Map(),
+    custom: new Map(),
+  };
+  for (const [index, rule] of tour.pricing.entries()) {
+    const previousIndex = pricingBreakpoints[rule.pickup].get(rule.maxPeople);
+    if (previousIndex !== undefined) {
+      add(
+        ['tours', tourSlug, 'pricing', index],
+        `tour ${tourSlug} pricing rule ${index} (pickup=${rule.pickup}, maxPeople=${rule.maxPeople}) duplicates and shadows rule ${previousIndex}; remove or change one breakpoint`,
+      );
+    } else {
+      pricingBreakpoints[rule.pickup].set(rule.maxPeople, index);
+    }
+  }
+
   for (const [index, rule] of tour.schedule.entries()) {
     if (rule.from && !isValidMonthDay(rule.from)) {
       add(['tours', tourSlug, 'schedule', index, 'from'], 'must be a valid month-day');
@@ -266,6 +282,9 @@ export function validateConfig(input: unknown): ClientConfig {
       for (const issue of issues) addIssue(ctx, issue.path, issue.message);
     }).safeParse(input);
     if (!result.success) throw result.error;
+  }
+  for (const tour of Object.values(config.tours)) {
+    tour.pricing.sort((a, b) => a.maxPeople - b.maxPeople);
   }
   return config;
 }
