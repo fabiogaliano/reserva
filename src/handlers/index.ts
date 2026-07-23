@@ -6,7 +6,7 @@ import {
   rescheduleBooking,
   type Booking,
 } from '../core/booking';
-import { resolveTour, type PickupType } from '../core/config';
+import { DEFAULT_TOKEN_EXPIRY_DAYS, resolveTour, type PickupType } from '../core/config';
 import { availabilityForDay, capacityForDate, defaultCapacityForDate, occupancyFor, type CalEvent, type CapacityDefault } from '../core/occupancy';
 import { verifyPayment } from '../core/payment-verification';
 import { priceFor } from '../core/pricing';
@@ -30,6 +30,7 @@ import { adminOriginAllowed, mintAdminCsrfToken, verifyAdminCsrfToken } from '..
 import { ConfirmationInProgressError, confirmBookingFromPayment, dispatchMutation, dispatchNonCritical } from '../confirmation';
 import type { BookkitContext } from '../context';
 import { getSecret, nowIso } from '../context';
+import { isManageableToken } from '../providers/brevo';
 import { HoldLimitExceededError, type SettingsBatchOperation } from '../repo';
 import { cssAssetHref, jsAssetHref } from '../ui/asset-hrefs';
 import { formatDateTime, formatDayDate, formatPrice } from '../ui/format';
@@ -410,11 +411,17 @@ export function handleCheckout(request: Request, context: BookkitContext): Promi
       const reference = await generateUniqueReference(context.config.business.shortCode, year, sequence, referenceExists);
       try {
         const holdLimit = context.config.booking.maxHoldsPerIp;
+        // BK-SEC-002: expiry counts from the tour's end, not from creation, so the link keeps
+        // working through the whole pre-tour period plus a post-tour grace window — see
+        // ClientConfig.booking.tokenExpiryDays (src/core/config.ts).
+        const tokenExpiryDays = context.config.booking.tokenExpiryDays ?? DEFAULT_TOKEN_EXPIRY_DAYS;
+        const tokensExpireAt = new Date(parseUtcInstant(candidate.endsAt).getTime() + tokenExpiryDays * 86_400_000).toISOString();
         const created = await context.repo.insertHoldWithCapacity({
           id: crypto.randomUUID(), reference, tourSlug, people, pickupType,
           startsAt: candidate.startsAt, endsAt: candidate.endsAt, locale, priceCents,
           holdExpiresAt: new Date(parseUtcInstant(now).getTime() + context.config.booking.holdMinutes * 60_000).toISOString(),
           cancelToken: tokenBytes(), operatorToken: tokenBytes(), createdAt: now, updatedAt: now,
+          tokensExpireAt,
           occupancyUnits, occupancyEndsAt, localDate, fleetDefaultCapacity: context.config.fleet.defaultCapacity,
           ...(holdLimit ? { holdIp: clientIp(request), maxActiveHoldsForIp: holdLimit } : {}),
         });
@@ -630,8 +637,13 @@ export function handleStatus(request: Request, context: BookkitContext): Promise
   }).then(withSensitiveHeaders);
 }
 
+// BK-SEC-002: getBookingByCancelToken/getBookingByOperatorToken enforce expiry (tokens_expire_at)
+// and, for the cancel token, revocation (cancel_token_revoked_at) as part of the same lookup
+// query (src/repo.ts) — an expired or revoked token comes back as a plain null here, identical to
+// an unknown one, so this stays a single `if (!booking) throw 403` with no separate check needed.
 async function tokenBooking(context: BookkitContext, token: string, operator = false): Promise<Booking> {
-  const booking = operator ? await context.repo.getBookingByOperatorToken(token) : await context.repo.getBookingByCancelToken(token);
+  const now = nowIso(context);
+  const booking = operator ? await context.repo.getBookingByOperatorToken(token, now) : await context.repo.getBookingByCancelToken(token, now);
   if (!booking) throw new HttpError(403, 'forbidden', 'Invalid booking token');
   return booking;
 }
@@ -641,11 +653,11 @@ export function handleManage(request: Request, context: BookkitContext): Promise
     if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const token = new URL(request.url).searchParams.get('token');
     if (!token) throw new HttpError(403, 'forbidden', 'A booking token is required');
-    const customer = await context.repo.getBookingByCancelToken(token);
-    const booking = customer ?? await context.repo.getBookingByOperatorToken(token);
+    const now = nowIso(context);
+    const customer = await context.repo.getBookingByCancelToken(token, now);
+    const booking = customer ?? await context.repo.getBookingByOperatorToken(token, now);
     if (!booking) throw new HttpError(403, 'forbidden', 'Invalid booking token');
     const operator = !customer;
-    const now = nowIso(context);
     return json({ booking: bookingSummary(context, booking), role: operator ? 'operator' : 'customer', canCancel: operator ? booking.status === 'confirmed' : canCancelBooking(booking, now, context.config.booking.cancelCutoffHours), canReschedule: operator ? booking.status === 'confirmed' : canRescheduleBooking(booking, now, context.config.booking.reschedule.cutoffHours, context.config.booking.reschedule.enabled), canNoShow: operator && booking.status === 'confirmed' && parseUtcInstant(booking.startsAt).getTime() < parseUtcInstant(now).getTime(), deadline: new Date(parseUtcInstant(booking.startsAt).getTime() - context.config.booking.cancelCutoffHours * 3_600_000).toISOString() });
   }).then(withSensitiveHeaders);
 }
@@ -707,6 +719,12 @@ async function rescheduleWithToken(context: BookkitContext, booking: Booking, ne
   const occupancyUnits = occupancyFor(candidate.tour, booking.people);
   const occupancyEndsAt = new Date(parseUtcInstant(next.endsAt).getTime() + candidate.tour.turnaroundMin * 60_000).toISOString();
   const localDate = localDateKey(next.startsAt, context.config.business.timezone);
+  // BK-SEC-002 (patch-11-r1 MEDIUM 2): recompute from the NEW endsAt, exactly like checkout does
+  // from the original endsAt (see handleCheckout above) — otherwise a booking moved later could
+  // have its manage link expire before the rescheduled tour happens, and one moved earlier would
+  // keep an over-long window relative to its new end.
+  const tokenExpiryDays = context.config.booking.tokenExpiryDays ?? DEFAULT_TOKEN_EXPIRY_DAYS;
+  const tokensExpireAt = new Date(parseUtcInstant(next.endsAt).getTime() + tokenExpiryDays * 86_400_000).toISOString();
   const updated = await context.repo.rescheduleWithCapacity(next.id, {
     expectedStatus: 'confirmed',
     expectedStartsAt: booking.startsAt,
@@ -715,6 +733,7 @@ async function rescheduleWithToken(context: BookkitContext, booking: Booking, ne
     rescheduledFrom: booking.startsAt,
     updatedAt: next.updatedAt,
     now,
+    tokensExpireAt,
     occupancyUnits, occupancyEndsAt, localDate, fleetDefaultCapacity: context.config.fleet.defaultCapacity,
   });
   if (!updated) {
@@ -1020,6 +1039,15 @@ function matchesAdminFilters(booking: Booking, filters: AdminFilters): boolean {
   return true;
 }
 
+// BK-SEC-002 (patch-11-r1 LOW 1): shared by every admin manage-link render site below (the
+// bookings table, the day-detail island, and its server-rendered fallback) — never build an href
+// from a token that isn't presentable (see isManageableToken, src/providers/brevo.ts: a
+// `nohash:`-prefixed placeholder, meaning no decryptable blob exists to regenerate the real link
+// from). null tells each call site to render the "unavailable" fallback instead of a dead link.
+function manageLinkHref(managePagePath: string, token: string): string | null {
+  return isManageableToken(token) ? `${managePagePath}?token=${encodeURIComponent(token)}` : null;
+}
+
 function adminPage(
   context: BookkitContext,
   bookings: Booking[],
@@ -1055,13 +1083,17 @@ function adminPage(
     const pickupSub = booking.pickupType === 'custom' && booking.pickupAddress
       ? `<span class="bk-sub">${escapeHtml(booking.pickupAddress)}</span>`
       : '';
+    const manageHref = manageLinkHref(managePagePath, booking.operatorToken);
+    const manageCell = manageHref
+      ? `<a href="${escapeHtml(manageHref)}">${escapeHtml(messages['admin.manage'])}</a>`
+      : `<span class="bk-sub">${escapeHtml(messages['admin.manageUnavailable'])}</span>`;
     return `<tr>`
       + `<td>${escapeHtml(formatDateTime(utcToLocalIso(booking.startsAt, timezone), locale, timezone))}<span class="bk-sub bk-mono">${escapeHtml(booking.reference)}</span></td>`
       + `<td><strong>${escapeHtml(customerPrimary)}</strong>${customerSub}</td>`
       + `<td>${escapeHtml(booking.tourSlug)}<span class="bk-sub">${escapeHtml(people)} · ${escapeHtml(price)}</span></td>`
       + `<td>${escapeHtml(pickupLabel)}${pickupSub}</td>`
       + `<td>${statusBadge(booking.status, messages)}</td>`
-      + `<td><a href="${escapeHtml(managePagePath)}?token=${encodeURIComponent(booking.operatorToken)}">${escapeHtml(messages['admin.manage'])}</a></td>`
+      + `<td>${manageCell}</td>`
       + `</tr>`;
   }).join('');
 
@@ -1190,13 +1222,16 @@ function adminPage(
   for (const [date, list] of bookingsByDate) {
     daySummaries[date] = [...list].sort(byStart).map((entry) => {
       const tone = statusToneOf(entry.status);
+      // BK-SEC-002 (patch-11-r1 LOW 1): omitted (not a dead-link href) when the token isn't
+      // presentable — admin-enhancer.ts renders the "unavailable" fallback when `u` is absent.
+      const manageHref = manageLinkHref(managePagePath, entry.operatorToken);
       return {
         t: formatDayTime(entry.startsAt),
         c: entry.customerName ?? entry.customerEmail ?? '—',
         p: peopleText(entry.people),
         s: messages[`status.${entry.status}` as keyof typeof messages] ?? entry.status,
         ...(tone ? { sc: tone } : {}),
-        u: `${managePagePath}?token=${encodeURIComponent(entry.operatorToken)}`,
+        ...(manageHref ? { u: manageHref } : {}),
       };
     });
   }
@@ -1209,16 +1244,22 @@ function adminPage(
     title: messages['admin.overrideTitle'],
     noBookings: messages['admin.dayNoBookings'],
     manage: messages['admin.manage'],
+    manageUnavailable: messages['admin.manageUnavailable'],
     prevMonth: messages['admin.prevMonth'],
     nextMonth: messages['admin.nextMonth'],
     days: daySummaries,
   }).replace(/</g, '\\u003c')}</script>`;
   // The day panel answers "what does this day actually have" — the bookings on the selected day,
   // rendered server-side for the no-JS path and rebuilt client-side from the island on selection.
-  const dayBookingItem = (entry: Booking): string =>
-    `<li><span class="bk-mono">${escapeHtml(formatDayTime(entry.startsAt))}</span> <strong>${escapeHtml(entry.customerName ?? entry.customerEmail ?? '—')}</strong>`
-    + `<span class="bk-sub">${escapeHtml(peopleText(entry.people))}</span>${statusBadge(entry.status, messages)}`
-    + `<a href="${escapeHtml(managePagePath)}?token=${encodeURIComponent(entry.operatorToken)}">${escapeHtml(messages['admin.manage'])}</a></li>`;
+  const dayBookingItem = (entry: Booking): string => {
+    const manageHref = manageLinkHref(managePagePath, entry.operatorToken);
+    const manageMarkup = manageHref
+      ? `<a href="${escapeHtml(manageHref)}">${escapeHtml(messages['admin.manage'])}</a>`
+      : `<span class="bk-sub">${escapeHtml(messages['admin.manageUnavailable'])}</span>`;
+    return `<li><span class="bk-mono">${escapeHtml(formatDayTime(entry.startsAt))}</span> <strong>${escapeHtml(entry.customerName ?? entry.customerEmail ?? '—')}</strong>`
+      + `<span class="bk-sub">${escapeHtml(peopleText(entry.people))}</span>${statusBadge(entry.status, messages)}`
+      + `${manageMarkup}</li>`;
+  };
   const editDayBookings = editDate ? [...bookingsByDate.get(editDate) ?? []].sort(byStart) : [];
   const dayDetail = `<div class="bk-day-detail" data-bookkit-day-detail>`
     + (editDate

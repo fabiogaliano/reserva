@@ -1,6 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createBookkitContext } from '../src/context';
+import { DEFAULT_TOKEN_EXPIRY_DAYS } from '../src/core/config';
 import { handleCustomerCancel, handleCustomerReschedule } from '../src/handlers';
 import { booking, config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
@@ -55,7 +56,15 @@ describe('POST /cancel (customer, spec §11)', () => {
     expect(emails).toEqual(['booking.cancelled_by_customer']);
   });
 
-  it('is idempotent: cancelling an already-cancelled booking again returns ok without a second calendar delete or email', async () => {
+  // BK-SEC-002: a successful cancel now revokes the customer's cancel_token (migrations/
+  // 0009_token_hashing.sql — cancel_token_revoked_at), since a cancelled booking's link has no
+  // further legitimate customer use. That changes what a same-token retry sees: it can no longer
+  // re-authenticate at all, so it gets 403 forbidden (the same denial an unknown token gets, per
+  // the "no oracle" requirement) rather than replaying the old idempotent 200. The property this
+  // test actually cares about — a repeat request can never cause a second calendar delete or a
+  // second email — holds even more strongly now: the retry cannot get far enough to attempt the
+  // mutation at all.
+  it('revokes the customer token on a successful cancel, so a same-token retry is denied like an unknown token — without ever risking a second calendar delete or email', async () => {
     const seeded = booking({ id: 'b-cancel-idempotent', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z', calendarEventId: 'cal-idempotent' });
     const repo = fakeRepository([seeded]);
     let deletes = 0;
@@ -74,8 +83,9 @@ describe('POST /cancel (customer, spec §11)', () => {
     const first = await handleCustomerCancel(cancelRequest(seeded.cancelToken), context);
     expect(first.status).toBe(200);
     const second = await handleCustomerCancel(cancelRequest(seeded.cancelToken), context);
-    expect(second.status).toBe(200);
-    await expect(second.json()).resolves.toEqual({ ok: true });
+    expect(second.status).toBe(403);
+    await expect(second.json()).resolves.toMatchObject({ error: { code: 'forbidden' } });
+    expect(repo.rows.get(seeded.id)?.status).toBe('cancelled');
     expect(deletes).toBe(1);
     expect(emails).toEqual(['booking.cancelled_by_customer']);
   });
@@ -231,5 +241,42 @@ describe('POST /reschedule (customer, spec §11)', () => {
     const response = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, validNewStart), context);
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toMatchObject({ error: { code: 'invalid_transition' } });
+  });
+
+  // BK-SEC-002 (patch-11-r1 MEDIUM 2): tokens_expire_at must track the booking's CURRENT endsAt,
+  // not whatever it was at checkout — otherwise a reschedule that moves a booking out drops its
+  // manage link's expiry before the (new, later) tour date, and one moved in leaves an
+  // over-long window relative to the new (earlier) end. repo.tokenState mirrors the DB-side
+  // tokens_expire_at column (see tests/fakes.ts).
+  it('moves tokens_expire_at to (new endsAt + tokenExpiryDays) on a LATER reschedule', async () => {
+    const seeded = booking({ id: 'b-reschedule-expiry-later', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z' });
+    const repo = fakeRepository([seeded]);
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+
+    const newStart = '2026-06-15T10:00:00.000Z'; // later than the original 09:00 start, still on-grid
+    const response = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, newStart), context);
+    expect(response.status).toBe(200);
+    const row = repo.rows.get(seeded.id);
+    expect(row?.endsAt).toBe('2026-06-15T11:00:00.000Z'); // 60-min tour, moved an hour later
+    const expected = new Date(new Date(row!.endsAt).getTime() + DEFAULT_TOKEN_EXPIRY_DAYS * 86_400_000).toISOString();
+    expect(repo.tokenState.get(seeded.id)?.tokensExpireAt).toBe(expected);
+  });
+
+  it('moves tokens_expire_at to (new endsAt + tokenExpiryDays) on an EARLIER reschedule', async () => {
+    const seeded = booking({ id: 'b-reschedule-expiry-earlier', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z' });
+    const repo = fakeRepository([seeded]);
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+
+    const newStart = '2026-06-15T08:00:00.000Z'; // earlier than the original 09:00 start, still on-grid
+    const response = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, newStart), context);
+    expect(response.status).toBe(200);
+    const row = repo.rows.get(seeded.id);
+    expect(row?.endsAt).toBe('2026-06-15T09:00:00.000Z'); // 60-min tour, moved an hour earlier
+    const expected = new Date(new Date(row!.endsAt).getTime() + DEFAULT_TOKEN_EXPIRY_DAYS * 86_400_000).toISOString();
+    expect(repo.tokenState.get(seeded.id)?.tokensExpireAt).toBe(expected);
+    // Sanity: the new expiry is earlier than it would have been off the ORIGINAL endsAt, proving
+    // this tracks the booking's current end, not a value frozen at checkout.
+    const staleExpiry = new Date(new Date(seeded.endsAt).getTime() + DEFAULT_TOKEN_EXPIRY_DAYS * 86_400_000).toISOString();
+    expect(repo.tokenState.get(seeded.id)?.tokensExpireAt).not.toBe(staleExpiry);
   });
 });

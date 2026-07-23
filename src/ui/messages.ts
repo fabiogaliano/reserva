@@ -147,6 +147,10 @@ export const defaultMessages = {
   'admin.all': 'All',
   'admin.apply': 'Apply filters',
   'admin.manage': 'Manage',
+  // BK-SEC-002 (patch-11-r1 LOW 1): shown instead of a manage-link href when the booking's
+  // operatorToken isn't presentable (see isManageableToken, src/providers/brevo.ts) — a
+  // not-yet-backfilled legacy row, or no BOOKKIT_TOKEN_ENC_KEY configured at all.
+  'admin.manageUnavailable': 'Manage link unavailable',
   'admin.results': '{n} bookings',
   'admin.resultsOne': '{n} booking',
   // Admin settings page

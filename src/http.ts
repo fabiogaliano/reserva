@@ -71,6 +71,21 @@ export function tokenBytes(length = 32): string {
   return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
 }
 
+// BK-SEC-002: one-way digest used to hash manage/operator tokens at rest (src/repo.ts) so a D1
+// dump no longer contains a usable credential. Unsalted SHA-256 is appropriate here specifically
+// because the input is always a 256-bit crypto.getRandomValues token (tokenBytes above), never a
+// low-entropy secret like a password — there is no dictionary/rainbow-table attack to defend
+// against, only "don't hand back the original bytes from the digest", which SHA-256 already
+// gives. Same base64url alphabet as tokenBytes so hashes and tokens are visually distinguishable
+// only by never having been presented as a token, not by character set.
+export async function sha256Base64Url(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  const bytes = new Uint8Array(digest);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+}
+
 export function constantTimeEqual(left: string, right: string): boolean {
   const encoder = new TextEncoder();
   const a = encoder.encode(left);

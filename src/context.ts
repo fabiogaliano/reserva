@@ -91,7 +91,11 @@ export function createBookkitContext(input: BookkitContextInput): BookkitContext
   return {
     ...input,
     config: validateConfig(input.config),
-    repo: input.repo ?? createBookingRepository(input.db),
+    // BK-SEC-002: threads the same secrets accessor the rest of BookkitContext uses through to
+    // the repo, so it can resolve the optional BOOKKIT_TOKEN_ENC_KEY (src/repo.ts) — repo.ts
+    // can't import SecretLookup from here (this module already imports createBookingRepository
+    // from repo.ts, and the reverse import would be circular).
+    repo: input.repo ?? createBookingRepository(input.db, input.secrets),
     clock: input.clock ?? (() => new Date()),
     logger: input.logger ?? console,
     providers: {

@@ -63,6 +63,12 @@ export interface ClientConfig {
     limitedThreshold: number;
     calendarMaxStaleSeconds: number;
     maxHoldsPerIp?: number;
+    // BK-SEC-002: manage/operator token lifetime, counted from booking end (not creation) so a
+    // link keeps working through the whole pre-tour period plus a post-tour grace window
+    // (late reschedules, refund follow-up, review requests). Optional — defaults to
+    // DEFAULT_TOKEN_EXPIRY_DAYS below when unset, so existing deployments don't need a config
+    // change to pick up expiry.
+    tokenExpiryDays?: number;
   };
   locales: {
     supported: string[];
@@ -87,6 +93,11 @@ export const stripeSupportedLocales = new Set([
   'lv', 'ms', 'mt', 'nb', 'nl', 'pl', 'pt', 'pt-BR', 'ro', 'ru', 'sk', 'sl',
   'sv', 'th', 'tr', 'uk', 'vi', 'zh', 'zh-HK', 'zh-TW',
 ]);
+
+// BK-SEC-002: default for booking.tokenExpiryDays when a deployment doesn't set one — long
+// enough to cover post-tour reschedules/refund disputes/review-request follow-ups without ever
+// being effectively unlimited.
+export const DEFAULT_TOKEN_EXPIRY_DAYS = 60;
 
 const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/;
 const monthDayPattern = /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
@@ -141,6 +152,7 @@ export const clientConfigSchema = z.object({
     limitedThreshold: z.number().int().nonnegative(),
     calendarMaxStaleSeconds: z.number().int().min(60).default(15 * 60),
     maxHoldsPerIp: z.number().int().positive().optional(),
+    tokenExpiryDays: z.number().int().positive().optional(),
   }),
   locales: z.object({
     supported: z.array(z.string().min(1)).min(1),

@@ -61,4 +61,27 @@ describe('email providers', () => {
   it('is a safe no-op when email is intentionally disabled', async () => {
     await expect(calendarInviteOnly().send('booking.confirmed', booking(), config)).resolves.toBeUndefined();
   });
+
+  // BK-SEC-002 (patch-11-r1 LOW 1): a `nohash:`-prefixed token (src/repo.ts placeholderToken) is
+  // what a DB-loaded booking's cancelToken/operatorToken looks like when there's no decryptable
+  // blob to regenerate the real link from (no BOOKKIT_TOKEN_ENC_KEY, or a not-yet-backfilled
+  // legacy row). Rendering it into a link would produce an href that 403s the instant it's
+  // clicked; the manage-link paragraph should be omitted instead.
+  it('omits the manage-link paragraph entirely (never renders a dead href) when a token is not presentable', async () => {
+    const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
+    const provider = brevoEmail({ apiKey: 'key', fetch: request });
+    await provider.send('booking.confirmed', booking({ cancelToken: 'nohash:11111111-1111-1111-1111-111111111111', operatorToken: 'nohash:22222222-2222-2222-2222-222222222222' }), config);
+
+    expect(request).toHaveBeenCalledTimes(2);
+    const customerHtml = JSON.parse(request.mock.calls[0]![1]!.body as string) as { htmlContent: string };
+    const ownerHtml = JSON.parse(request.mock.calls[1]![1]!.body as string) as { htmlContent: string };
+    expect(customerHtml.htmlContent).not.toContain('nohash:');
+    expect(customerHtml.htmlContent).not.toContain('href=""');
+    expect(customerHtml.htmlContent).not.toContain('Manage your booking');
+    expect(ownerHtml.htmlContent).not.toContain('nohash:');
+    expect(ownerHtml.htmlContent).not.toContain('href=""');
+    expect(ownerHtml.htmlContent).not.toContain('Open operator actions');
+    // The rest of the email is unaffected — only the dead link paragraph is gone.
+    expect(customerHtml.htmlContent).toContain('Ada Lovelace');
+  });
 });

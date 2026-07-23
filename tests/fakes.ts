@@ -9,6 +9,7 @@ import {
   type OccupancyBooking,
   type OccupancyTour,
 } from '../src/core/occupancy';
+import { sha256Base64Url } from '../src/http';
 import {
   HoldLimitExceededError,
   type BookingRepository,
@@ -16,6 +17,24 @@ import {
   type SideEffectOperationRecord,
 } from '../src/repo';
 import { booking } from './fixtures';
+
+// BK-SEC-002: mirrors the DB-side cancel_token_hash/operator_token_hash/tokens_expire_at/
+// cancel_token_revoked_at columns (migrations/0009_token_hashing.sql), kept as a side map rather
+// than folded into the `Booking` object stored in `rows`. This split matters for what a test can
+// observe: `rows` stays the "hydrated" view (Booking.cancelToken/operatorToken always the real,
+// presentable value, exactly like a decrypted src/repo.ts read) so every pre-existing test that
+// reads a seeded/created booking's `.cancelToken` off `rows` keeps working unmodified; `tokenState`
+// is the "raw storage" view a test can inspect to assert the stored representation is not the
+// presented token (mirrors the real repo's hash column) and that presenting it back doesn't
+// authenticate. A row with no tokenState entry can't happen here — every row, seeded or inserted,
+// gets one (with null hashes for a seeded row, mirroring a pre-migration legacy row that hasn't
+// been backfilled yet).
+interface FakeTokenState {
+  cancelTokenHash: string | null;
+  operatorTokenHash: string | null;
+  tokensExpireAt: string | null;
+  cancelTokenRevokedAt: string | null;
+}
 
 // Shared in-memory fake repository + provider harness for handler tests.
 // Kept general (seed bookings, override individual repo methods / providers)
@@ -25,11 +44,17 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
   settings: Map<string, string>;
   refundOperations: Map<string, RefundOperationRecord>;
   sideEffectOperations: Map<string, SideEffectOperationRecord>;
+  tokenState: Map<string, FakeTokenState>;
 } {
   const rows = new Map(seed.map((item) => [item.id, item]));
   const holdIps = new Map<string, string>();
   const settings = new Map<string, string>();
   const leases = new Map<string, { token: string; until: string }>();
+  // Seeded rows start out exactly like a not-yet-backfilled legacy row (null hashes) — see the
+  // FakeTokenState doc comment above.
+  const tokenState = new Map<string, FakeTokenState>(
+    seed.map((item) => [item.id, { cancelTokenHash: null, operatorTokenHash: null, tokensExpireAt: null, cancelTokenRevokedAt: null }]),
+  );
   // Keyed by booking_id, mirroring the real table's UNIQUE(booking_id) constraint.
   const refundOperations = new Map<string, RefundOperationRecord>();
   const sideEffectOperations = new Map<string, SideEffectOperationRecord>();
@@ -82,8 +107,9 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
     const defaults = await repository.listCapacityDefaults();
     return defaultCapacityForDate(localDate, fleetDefaultCapacity, defaults);
   };
-  const repository: BookingRepository & { rows: Map<string, Booking>; settings: Map<string, string>; refundOperations: Map<string, RefundOperationRecord>; sideEffectOperations: Map<string, SideEffectOperationRecord> } = {
+  const repository: BookingRepository & { rows: Map<string, Booking>; settings: Map<string, string>; refundOperations: Map<string, RefundOperationRecord>; sideEffectOperations: Map<string, SideEffectOperationRecord>; tokenState: Map<string, FakeTokenState> } = {
     rows,
+    tokenState,
     sweepExpiredHolds: async (now) => {
       let changes = 0;
       for (const item of rows.values()) if (item.status === 'hold' && item.holdExpiresAt && item.holdExpiresAt < now) {
@@ -120,8 +146,43 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
     getBookingByReference: async (reference) => find((item) => item.reference === reference),
     getBookingBySessionId: async (sessionId) => find((item) => item.stripeSessionId === sessionId),
     getBookingByPaymentIntent: async (paymentIntent) => find((item) => item.stripePaymentIntent === paymentIntent),
-    getBookingByCancelToken: async (token) => find((item) => item.cancelToken === token),
-    getBookingByOperatorToken: async (token) => find((item) => item.operatorToken === token),
+    // BK-SEC-002: mirrors src/repo.ts's hash-first lookup with a guarded legacy-plaintext
+    // fallback + lazy backfill. now gates tokensExpireAt, and (cancel token only) presence of
+    // cancelTokenRevokedAt, exactly the same way the real repo's WHERE clause does — an expired
+    // or revoked token returns null, indistinguishable from an unknown one.
+    getBookingByCancelToken: async (token, now) => {
+      const hash = await sha256Base64Url(token);
+      for (const item of rows.values()) {
+        const state = tokenState.get(item.id);
+        if (!state || state.cancelTokenRevokedAt !== null) continue;
+        if (state.tokensExpireAt !== null && state.tokensExpireAt <= now) continue;
+        if (state.cancelTokenHash === hash) return item;
+        if (state.cancelTokenHash === null && item.cancelToken === token) {
+          // Lazy backfill: first presentation of a legacy plaintext token upgrades the tracked
+          // hash, closing the plaintext-fallback branch for next time (src/repo.ts does the same
+          // via an UPDATE guarded by `cancel_token_hash IS NULL`).
+          state.cancelTokenHash = hash;
+          return item;
+        }
+      }
+      return null;
+    },
+    // Operator tokens are never revoked (see migrations/0009_token_hashing.sql), so this checks
+    // expiry only.
+    getBookingByOperatorToken: async (token, now) => {
+      const hash = await sha256Base64Url(token);
+      for (const item of rows.values()) {
+        const state = tokenState.get(item.id);
+        if (!state) continue;
+        if (state.tokensExpireAt !== null && state.tokensExpireAt <= now) continue;
+        if (state.operatorTokenHash === hash) return item;
+        if (state.operatorTokenHash === null && item.operatorToken === token) {
+          state.operatorTokenHash = hash;
+          return item;
+        }
+      }
+      return null;
+    },
     countReferencesForYear: async (prefix) => [...rows.values()].filter((item) => item.reference.startsWith(prefix)).length,
     insertHold: async (input) => {
       if (input.holdIp && input.maxActiveHoldsForIp) {
@@ -135,6 +196,14 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
       }
       const created: Booking = { ...booking(), ...input, pickupAddress: null, customerName: null, customerEmail: null, customerPhone: null, status: 'hold', stripeSessionId: null, stripePaymentIntent: null, calendarEventId: null, calendarSynced: false, emailSynced: false, tourflowSynced: false, remindedAt: null, reviewRequestedAt: null, cancelledAt: null, cancelledBy: null, rescheduledFrom: null };
       rows.set(created.id, created);
+      // BK-SEC-002: a newly created row is hash-backed from the start (never "legacy"), mirroring
+      // src/repo.ts's insertHold/insertHoldWithCapacity, which write only a hash.
+      tokenState.set(created.id, {
+        cancelTokenHash: await sha256Base64Url(input.cancelToken),
+        operatorTokenHash: await sha256Base64Url(input.operatorToken),
+        tokensExpireAt: input.tokensExpireAt ?? null,
+        cancelTokenRevokedAt: null,
+      });
       if (input.holdIp) holdIps.set(created.id, input.holdIp);
       return created;
     },
@@ -148,7 +217,13 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
     // can never interleave between "decide" and "write" (mirrors D1 evaluating hold-limit +
     // capacity in the single WHERE of one INSERT statement).
     insertHoldWithCapacity: async (input) => {
-      const capacity = await resolveCapacityFake(input.localDate, input.fleetDefaultCapacity);
+      // Computed alongside capacity (both awaits, both independent of rows/holdIps/occupancyMeta)
+      // so the decide+write block below stays the single synchronous block Fix 2 above requires.
+      const [capacity, cancelTokenHash, operatorTokenHash] = await Promise.all([
+        resolveCapacityFake(input.localDate, input.fleetDefaultCapacity),
+        sha256Base64Url(input.cancelToken),
+        sha256Base64Url(input.operatorToken),
+      ]);
       if (input.holdIp && input.maxActiveHoldsForIp) {
         const active = [...rows.values()].filter((item) =>
           holdIps.get(item.id) === input.holdIp
@@ -163,6 +238,8 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
       const created: Booking = { ...booking(), ...input, pickupAddress: null, customerName: null, customerEmail: null, customerPhone: null, status: 'hold', stripeSessionId: null, stripePaymentIntent: null, calendarEventId: null, calendarSynced: false, emailSynced: false, tourflowSynced: false, remindedAt: null, reviewRequestedAt: null, cancelledAt: null, cancelledBy: null, rescheduledFrom: null };
       rows.set(created.id, created);
       occupancyMeta.set(created.id, { units: input.occupancyUnits, endsAt: input.occupancyEndsAt });
+      // BK-SEC-002: see the identical comment in insertHold above.
+      tokenState.set(created.id, { cancelTokenHash, operatorTokenHash, tokensExpireAt: input.tokensExpireAt ?? null, cancelTokenRevokedAt: null });
       if (input.holdIp) holdIps.set(created.id, input.holdIp);
       return created;
     },
@@ -182,6 +259,11 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
       if (input.expectedStartsAt !== undefined && current.startsAt !== input.expectedStartsAt) return null;
       const updated: Booking = { ...current, status: 'cancelled', cancelledAt: input.cancelledAt, cancelledBy: input.cancelledBy, updatedAt: input.updatedAt };
       rows.set(id, updated);
+      // BK-SEC-002: mirrors src/repo.ts's COALESCE(cancel_token_revoked_at, ?) — a cancelled
+      // booking's customer link is revoked; the operator token is left alone (see
+      // migrations/0009_token_hashing.sql).
+      const state = tokenState.get(id);
+      if (state && state.cancelTokenRevokedAt === null) state.cancelTokenRevokedAt = input.cancelledAt;
       return updated;
     },
     transitionToNoShow: async (id, input) => {
@@ -189,6 +271,8 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
       if (!current || !input.expectedStatusIn.includes(current.status)) return null;
       const updated: Booking = { ...current, status: 'no_show', updatedAt: input.updatedAt };
       rows.set(id, updated);
+      const state = tokenState.get(id);
+      if (state && state.cancelTokenRevokedAt === null) state.cancelTokenRevokedAt = input.updatedAt;
       return updated;
     },
     transitionToConfirmed: async (id, input) => {
@@ -290,6 +374,11 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
       if (!current || current.status !== input.expectedStatus || current.startsAt !== input.expectedStartsAt) return null;
       const updated: Booking = { ...current, startsAt: input.startsAt, endsAt: input.endsAt, rescheduledFrom: input.rescheduledFrom, updatedAt: input.updatedAt };
       rows.set(id, updated);
+      // patch-11-r1 MEDIUM 2: mirrors src/repo.ts's COALESCE(?, tokens_expire_at) — the real
+      // repo binds `input.tokensExpireAt ?? null`, so both an omitted field and an explicit null
+      // fall through to COALESCE's "keep the existing value" branch; only a real string moves it.
+      const state = tokenState.get(id);
+      if (state && input.tokensExpireAt != null) state.tokensExpireAt = input.tokensExpireAt;
       return updated;
     },
     // Mirrors src/repo.ts's rescheduleWithCapacity: transitionReschedule's CAS plus the same
@@ -314,6 +403,9 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
       const updated: Booking = { ...current, startsAt: input.startsAt, endsAt: input.endsAt, rescheduledFrom: input.rescheduledFrom, updatedAt: input.updatedAt };
       rows.set(id, updated);
       occupancyMeta.set(id, { units: input.occupancyUnits, endsAt: input.occupancyEndsAt });
+      // patch-11-r1 MEDIUM 2: see the identical comment in transitionReschedule above.
+      const state = tokenState.get(id);
+      if (state && input.tokensExpireAt != null) state.tokensExpireAt = input.tokensExpireAt;
       return updated;
     },
     listOccupancyBookings: async (from, to) => [...rows.values()].filter((item) => item.startsAt >= from && item.startsAt < to),

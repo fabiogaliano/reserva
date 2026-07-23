@@ -1,5 +1,6 @@
 import type { D1Database, D1Result } from '@cloudflare/workers-types';
 import type { Booking, BookingStatus, CancellationActor } from './core/booking';
+import { sha256Base64Url } from './http';
 import type { CapacityDefault, DayCapacityOverride } from './core/occupancy';
 
 export interface BookingInsert {
@@ -15,6 +16,11 @@ export interface BookingInsert {
   holdExpiresAt: string;
   cancelToken: string;
   operatorToken: string;
+  // BK-SEC-002: shared expiry for both tokens (see ClientConfig.booking.tokenExpiryDays).
+  // Optional/nullable so every pre-existing caller of insertHold/insertHoldWithCapacity (tests,
+  // mainly) that doesn't pass one keeps compiling and simply gets an unexpiring token, matching
+  // pre-migration behavior.
+  tokensExpireAt?: string | null;
   holdIp?: string | null;
   maxActiveHoldsForIp?: number;
   createdAt: string;
@@ -113,8 +119,11 @@ export interface BookingRepository {
   getBookingByReference(reference: string): Promise<Booking | null>;
   getBookingBySessionId(sessionId: string): Promise<Booking | null>;
   getBookingByPaymentIntent?(paymentIntent: string): Promise<Booking | null>;
-  getBookingByCancelToken(token: string): Promise<Booking | null>;
-  getBookingByOperatorToken(token: string): Promise<Booking | null>;
+  // BK-SEC-002: `now` gates expiry (tokens_expire_at) in the same query as the hash/fallback
+  // lookup, so an expired token is denied identically to an unknown one (no timing/response
+  // oracle distinguishing "expired" from "never existed").
+  getBookingByCancelToken(token: string, now: string): Promise<Booking | null>;
+  getBookingByOperatorToken(token: string, now: string): Promise<Booking | null>;
   countReferencesForYear(prefix: string): Promise<number>;
   insertHold(input: BookingInsert): Promise<Booking>;
   // Atomic checkout write (BK-CAP-001 / AR-001): same per-IP hold-cap guard as insertHold, plus
@@ -188,6 +197,13 @@ export interface BookingRepository {
     endsAt: string;
     rescheduledFrom: string;
     updatedAt: string;
+    // patch-11-r1 MEDIUM 2: recomputed from the NEW endsAt at the call site (src/handlers/
+    // index.ts rescheduleWithToken), mirroring the checkout-time computation — otherwise a
+    // booking moved later could have its manage link expire before the rescheduled tour even
+    // happens, and one moved earlier would keep an over-long window. Optional/nullable so
+    // existing callers that don't pass one (older tests, mainly) leave tokens_expire_at
+    // untouched rather than clobbering it to NULL — see the COALESCE in the implementation.
+    tokensExpireAt?: string | null;
   }): Promise<Booking | null>;
   // Atomic reschedule write (BK-CAP-001): extends transitionReschedule's CAS (status +
   // starts_at, guarding against a stale read racing a concurrent transition) with the same
@@ -203,6 +219,8 @@ export interface BookingRepository {
     rescheduledFrom: string;
     updatedAt: string;
     now: string;
+    // patch-11-r1 MEDIUM 2: see the identical field on transitionReschedule above.
+    tokensExpireAt?: string | null;
   } & CapacityGuardInput): Promise<Booking | null>;
   listOccupancyBookings(from: string, to: string): Promise<Booking[]>;
   listUpcoming(now: string): Promise<Booking[]>;
@@ -292,6 +310,13 @@ interface BookingRow {
   review_requested_at: string | null;
   cancel_token: string;
   operator_token: string;
+  // BK-SEC-002: see migrations/0009_token_hashing.sql for what each column means and why.
+  cancel_token_hash: string | null;
+  operator_token_hash: string | null;
+  cancel_token_enc: string | null;
+  operator_token_enc: string | null;
+  tokens_expire_at: string | null;
+  cancel_token_revoked_at: string | null;
   cancelled_at: string | null;
   cancelled_by: CancellationActor | null;
   rescheduled_from: string | null;
@@ -337,8 +362,9 @@ function mapBooking(row: BookingRow): Booking {
 const bookingColumns = `id, reference, tour_slug, people, pickup_type, pickup_address, starts_at, ends_at,
   customer_name, customer_email, customer_phone, locale, price_cents, status, hold_expires_at,
   stripe_session_id, stripe_payment_intent, calendar_event_id, calendar_synced, email_synced,
-  tourflow_synced, reminded_at, review_requested_at, cancel_token, operator_token, cancelled_at,
-  cancelled_by, rescheduled_from, created_at, updated_at`;
+  tourflow_synced, reminded_at, review_requested_at, cancel_token, operator_token,
+  cancel_token_hash, operator_token_hash, cancel_token_enc, operator_token_enc, tokens_expire_at,
+  cancel_token_revoked_at, cancelled_at, cancelled_by, rescheduled_from, created_at, updated_at`;
 
 async function first<T>(result: Promise<D1Result<T>>): Promise<T | null> {
   return (await result).results[0] ?? null;
@@ -406,10 +432,136 @@ function mapSideEffectOperation(row: SideEffectOperationRow): SideEffectOperatio
   };
 }
 
-export function createBookingRepository(db: D1Database): BookingRepository {
+// BK-SEC-002: name of the optional Worker secret used to decrypt cancel_token_enc/
+// operator_token_enc back into a usable link (see migrations/0009_token_hashing.sql for the full
+// rationale). Read the same way as BOOKKIT_CSRF_SECRET/TOURFLOW_SHARED_SECRET (src/admin-csrf.ts,
+// src/handlers/index.ts) — via the SecretLookup passed in below, never through ClientConfig — and,
+// like BOOKKIT_CSRF_SECRET, deliberately NOT added to runtime-context.ts's default
+// secretBindings or integration.ts's astro:env schema: a deployment must opt in by adding its name
+// to secretBindings (see README "Runtime module" / "Admin access and booking tokens").
+const TOKEN_ENC_SECRET_NAME = 'BOOKKIT_TOKEN_ENC_KEY';
+
+function base64UrlEncodeBytes(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+}
+
+function base64UrlDecodeBytes(value: string): Uint8Array {
+  const normalized = value.replaceAll('-', '+').replaceAll('_', '/');
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+  return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
+}
+
+// Normalizes an arbitrary-length configured secret string into the exact 32 bytes AES-256-GCM
+// needs, the same way admin-csrf.ts's hmacSign accepts an arbitrary-length HMAC key — SHA-256 the
+// secret rather than requiring the operator to provision exactly 32 bytes themselves.
+async function importTokenKey(secret: string): Promise<CryptoKey> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret));
+  return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+}
+
+async function encryptToken(key: CryptoKey, plaintext: string): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plaintext)));
+  const combined = new Uint8Array(iv.length + ciphertext.length);
+  combined.set(iv, 0);
+  combined.set(ciphertext, iv.length);
+  return base64UrlEncodeBytes(combined);
+}
+
+// Fails closed (null, not throw) on a corrupt/tampered/foreign-key blob so one bad row can never
+// crash an otherwise-successful list/read — callers already treat "no decrypted value" as "fall
+// back to whatever mapBooking put there" (see hydrateBooking).
+async function decryptToken(key: CryptoKey, blob: string): Promise<string | null> {
+  try {
+    const combined = base64UrlDecodeBytes(blob);
+    const iv = combined.slice(0, 12);
+    const ciphertext = combined.slice(12);
+    const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+    return new TextDecoder().decode(plaintext);
+  } catch {
+    return null;
+  }
+}
+
+// Satisfies the legacy cancel_token/operator_token columns' NOT NULL UNIQUE constraint for rows
+// written after migrations/0009_token_hashing.sql, without those columns ever holding a usable
+// credential again. Safe even if it leaks in a dump: getBookingByCancelToken/
+// getBookingByOperatorToken below only ever consult this column via a query guarded by
+// `..._hash IS NULL`, and every row written after this migration has its hash set from the start.
+function placeholderToken(): string {
+  return `nohash:${crypto.randomUUID()}`;
+}
+
+export function createBookingRepository(
+  db: D1Database,
+  // Same shape as context.ts's SecretLookup; duplicated inline rather than imported to avoid a
+  // repo.ts <-> context.ts circular import (context.ts already imports createBookingRepository).
+  secrets?: (name: string) => string | undefined | Promise<string | undefined>,
+): BookingRepository {
+  // Resolved and imported at most once per repository instance (i.e. per request in the normal
+  // Cloudflare adapter — see context.ts), not once per token: the secret cannot change mid-request.
+  let tokenKeyPromise: Promise<CryptoKey | null> | undefined;
+  const resolveTokenKey = (): Promise<CryptoKey | null> => {
+    if (!tokenKeyPromise) {
+      tokenKeyPromise = (async () => {
+        const secret = secrets ? await secrets(TOKEN_ENC_SECRET_NAME) : undefined;
+        return secret ? importTokenKey(secret) : null;
+      })();
+    }
+    return tokenKeyPromise;
+  };
+
+  // Reconstitutes booking.cancelToken/operatorToken into their real, presentable plaintext for
+  // every DB-loaded booking that might flow into an email's manage link (src/providers/brevo.ts
+  // manageUrl) or the admin dashboard's operator manage-link column (src/handlers/index.ts) —
+  // both read straight off the Booking object, with no idea whether it came from a fresh insert,
+  // a token lookup, or an arbitrary later read. mapBooking already defaults these fields to
+  // row.cancel_token/row.operator_token (the legacy plaintext column, correct for a
+  // not-yet-backfilled legacy row); this only overrides them when a decryptable blob exists.
+  async function hydrateBooking(row: BookingRow, key: CryptoKey | null): Promise<Booking> {
+    const mapped = mapBooking(row);
+    if (!key) return mapped;
+    if (row.cancel_token_enc) {
+      const decrypted = await decryptToken(key, row.cancel_token_enc);
+      if (decrypted !== null) mapped.cancelToken = decrypted;
+    }
+    if (row.operator_token_enc) {
+      const decrypted = await decryptToken(key, row.operator_token_enc);
+      if (decrypted !== null) mapped.operatorToken = decrypted;
+    }
+    return mapped;
+  }
+
+  // Shared by insertHold/insertHoldWithCapacity: computes every BK-SEC-002 column a new row needs
+  // to write, so both insert paths stay in sync instead of duplicating this logic.
+  async function newTokenColumns(input: BookingInsert): Promise<{
+    cancelTokenPlaceholder: string; operatorTokenPlaceholder: string;
+    cancelTokenHash: string; operatorTokenHash: string;
+    cancelTokenEnc: string | null; operatorTokenEnc: string | null;
+    tokensExpireAt: string | null;
+  }> {
+    const key = await resolveTokenKey();
+    const [cancelTokenHash, operatorTokenHash] = await Promise.all([
+      sha256Base64Url(input.cancelToken),
+      sha256Base64Url(input.operatorToken),
+    ]);
+    const [cancelTokenEnc, operatorTokenEnc] = key
+      ? await Promise.all([encryptToken(key, input.cancelToken), encryptToken(key, input.operatorToken)])
+      : [null, null];
+    return {
+      cancelTokenPlaceholder: placeholderToken(),
+      operatorTokenPlaceholder: placeholderToken(),
+      cancelTokenHash, operatorTokenHash, cancelTokenEnc, operatorTokenEnc,
+      tokensExpireAt: input.tokensExpireAt ?? null,
+    };
+  }
+
   const oneBooking = async (sql: string, ...params: unknown[]): Promise<Booking | null> => {
     const row = await first(db.prepare(sql).bind(...params).all<BookingRow>());
-    return row ? mapBooking(row) : null;
+    if (!row) return null;
+    return hydrateBooking(row, await resolveTokenKey());
   };
 
   return {
@@ -449,11 +601,80 @@ export function createBookingRepository(db: D1Database): BookingRepository {
       ).bind(id, token).run();
     },
     getBookingById: (id) => oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id),
-    getBookingByReference: (reference) => oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE reference = ?`, reference),
+    // Deliberately NOT routed through oneBooking's hydration: the only caller
+    // (handleCheckout's referenceExists, src/handlers/index.ts) only checks for a non-null
+    // result inside a reference-collision retry loop that can run up to a dozen times per
+    // checkout, and never reads the returned booking's tokens — hydrating here would be a
+    // real (if small) per-attempt AES-GCM cost for a value nothing ever uses.
+    getBookingByReference: async (reference) => {
+      const row = await first(db.prepare(`SELECT ${bookingColumns} FROM bookings WHERE reference = ?`).bind(reference).all<BookingRow>());
+      return row ? mapBooking(row) : null;
+    },
     getBookingBySessionId: (sessionId) => oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE stripe_session_id = ?`, sessionId),
     getBookingByPaymentIntent: (paymentIntent) => oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE stripe_payment_intent = ?`, paymentIntent),
-    getBookingByCancelToken: (token) => oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE cancel_token = ?`, token),
-    getBookingByOperatorToken: (token) => oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE operator_token = ?`, token),
+    // BK-SEC-002: hash-first lookup with a guarded legacy-plaintext fallback + lazy backfill (see
+    // migrations/0009_token_hashing.sql). `now` gates tokens_expire_at in the SAME query as the
+    // hash/plaintext match, and cancel-token lookups additionally require
+    // cancel_token_revoked_at IS NULL — both an expired and a revoked token fail exactly like an
+    // unknown one (a plain null result), so callers (tokenBooking/handleManage,
+    // src/handlers/index.ts) can't distinguish "wrong token" from "right token, denied" and no
+    // oracle is exposed. Operator tokens are deliberately never revoked (see the migration's
+    // comment on cancel_token_revoked_at) so they carry no revocation check here.
+    async getBookingByCancelToken(token, now) {
+      const key = await resolveTokenKey();
+      const hash = await sha256Base64Url(token);
+      const hashRow = await first(db.prepare(
+        `SELECT ${bookingColumns} FROM bookings
+         WHERE cancel_token_hash = ? AND cancel_token_revoked_at IS NULL
+           AND (tokens_expire_at IS NULL OR tokens_expire_at > ?)`,
+      ).bind(hash, now).all<BookingRow>());
+      if (hashRow) return hydrateBooking(hashRow, key);
+      // Compatibility fallback for a row written before this migration (cancel_token_hash IS
+      // NULL). Guarding on that column, not just cancel_token = ?, closes the "present the
+      // leaked hash value itself as a token" oracle: once a row has a hash (true for every row
+      // from the moment it's written, whether at insert or right here on first use), this branch
+      // can never match it again, so a hash appearing in a dump is never itself accepted.
+      const legacyRow = await first(db.prepare(
+        `SELECT ${bookingColumns} FROM bookings
+         WHERE cancel_token = ? AND cancel_token_hash IS NULL AND cancel_token_revoked_at IS NULL
+           AND (tokens_expire_at IS NULL OR tokens_expire_at > ?)`,
+      ).bind(token, now).all<BookingRow>());
+      if (!legacyRow) return null;
+      const enc = key ? await encryptToken(key, token) : null;
+      // Re-guarded by cancel_token_hash IS NULL: a concurrent request racing this same backfill
+      // simply no-ops here (harmless — both already have the authenticated row in hand from the
+      // SELECT above) rather than clobbering whichever hash won.
+      await db.prepare(
+        `UPDATE bookings SET cancel_token_hash = ?, cancel_token_enc = ?, cancel_token = ?
+         WHERE id = ? AND cancel_token_hash IS NULL`,
+      ).bind(hash, enc, placeholderToken(), legacyRow.id).run();
+      // legacyRow.cancel_token IS the presented token (that's how the WHERE above matched it),
+      // and cancel_token_enc was still NULL at read time, so hydrateBooking's default (mapBooking
+      // falling back to row.cancel_token) already yields the right plaintext without needing a
+      // second read of the just-updated row.
+      return hydrateBooking(legacyRow, key);
+    },
+    async getBookingByOperatorToken(token, now) {
+      const key = await resolveTokenKey();
+      const hash = await sha256Base64Url(token);
+      const hashRow = await first(db.prepare(
+        `SELECT ${bookingColumns} FROM bookings
+         WHERE operator_token_hash = ? AND (tokens_expire_at IS NULL OR tokens_expire_at > ?)`,
+      ).bind(hash, now).all<BookingRow>());
+      if (hashRow) return hydrateBooking(hashRow, key);
+      const legacyRow = await first(db.prepare(
+        `SELECT ${bookingColumns} FROM bookings
+         WHERE operator_token = ? AND operator_token_hash IS NULL
+           AND (tokens_expire_at IS NULL OR tokens_expire_at > ?)`,
+      ).bind(token, now).all<BookingRow>());
+      if (!legacyRow) return null;
+      const enc = key ? await encryptToken(key, token) : null;
+      await db.prepare(
+        `UPDATE bookings SET operator_token_hash = ?, operator_token_enc = ?, operator_token = ?
+         WHERE id = ? AND operator_token_hash IS NULL`,
+      ).bind(hash, enc, placeholderToken(), legacyRow.id).run();
+      return hydrateBooking(legacyRow, key);
+    },
     async countReferencesForYear(prefix) {
       const row = await first(db.prepare(
         'SELECT COUNT(*) AS count FROM bookings WHERE reference LIKE ?',
@@ -463,12 +684,18 @@ export function createBookingRepository(db: D1Database): BookingRepository {
     async insertHold(input) {
       const holdIp = input.holdIp ?? null;
       const holdLimit = input.maxActiveHoldsForIp ?? null;
+      // BK-SEC-002: every row written from here on gets only a hash (+ encrypted blob, if a key
+      // is configured) — never real plaintext in cancel_token/operator_token (see
+      // migrations/0009_token_hashing.sql and newTokenColumns above).
+      const tokenColumns = await newTokenColumns(input);
       const result = await db.prepare(
         `INSERT INTO bookings (
           id, reference, tour_slug, people, pickup_type, starts_at, ends_at, locale, price_cents,
-          status, hold_expires_at, cancel_token, operator_token, hold_ip, created_at, updated_at
+          status, hold_expires_at, cancel_token, operator_token, cancel_token_hash,
+          operator_token_hash, cancel_token_enc, operator_token_enc, tokens_expire_at, hold_ip,
+          created_at, updated_at
         )
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'hold', ?, ?, ?, ?, ?, ?
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'hold', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         WHERE ? IS NULL OR (
           SELECT COUNT(*) FROM bookings
           WHERE hold_ip = ? AND status = 'hold' AND hold_expires_at >= ?
@@ -476,7 +703,10 @@ export function createBookingRepository(db: D1Database): BookingRepository {
       ).bind(
         input.id, input.reference, input.tourSlug, input.people, input.pickupType,
         input.startsAt, input.endsAt, input.locale, input.priceCents, input.holdExpiresAt,
-        input.cancelToken, input.operatorToken, holdIp, input.createdAt, input.updatedAt,
+        tokenColumns.cancelTokenPlaceholder, tokenColumns.operatorTokenPlaceholder,
+        tokenColumns.cancelTokenHash, tokenColumns.operatorTokenHash,
+        tokenColumns.cancelTokenEnc, tokenColumns.operatorTokenEnc, tokenColumns.tokensExpireAt,
+        holdIp, input.createdAt, input.updatedAt,
         holdLimit, holdIp, input.createdAt, holdLimit,
       ).run();
       if (result.meta.changes === 0) throw new HoldLimitExceededError();
@@ -515,13 +745,16 @@ export function createBookingRepository(db: D1Database): BookingRepository {
     async insertHoldWithCapacity(input) {
       const holdIp = input.holdIp ?? null;
       const holdLimit = input.maxActiveHoldsForIp ?? null;
+      // BK-SEC-002: see the identical comment in insertHold above.
+      const tokenColumns = await newTokenColumns(input);
       const result = await db.prepare(
         `INSERT INTO bookings (
           id, reference, tour_slug, people, pickup_type, starts_at, ends_at, locale, price_cents,
-          status, hold_expires_at, cancel_token, operator_token, hold_ip, occupancy_units,
-          occupancy_ends_at, created_at, updated_at
+          status, hold_expires_at, cancel_token, operator_token, cancel_token_hash,
+          operator_token_hash, cancel_token_enc, operator_token_enc, tokens_expire_at, hold_ip,
+          occupancy_units, occupancy_ends_at, created_at, updated_at
         )
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'hold', ?, ?, ?, ?, ?, ?, ?, ?
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'hold', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         WHERE (? IS NULL OR (
             SELECT COUNT(*) FROM bookings WHERE hold_ip = ? AND status = 'hold' AND hold_expires_at >= ?
           ) < ?)
@@ -551,7 +784,10 @@ export function createBookingRepository(db: D1Database): BookingRepository {
       ).bind(
         input.id, input.reference, input.tourSlug, input.people, input.pickupType,
         input.startsAt, input.endsAt, input.locale, input.priceCents, input.holdExpiresAt,
-        input.cancelToken, input.operatorToken, holdIp, input.occupancyUnits, input.occupancyEndsAt,
+        tokenColumns.cancelTokenPlaceholder, tokenColumns.operatorTokenPlaceholder,
+        tokenColumns.cancelTokenHash, tokenColumns.operatorTokenHash,
+        tokenColumns.cancelTokenEnc, tokenColumns.operatorTokenEnc, tokenColumns.tokensExpireAt,
+        holdIp, input.occupancyUnits, input.occupancyEndsAt,
         input.createdAt, input.updatedAt,
         holdLimit, holdIp, input.createdAt, holdLimit,
         // NOT EXISTS candidate points: the request's own start, then every active overlapping
@@ -615,11 +851,17 @@ export function createBookingRepository(db: D1Database): BookingRepository {
       // care about a concurrent reschedule (e.g. the refund webhook) keep the original scope.
       const startsAtClause = input.expectedStartsAt !== undefined ? ' AND starts_at = ?' : '';
       const params = [
-        input.cancelledAt, input.cancelledBy, input.updatedAt, id, ...input.expectedStatusIn,
+        input.cancelledAt, input.cancelledBy, input.updatedAt,
+        // BK-SEC-002: a cancelled booking's customer link has no further legitimate use (see
+        // migrations/0009_token_hashing.sql for why only the customer token, not the operator
+        // one). COALESCE keeps this idempotent if a row is somehow re-touched here.
+        input.cancelledAt,
+        id, ...input.expectedStatusIn,
         ...(input.expectedStartsAt !== undefined ? [input.expectedStartsAt] : []),
       ];
       const result = await db.prepare(
-        `UPDATE bookings SET status = 'cancelled', cancelled_at = ?, cancelled_by = ?, updated_at = ?
+        `UPDATE bookings SET status = 'cancelled', cancelled_at = ?, cancelled_by = ?, updated_at = ?,
+           cancel_token_revoked_at = COALESCE(cancel_token_revoked_at, ?)
          WHERE id = ? AND status IN (${placeholders})${startsAtClause}`,
       ).bind(...params).run();
       if (result.meta.changes === 0) return null;
@@ -628,9 +870,10 @@ export function createBookingRepository(db: D1Database): BookingRepository {
     async transitionToNoShow(id, input) {
       const placeholders = input.expectedStatusIn.map(() => '?').join(', ');
       const result = await db.prepare(
-        `UPDATE bookings SET status = 'no_show', updated_at = ?
+        `UPDATE bookings SET status = 'no_show', updated_at = ?,
+           cancel_token_revoked_at = COALESCE(cancel_token_revoked_at, ?)
          WHERE id = ? AND status IN (${placeholders})`,
-      ).bind(input.updatedAt, id, ...input.expectedStatusIn).run();
+      ).bind(input.updatedAt, input.updatedAt, id, ...input.expectedStatusIn).run();
       if (result.meta.changes === 0) return null;
       return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
     },
@@ -757,10 +1000,17 @@ export function createBookingRepository(db: D1Database): BookingRepository {
       return (result[0]?.meta.changes ?? 0) > 0;
     },
     async transitionReschedule(id, input) {
+      // patch-11-r1 MEDIUM 2: COALESCE(?, tokens_expire_at) rather than an unconditional SET —
+      // a caller that doesn't pass tokensExpireAt (input.tokensExpireAt ?? null) leaves the
+      // existing column value alone instead of nulling out a previously-set expiry.
       const result = await db.prepare(
-        `UPDATE bookings SET starts_at = ?, ends_at = ?, rescheduled_from = ?, updated_at = ?
+        `UPDATE bookings SET starts_at = ?, ends_at = ?, rescheduled_from = ?, updated_at = ?,
+           tokens_expire_at = COALESCE(?, tokens_expire_at)
          WHERE id = ? AND status = ? AND starts_at = ?`,
-      ).bind(input.startsAt, input.endsAt, input.rescheduledFrom, input.updatedAt, id, input.expectedStatus, input.expectedStartsAt).run();
+      ).bind(
+        input.startsAt, input.endsAt, input.rescheduledFrom, input.updatedAt, input.tokensExpireAt ?? null,
+        id, input.expectedStatus, input.expectedStartsAt,
+      ).run();
       if (result.meta.changes === 0) return null;
       return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
     },
@@ -776,9 +1026,11 @@ export function createBookingRepository(db: D1Database): BookingRepository {
     // This opportunistically self-heals a legacy NULL row (see migrations/0008) the first time it
     // is ever moved, instead of leaving it undercounted as 1 unit forever.
     async rescheduleWithCapacity(id, input) {
+      // patch-11-r1 MEDIUM 2: same COALESCE(?, tokens_expire_at) as transitionReschedule above.
       const result = await db.prepare(
         `UPDATE bookings
-         SET starts_at = ?, ends_at = ?, rescheduled_from = ?, occupancy_units = ?, occupancy_ends_at = ?, updated_at = ?
+         SET starts_at = ?, ends_at = ?, rescheduled_from = ?, occupancy_units = ?, occupancy_ends_at = ?, updated_at = ?,
+             tokens_expire_at = COALESCE(?, tokens_expire_at)
          WHERE id = ? AND status = ? AND starts_at = ?
            AND NOT EXISTS (
              SELECT 1 FROM (
@@ -807,6 +1059,7 @@ export function createBookingRepository(db: D1Database): BookingRepository {
            )`,
       ).bind(
         input.startsAt, input.endsAt, input.rescheduledFrom, input.occupancyUnits, input.occupancyEndsAt, input.updatedAt,
+        input.tokensExpireAt ?? null,
         id, input.expectedStatus, input.expectedStartsAt,
         // NOT EXISTS candidate points (self-excluded): the request's own start, then every other
         // active overlapping booking's own starts_at.
@@ -820,6 +1073,10 @@ export function createBookingRepository(db: D1Database): BookingRepository {
       if (result.meta.changes === 0) return null;
       return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
     },
+    // Deliberately NOT hydrated (plain mapBooking): purely internal occupancy math
+    // (src/core/occupancy.ts via availabilityForDay/checkSlot), can return many rows for a wide
+    // date range, and never renders/emails a token — hydrating here would be a real per-row
+    // AES-GCM cost for values nothing reads.
     async listOccupancyBookings(from, to) {
       const result = await db.prepare(
         `SELECT ${bookingColumns} FROM bookings
@@ -828,17 +1085,24 @@ export function createBookingRepository(db: D1Database): BookingRepository {
       ).bind(to, from).all<BookingRow>();
       return result.results.map(mapBooking);
     },
+    // Hydrated: the admin dashboard (src/handlers/index.ts handleAdminGet) renders each row's
+    // operatorToken as a manage-link href straight off this list.
     async listUpcoming(now) {
       const result = await db.prepare(
         `SELECT ${bookingColumns} FROM bookings
          WHERE starts_at >= ? AND (status = 'confirmed' OR (status = 'hold' AND hold_expires_at > ?))
          ORDER BY starts_at`,
       ).bind(now, now).all<BookingRow>();
-      return result.results.map(mapBooking);
+      const key = await resolveTokenKey();
+      return Promise.all(result.results.map((row) => hydrateBooking(row, key)));
     },
+    // Hydrated: a custom OpsSink.mapBooking (src/handlers/index.ts handleFeed) may read a
+    // booking's tokens, and the default feed mapping doesn't, so hydrating here is the only way
+    // to keep that consumer contract honest without knowing which mapper is plugged in.
     async listSince(since) {
       const result = await db.prepare(`SELECT ${bookingColumns} FROM bookings WHERE updated_at > ? ORDER BY updated_at`).bind(since).all<BookingRow>();
-      return result.results.map(mapBooking);
+      const key = await resolveTokenKey();
+      return Promise.all(result.results.map((row) => hydrateBooking(row, key)));
     },
     async getDayOverride(date) {
       const row = await first(db.prepare('SELECT date, capacity, reason FROM day_overrides WHERE date = ?').bind(date).all<DayCapacityOverride>());

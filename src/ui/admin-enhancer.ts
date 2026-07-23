@@ -96,9 +96,19 @@ export const adminEnhancerJs = `(() => {
       const status = document.createElement('span');
       status.className = 'bk-badge' + (row.sc ? ' bk-badge--' + row.sc : '');
       status.textContent = row.s;
-      const manage = document.createElement('a');
-      manage.href = row.u;
-      manage.textContent = i18n.manage || '';
+      // BK-SEC-002: row.u is only present when the server found a presentable operator token
+      // (src/handlers/index.ts manageLinkHref) -- otherwise render plain text, never a link that
+      // would 403 the instant it's clicked.
+      let manage;
+      if (row.u) {
+        manage = document.createElement('a');
+        manage.href = row.u;
+        manage.textContent = i18n.manage || '';
+      } else {
+        manage = document.createElement('span');
+        manage.className = 'bk-sub';
+        manage.textContent = i18n.manageUnavailable || '';
+      }
       item.append(time, name, people, status, manage);
       list.appendChild(item);
     }

@@ -114,6 +114,26 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
     expect(body).not.toContain(second.cancelToken);
   });
 
+  // BK-SEC-002 (patch-11-r1 LOW 1): a `nohash:`-prefixed operatorToken (src/repo.ts
+  // placeholderToken) is what a real, DB-loaded booking looks like when there's no decryptable
+  // blob to regenerate its link from (no BOOKKIT_TOKEN_ENC_KEY configured, or a not-yet-backfilled
+  // legacy row) — the admin table and the day-detail JSON island must never render a link built
+  // from it, since it would 403 the instant an operator clicked it.
+  it('omits the manage link (never a dead href) for a booking whose operator token is not presentable', async () => {
+    const seeded = booking({
+      id: 'b-admin-nohash', reference: 'LVT-2026-210', startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
+      operatorToken: 'nohash:11111111-1111-1111-1111-111111111111', cancelToken: 'cancel-token-nohash-secret',
+    });
+    const repo = fakeRepository([seeded]);
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+
+    const response = await handleAdminGet(adminGetRequest(), context);
+    const body = await response.text();
+    expect(body).not.toContain(`token=${encodeURIComponent(seeded.operatorToken)}`);
+    expect(body).not.toContain(seeded.operatorToken); // not even unencoded, e.g. inside the JSON island
+    expect(body).toContain('Manage link unavailable');
+  });
+
   it('sets cache-control: no-store and referrer-policy: no-referrer', async () => {
     const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminGet(adminGetRequest(), context);

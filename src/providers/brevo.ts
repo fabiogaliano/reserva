@@ -64,9 +64,23 @@ function getTemplate(event: EmailBookingEvent, recipient: BrevoRecipient, locale
 function escapeHtml(value: string): string { return value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!); }
 function interpolate(template: string, values: Record<string, string>): string { return template.replace(/\{([A-Za-z][A-Za-z0-9]*)\}/g, (_, key: string) => values[key] ?? ''); }
 function manageUrl(config: ClientConfig, token: string, routePaths?: BookkitResolvedRouteConfig['paths']): string { return `${config.business.url.replace(/\/$/, '')}${routePaths?.managePage ?? '/booking/manage'}?token=${encodeURIComponent(token)}`; }
+// BK-SEC-002 (patch-11-r1 LOW 1): a `nohash:`-prefixed value (src/repo.ts placeholderToken) is
+// what a DB-loaded Booking.cancelToken/operatorToken looks like when the row has no decryptable
+// cancel_token_enc/operator_token_enc — either BOOKKIT_TOKEN_ENC_KEY isn't configured, or the row
+// predates that secret being set. A link built from it would 403 the instant it's clicked; better
+// to omit the link entirely than render one that looks live but is already dead.
+export function isManageableToken(token: string): boolean { return !token.startsWith('nohash:'); }
 function localStart(booking: Booking, config: ClientConfig): string {
   const locale = booking.locale === 'auto' ? config.locales.default : booking.locale || config.locales.default;
   return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short', timeZone: config.business.timezone }).format(new Date(booking.startsAt));
+}
+// BK-SEC-002 (patch-11-r1 LOW 1): every current template renders its manage link as a fixed
+// `<p><a href="{...ManageUrl}">label</a></p>` fragment. When manageUrl was left '' above (token
+// not presentable), interpolate leaves `<p><a href="">label</a></p>` behind — cut that exact shape
+// rather than restructure every locale's template string with conditional markup, which is a
+// bigger, non-localized change out of scope here.
+function stripUnusableManageLinks(html: string): string {
+  return html.replace(/<p><a href="">[^<]*<\/a><\/p>/g, '');
 }
 function defaultRender(context: BrevoEmailTemplateContext): BrevoEmailContent {
   const source = getTemplate(context.event, context.recipient, context.locale, context.config.locales.default);
@@ -86,7 +100,11 @@ function defaultRender(context: BrevoEmailTemplateContext): BrevoEmailContent {
     startsAtLocal: escapeHtml(context.startsAtLocal), pickupDetails: escapeHtml(pickupDetails), pickupMapLink, contact: escapeHtml(contact),
     customerManageUrl: context.customerManageUrl, operatorManageUrl: context.operatorManageUrl,
   };
-  return { subject: interpolate(source.subject, values), htmlContent: interpolate(source.htmlContent, values), ...(source.textContent ? { textContent: interpolate(source.textContent, values) } : {}) };
+  return {
+    subject: interpolate(source.subject, values),
+    htmlContent: stripUnusableManageLinks(interpolate(source.htmlContent, values)),
+    ...(source.textContent ? { textContent: stripUnusableManageLinks(interpolate(source.textContent, values)) } : {}),
+  };
 }
 function addressFor(recipient: BrevoRecipient, booking: Booking, config: ClientConfig, owner?: BrevoRecipientAddress): BrevoRecipientAddress | null {
   if (recipient === 'customer') return booking.customerEmail ? { email: booking.customerEmail, ...(booking.customerName ? { name: booking.customerName } : {}) } : null;
@@ -110,7 +128,9 @@ export class BrevoEmailProvider implements EmailProvider {
     const recipients: BrevoRecipient[] = ['customer']; if (ownerEvents.has(event)) recipients.push('owner');
     for (const recipient of recipients) {
       const address = addressFor(recipient, booking, config, this.owner); if (!address) continue;
-      const context: BrevoEmailTemplateContext = { event, booking, config, locale: config.locales.supported.includes(booking.locale) ? booking.locale : config.locales.default, recipient, customerManageUrl: manageUrl(config, booking.cancelToken, routePaths), operatorManageUrl: manageUrl(config, booking.operatorToken, routePaths), startsAtLocal: localStart(booking, config) };
+      // BK-SEC-002 (patch-11-r1 LOW 1): '' rather than a dead link when the token isn't
+      // presentable — defaultRender below strips the paragraph an empty URL leaves behind.
+      const context: BrevoEmailTemplateContext = { event, booking, config, locale: config.locales.supported.includes(booking.locale) ? booking.locale : config.locales.default, recipient, customerManageUrl: isManageableToken(booking.cancelToken) ? manageUrl(config, booking.cancelToken, routePaths) : '', operatorManageUrl: isManageableToken(booking.operatorToken) ? manageUrl(config, booking.operatorToken, routePaths) : '', startsAtLocal: localStart(booking, config) };
       const content = this.renderer(context);
       const response = await this.request(this.endpoint, { method: 'POST', headers: { accept: 'application/json', 'api-key': this.apiKey, 'content-type': 'application/json' }, body: JSON.stringify({ ...content, sender: this.sender ?? { email: config.business.contact.email, name: config.business.name }, to: [address] }) });
       if (!response.ok) throw new Error(`Brevo email request failed (${response.status}): ${await response.text()}`);
