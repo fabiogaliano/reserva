@@ -120,6 +120,25 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
     expect(response.headers.get('cache-control')).toBe('no-store');
     expect(response.headers.get('referrer-policy')).toBe('no-referrer');
   });
+
+  // BK-CAP-002: the day calendar must show fleet units consumed, not a raw booking-row count — a
+  // single 5-person booking on the fixture tour (occupancyFor: people > 4 ? 2 : 1) needs two
+  // vehicles, so a day with just this one booking is already at the fixture's default capacity (2).
+  it('renders the day cell in fleet units, not booking count, for a multi-unit booking', async () => {
+    const multiUnit = booking({
+      id: 'b-admin-multiunit', reference: 'LVT-2026-300', people: 5,
+      startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
+      operatorToken: 'op-multiunit', cancelToken: 'cancel-multiunit',
+    });
+    const repo = fakeRepository([multiUnit]);
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers() });
+    const response = await handleAdminGet(adminGetRequest(), context);
+    const body = await response.text();
+    // One booking, two fleet units, capacity 2 (fixture's fleet.defaultCapacity) — the label must
+    // read the unit count against capacity, not "1/2" (which is what a raw booking count would show).
+    expect(body).toContain('units 2/2');
+    expect(body).not.toMatch(/bk-day-load">1\/2</);
+  });
 });
 
 describe('POST /admin day overrides (spec §11)', () => {

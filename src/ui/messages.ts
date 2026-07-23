@@ -61,6 +61,7 @@ export const defaultMessages = {
   'widget.errorAvailability': 'Could not load availability. Please try again.',
   'widget.errorCheckout': 'Checkout failed. Please try again.',
   'widget.retry': 'Retry',
+  'widget.noscript': 'Booking requires JavaScript. Please contact us directly to book.',
   // Confirmation page
   'confirmation.title': 'Booking confirmed',
   'confirmation.lead': 'Thank you — your tour is booked. A confirmation email is on its way.',
@@ -112,7 +113,8 @@ export const defaultMessages = {
   'admin.navBookings': 'Bookings',
   'admin.navDays': 'Availability',
   'admin.days': 'Availability by day',
-  'admin.daysHint': 'Each day shows booked/capacity. Select a day to adjust or close it.',
+  'admin.daysHint': 'Each day shows fleet units used/capacity. Select a day to adjust or close it.',
+  'admin.unitsLoad': 'units {booked}/{capacity}',
   'admin.bookings': 'Upcoming bookings',
   'admin.noBookings': 'No upcoming bookings.',
   'admin.capacity': 'Capacity',

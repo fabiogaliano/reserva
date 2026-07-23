@@ -28,6 +28,14 @@ interface Props {
   // Pass the tour's pricing rules (config.tours[slug].pricing) to show a live price; omit to hide.
   pricing?: PricingRuleProp[];
   currency?: string;
+  // Pass config.booking.limitedThreshold so the slot scarcity hint matches the same operator-set
+  // knob the server uses for a day's overall "limited" status. Defaults to the widget's prior
+  // hardcoded threshold for consumers that don't wire it up.
+  limitedThreshold?: number;
+  // Shown in the <noscript> fallback as a way to book without JavaScript — pass
+  // config.business.contact.email / .phone. Either, both, or neither may be supplied.
+  contactEmail?: string;
+  contactPhone?: string;
   // Partial overrides merged over the shipped English catalog — feed the page's locale copy here.
   messages?: Partial<BookkitMessages>;
   showTitle?: boolean;
@@ -45,6 +53,9 @@ const {
   startOptions = [],
   pricing,
   currency = 'EUR',
+  limitedThreshold = 3,
+  contactEmail,
+  contactPhone,
   messages: messageOverrides = {},
   showTitle = true,
 } = Astro.props;
@@ -61,6 +72,7 @@ const scriptData = {
   locale,
   currency,
   resolvedPrices,
+  limitedThreshold,
   i18n: {
     loadingSlots: t['widget.loadingSlots'],
     noSlots: t['widget.noSlots'],
@@ -90,6 +102,7 @@ const pickupCopy: Record<'default' | 'custom', { label: string; hint: string }> 
   data-availability-from={availabilityFrom}
   data-availability-to={availabilityTo}
   aria-label={t['widget.title']}
+  hidden
 >
   <script type="application/json" data-bookkit-data set:html={JSON.stringify(scriptData).replace(/</g, '\\u003c')} />
   <input type="hidden" name="tourSlug" value={tourSlug} />
@@ -169,14 +182,30 @@ const pickupCopy: Record<'default' | 'custom', { label: string; hint: string }> 
   )}
 
   {/* In availability mode the button stays disabled until slots render, so a fast click can never
-      post an empty start; the script re-enables it from renderSlots. */}
-  <button type="submit" class="bkw-submit" disabled={usesAvailability}>{t['widget.submit']}</button>
+      post an empty start; its label shows the loading state until renderSlots restores the normal
+      submit label and re-enables it. */}
+  <button type="submit" class="bkw-submit" disabled={usesAvailability}>{usesAvailability ? t['widget.loadingSlots'] : t['widget.submit']}</button>
   <p class="bkw-error" data-bookkit-error role="alert" hidden>
     <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><path d="M12 8v4" /><path d="M12 16h.01" /></svg>
     <span data-bookkit-error-text></span>
   </p>
   <button type="button" class="bkw-retry" data-bookkit-retry hidden>{t['widget.retry']}</button>
 </form>
+
+{/* The form starts `hidden` and the script un-hides it on init (see the `<script>` block below), so
+    a no-JS visitor never sees a dead form — only this message and, if configured, a contact path. */}
+<noscript>
+  <div class="bkw-noscript">
+    <p>{t['widget.noscript']}</p>
+    {(contactEmail || contactPhone) && (
+      <p class="bkw-noscript-contact">
+        {contactEmail && <a href={`mailto:${contactEmail}`}>{contactEmail}</a>}
+        {contactEmail && contactPhone && ' · '}
+        {contactPhone && <a href={`tel:${contactPhone}`}>{contactPhone}</a>}
+      </p>
+    )}
+  </div>
+</noscript>
 
 <script>
   import 'cally';
@@ -187,7 +216,7 @@ const pickupCopy: Record<'default' | 'custom', { label: string; hint: string }> 
     isDateDisallowed: (date: Date) => boolean;
   }
 
-  interface AvailabilitySlot { start: string; remaining: number }
+  interface AvailabilitySlot { start: string; remaining: number; remainingBookings: number }
   interface AvailabilityDay { date: string; status: string; closedReason?: string; slots: AvailabilitySlot[] }
   interface ResolvedPriceTable {
     default: number[];
@@ -197,6 +226,7 @@ const pickupCopy: Record<'default' | 'custom', { label: string; hint: string }> 
     locale: string;
     currency: string;
     resolvedPrices: ResolvedPriceTable | null;
+    limitedThreshold: number;
     i18n: Record<string, string>;
   }
 
@@ -257,6 +287,10 @@ const pickupCopy: Record<'default' | 'custom', { label: string; hint: string }> 
     container.replaceChildren();
     const slots = day?.slots ?? [];
     wrap.hidden = false;
+    // The button's initial label is a loading affordance (data-bookkit-checkout only becomes
+    // visible once this script runs); once availability actually resolves, restore its normal
+    // label regardless of whether a slot ends up selectable.
+    if (submit) submit.textContent = data.i18n.submit ?? submit.textContent;
     if (slots.length === 0) {
       const empty = document.createElement('p');
       empty.className = 'bkw-empty';
@@ -278,10 +312,10 @@ const pickupCopy: Record<'default' | 'custom', { label: string; hint: string }> 
       time.className = 'bkw-slot-time';
       time.textContent = slot.start.slice(11, 16);
       label.append(input, time);
-      if (slot.remaining > 0 && slot.remaining <= 3) {
+      if (slot.remainingBookings > 0 && slot.remainingBookings <= data.limitedThreshold) {
         const hint = document.createElement('span');
         hint.className = 'bkw-slot-hint';
-        hint.textContent = fill(data.i18n.limited ?? '', { n: slot.remaining });
+        hint.textContent = fill(data.i18n.limited ?? '', { n: slot.remainingBookings });
         label.append(hint);
       }
       container.append(label);
@@ -336,13 +370,22 @@ const pickupCopy: Record<'default' | 'custom', { label: string; hint: string }> 
       calStatus(form, '');
       showError(form, data, cause, 'errorAvailability');
       showRetry(form);
-      if (submit) submit.disabled = true;
+      // The availability fetch itself failed, so renderSlots (which would otherwise restore the
+      // idle label) never ran — do it here so the button doesn't read "loading" forever.
+      if (submit) {
+        submit.disabled = true;
+        submit.textContent = data.i18n.submit ?? submit.textContent;
+      }
     } finally {
       calendar.removeAttribute('aria-busy');
     }
   }
 
   for (const form of document.querySelectorAll<HTMLFormElement>('[data-bookkit-checkout]')) {
+    // The form starts `hidden` in markup (see BookingWidget.astro) so a no-JS visitor sees the
+    // <noscript> message instead of a dead form; reaching here means this script is running, so
+    // reveal it immediately rather than waiting on the availability fetch below.
+    form.hidden = false;
     const data = readData(form);
     form.querySelector<HTMLSelectElement>('select[name="people"]')?.addEventListener('change', () => {
       updatePrice(form, data);

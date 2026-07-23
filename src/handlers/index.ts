@@ -909,7 +909,23 @@ function adminPage(
     if (list) list.push(booking);
     else bookingsByDate.set(date, [booking]);
   }
-  const bookingCounts = new Map([...bookingsByDate].map(([date, list]) => [date, list.length]));
+  // Fleet units consumed per day, not raw booking-row counts: a single 5-person booking on a
+  // 4-seat vehicle occupies 2 vans (occupancyFor), and checkout enforces capacity in units, so the
+  // admin calendar must count in the same unit or a day can read "1/2" while it is actually full.
+  // resolveTour throws for a tourSlug no longer in the live config (e.g. renamed/removed since the
+  // booking was made) — unlike a single-booking lookup, this aggregates every booking in the
+  // rendered horizon, so one stale row must degrade to counting itself as one unit, not 500 the
+  // whole admin calendar.
+  const unitsByDate = new Map([...bookingsByDate].map(([date, list]) => [
+    date,
+    list.reduce((total, b) => {
+      try {
+        return total + occupancyFor(resolveTour(context.config, b.tourSlug), b.people);
+      } catch {
+        return total + 1;
+      }
+    }, 0),
+  ]));
   const formatDayTime = (startsAt: string): string =>
     new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', timeZone: timezone }).format(new Date(startsAt));
   const peopleText = (people: number): string =>
@@ -943,14 +959,15 @@ function adminPage(
       const override = overridesByDate.get(date);
       const dayDefault = defaultCapacityForDate(date, context.config.fleet.defaultCapacity, capacityDefaults);
       const capacity = override?.capacity ?? dayDefault;
-      const booked = bookingCounts.get(date) ?? 0;
+      const booked = unitsByDate.get(date) ?? 0;
       const tone = capacity === 0 ? ' bk-day--closed' : override ? ' bk-day--adjusted' : booked > 0 ? ' bk-day--booked' : ' bk-day--quiet';
       if (override || capacity === 0) flagged += 1;
       const selected = date === editDate;
       if (selected) containsSelected = true;
       // A changed fleet default is the "new normal" — no warning tint, but do show the numbers.
+      // Labelled "units" so this reads unambiguously against fleet capacity, not a booking count.
       const load = booked > 0 || override || dayDefault !== context.config.fleet.defaultCapacity
-        ? `<span class="bk-day-load">${booked}/${capacity}</span>`
+        ? `<span class="bk-day-load">${escapeHtml(formatMessage(messages['admin.unitsLoad'], { booked, capacity }))}</span>`
         : '';
       const title = override?.reason ? ` title="${escapeHtml(override.reason)}"` : '';
       // data-* carries each day's effective values so the enhancer can prefill the form without a

@@ -76,10 +76,10 @@ export const manageEnhancerJs = `(() => {
       time.className = 'bk-slot-time';
       time.textContent = slot.start.slice(11, 16);
       button.append(time);
-      if (slot.remaining > 0 && slot.remaining <= 3 && i18n.limited) {
+      if (slot.remainingBookings > 0 && slot.remainingBookings <= 3 && i18n.limited) {
         const hint = document.createElement('span');
         hint.className = 'bk-slot-hint';
-        hint.textContent = i18n.limited.replace('{n}', String(slot.remaining));
+        hint.textContent = i18n.limited.replace('{n}', String(slot.remainingBookings));
         button.append(hint);
       }
       button.addEventListener('click', () => {

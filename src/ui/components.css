@@ -287,3 +287,18 @@
   .bk-widget .bkw-retry:hover { border-color: var(--bk-accent); }
 }
 .bk-widget .bkw-retry:focus-visible { outline: none; box-shadow: var(--bk-focus); }
+
+/* Sibling of the (script-revealed) .bk-widget form, not a descendant — it must stay visible when
+   the form is hidden pending JS, so it can't be scoped under a .bk-widget ancestor selector. */
+.bkw-noscript {
+  margin: 0 0 1rem;
+  padding: 0.75rem;
+  border: 1px solid var(--bk-border);
+  border-radius: var(--bk-radius-sm);
+  background: var(--bk-surface-2);
+  color: var(--bk-text);
+  font-size: 0.9rem;
+}
+.bkw-noscript p { margin: 0 0 0.35rem; }
+.bkw-noscript p:last-child { margin-bottom: 0; }
+.bkw-noscript-contact a { color: var(--bk-accent); font-weight: 600; }

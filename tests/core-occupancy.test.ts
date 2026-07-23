@@ -6,6 +6,7 @@ import {
   getOccupancyIntervals,
   isSlotAvailable,
   maxConcurrentOccupancy,
+  remainingBookings,
   remainingCapacity,
 } from '../src/core/occupancy';
 import { booking, config, tour } from './fixtures';
@@ -192,6 +193,28 @@ describe('core occupancy', () => {
       bookings: [hold],
     }));
     expect(intervals).toHaveLength(1);
+  });
+
+  it('remainingBookings converts remaining fleet units into bookings for a given party size (BK-CAP-002)', () => {
+    // Fixture tour: occupancyFor(5) = 2 units (parties >4 need a second vehicle).
+    expect(remainingBookings(3, tour, 5)).toBe(1); // 3 units / 2-unit party = 1 more booking fits
+    expect(remainingBookings(4, tour, 5)).toBe(2);
+    expect(remainingBookings(1, tour, 5)).toBe(0); // a lone unit can't seat a 2-unit party
+    // A single-unit party consumes 1:1, so remainingBookings equals the raw unit count.
+    expect(remainingBookings(3, tour, 2)).toBe(3);
+  });
+
+  it('availabilityForDay slots carry both remaining (units) and remainingBookings (for the requested party)', () => {
+    const result = availabilityForDay({
+      date: '2026-06-15', timezone: config.business.timezone, tour, capacity: 4,
+      bookings: [], requestedPeople: 5, limitedThreshold: 2, now: '2026-06-14T00:00:00.000Z',
+    });
+    expect(result.slots.length).toBeGreaterThan(0);
+    for (const slot of result.slots) {
+      // Nothing booked yet: all 4 units are free, and a 5-person (2-unit) party can fit twice.
+      expect(slot.remaining).toBe(4);
+      expect(slot.remainingBookings).toBe(2);
+    }
   });
 
   it('excludes the moved booking from reschedule validation', () => {

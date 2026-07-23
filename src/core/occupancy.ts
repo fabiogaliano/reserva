@@ -89,6 +89,7 @@ export interface DayAvailabilityOptions {
 export interface AvailableSlot {
   start: string;
   remaining: number;
+  remainingBookings: number;
 }
 
 export interface DayAvailability {
@@ -303,6 +304,13 @@ export function slotRemaining(
   return remainingCapacity(options.capacity, options.intervals, slotStart, end);
 }
 
+// How many more bookings of this party size still fit in the remaining fleet units — a slot with
+// 3 units left and a 2-unit party has room for 1 more booking, not 3. occupancyFor always returns
+// a positive integer (it throws otherwise), so this never divides by zero.
+export function remainingBookings(remainingUnits: number, tour: Pick<TourConfig, 'occupancyFor'>, people: number): number {
+  return Math.floor(remainingUnits / occupancyFor(tour, people));
+}
+
 function isWithinRequestWindow(slot: GeneratedSlot, options: DayAvailabilityOptions, now: Date): boolean {
   const start = parseUtcInstant(slot.utcStart);
   const min = options.minNoticeHours === undefined ? now : new Date(now.getTime() + options.minNoticeHours * 3_600_000);
@@ -352,7 +360,11 @@ export function availabilityForDay(options: DayAvailabilityOptions): DayAvailabi
       requestedUnits,
       turnaroundMin: options.tour.turnaroundMin,
     }) && remaining > 0)
-    .map(({ slot, remaining }) => ({ start: slot.start, remaining }));
+    .map(({ slot, remaining }) => ({
+      start: slot.start,
+      remaining,
+      remainingBookings: remainingBookings(remaining, options.tour, options.requestedPeople),
+    }));
   const status = slots.length === 0 ? 'full' : slots.length <= options.limitedThreshold ? 'limited' : 'available';
   return { date: options.date, status, slots };
 }
