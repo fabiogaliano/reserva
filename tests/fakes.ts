@@ -11,6 +11,7 @@ import {
 } from '../src/core/occupancy';
 import { sha256Base64Url } from '../src/http';
 import {
+  DuplicatePaymentIntentError,
   HoldLimitExceededError,
   MUTATION_SIDE_EFFECT_LEASE_MS,
   type BookingRepository,
@@ -90,6 +91,12 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
   // NULL row, so the same COALESCE(units, 1) / COALESCE(endsAt, row.endsAt) fallback applies.
   const occupancyMeta = new Map<string, { units: number; endsAt: string }>();
   const find = (predicate: (item: Booking) => boolean) => [...rows.values()].find(predicate) ?? null;
+  const guardDuplicatePaymentIntent = (bookingId: string, paymentIntent: string | null | undefined): void => {
+    if (paymentIntent === null || paymentIntent === undefined) return;
+    if (find((item) => item.id !== bookingId && item.stripePaymentIntent === paymentIntent)) {
+      throw new DuplicatePaymentIntentError(paymentIntent);
+    }
+  };
   // patch-05-r1 Fix 2: reuse the REAL getOccupancyIntervals/maxConcurrentOccupancy (src/core/
   // occupancy.ts) instead of a hand-rolled SUM-of-overlaps calc that could silently drift from
   // src/repo.ts's own NOT-EXISTS max-concurrency guard (see the Fix 1 comment there). Each row's
@@ -271,6 +278,7 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
     updateBooking: async (id, patch) => {
       const current = rows.get(id);
       if (!current) throw new Error('missing booking');
+      guardDuplicatePaymentIntent(id, patch.stripePaymentIntent);
       const updated = { ...current, ...patch } as Booking;
       rows.set(id, updated);
       return updated;
@@ -307,6 +315,7 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
     transitionToConfirmed: async (id, input) => {
       const current = rows.get(id);
       if (!current || !input.expectedStatusIn.includes(current.status)) return null;
+      guardDuplicatePaymentIntent(id, input.stripePaymentIntent);
       const { expectedStatusIn, updatedAt, ...patch } = input;
       const defined = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
       const updated: Booking = { ...current, ...defined, status: 'confirmed', holdExpiresAt: null, updatedAt };
@@ -316,6 +325,7 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
     confirmWithSideEffectOperations: async (id, input) => {
       const current = rows.get(id);
       if (!current || !input.expectedStatusIn.includes(current.status) || leases.get(id)?.token !== input.leaseToken) return null;
+      guardDuplicatePaymentIntent(id, input.stripePaymentIntent);
       const { expectedStatusIn, leaseToken, oversold, updatedAt, ...patch } = input;
       const defined = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
       const updated: Booking = { ...current, ...defined, status: 'confirmed', holdExpiresAt: null, updatedAt };
@@ -339,6 +349,7 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
     applyConfirmedPaymentDetails: async (id, patch, leaseToken, updatedAt) => {
       const current = rows.get(id);
       if (!current || current.status !== 'confirmed' || leases.get(id)?.token !== leaseToken) return false;
+      guardDuplicatePaymentIntent(id, patch.stripePaymentIntent);
       const updated: Booking = {
         ...current,
         ...(current.stripePaymentIntent === null && patch.stripePaymentIntent !== undefined ? { stripePaymentIntent: patch.stripePaymentIntent } : {}),

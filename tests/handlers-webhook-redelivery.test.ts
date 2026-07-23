@@ -77,6 +77,57 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
     expect(afterSecond).toMatchObject({ status: 'confirmed', calendarSynced: true, emailSynced: true });
   });
 
+  it('surfaces a duplicate payment intent from the fake repository as a 409', async () => {
+    const first = booking({
+      id: 'b-webhook-duplicate-payment-first',
+      status: 'hold',
+      holdExpiresAt: '2026-06-14T09:00:00.000Z',
+      stripeSessionId: 'cs_webhook_duplicate_payment_first',
+      stripePaymentIntent: null,
+    });
+    const second = booking({
+      id: 'b-webhook-duplicate-payment-second',
+      status: 'hold',
+      holdExpiresAt: '2026-06-14T09:00:00.000Z',
+      stripeSessionId: 'cs_webhook_duplicate_payment_second',
+      stripePaymentIntent: null,
+    });
+    const repo = fakeRepository([first, second]);
+    let eventIndex = 0;
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      providers: providers({ payments: {
+        createCheckout: async () => ({ url: '', sessionId: '' }),
+        parseWebhook: async () => {
+          const booking = eventIndex++ === 0 ? first : second;
+          return {
+            id: `evt_webhook_duplicate_payment_${booking.id}`,
+            type: 'checkout.session.completed' as const,
+            bookingId: booking.id,
+            sessionId: booking.stripeSessionId ?? '',
+            paymentIntent: 'pi_webhook_duplicate_payment',
+            paid: true,
+            amountCaptured: booking.priceCents,
+            currency: config.business.currency,
+          };
+        },
+        getSession: async () => ({ status: 'open' }),
+        refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+      } }),
+    });
+
+    const firstResponse = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    expect(firstResponse.status).toBe(200);
+
+    const secondResponse = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    expect(secondResponse.status).toBe(409);
+    await expect(secondResponse.json()).resolves.toMatchObject({ error: { code: 'duplicate_payment_intent' } });
+    expect(repo.rows.get(second.id)).toMatchObject({ status: 'hold', stripePaymentIntent: null });
+  });
+
   it('drains a pending cancellation effect when Stripe redelivers a completed session for a terminal booking', async () => {
     const sessionId = 'cs_redelivery_terminal_mutation';
     const paymentIntent = 'pi_redelivery_terminal_mutation';
