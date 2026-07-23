@@ -33,6 +33,30 @@ describe('fakeRepository fidelity to the real D1 repository', () => {
     ]);
   });
 
+  it('matches real no-op and conflict-update behavior for partial booking writes', async () => {
+    const seeded = booking({ id: 'b-fake-write-parity', customerEmail: 'customer@example.test', updatedAt: '2026-06-14T08:00:00.000Z' });
+    const repo = fakeRepository([seeded]);
+
+    const patch = { updatedAt: '2026-06-14T08:01:00.000Z' };
+    Object.assign(patch, { customerEmail: undefined });
+    const updated = await repo.updateBooking(seeded.id, patch);
+    expect(updated).toMatchObject({ customerEmail: seeded.customerEmail, updatedAt: '2026-06-14T08:01:00.000Z' });
+
+    await repo.acquireConfirmationLease(seeded.id, 'lease-fake-write-parity', '2026-06-14T08:01:00.000Z', '2026-06-14T08:06:00.000Z');
+    const applied = await repo.applyConfirmedPaymentDetails(seeded.id, {}, 'lease-fake-write-parity', '2026-06-14T08:02:00.000Z');
+    expect(applied).toBe(false);
+    expect(repo.rows.get(seeded.id)?.updatedAt).toBe('2026-06-14T08:01:00.000Z');
+
+    await repo.claimRefundOperation({
+      id: 'op-fake-write-original', bookingId: seeded.id, paymentIntent: seeded.stripePaymentIntent, choice: 'full', requestedAt: '2026-06-14T08:00:00.000Z',
+    });
+    await repo.upsertRefundOperation({
+      id: 'op-fake-write-replacement', bookingId: seeded.id, paymentIntent: seeded.stripePaymentIntent, choice: 'full', status: 'failed',
+      stripeRefundId: null, amountCents: null, requestedAt: '2026-06-14T08:02:00.000Z', resolvedAt: '2026-06-14T08:02:00.000Z',
+    });
+    expect(repo.refundOperations.get(seeded.id)?.id).toBe('op-fake-write-original');
+  });
+
   it('refuses a confirmation lease for an unknown booking id, like the real UPDATE ... WHERE id = ?', async () => {
     const repo = fakeRepository([booking({ id: 'b-known' })]);
 

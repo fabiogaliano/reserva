@@ -315,7 +315,8 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       const current = rows.get(id);
       if (!current) throw new Error('missing booking');
       guardDuplicatePaymentIntent(id, patch.stripePaymentIntent);
-      const updated = { ...current, ...patch } as Booking;
+      const defined = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
+      const updated = { ...current, ...defined } as Booking;
       rows.set(id, updated);
       return hydrateBooking(updated);
     },
@@ -385,6 +386,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     applyConfirmedPaymentDetails: async (id, patch, leaseToken, updatedAt) => {
       const current = rows.get(id);
       if (!current || current.status !== 'confirmed' || leases.get(id)?.token !== leaseToken) return false;
+      if (Object.values(patch).every((value) => value === undefined)) return false;
       guardDuplicatePaymentIntent(id, patch.stripePaymentIntent);
       const updated: Booking = {
         ...current,
@@ -588,7 +590,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         return;
       }
       refundOperations.set(input.bookingId, {
-        id: input.id, bookingId: input.bookingId, paymentIntent: input.paymentIntent,
+        id: current?.id ?? input.id, bookingId: input.bookingId, paymentIntent: input.paymentIntent,
         choice: input.choice, status: input.status, stripeRefundId: input.stripeRefundId,
         amountCents: input.amountCents, requestedAt: current?.requestedAt ?? input.requestedAt,
         resolvedAt: input.resolvedAt, error: input.error ?? null,
