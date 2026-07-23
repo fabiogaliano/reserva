@@ -69,8 +69,26 @@ export interface SessionStatus extends StripeCustomerDetails {
 
 export type EmailBookingEvent = Exclude<BookingEvent, 'payment.dispute_created'>;
 
+// BK-SIDE-001 (handoff 13): who a given event's email goes to. Kept generic here (not
+// Brevo-specific) so the mutation dispatcher (src/confirmation.ts) can ask any provider which
+// recipients apply without depending on a concrete implementation's template config.
+export type EmailRecipientRole = 'customer' | 'owner';
+
 export interface EmailProvider {
   send(
+    event: EmailBookingEvent,
+    booking: Booking,
+    config: ClientConfig,
+    routePaths?: BookkitResolvedRouteConfig['paths'],
+  ): Promise<void>;
+  // Optional per-recipient split (BK-SIDE-001): a provider that implements both of these lets the
+  // mutation dispatcher record + retry each recipient as its own durable outbox operation, so an
+  // owner-send failure can never cause a retry to re-send the customer's already-delivered
+  // message. A provider without them falls back to `send` as a single, unsplit operation — still
+  // recorded and retried durably, just not per-recipient.
+  recipientsForEvent?(event: EmailBookingEvent): EmailRecipientRole[];
+  sendToRecipient?(
+    recipient: EmailRecipientRole,
     event: EmailBookingEvent,
     booking: Booking,
     config: ClientConfig,

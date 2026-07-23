@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { booking, config } from './fixtures';
-import { mapTourflowFeed, mapTourflowBooking, TOURFLOW_AUTHORIZATION_HEADER, TOURFLOW_SOURCE, tourflow } from '../src/providers/tourflow';
+import { mapTourflowFeed, mapTourflowBooking, TOURFLOW_AUTHORIZATION_HEADER, TOURFLOW_SOURCE, TourflowResponseError, tourflow } from '../src/providers/tourflow';
 
 describe('Tourflow provider', () => {
   it('maps a booking into the reservation payload without secrets or tokens', () => {
@@ -21,5 +21,26 @@ describe('Tourflow provider', () => {
     await sink.push('booking.confirmed', booking());
     expect(request).toHaveBeenCalledWith('https://tourflow.test/api/webhooks/reservations', expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ [TOURFLOW_AUTHORIZATION_HEADER]: 'Bearer secret' }) }));
     expect(JSON.parse(request.mock.calls[0]![1]!.body as string)).toEqual(expect.objectContaining({ externalId: 'booking-1', operatorSlug: 'lvt' }));
+  });
+
+  it('caps a failed response body and exposes its status without retaining the full body', async () => {
+    const body = 'y'.repeat(5_000);
+    const sink = tourflow({
+      webhookUrl: 'https://tourflow.test/api/webhooks/reservations',
+      sharedSecret: 'secret',
+      fetch: async () => new Response(body, { status: 502 }),
+    });
+    let caught: unknown;
+    try {
+      await sink.push('booking.confirmed', booking());
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(TourflowResponseError);
+    if (!(caught instanceof TourflowResponseError)) throw new Error('Tourflow request unexpectedly succeeded');
+    expect(caught.status).toBe(502);
+    expect(caught.message).toContain('y'.repeat(200));
+    expect(caught.message).not.toContain('y'.repeat(201));
   });
 });

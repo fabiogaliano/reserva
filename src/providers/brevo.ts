@@ -1,11 +1,25 @@
 import type { Booking } from '../core/booking';
 import type { ClientConfig } from '../core/config';
-import type { EmailBookingEvent, EmailProvider } from '../core/events';
+import type { EmailBookingEvent, EmailProvider, EmailRecipientRole } from '../core/events';
 import type { BookkitResolvedRouteConfig } from '../routes-manifest';
 
 export const BREVO_TRANSACTIONAL_EMAIL_URL = 'https://api.brevo.com/v3/smtp/email';
 export const BREVO_API_URL = BREVO_TRANSACTIONAL_EMAIL_URL;
-export type BrevoRecipient = 'customer' | 'owner';
+export type BrevoRecipient = EmailRecipientRole;
+
+// BK-SIDE-001 (handoff 13): response bodies (status pages, HTML error bodies) are where PII/
+// operator-visible detail rides — cap what ever reaches an Error message so a caller that logs it
+// (or an upstream catch that does `String(error)`) can't leak an unbounded body into application
+// logs, and expose `status` as a plain property so a caller can log it structurally instead.
+const MAX_ERROR_BODY_CHARS = 200;
+export class BrevoResponseError extends Error {
+  readonly status: number;
+  constructor(status: number, body: string) {
+    super(`Brevo email request failed (${status}): ${body.slice(0, MAX_ERROR_BODY_CHARS)}`);
+    this.name = 'BrevoResponseError';
+    this.status = status;
+  }
+}
 
 export interface BrevoEmailContent { subject: string; htmlContent: string; textContent?: string }
 export interface BrevoEmailTemplateContext {
@@ -119,21 +133,48 @@ export class BrevoEmailProvider implements EmailProvider {
     this.apiKey = options.apiKey; this.sender = options.sender; this.owner = options.owner; this.endpoint = options.endpoint ?? BREVO_TRANSACTIONAL_EMAIL_URL;
     this.request = options.fetchImpl ?? options.fetch ?? globalThis.fetch.bind(globalThis); this.renderer = options.renderEmail ?? options.render ?? defaultRender;
   }
+  // BK-SIDE-001: which recipients apply for an event, exposed so a caller (the mutation
+  // dispatcher) can record + retry each recipient as its own durable operation without knowing
+  // this provider's template config.
+  recipientsForEvent(event: EmailBookingEvent): BrevoRecipient[] {
+    const recipients: BrevoRecipient[] = ['customer'];
+    if (ownerEvents.has(event)) recipients.push('owner');
+    return recipients;
+  }
+
+  // BK-SIDE-001: single-recipient send, so a caller can treat the customer and owner messages as
+  // independent operations — an owner-send failure here never touches the customer's address.
+  async sendToRecipient(
+    recipient: BrevoRecipient,
+    event: EmailBookingEvent,
+    booking: Booking,
+    config: ClientConfig,
+    routePaths?: BookkitResolvedRouteConfig['paths'],
+  ): Promise<void> {
+    const address = addressFor(recipient, booking, config, this.owner);
+    if (!address) return;
+    // BK-SEC-002 (patch-11-r1 LOW 1): '' rather than a dead link when the token isn't
+    // presentable — defaultRender below strips the paragraph an empty URL leaves behind. Kept
+    // here (not lost in the sendToRecipient/send split) — see the isManageableToken doc comment.
+    const context: BrevoEmailTemplateContext = { event, booking, config, locale: config.locales.supported.includes(booking.locale) ? booking.locale : config.locales.default, recipient, customerManageUrl: isManageableToken(booking.cancelToken) ? manageUrl(config, booking.cancelToken, routePaths) : '', operatorManageUrl: isManageableToken(booking.operatorToken) ? manageUrl(config, booking.operatorToken, routePaths) : '', startsAtLocal: localStart(booking, config) };
+    const content = this.renderer(context);
+    const response = await this.request(this.endpoint, { method: 'POST', headers: { accept: 'application/json', 'api-key': this.apiKey, 'content-type': 'application/json' }, body: JSON.stringify({ ...content, sender: this.sender ?? { email: config.business.contact.email, name: config.business.name }, to: [address] }) });
+    if (!response.ok) throw new BrevoResponseError(response.status, await response.text());
+  }
+
+  // Kept as the whole-event send (customer then owner, sequentially, in one call) for callers
+  // that don't need per-recipient tracking (e.g. the confirmation-path outbox's single
+  // 'email_confirmation' operation — see src/confirmation.ts executeOperation, handoff 04's
+  // territory, out of scope for this task). Implemented in terms of sendToRecipient so both paths
+  // share one HTTP-call implementation.
   async send(
     event: EmailBookingEvent,
     booking: Booking,
     config: ClientConfig,
     routePaths?: BookkitResolvedRouteConfig['paths'],
   ): Promise<void> {
-    const recipients: BrevoRecipient[] = ['customer']; if (ownerEvents.has(event)) recipients.push('owner');
-    for (const recipient of recipients) {
-      const address = addressFor(recipient, booking, config, this.owner); if (!address) continue;
-      // BK-SEC-002 (patch-11-r1 LOW 1): '' rather than a dead link when the token isn't
-      // presentable — defaultRender below strips the paragraph an empty URL leaves behind.
-      const context: BrevoEmailTemplateContext = { event, booking, config, locale: config.locales.supported.includes(booking.locale) ? booking.locale : config.locales.default, recipient, customerManageUrl: isManageableToken(booking.cancelToken) ? manageUrl(config, booking.cancelToken, routePaths) : '', operatorManageUrl: isManageableToken(booking.operatorToken) ? manageUrl(config, booking.operatorToken, routePaths) : '', startsAtLocal: localStart(booking, config) };
-      const content = this.renderer(context);
-      const response = await this.request(this.endpoint, { method: 'POST', headers: { accept: 'application/json', 'api-key': this.apiKey, 'content-type': 'application/json' }, body: JSON.stringify({ ...content, sender: this.sender ?? { email: config.business.contact.email, name: config.business.name }, to: [address] }) });
-      if (!response.ok) throw new Error(`Brevo email request failed (${response.status}): ${await response.text()}`);
+    for (const recipient of this.recipientsForEvent(event)) {
+      await this.sendToRecipient(recipient, event, booking, config, routePaths);
     }
   }
 }

@@ -380,6 +380,45 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     expect(repo.rows.get(seeded.id)).toMatchObject({ createdAt: seeded.createdAt, updatedAt: now, calendarSynced: true });
   });
 
+  it('does not treat reschedule mutation rows as confirmation fulfillment debt', async () => {
+    const seeded = booking({
+      id: 'b-status-mutation-isolation', status: 'confirmed', stripeSessionId: 'cs_status_mutation_isolation',
+      calendarSynced: true, emailSynced: true,
+    });
+    const repo = fakeRepository([seeded]);
+    await repo.recordMutationSideEffectOperations(seeded.id, [
+      'email:booking.rescheduled:customer:1', 'tourflow:booking.rescheduled:1',
+    ], '2026-06-14T07:00:00.000Z');
+    const email = repo.sideEffectOperations.get(`${seeded.id}:email:booking.rescheduled:customer:1`);
+    const tourflow = repo.sideEffectOperations.get(`${seeded.id}:tourflow:booking.rescheduled:1`);
+    if (!email || !tourflow) throw new Error('mutation rows were not seeded');
+    repo.sideEffectOperations.set(`${seeded.id}:email:booking.rescheduled:customer:1`, { ...email, status: 'failed', error: 'retry later' });
+    repo.sideEffectOperations.set(`${seeded.id}:tourflow:booking.rescheduled:1`, {
+      ...tourflow, status: 'in_flight', attemptedAt: '2026-06-14T07:59:00.000Z', attemptCount: 1,
+    });
+    const sentEvents: string[] = [];
+    const configuredProviders = providers({ email: {
+      send: async (event) => { sentEvents.push(event); },
+      sendToRecipient: async (_recipient, event) => {
+        sentEvents.push(event);
+        throw new Error('reschedule retry remains owed');
+      },
+    } });
+    delete configuredProviders.ops;
+    const context = createBookkitContext({
+      config, db: {} as D1Database, repo,
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      providers: configuredProviders,
+      logger: { warn: () => undefined },
+    });
+
+    const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_mutation_isolation'), context);
+    expect(response.status).toBe(200);
+    expect(sentEvents).toEqual(['booking.rescheduled']);
+    expect(repo.sideEffectOperations.get(`${seeded.id}:email:booking.rescheduled:customer:1`)).toMatchObject({ status: 'failed' });
+    expect(repo.sideEffectOperations.get(`${seeded.id}:tourflow:booking.rescheduled:1`)).toMatchObject({ status: 'in_flight' });
+  });
+
   it('returns sensitive headers for a missing session_id error', async () => {
     const context = createBookkitContext({
       config,

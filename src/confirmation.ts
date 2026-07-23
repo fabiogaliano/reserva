@@ -1,6 +1,6 @@
 import type { Booking } from './core/booking';
 import { resolveTour } from './core/config';
-import type { BookingEvent, EmailBookingEvent, StripeCustomerDetails } from './core/events';
+import type { BookingEvent, EmailBookingEvent, EmailRecipientRole, StripeCustomerDetails } from './core/events';
 import {
   capacityForDate,
   defaultCapacityForDate,
@@ -10,7 +10,7 @@ import {
 import { localDateKey, parseUtcInstant } from './core/time';
 import type { BookkitContext } from './context';
 import { nowIso } from './context';
-import type { SideEffectOperationRecord } from './repo';
+import type { ConfirmationSideEffectKind, SideEffectOperationKind, SideEffectOperationRecord } from './repo';
 
 export class ConfirmationInProgressError extends Error {
   readonly status = 503;
@@ -73,10 +73,14 @@ async function resolveOperation(
   if (!await context.repo.resolveSideEffectOperation(input)) throw new ConfirmationInProgressError();
 }
 
+function isConfirmationSideEffectOperation(operation: SideEffectOperationRecord): operation is SideEffectOperationRecord & { kind: ConfirmationSideEffectKind } {
+  return operation.kind === 'calendar_create' || operation.kind === 'email_confirmation' || operation.kind === 'oversell';
+}
+
 async function executeOperation(
   context: BookkitContext,
   booking: Booking,
-  operation: SideEffectOperationRecord,
+  operation: SideEffectOperationRecord & { kind: ConfirmationSideEffectKind },
   token: string,
 ): Promise<void> {
   if (operation.status === 'succeeded' || operation.kind === 'oversell') return;
@@ -174,7 +178,7 @@ async function confirmBookingFromPaymentUnlocked(
 
   await renewConfirmationLease(context, current.id, token);
   await context.repo.ensureConfirmationSideEffectOperations(current.id, token, nowIso(context));
-  const operations = await context.repo.listSideEffectOperations(current.id);
+  const operations = (await context.repo.listSideEffectOperations(current.id)).filter(isConfirmationSideEffectOperation);
   shouldDispatchConfirmation ||= operations.some((operation) => operation.status !== 'succeeded');
   for (const operation of operations) await executeOperation(context, current, operation, token);
   current = await context.repo.getBookingById(current.id) ?? current;
@@ -231,6 +235,19 @@ export async function confirmBookingFromPayment(
   }
 }
 
+// BK-SIDE-001 (handoff 13): providers that throw a status-carrying error (BrevoResponseError,
+// TourflowResponseError) let a catch here log the HTTP status as a structured field instead of
+// embedding the provider's (possibly PII-bearing) response body via String(error) — that body is
+// already capped at the throw site (src/providers/brevo.ts, src/providers/tourflow.ts), but the
+// dispatcher logs shouldn't carry it at all, only the status.
+function extractStatus(error: unknown): number | undefined {
+  if (error && typeof error === 'object' && 'status' in error) {
+    const status = (error as { status: unknown }).status;
+    if (typeof status === 'number') return status;
+  }
+  return undefined;
+}
+
 export function dispatchNonCritical(
   context: BookkitContext,
   event: BookingEvent,
@@ -244,14 +261,22 @@ export function dispatchNonCritical(
           await context.repo.updateBooking(booking.id, { tourflowSynced: true, updatedAt: nowIso(context) });
         }
       } catch (error) {
-        context.logger.warn?.('bookkit ops sink failed', { event, bookingId: booking.id, error: String(error) });
+        const status = extractStatus(error);
+        context.logger.warn?.('bookkit ops sink failed', {
+          event, bookingId: booking.id, provider: 'tourflow',
+          ...(status !== undefined ? { status } : {}),
+        });
       }
     }
     if (context.providers.analytics) {
       try {
         await context.providers.analytics.track(event, booking);
       } catch (error) {
-        context.logger.warn?.('bookkit analytics sink failed', { event, bookingId: booking.id, error: String(error) });
+        const status = extractStatus(error);
+        context.logger.warn?.('bookkit analytics sink failed', {
+          event, bookingId: booking.id, provider: 'analytics',
+          ...(status !== undefined ? { status } : {}),
+        });
       }
     }
   })();
@@ -259,17 +284,159 @@ export function dispatchNonCritical(
   else void task;
 }
 
+// BK-SIDE-001: analytics is the one deliberate best-effort carve-out for the mutation path — loss
+// is cheap, so it stays fire-and-forget (waitUntil when available, else an unawaited task, same
+// pattern as dispatchNonCritical) rather than going through the durable outbox below.
+function dispatchAnalytics(context: BookkitContext, event: BookingEvent, booking: Booking): void {
+  if (!context.providers.analytics) return;
+  const task = context.providers.analytics.track(event, booking).catch((error: unknown) => {
+    const status = extractStatus(error);
+    context.logger.warn?.('bookkit analytics sink failed', {
+      event, bookingId: booking.id, provider: 'analytics',
+      ...(status !== undefined ? { status } : {}),
+    });
+  });
+  if (context.waitUntil) context.waitUntil(task);
+  else void task;
+}
+
+function emailKind(event: EmailBookingEvent, recipient: EmailRecipientRole | undefined, discriminator: string | undefined): SideEffectOperationKind {
+  return ['email', event, ...(recipient ? [recipient] : []), ...(discriminator ? [discriminator] : [])].join(':') as SideEffectOperationKind;
+}
+function tourflowKind(event: EmailBookingEvent, discriminator: string | undefined): SideEffectOperationKind {
+  return ['tourflow', event, ...(discriminator ? [discriminator] : [])].join(':') as SideEffectOperationKind;
+}
+
+// BK-SIDE-001: terminal events use a stable kind because each can happen only once. Reschedule
+// kinds receive their strictly increasing suffix inside the winning repository batch, where the
+// booking transition version is incremented atomically with the outbox row.
+export function mutationSideEffectKinds(
+  context: BookkitContext,
+  event: EmailBookingEvent,
+): SideEffectOperationKind[] {
+  const kinds: SideEffectOperationKind[] = [];
+  const email = context.providers.email;
+  if (email) {
+    if (email.recipientsForEvent && email.sendToRecipient) {
+      for (const recipient of email.recipientsForEvent(event)) kinds.push(emailKind(event, recipient, undefined));
+    } else {
+      // Split rows require a matching split sender; otherwise each retry must remain one combined send.
+      kinds.push(emailKind(event, undefined, undefined));
+    }
+  }
+  if (context.providers.ops) kinds.push(tourflowKind(event, undefined));
+  return kinds;
+}
+
+interface MutationSideEffectAttempt {
+  event: EmailBookingEvent;
+  provider: 'email' | 'tourflow';
+  run: () => Promise<void>;
+}
+
+function isMutationSideEffectKind(kind: SideEffectOperationKind): kind is `email:${string}` | `tourflow:${string}` {
+  return kind.startsWith('email:') || kind.startsWith('tourflow:');
+}
+
+// BK-SIDE-001 (handoff 13) HIGH-1(b): reconstructs a runnable attempt from a durable row's `kind`
+// ALONE (not from whatever event dispatchMutation was originally called with) so the request-
+// driven drain below can resume ANY owed mutation side effect for this booking, regardless of
+// which dispatchMutation call originally recorded it. Segment layout (see mutationSideEffectKinds
+// above): 'email:<event>:<recipient>[:<discriminator>]' | 'email:<event>[:<discriminator>]' (no
+// per-recipient support) | 'tourflow:<event>[:<discriminator>]'. `event` is always segments[1] —
+// event names contain '.', never ':', so this position is unambiguous regardless of what follows.
+// A trailing discriminator (only ever present to make the STORED kind unique — see above) is inert
+// here: it never affects which provider call gets re-issued, only whether rest[0] happens to be
+// 'customer'/'owner' (recipient) or something else (no recipient, non-split fallback) — real
+// recipient values can never collide with a discriminator, since reschedule versions are numeric.
+function attemptForKind(context: BookkitContext, booking: Booking, kind: SideEffectOperationKind): MutationSideEffectAttempt | null {
+  const [providerName, event, ...rest] = kind.split(':');
+  if (!providerName || !event) return null;
+  const emailBookingEvent = event as EmailBookingEvent;
+  if (providerName === 'email') {
+    const email = context.providers.email;
+    if (!email) return null;
+    const recipient: EmailRecipientRole | undefined = rest[0] === 'customer' || rest[0] === 'owner' ? rest[0] : undefined;
+    if (recipient) {
+      if (!email.sendToRecipient) return null;
+      const sendToRecipient = email.sendToRecipient;
+      return {
+        event: emailBookingEvent, provider: 'email',
+        run: () => sendToRecipient(recipient, emailBookingEvent, booking, context.config, context.routeConfig.paths),
+      };
+    }
+    return {
+      event: emailBookingEvent, provider: 'email',
+      run: () => email.send(emailBookingEvent, booking, context.config, context.routeConfig.paths),
+    };
+  }
+  if (providerName === 'tourflow') {
+    const ops = context.providers.ops;
+    if (!ops) return null;
+    return { event: emailBookingEvent, provider: 'tourflow', run: () => ops.push(emailBookingEvent, booking) };
+  }
+  return null;
+}
+
+// Claims, runs, and resolves exactly one durable operation. Never throws — a mutation-critical
+// side-effect failure must never turn the customer's already-durable cancel/reschedule/no-show
+// into a 500; it leaves a 'failed' row for a later request touching this booking to retry.
+async function runMutationSideEffect(
+  context: BookkitContext,
+  booking: Booking,
+  kind: SideEffectOperationKind,
+  attempt: MutationSideEffectAttempt,
+): Promise<void> {
+  const attemptedAt = nowIso(context);
+  if (!await context.repo.claimMutationSideEffectOperation(booking.id, kind, attemptedAt)) return;
+  try {
+    await attempt.run();
+    await context.repo.resolveMutationSideEffectOperation({
+      bookingId: booking.id, kind, status: 'succeeded', claimedAt: attemptedAt, resolvedAt: nowIso(context),
+    });
+  } catch (error) {
+    const status = extractStatus(error);
+    await context.repo.resolveMutationSideEffectOperation({
+      bookingId: booking.id, kind, status: 'failed', claimedAt: attemptedAt,
+      error: (error instanceof Error ? error.message : String(error)).slice(0, 200),
+      resolvedAt: nowIso(context),
+    });
+    context.logger.warn?.('bookkit mutation side effect failed', {
+      event: attempt.event, bookingId: booking.id, provider: attempt.provider, kind,
+      ...(status !== undefined ? { status } : {}),
+    });
+  }
+}
+
+// BK-SIDE-001 (handoff 13) HIGH-1(b): the request-driven drain. Lists this booking's side-effect
+// operations and claims->runs->resolves every non-succeeded email:%/tourflow:% row (the
+// confirmation-path literals are skipped — those drain through executeOperation/handleStatus's
+// needsFulfillment instead). Called from every mutation handler AFTER its own transition (so newly
+// -recorded rows get their first attempt immediately) AND from every place a booking is loaded for
+// a mutation-adjacent request — idempotent short-circuits, handleManage, handleStatus — so rows
+// left behind by a dead isolate (crashed between claim and resolve, or between record and attempt)
+// still get delivered on a LATER request even though there is no cron in this project. Does not
+// touch analytics — that's the deliberate best-effort carve-out (dispatchAnalytics), never durable.
+export async function runOwedMutationSideEffects(context: BookkitContext, booking: Booking): Promise<void> {
+  const operations = await context.repo.listSideEffectOperations(booking.id);
+  for (const operation of operations) {
+    if (operation.status === 'succeeded' || !isMutationSideEffectKind(operation.kind)) continue;
+    const attempt = attemptForKind(context, booking, operation.kind);
+    if (!attempt) continue; // provider no longer configured — leave the row for a later request.
+    await runMutationSideEffect(context, booking, operation.kind, attempt);
+  }
+}
+
 export async function dispatchMutation(
   context: BookkitContext,
   event: EmailBookingEvent,
   booking: Booking,
 ): Promise<void> {
-  if (context.providers.email) {
-    try {
-      await context.providers.email.send(event, booking, context.config, context.routeConfig.paths);
-    } catch (error) {
-      context.logger.warn?.('bookkit mutation email failed', { event, bookingId: booking.id, error: String(error) });
-    }
-  }
-  dispatchNonCritical(context, event, booking);
+  // The outbox rows this dispatch owes were already recorded atomically by the transition method
+  // that produced `booking` (HIGH-1(a) — see transitionToCancelled/transitionToNoShow/
+  // transitionReschedule/rescheduleWithCapacity in src/repo.ts), so there is nothing left to record here: draining runs
+  // every owed row (the ones this transition just recorded, plus any older stragglers) through the
+  // same claim/run/resolve path a later request's drain would use.
+  await runOwedMutationSideEffects(context, booking);
+  dispatchAnalytics(context, event, booking);
 }

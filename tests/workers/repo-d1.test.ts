@@ -1,19 +1,26 @@
 import { env } from 'cloudflare:workers';
+import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createBookingRepository, HoldLimitExceededError } from '../../src/repo';
+import { runOwedMutationSideEffects } from '../../src/confirmation';
+import { createBookkitContext } from '../../src/context';
+import { createBookingRepository, HoldLimitExceededError, type SideEffectOperationKind } from '../../src/repo';
+import { config } from '../fixtures';
+import { providers } from '../fakes';
 
 interface TestEnv {
   BOOKKIT_DB: D1Database;
+  TEST_MIGRATIONS: D1Migration[];
 }
 
-const db = (env as unknown as TestEnv).BOOKKIT_DB;
+const bindings = env as unknown as TestEnv;
+const db = bindings.BOOKKIT_DB;
 const repo = createBookingRepository(db);
 
 beforeEach(async () => {
-  await db.prepare('DELETE FROM bookings').run();
-  await db.prepare('DELETE FROM day_overrides').run();
   await db.prepare('DELETE FROM side_effect_operations').run();
   await db.prepare('DELETE FROM refund_operations').run();
+  await db.prepare('DELETE FROM bookings').run();
+  await db.prepare('DELETE FROM day_overrides').run();
 });
 
 describe('D1 booking repository', () => {
@@ -458,5 +465,178 @@ describe('D1 booking repository', () => {
       expect(foreignRead!.cancelToken).not.toBe('corrupt-cancel-token');
       expect(foreignRead!.cancelToken).toBe(original.cancel_token);
     });
+  });
+});
+
+describe('mutation side-effect outbox on real D1', () => {
+  async function seedBooking(id: string): Promise<void> {
+    await repo.insertHold({
+      id, reference: `BKT-2026-${id}`, tourSlug: 'vintage', people: 2, pickupType: 'default',
+      startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceCents: 12000,
+      holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: `cancel-${id}`, operatorToken: `operator-${id}`,
+      createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
+    });
+  }
+
+  it('fences a stale resolver token after a mutation-side-effect reclaim', async () => {
+    await seedBooking('mutation-stale-lease');
+    const kind = 'email:booking.no_show';
+    const oldClaimedAt = '2026-07-21T08:00:00.000Z';
+    await db.prepare(
+      `INSERT INTO side_effect_operations (
+         booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
+       ) VALUES (?, ?, 'in_flight', NULL, 1, ?, NULL, NULL, ?, ?)`,
+    ).bind('mutation-stale-lease', kind, oldClaimedAt, oldClaimedAt, oldClaimedAt).run();
+
+    const reclaimedAt = '2026-07-21T08:06:00.000Z';
+    await expect(repo.claimMutationSideEffectOperation('mutation-stale-lease', kind, reclaimedAt)).resolves.toBe(true);
+    await expect(repo.resolveMutationSideEffectOperation({
+      bookingId: 'mutation-stale-lease', kind, status: 'failed', claimedAt: oldClaimedAt,
+      error: 'late original worker', resolvedAt: '2026-07-21T08:06:01.000Z',
+    })).resolves.toBe(false);
+    await expect(repo.claimMutationSideEffectOperation('mutation-stale-lease', kind, '2026-07-21T08:07:00.000Z')).resolves.toBe(false);
+    await expect(repo.resolveMutationSideEffectOperation({
+      bookingId: 'mutation-stale-lease', kind, status: 'succeeded', claimedAt: reclaimedAt,
+      resolvedAt: '2026-07-21T08:07:00.000Z',
+    })).resolves.toBe(true);
+    await expect(repo.listSideEffectOperations('mutation-stale-lease')).resolves.toEqual([
+      expect.objectContaining({ kind, status: 'succeeded', attemptCount: 2, attemptedAt: reclaimedAt }),
+    ]);
+  });
+
+  it('reclaims a stale in-flight operation through the mutation drain', async () => {
+    await seedBooking('mutation-stale-drain');
+    const kind = 'email:booking.no_show';
+    await db.prepare(
+      `INSERT INTO side_effect_operations (
+         booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
+       ) VALUES (?, ?, 'in_flight', NULL, 1, ?, NULL, NULL, ?, ?)`,
+    ).bind('mutation-stale-drain', kind, '2026-07-21T08:00:00.000Z', '2026-07-21T08:00:00.000Z', '2026-07-21T08:00:00.000Z').run();
+    const current = await repo.getBookingById('mutation-stale-drain');
+    if (!current) throw new Error('seed booking missing');
+    let sends = 0;
+    const context = createBookkitContext({
+      config, db, repo, clock: () => new Date('2026-07-21T08:06:00.000Z'),
+      providers: providers({ email: { send: async () => { sends += 1; } } }),
+    });
+
+    await runOwedMutationSideEffects(context, current);
+    expect(sends).toBe(1);
+    await expect(repo.listSideEffectOperations(current.id)).resolves.toEqual([
+      expect.objectContaining({ kind, status: 'succeeded', attemptCount: 2 }),
+    ]);
+  });
+
+  it('records outbox rows only for the winning transitionReschedule CAS on real D1', async () => {
+    await seedBooking('mutation-transition-reschedule');
+    await repo.transitionToConfirmed('mutation-transition-reschedule', {
+      expectedStatusIn: ['hold'], updatedAt: '2026-07-21T10:01:00.000Z',
+    });
+    const original = await repo.getBookingById('mutation-transition-reschedule');
+    if (!original) throw new Error('seed booking missing');
+    const common = {
+      expectedStatus: 'confirmed' as const, expectedStartsAt: original.startsAt,
+      rescheduledFrom: original.startsAt, updatedAt: '2026-07-21T10:02:00.000Z',
+      mutationSideEffectKinds: ['email:booking.rescheduled'] satisfies SideEffectOperationKind[],
+    };
+
+    const winner = await repo.transitionReschedule(original.id, {
+      ...common, startsAt: '2026-08-02T09:00:00.000Z', endsAt: '2026-08-02T10:00:00.000Z',
+    });
+    const loser = await repo.transitionReschedule(original.id, {
+      ...common, startsAt: '2026-08-03T09:00:00.000Z', endsAt: '2026-08-03T10:00:00.000Z',
+    });
+
+    expect(winner).toMatchObject({ startsAt: '2026-08-02T09:00:00.000Z' });
+    expect(loser).toBeNull();
+    await expect(repo.listSideEffectOperations(original.id)).resolves.toEqual([
+      expect.objectContaining({ kind: 'email:booking.rescheduled:1', status: 'pending' }),
+    ]);
+  });
+
+  it('rolls back a cancellation when its atomically-batched outbox insert fails', async () => {
+    await seedBooking('mutation-atomic');
+    await repo.transitionToConfirmed('mutation-atomic', { expectedStatusIn: ['hold'], updatedAt: '2026-07-21T10:01:00.000Z' });
+    await db.prepare(`CREATE TRIGGER fail_mutation_outbox
+      BEFORE INSERT ON side_effect_operations
+      BEGIN SELECT RAISE(ABORT, 'mutation outbox insert failed'); END`).run();
+
+    await expect(repo.transitionToCancelled('mutation-atomic', {
+      expectedStatusIn: ['confirmed'], cancelledAt: '2026-07-21T10:02:00.000Z', cancelledBy: 'operator',
+      updatedAt: '2026-07-21T10:02:00.000Z', mutationSideEffectKinds: ['email:booking.cancelled_by_operator'],
+    })).rejects.toThrow('mutation outbox insert failed');
+    await expect(repo.getBookingById('mutation-atomic')).resolves.toMatchObject({ status: 'confirmed' });
+    await db.prepare('DROP TRIGGER fail_mutation_outbox').run();
+  });
+
+  it('applies the actual 0010 migration while preserving every legacy outbox row', async () => {
+    for (const table of [
+      'side_effect_operations', 'refund_operations', 'settings', 'capacity_defaults', 'day_overrides', 'bookings',
+      'd1_migrations_0010_test', 'd1_migrations',
+    ]) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
+    const migrationIndex = bindings.TEST_MIGRATIONS.findIndex((migration) => migration.name === '0010_mutation_side_effect_outbox.sql');
+    if (migrationIndex < 0) throw new Error('0010 migration missing from TEST_MIGRATIONS');
+    const migration0010 = bindings.TEST_MIGRATIONS[migrationIndex];
+    if (!migration0010) throw new Error('0010 migration missing from TEST_MIGRATIONS');
+    await applyD1Migrations(db, bindings.TEST_MIGRATIONS.slice(0, migrationIndex), 'd1_migrations_0010_test');
+
+    const legacyKinds = ['calendar_create', 'email_confirmation', 'oversell'];
+    const statuses = ['pending', 'in_flight', 'succeeded', 'failed'];
+    const seeded: Array<{ bookingId: string; kind: string; status: string; providerResultId: string | null; attemptCount: number; attemptedAt: string | null; resolvedAt: string | null; error: string | null; createdAt: string; updatedAt: string }> = [];
+    for (const [kindIndex, kind] of legacyKinds.entries()) {
+      for (const [statusIndex, status] of statuses.entries()) {
+        const bookingId = `migration-${kindIndex}-${statusIndex}`;
+        const stamp = `2026-07-21T10:0${kindIndex}${statusIndex}:00.000Z`;
+        await seedBooking(bookingId);
+        const row = {
+          bookingId, kind, status,
+          providerResultId: status === 'succeeded' ? `provider-${kindIndex}-${statusIndex}` : null,
+          attemptCount: statusIndex,
+          attemptedAt: status === 'pending' ? null : stamp,
+          resolvedAt: status === 'succeeded' || status === 'failed' ? stamp : null,
+          error: status === 'failed' ? `error-${kindIndex}-${statusIndex}` : null,
+          createdAt: stamp,
+          updatedAt: stamp,
+        };
+        seeded.push(row);
+        await db.prepare(
+          `INSERT INTO side_effect_operations (
+             booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(
+          row.bookingId, row.kind, row.status, row.providerResultId, row.attemptCount, row.attemptedAt,
+          row.resolvedAt, row.error, row.createdAt, row.updatedAt,
+        ).run();
+      }
+    }
+
+    await applyD1Migrations(db, [migration0010], 'd1_migrations_0010_test');
+
+    const preserved = await db.prepare(
+      `SELECT booking_id AS bookingId, kind, status, provider_result_id AS providerResultId, attempt_count AS attemptCount,
+         attempted_at AS attemptedAt, resolved_at AS resolvedAt, error, created_at AS createdAt, updated_at AS updatedAt
+       FROM side_effect_operations WHERE booking_id LIKE 'migration-%' ORDER BY booking_id, kind`,
+    ).all<typeof seeded[number]>();
+    expect(preserved.results).toEqual([...seeded].sort((a, b) => a.bookingId.localeCompare(b.bookingId) || a.kind.localeCompare(b.kind)));
+
+    await expect(db.prepare(
+      `INSERT INTO side_effect_operations (booking_id, kind, status, attempt_count, created_at, updated_at)
+       VALUES (?, ?, 'pending', 0, ?, ?)`,
+    ).bind('migration-0-0', 'email:booking.no_show:customer', '2026-07-21T11:00:00.000Z', '2026-07-21T11:00:00.000Z').run()).resolves.toBeDefined();
+    await expect(db.prepare(
+      `INSERT INTO side_effect_operations (booking_id, kind, status, attempt_count, created_at, updated_at)
+       VALUES (?, ?, 'pending', 0, ?, ?)`,
+    ).bind('migration-0-1', 'tourflow:booking.rescheduled:123-456', '2026-07-21T11:00:00.000Z', '2026-07-21T11:00:00.000Z').run()).resolves.toBeDefined();
+    await expect(db.prepare(
+      `INSERT INTO side_effect_operations (booking_id, kind, status, attempt_count, created_at, updated_at)
+       VALUES (?, ?, 'pending', 0, ?, ?)`,
+    ).bind('migration-0-2', 'not-an-operation', '2026-07-21T11:00:00.000Z', '2026-07-21T11:00:00.000Z').run()).rejects.toThrow();
+    await expect(db.prepare(
+      `INSERT INTO side_effect_operations (booking_id, kind, status, attempt_count, created_at, updated_at)
+       VALUES (?, ?, 'pending', 0, ?, ?)`,
+    ).bind('migration-0-0', 'email:booking.no_show:customer', '2026-07-21T11:00:00.000Z', '2026-07-21T11:00:00.000Z').run()).rejects.toThrow();
+    await expect(db.prepare(
+      `SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_side_effect_operations_pending'`,
+    ).all<{ name: string }>()).resolves.toMatchObject({ results: [{ name: 'idx_side_effect_operations_pending' }] });
   });
 });

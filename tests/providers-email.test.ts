@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { brevoEmail, BREVO_TRANSACTIONAL_EMAIL_URL } from '../src/providers/brevo';
+import { BrevoResponseError, brevoEmail, BREVO_TRANSACTIONAL_EMAIL_URL } from '../src/providers/brevo';
 import { calendarInviteOnly } from '../src/providers/noop';
 import { booking, config } from './fixtures';
 import { resolveRouteConfig } from '../src/routes-manifest';
@@ -60,6 +60,49 @@ describe('email providers', () => {
 
   it('is a safe no-op when email is intentionally disabled', async () => {
     await expect(calendarInviteOnly().send('booking.confirmed', booking(), config)).resolves.toBeUndefined();
+  });
+
+  it('reports the configured recipient roles and sends exactly one guarded recipient message', async () => {
+    const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
+    const render = vi.fn(() => ({ subject: 'subject', htmlContent: '<p>content</p>' }));
+    const provider = brevoEmail({ apiKey: 'key', fetch: request, render });
+
+    expect(provider.recipientsForEvent('booking.confirmed')).toEqual(['customer', 'owner']);
+    expect(provider.recipientsForEvent('booking.cancelled_by_customer')).toEqual(['customer', 'owner']);
+    expect(provider.recipientsForEvent('booking.cancelled_by_operator')).toEqual(['customer']);
+    expect(provider.recipientsForEvent('booking.rescheduled')).toEqual(['customer']);
+    expect(provider.recipientsForEvent('booking.no_show')).toEqual(['customer']);
+
+    await provider.sendToRecipient('customer', 'booking.confirmed', booking({
+      cancelToken: 'nohash:customer', operatorToken: 'nohash:operator',
+    }), config);
+
+    expect(request).toHaveBeenCalledTimes(1);
+    const call = request.mock.calls[0];
+    const body = call?.[1]?.body;
+    expect(typeof body).toBe('string');
+    if (typeof body !== 'string') throw new Error('Brevo request body was not serialized');
+    expect(JSON.parse(body)).toMatchObject({ to: [{ email: 'ada@example.test', name: 'Ada Lovelace' }] });
+    expect(render).toHaveBeenCalledWith(expect.objectContaining({
+      recipient: 'customer', customerManageUrl: '', operatorManageUrl: '',
+    }));
+  });
+
+  it('caps a failed response body and exposes its status without retaining the full body', async () => {
+    const body = 'x'.repeat(5_000);
+    const provider = brevoEmail({ apiKey: 'key', fetch: async () => new Response(body, { status: 503 }) });
+    let caught: unknown;
+    try {
+      await provider.sendToRecipient('customer', 'booking.confirmed', booking(), config);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BrevoResponseError);
+    if (!(caught instanceof BrevoResponseError)) throw new Error('Brevo request unexpectedly succeeded');
+    expect(caught.status).toBe(503);
+    expect(caught.message).toContain('x'.repeat(200));
+    expect(caught.message).not.toContain('x'.repeat(201));
   });
 
   // BK-SEC-002 (patch-11-r1 LOW 1): a `nohash:`-prefixed token (src/repo.ts placeholderToken) is

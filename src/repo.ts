@@ -73,8 +73,26 @@ export interface RefundOperationRecord {
   error: string | null;
 }
 
-export type SideEffectOperationKind = 'calendar_create' | 'email_confirmation' | 'oversell';
+// BK-SIDE-001 (handoff 13): the mutation-path outbox (record/claim/resolveMutationSideEffectOperation
+// below) reuses this same table/type rather than a second mechanism, so `kind` widens beyond the
+// confirmation path's fixed three literals to the dynamic 'email:...'/'tourflow:...' strings
+// src/confirmation.ts's mutationSideEffectKinds builds (kept as template-literal patterns, not a
+// bare `string`, so the fixed literals below still get meaningful autocomplete/typo protection).
+export type ConfirmationSideEffectKind = 'calendar_create' | 'email_confirmation' | 'oversell';
+export type SideEffectOperationKind =
+  | ConfirmationSideEffectKind
+  | `email:${string}`
+  | `tourflow:${string}`;
 export type SideEffectOperationStatus = 'pending' | 'in_flight' | 'succeeded' | 'failed';
+
+// BK-SIDE-001 (handoff 13) HIGH-2: a claimant that dies between claiming (status -> in_flight)
+// and resolving would otherwise leave the row stuck forever — claiming only matches
+// pending/failed, so nothing ever reclaims it. claimMutationSideEffectOperation additionally
+// matches an in_flight row whose attempted_at is older than this lease window. Reuses the same
+// 5-minute figure as the confirmation-lease pattern (src/confirmation.ts
+// acquireConfirmationLease/renewConfirmationLease) — both are "how long before we assume the
+// original claimant is dead" judgment calls with no reason to differ.
+export const MUTATION_SIDE_EFFECT_LEASE_MS = 5 * 60_000;
 
 export interface SideEffectOperationRecord {
   bookingId: string;
@@ -146,10 +164,19 @@ export interface BookingRepository {
     cancelledAt: string;
     cancelledBy: CancellationActor;
     updatedAt: string;
+    // BK-SIDE-001 (handoff 13) HIGH-1(a): kinds this transition owes durable delivery for (built
+    // by src/confirmation.ts's mutationSideEffectKinds from the CURRENTLY configured providers
+    // before the transition is attempted). Recorded as 'pending' rows in the SAME atomic write as
+    // the CAS UPDATE, conditional on the CAS actually winning (see the implementation) — a
+    // losing/stale transition attempt can never record, and later drain-send, side effects for a
+    // mutation that didn't happen. Omitted/empty = nothing owed (no email/ops provider configured).
+    mutationSideEffectKinds?: SideEffectOperationKind[];
   }): Promise<Booking | null>;
   transitionToNoShow(id: string, input: {
     expectedStatusIn: BookingStatus[];
     updatedAt: string;
+    // BK-SIDE-001 (handoff 13): see the identical field on transitionToCancelled above.
+    mutationSideEffectKinds?: SideEffectOperationKind[];
   }): Promise<Booking | null>;
   transitionToConfirmed(id: string, input: {
     expectedStatusIn: BookingStatus[];
@@ -180,15 +207,41 @@ export interface BookingRepository {
   }, leaseToken: string, updatedAt: string): Promise<boolean>;
   ensureConfirmationSideEffectOperations(id: string, leaseToken: string, now: string): Promise<void>;
   listSideEffectOperations(bookingId: string): Promise<SideEffectOperationRecord[]>;
-  claimSideEffectOperation(bookingId: string, kind: Exclude<SideEffectOperationKind, 'oversell'>, leaseToken: string, attemptedAt: string): Promise<boolean>;
+  claimSideEffectOperation(bookingId: string, kind: ConfirmationSideEffectKind, leaseToken: string, attemptedAt: string): Promise<boolean>;
   resolveSideEffectOperation(input: {
     bookingId: string;
-    kind: Exclude<SideEffectOperationKind, 'oversell'>;
+    kind: ConfirmationSideEffectKind;
     leaseToken: string;
     status: 'succeeded' | 'failed';
     providerResultId?: string | null;
     error?: string | null;
     resolvedAt: string;
+  }): Promise<boolean>;
+  // BK-SIDE-001 (handoff 13): mutation-path outbox claim/resolve. Unlike the confirmation-path
+  // pair above, these aren't gated by a confirmation lease — cancel/reschedule/no-show already run
+  // their own compare-and-set in the transition methods, and the rows themselves are only ever
+  // written conditional on that CAS winning (see transitionToCancelled et al) — so this is a plain
+  // claim/resolve over (booking_id, kind), with the row's OWN attempted_at doubling as a lease
+  // token (HIGH-2) since there's no separate lease concept here to reuse. listSideEffectOperations
+  // (above) is reused as-is to read them back — its SQL was never lease-scoped, just filtered by
+  // booking_id.
+  //
+  // Claimable from 'pending'/'failed', OR an 'in_flight' row whose attempted_at is older than
+  // MUTATION_SIDE_EFFECT_LEASE_MS (a killed claimant's stale claim) — never from 'succeeded' (never
+  // re-sent) or a live 'in_flight' (no double-claim by a concurrent retry).
+  claimMutationSideEffectOperation(bookingId: string, kind: SideEffectOperationKind, attemptedAt: string): Promise<boolean>;
+  resolveMutationSideEffectOperation(input: {
+    bookingId: string;
+    kind: SideEffectOperationKind;
+    status: 'succeeded' | 'failed';
+    providerResultId?: string | null;
+    error?: string | null;
+    resolvedAt: string;
+    // HIGH-2: the attempted_at value THIS claimant set at claim time. Resolve requires it to
+    // still match — so a slow original claimant that wakes up after a reclaimer already took the
+    // row (bumping attempted_at again) fails to match here (0 rows) instead of clobbering the
+    // reclaimer's outcome.
+    claimedAt: string;
   }): Promise<boolean>;
   transitionReschedule(id: string, input: {
     expectedStatus: BookingStatus;
@@ -204,6 +257,7 @@ export interface BookingRepository {
     // existing callers that don't pass one (older tests, mainly) leave tokens_expire_at
     // untouched rather than clobbering it to NULL — see the COALESCE in the implementation.
     tokensExpireAt?: string | null;
+    mutationSideEffectKinds?: SideEffectOperationKind[];
   }): Promise<Booking | null>;
   // Atomic reschedule write (BK-CAP-001): extends transitionReschedule's CAS (status +
   // starts_at, guarding against a stale read racing a concurrent transition) with the same
@@ -221,6 +275,9 @@ export interface BookingRepository {
     now: string;
     // patch-11-r1 MEDIUM 2: see the identical field on transitionReschedule above.
     tokensExpireAt?: string | null;
+    // Reschedule rows receive the incremented per-booking transition version in the same batch,
+    // so a repeated A→B hop cannot collide with an earlier one.
+    mutationSideEffectKinds?: SideEffectOperationKind[];
   } & CapacityGuardInput): Promise<Booking | null>;
   listOccupancyBookings(from: string, to: string): Promise<Booking[]>;
   listUpcoming(now: string): Promise<Booking[]>;
@@ -564,6 +621,51 @@ export function createBookingRepository(
     return hydrateBooking(row, await resolveTokenKey());
   };
 
+  // BK-SIDE-001 (handoff 13) HIGH-1(a): builds the single INSERT statement transitionToCancelled/
+  // transitionToNoShow/transitionReschedule/rescheduleWithCapacity batch ALONGSIDE (before, specifically) their own CAS
+  // UPDATE, so the outbox rows land iff the transition actually happens. `casPredicate`/`casParams`
+  // are the EXACT SAME compare-and-set condition the UPDATE itself uses (id/status[/starts_at
+  // /capacity], whatever the caller's WHERE clause is) — wrapped in WHERE EXISTS and evaluated
+  // BEFORE the UPDATE runs, i.e. against the pre-batch snapshot. Because a db.batch() call is
+  // atomic relative to any OTHER writer (D1's core guarantee), this INSERT and the UPDATE right
+  // after it always agree: either both fire (this call's CAS wins) or neither does (a stale/
+  // duplicate call, or someone else already moved the row) — so a losing attempt can never record,
+  // and later drain-send, side effects for a mutation that didn't happen. (Placing the INSERT
+  // AFTER the UPDATE and checking POST-transition state instead — the way
+  // confirmWithSideEffectOperations does — doesn't work here: that method disambiguates "my write
+  // won" from "someone else already got here first" via a per-attempt confirmation_lease_token,
+  // which these plain CAS transitions have no equivalent of.) All N kinds are inserted by this ONE
+  // statement (a VALUES-derived table), not N separate ones, so nothing about statement count
+  // affects the guarantee above.
+  // Task 12's planned bookings-table REBUILD MUST preserve reschedule_transition_version; this
+  // insert reads its next value before the paired CAS update increments it, keeping the row kind
+  // and transition version inseparable without relying on wall-clock uniqueness.
+  const mutationSideEffectInsert = (
+    bookingId: string,
+    kinds: SideEffectOperationKind[],
+    now: string,
+    casPredicate: string,
+    casParams: unknown[],
+    appendRescheduleVersion = false,
+  ) => {
+    const kind = appendRescheduleVersion
+      ? `k.column1 || ':' || (SELECT reschedule_transition_version + 1 FROM bookings WHERE ${casPredicate})`
+      : 'k.column1';
+    return db.prepare(
+      `INSERT INTO side_effect_operations (
+         booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
+       )
+       SELECT ?, ${kind}, 'pending', NULL, 0, NULL, NULL, NULL, ?, ?
+       FROM (VALUES ${kinds.map(() => '(?)').join(', ')}) AS k
+       WHERE EXISTS (SELECT 1 FROM bookings WHERE ${casPredicate})
+       ON CONFLICT(booking_id, kind) DO NOTHING`,
+    ).bind(
+      bookingId,
+      ...(appendRescheduleVersion ? casParams : []),
+      now, now, ...kinds, ...casParams,
+    );
+  };
+
   return {
     async sweepExpiredHolds(now) {
       const result = await db.prepare(
@@ -850,31 +952,47 @@ export function createBookingRepository(
       // starts_at clause is appended only when the caller supplies it, so callers that don't
       // care about a concurrent reschedule (e.g. the refund webhook) keep the original scope.
       const startsAtClause = input.expectedStartsAt !== undefined ? ' AND starts_at = ?' : '';
-      const params = [
+      const casPredicate = `id = ? AND status IN (${placeholders})${startsAtClause}`;
+      const casParams = [id, ...input.expectedStatusIn, ...(input.expectedStartsAt !== undefined ? [input.expectedStartsAt] : [])];
+      const updateStmt = db.prepare(
+        `UPDATE bookings SET status = 'cancelled', cancelled_at = ?, cancelled_by = ?, updated_at = ?,
+           cancel_token_revoked_at = COALESCE(cancel_token_revoked_at, ?)
+         WHERE ${casPredicate}`,
+      ).bind(
         input.cancelledAt, input.cancelledBy, input.updatedAt,
         // BK-SEC-002: a cancelled booking's customer link has no further legitimate use (see
         // migrations/0009_token_hashing.sql for why only the customer token, not the operator
         // one). COALESCE keeps this idempotent if a row is somehow re-touched here.
         input.cancelledAt,
-        id, ...input.expectedStatusIn,
-        ...(input.expectedStartsAt !== undefined ? [input.expectedStartsAt] : []),
-      ];
-      const result = await db.prepare(
-        `UPDATE bookings SET status = 'cancelled', cancelled_at = ?, cancelled_by = ?, updated_at = ?,
-           cancel_token_revoked_at = COALESCE(cancel_token_revoked_at, ?)
-         WHERE id = ? AND status IN (${placeholders})${startsAtClause}`,
-      ).bind(...params).run();
-      if (result.meta.changes === 0) return null;
+        ...casParams,
+      );
+      const kinds = input.mutationSideEffectKinds ?? [];
+      if (kinds.length === 0) {
+        const result = await updateStmt.run();
+        if (result.meta.changes === 0) return null;
+        return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
+      }
+      const results = await db.batch([mutationSideEffectInsert(id, kinds, input.updatedAt, casPredicate, casParams), updateStmt]);
+      if ((results[1]?.meta.changes ?? 0) === 0) return null;
       return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
     },
     async transitionToNoShow(id, input) {
       const placeholders = input.expectedStatusIn.map(() => '?').join(', ');
-      const result = await db.prepare(
+      const casPredicate = `id = ? AND status IN (${placeholders})`;
+      const casParams = [id, ...input.expectedStatusIn];
+      const updateStmt = db.prepare(
         `UPDATE bookings SET status = 'no_show', updated_at = ?,
            cancel_token_revoked_at = COALESCE(cancel_token_revoked_at, ?)
-         WHERE id = ? AND status IN (${placeholders})`,
-      ).bind(input.updatedAt, input.updatedAt, id, ...input.expectedStatusIn).run();
-      if (result.meta.changes === 0) return null;
+         WHERE ${casPredicate}`,
+      ).bind(input.updatedAt, input.updatedAt, ...casParams);
+      const kinds = input.mutationSideEffectKinds ?? [];
+      if (kinds.length === 0) {
+        const result = await updateStmt.run();
+        if (result.meta.changes === 0) return null;
+        return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
+      }
+      const results = await db.batch([mutationSideEffectInsert(id, kinds, input.updatedAt, casPredicate, casParams), updateStmt]);
+      if ((results[1]?.meta.changes ?? 0) === 0) return null;
       return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
     },
     async transitionToConfirmed(id, input) {
@@ -905,7 +1023,7 @@ export function createBookingRepository(
       if (columns.some((column) => !column)) throw new Error('Unsupported confirmation field');
       const placeholders = expectedStatusIn.map(() => '?').join(', ');
       const setClauses = [`status = 'confirmed'`, 'hold_expires_at = NULL', ...columns.map((column) => `${column} = ?`), 'updated_at = ?'];
-      const operation = (kind: SideEffectOperationKind, status: SideEffectOperationStatus, providerResultId: string | null, resolvedAt: string | null) => db.prepare(
+      const operation = (kind: ConfirmationSideEffectKind, status: SideEffectOperationStatus, providerResultId: string | null, resolvedAt: string | null) => db.prepare(
         `INSERT INTO side_effect_operations (
            booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
          )
@@ -944,7 +1062,7 @@ export function createBookingRepository(
       return result.meta.changes > 0;
     },
     async ensureConfirmationSideEffectOperations(id, leaseToken, now) {
-      const operation = (kind: Exclude<SideEffectOperationKind, 'oversell'>, syncedColumn: 'calendar_synced' | 'email_synced') => db.prepare(
+      const operation = (kind: ConfirmationSideEffectKind, syncedColumn: 'calendar_synced' | 'email_synced') => db.prepare(
         `INSERT INTO side_effect_operations (
            booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
          )
@@ -999,19 +1117,56 @@ export function createBookingRepository(
       ]);
       return (result[0]?.meta.changes ?? 0) > 0;
     },
-    async transitionReschedule(id, input) {
-      // patch-11-r1 MEDIUM 2: COALESCE(?, tokens_expire_at) rather than an unconditional SET —
-      // a caller that doesn't pass tokensExpireAt (input.tokensExpireAt ?? null) leaves the
-      // existing column value alone instead of nulling out a previously-set expiry.
+    // BK-SIDE-001 (handoff 13) HIGH-2: see the BookingRepository interface comment above these two
+    // methods for why they're ungated and how attempted_at doubles as a lease token. staleBefore
+    // is computed from the CALLER's own attemptedAt (not a fresh clock read) so this stays a pure
+    // function of its inputs, consistent with every other repo method here.
+    async claimMutationSideEffectOperation(bookingId, kind, attemptedAt) {
+      const staleBefore = new Date(Date.parse(attemptedAt) - MUTATION_SIDE_EFFECT_LEASE_MS).toISOString();
       const result = await db.prepare(
+        `UPDATE side_effect_operations
+         SET status = 'in_flight', attempt_count = attempt_count + 1, attempted_at = ?, error = NULL, updated_at = ?
+         WHERE booking_id = ? AND kind = ?
+           AND (status IN ('pending', 'failed') OR (status = 'in_flight' AND attempted_at < ?))`,
+      ).bind(attemptedAt, attemptedAt, bookingId, kind, staleBefore).run();
+      return result.meta.changes > 0;
+    },
+    async resolveMutationSideEffectOperation(input) {
+      const result = await db.prepare(
+        `UPDATE side_effect_operations
+         SET status = ?, provider_result_id = ?, error = ?, resolved_at = ?, updated_at = ?
+         WHERE booking_id = ? AND kind = ? AND status = 'in_flight' AND attempted_at = ?`,
+      ).bind(
+        input.status, input.providerResultId ?? null, input.error ?? null, input.resolvedAt, input.resolvedAt,
+        input.bookingId, input.kind, input.claimedAt,
+      ).run();
+      return result.meta.changes > 0;
+    },
+    async transitionReschedule(id, input) {
+      const casPredicate = 'id = ? AND status = ? AND starts_at = ?';
+      const casParams = [id, input.expectedStatus, input.expectedStartsAt];
+      // The version increment and its outbox suffix must share the CAS batch, so a loser cannot
+      // consume a version or leave delivery debt for a move that did not occur.
+      const updateStmt = db.prepare(
         `UPDATE bookings SET starts_at = ?, ends_at = ?, rescheduled_from = ?, updated_at = ?,
-           tokens_expire_at = COALESCE(?, tokens_expire_at)
-         WHERE id = ? AND status = ? AND starts_at = ?`,
+           tokens_expire_at = COALESCE(?, tokens_expire_at),
+           reschedule_transition_version = reschedule_transition_version + 1
+         WHERE ${casPredicate}`,
       ).bind(
         input.startsAt, input.endsAt, input.rescheduledFrom, input.updatedAt, input.tokensExpireAt ?? null,
-        id, input.expectedStatus, input.expectedStartsAt,
-      ).run();
-      if (result.meta.changes === 0) return null;
+        ...casParams,
+      );
+      const kinds = input.mutationSideEffectKinds ?? [];
+      if (kinds.length === 0) {
+        const result = await updateStmt.run();
+        if (result.meta.changes === 0) return null;
+        return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
+      }
+      const results = await db.batch([
+        mutationSideEffectInsert(id, kinds, input.updatedAt, casPredicate, casParams, true),
+        updateStmt,
+      ]);
+      if ((results[1]?.meta.changes ?? 0) === 0) return null;
       return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
     },
     // BK-CAP-001: transitionReschedule's CAS (status + starts_at) plus the same max-concurrency
@@ -1026,12 +1181,13 @@ export function createBookingRepository(
     // This opportunistically self-heals a legacy NULL row (see migrations/0008) the first time it
     // is ever moved, instead of leaving it undercounted as 1 unit forever.
     async rescheduleWithCapacity(id, input) {
-      // patch-11-r1 MEDIUM 2: same COALESCE(?, tokens_expire_at) as transitionReschedule above.
-      const result = await db.prepare(
-        `UPDATE bookings
-         SET starts_at = ?, ends_at = ?, rescheduled_from = ?, occupancy_units = ?, occupancy_ends_at = ?, updated_at = ?,
-             tokens_expire_at = COALESCE(?, tokens_expire_at)
-         WHERE id = ? AND status = ? AND starts_at = ?
+      // BK-SIDE-001 (handoff 13) HIGH-1(a): factored out (not inlined in the UPDATE below) so the
+      // batched outbox INSERT can re-check the EXACT SAME condition — including the capacity
+      // guard, not just status/starts_at — via WHERE EXISTS, evaluated before the UPDATE runs (see
+      // mutationSideEffectInsert's comment). Duplicating just the WHERE text this way (one source
+      // of truth for the params too) is cheaper to keep in sync than re-deriving a simplified
+      // guard that could silently drift from what actually gates the write.
+      const casPredicate = `id = ? AND status = ? AND starts_at = ?
            AND NOT EXISTS (
              SELECT 1 FROM (
                SELECT ? AS p
@@ -1056,10 +1212,8 @@ export function createBookingRepository(
                (SELECT capacity FROM capacity_defaults WHERE from_date <= ? ORDER BY from_date DESC LIMIT 1),
                ?
              ))
-           )`,
-      ).bind(
-        input.startsAt, input.endsAt, input.rescheduledFrom, input.occupancyUnits, input.occupancyEndsAt, input.updatedAt,
-        input.tokensExpireAt ?? null,
+           )`;
+      const casParams = [
         id, input.expectedStatus, input.expectedStartsAt,
         // NOT EXISTS candidate points (self-excluded): the request's own start, then every other
         // active overlapping booking's own starts_at.
@@ -1069,8 +1223,27 @@ export function createBookingRepository(
         id, input.now,
         input.occupancyUnits,
         input.localDate, input.localDate, input.fleetDefaultCapacity,
-      ).run();
-      if (result.meta.changes === 0) return null;
+      ];
+      // patch-11-r1 MEDIUM 2: same COALESCE(?, tokens_expire_at) as transitionReschedule above.
+      const updateStmt = db.prepare(
+        `UPDATE bookings
+         SET starts_at = ?, ends_at = ?, rescheduled_from = ?, occupancy_units = ?, occupancy_ends_at = ?, updated_at = ?,
+             tokens_expire_at = COALESCE(?, tokens_expire_at),
+             reschedule_transition_version = reschedule_transition_version + 1
+         WHERE ${casPredicate}`,
+      ).bind(
+        input.startsAt, input.endsAt, input.rescheduledFrom, input.occupancyUnits, input.occupancyEndsAt, input.updatedAt,
+        input.tokensExpireAt ?? null,
+        ...casParams,
+      );
+      const kinds = input.mutationSideEffectKinds ?? [];
+      if (kinds.length === 0) {
+        const result = await updateStmt.run();
+        if (result.meta.changes === 0) return null;
+        return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
+      }
+      const results = await db.batch([mutationSideEffectInsert(id, kinds, input.updatedAt, casPredicate, casParams, true), updateStmt]);
+      if ((results[1]?.meta.changes ?? 0) === 0) return null;
       return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
     },
     // Deliberately NOT hydrated (plain mapBooking): purely internal occupancy math

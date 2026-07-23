@@ -27,7 +27,7 @@ import {
 import { generateSlots } from '../core/slots';
 import { addDaysToDateKey, enumerateDateKeys, localDateKey, localDateTimeToUtcIso, parseUtcInstant, utcToLocalIso } from '../core/time';
 import { adminOriginAllowed, mintAdminCsrfToken, verifyAdminCsrfToken } from '../admin-csrf';
-import { ConfirmationInProgressError, confirmBookingFromPayment, dispatchMutation, dispatchNonCritical } from '../confirmation';
+import { ConfirmationInProgressError, confirmBookingFromPayment, dispatchMutation, dispatchNonCritical, mutationSideEffectKinds, runOwedMutationSideEffects } from '../confirmation';
 import type { BookkitContext } from '../context';
 import { getSecret, nowIso } from '../context';
 import { isManageableToken } from '../providers/brevo';
@@ -523,10 +523,16 @@ export function handleStripeWebhook(request: Request, context: BookkitContext): 
               // Stripe still gets 200 below, so a retry never causes redelivery storms.
               expectedStatusIn: ['hold', 'confirmed', 'expired'],
               cancelledAt: timestamp, cancelledBy: 'operator', updatedAt: timestamp,
+              mutationSideEffectKinds: mutationSideEffectKinds(context, 'booking.cancelled_by_operator'),
             });
             // A concurrent transition (e.g. a customer cancel) can win this race; when it does,
             // the booking already reached a terminal state, so there is nothing left to dispatch.
             if (updated) await dispatchMutation(context, 'booking.cancelled_by_operator', updated);
+          } else {
+            // BK-SIDE-001 (handoff 13): idempotent redelivery of an already-cancelled booking —
+            // still a booking-touching request, so drain any rows a prior delivery left owed
+            // (e.g. the isolate died between this same webhook's earlier CAS win and its attempt).
+            await runOwedMutationSideEffects(context, booking);
           }
         }
       }
@@ -614,9 +620,10 @@ export function handleStatus(request: Request, context: BookkitContext): Promise
           ?? current;
       }
     } else if (current.status === 'confirmed') {
-      const operations = await context.repo.listSideEffectOperations(current.id);
-      const needsFulfillment = operations.some((operation) => operation.status !== 'succeeded')
-        || (operations.length === 0 && (!current.calendarSynced || !current.emailSynced));
+      const confirmationOperations = (await context.repo.listSideEffectOperations(current.id))
+        .filter((operation) => operation.kind === 'calendar_create' || operation.kind === 'email_confirmation' || operation.kind === 'oversell');
+      const needsFulfillment = confirmationOperations.some((operation) => operation.status !== 'succeeded')
+        || (confirmationOperations.length === 0 && (!current.calendarSynced || !current.emailSynced));
       if (needsFulfillment) {
         try {
           current = await confirmBookingFromPayment(context, current);
@@ -625,6 +632,13 @@ export function handleStatus(request: Request, context: BookkitContext): Promise
           current = await context.repo.getBookingById(current.id) ?? current;
         }
       }
+    }
+    // BK-SIDE-001 (handoff 13): a booking-touching request — drain any mutation-path side effects
+    // (per-recipient email, Tourflow push) still owed from a prior cancel/reschedule/no-show whose
+    // delivery attempt didn't finish. Confirmed/cancelled/no_show are the only statuses a mutation
+    // event ever fires for; hold/expired never have rows here.
+    if (current.status === 'confirmed' || current.status === 'cancelled' || current.status === 'no_show') {
+      await runOwedMutationSideEffects(context, current);
     }
     if (current.status === 'confirmed') {
       const age = parseUtcInstant(nowIso(context)).getTime() - parseUtcInstant(current.createdAt).getTime();
@@ -645,6 +659,12 @@ async function tokenBooking(context: BookkitContext, token: string, operator = f
   const now = nowIso(context);
   const booking = operator ? await context.repo.getBookingByOperatorToken(token, now) : await context.repo.getBookingByCancelToken(token, now);
   if (!booking) throw new HttpError(403, 'forbidden', 'Invalid booking token');
+  // BK-SIDE-001 (handoff 13): every caller of tokenBooking is a mutation-adjacent request
+  // (customer cancel/reschedule, and — via operatorBooking below — operator cancel/reschedule/
+  // no-show) touching this exact booking, so this is one of the places a later request must drain
+  // rows a prior mutation's delivery attempt left owed. Draining here doesn't affect the booking
+  // object itself (it only ever touches side_effect_operations, never `bookings`).
+  await runOwedMutationSideEffects(context, booking);
   return booking;
 }
 
@@ -657,6 +677,10 @@ export function handleManage(request: Request, context: BookkitContext): Promise
     const customer = await context.repo.getBookingByCancelToken(token, now);
     const booking = customer ?? await context.repo.getBookingByOperatorToken(token, now);
     if (!booking) throw new HttpError(403, 'forbidden', 'Invalid booking token');
+    // BK-SIDE-001 (handoff 13): the manage page is read via a direct token lookup, not
+    // tokenBooking, so it needs its own drain call — still a booking-touching request a prior
+    // mutation's undelivered side effects should get to piggyback on.
+    await runOwedMutationSideEffects(context, booking);
     const operator = !customer;
     return json({ booking: bookingSummary(context, booking), role: operator ? 'operator' : 'customer', canCancel: operator ? booking.status === 'confirmed' : canCancelBooking(booking, now, context.config.booking.cancelCutoffHours), canReschedule: operator ? booking.status === 'confirmed' : canRescheduleBooking(booking, now, context.config.booking.reschedule.cutoffHours, context.config.booking.reschedule.enabled), canNoShow: operator && booking.status === 'confirmed' && parseUtcInstant(booking.startsAt).getTime() < parseUtcInstant(now).getTime(), deadline: new Date(parseUtcInstant(booking.startsAt).getTime() - context.config.booking.cancelCutoffHours * 3_600_000).toISOString() });
   }).then(withSensitiveHeaders);
@@ -686,6 +710,7 @@ export function handleCustomerCancel(request: Request, context: BookkitContext):
     const updated = await context.repo.transitionToCancelled(cancelled.id, {
       expectedStatusIn: ['confirmed'], expectedStartsAt: booking.startsAt,
       cancelledAt: cancelled.updatedAt, cancelledBy: 'customer', updatedAt: cancelled.updatedAt,
+      mutationSideEffectKinds: mutationSideEffectKinds(context, 'booking.cancelled_by_customer'),
     });
     if (!updated) {
       // CAS loss always surfaces as a conflict here (never an idempotent 200): a concurrent
@@ -735,6 +760,7 @@ async function rescheduleWithToken(context: BookkitContext, booking: Booking, ne
     now,
     tokensExpireAt,
     occupancyUnits, occupancyEndsAt, localDate, fleetDefaultCapacity: context.config.fleet.defaultCapacity,
+    mutationSideEffectKinds: mutationSideEffectKinds(context, 'booking.rescheduled'),
   });
   if (!updated) {
     const fresh = await context.repo.getBookingById(next.id);
@@ -769,6 +795,10 @@ async function operatorBooking(context: BookkitContext, request: Request, body: 
   const bookingId = requireString(body.bookingId, 'bookingId');
   const booking = await context.repo.getBookingById(bookingId);
   if (!booking) throw new HttpError(404, 'not_found', 'Booking not found');
+  // BK-SIDE-001 (handoff 13): the operator-token branch above already drains via tokenBooking —
+  // this bearer-token branch is the other way an operator-adjacent request loads a booking, so it
+  // needs the same drain call.
+  await runOwedMutationSideEffects(context, booking);
   return booking;
 }
 
@@ -885,6 +915,7 @@ export function handleOperatorCancel(request: Request, context: BookkitContext):
     const updated = await context.repo.transitionToCancelled(cancelled.id, {
       expectedStatusIn: ['confirmed'], expectedStartsAt: booking.startsAt,
       cancelledAt: cancelled.updatedAt, cancelledBy: 'operator', updatedAt: cancelled.updatedAt,
+      mutationSideEffectKinds: mutationSideEffectKinds(context, 'booking.cancelled_by_operator'),
     });
     if (!updated) {
       const fresh = await context.repo.getBookingById(cancelled.id);
@@ -924,7 +955,10 @@ export function handleOperatorNoShow(request: Request, context: BookkitContext):
     if (booking.status === 'no_show') return json({ ok: true });
     try {
       const next = markNoShow(booking, nowIso(context));
-      const updated = await context.repo.transitionToNoShow(next.id, { expectedStatusIn: ['confirmed'], updatedAt: next.updatedAt });
+      const updated = await context.repo.transitionToNoShow(next.id, {
+        expectedStatusIn: ['confirmed'], updatedAt: next.updatedAt,
+        mutationSideEffectKinds: mutationSideEffectKinds(context, 'booking.no_show'),
+      });
       // CAS loss is always a conflict here, not an idempotent 200 — the caught error below
       // converts it to the same 409 invalid_transition the wrong-state check already uses.
       if (!updated) throw new Error('Booking cannot be marked no-show');

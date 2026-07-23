@@ -12,8 +12,10 @@ import {
 import { sha256Base64Url } from '../src/http';
 import {
   HoldLimitExceededError,
+  MUTATION_SIDE_EFFECT_LEASE_MS,
   type BookingRepository,
   type RefundOperationRecord,
+  type SideEffectOperationKind,
   type SideEffectOperationRecord,
 } from '../src/repo';
 import { booking } from './fixtures';
@@ -45,6 +47,7 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
   refundOperations: Map<string, RefundOperationRecord>;
   sideEffectOperations: Map<string, SideEffectOperationRecord>;
   tokenState: Map<string, FakeTokenState>;
+  recordMutationSideEffectOperations(bookingId: string, kinds: SideEffectOperationKind[], now: string): Promise<void>;
 } {
   const rows = new Map(seed.map((item) => [item.id, item]));
   const holdIps = new Map<string, string>();
@@ -58,7 +61,29 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
   // Keyed by booking_id, mirroring the real table's UNIQUE(booking_id) constraint.
   const refundOperations = new Map<string, RefundOperationRecord>();
   const sideEffectOperations = new Map<string, SideEffectOperationRecord>();
+  const rescheduleTransitionVersions = new Map(seed.map((item) => [item.id, 0]));
   const sideEffectKey = (bookingId: string, kind: SideEffectOperationRecord['kind']) => `${bookingId}:${kind}`;
+  const isSideEffectOperationKind = (kind: string): kind is SideEffectOperationKind => (
+    kind === 'calendar_create' || kind === 'email_confirmation' || kind === 'oversell'
+    || kind.startsWith('email:') || kind.startsWith('tourflow:')
+  );
+  // BK-SIDE-001 (handoff 13) HIGH-1(a): mirrors src/repo.ts's mutationSideEffectInsert — called
+  // by transitionToCancelled/transitionToNoShow/rescheduleWithCapacity below ONLY after each has
+  // already confirmed its own CAS won (the real repo's atomicity guarantee, reproduced here by
+  // simple call ordering rather than SQL, since the fake has no concurrent writers to race), and
+  // ON CONFLICT DO NOTHING (never overwrites an existing row) so a retried dispatch of the same
+  // mutation instance resumes its row instead of duplicating or clobbering it.
+  const recordMutationKinds = (bookingId: string, kinds: SideEffectOperationKind[] | undefined, now: string, rescheduleVersion?: number) => {
+    for (const baseKind of kinds ?? []) {
+      const candidate = rescheduleVersion === undefined ? baseKind : `${baseKind}:${rescheduleVersion}`;
+      if (!isSideEffectOperationKind(candidate)) throw new Error('Unsupported side effect operation kind');
+      const key = sideEffectKey(bookingId, candidate);
+      if (!sideEffectOperations.has(key)) sideEffectOperations.set(key, {
+        bookingId, kind: candidate, status: 'pending', providerResultId: null, attemptCount: 0,
+        attemptedAt: null, resolvedAt: null, error: null, createdAt: now, updatedAt: now,
+      });
+    }
+  };
   // Mirrors the occupancy_units / occupancy_ends_at columns migration 0008 adds (see
   // src/repo.ts insertHoldWithCapacity / rescheduleWithCapacity): rows seeded directly via the
   // `booking()` fixture (bypassing these methods) have no entry here, matching a pre-migration
@@ -107,7 +132,7 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
     const defaults = await repository.listCapacityDefaults();
     return defaultCapacityForDate(localDate, fleetDefaultCapacity, defaults);
   };
-  const repository: BookingRepository & { rows: Map<string, Booking>; settings: Map<string, string>; refundOperations: Map<string, RefundOperationRecord>; sideEffectOperations: Map<string, SideEffectOperationRecord>; tokenState: Map<string, FakeTokenState> } = {
+  const repository: BookingRepository & { rows: Map<string, Booking>; settings: Map<string, string>; refundOperations: Map<string, RefundOperationRecord>; sideEffectOperations: Map<string, SideEffectOperationRecord>; tokenState: Map<string, FakeTokenState>; recordMutationSideEffectOperations(bookingId: string, kinds: SideEffectOperationKind[], now: string): Promise<void> } = {
     rows,
     tokenState,
     sweepExpiredHolds: async (now) => {
@@ -264,6 +289,9 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
       // migrations/0009_token_hashing.sql).
       const state = tokenState.get(id);
       if (state && state.cancelTokenRevokedAt === null) state.cancelTokenRevokedAt = input.cancelledAt;
+      // BK-SIDE-001 (handoff 13): only reached once the CAS above has already confirmed this
+      // transition applies — see recordMutationKinds's doc comment.
+      recordMutationKinds(id, input.mutationSideEffectKinds, input.updatedAt);
       return updated;
     },
     transitionToNoShow: async (id, input) => {
@@ -271,6 +299,7 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
       if (!current || !input.expectedStatusIn.includes(current.status)) return null;
       const updated: Booking = { ...current, status: 'no_show', updatedAt: input.updatedAt };
       rows.set(id, updated);
+      recordMutationKinds(id, input.mutationSideEffectKinds, input.updatedAt);
       const state = tokenState.get(id);
       if (state && state.cancelTokenRevokedAt === null) state.cancelTokenRevokedAt = input.updatedAt;
       return updated;
@@ -340,6 +369,9 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
     listSideEffectOperations: async (bookingId) => [...sideEffectOperations.values()]
       .filter((operation) => operation.bookingId === bookingId)
       .sort((a, b) => a.kind.localeCompare(b.kind)),
+    recordMutationSideEffectOperations: async (bookingId, kinds, now) => {
+      recordMutationKinds(bookingId, kinds, now);
+    },
     claimSideEffectOperation: async (bookingId, kind, leaseToken, attemptedAt) => {
       const key = sideEffectKey(bookingId, kind);
       const current = sideEffectOperations.get(key);
@@ -368,12 +400,39 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
       });
       return true;
     },
+    claimMutationSideEffectOperation: async (bookingId, kind, attemptedAt) => {
+      const key = sideEffectKey(bookingId, kind);
+      const current = sideEffectOperations.get(key);
+      const staleBefore = new Date(Date.parse(attemptedAt) - MUTATION_SIDE_EFFECT_LEASE_MS).toISOString();
+      const reclaimable = current?.status === 'in_flight'
+        && current.attemptedAt !== null
+        && current.attemptedAt < staleBefore;
+      if (!current || (current.status !== 'pending' && current.status !== 'failed' && !reclaimable)) return false;
+      sideEffectOperations.set(key, {
+        ...current, status: 'in_flight', attemptCount: current.attemptCount + 1,
+        attemptedAt, error: null, updatedAt: attemptedAt,
+      });
+      return true;
+    },
+    resolveMutationSideEffectOperation: async (input) => {
+      const key = sideEffectKey(input.bookingId, input.kind);
+      const current = sideEffectOperations.get(key);
+      if (!current || current.status !== 'in_flight' || current.attemptedAt !== input.claimedAt) return false;
+      sideEffectOperations.set(key, {
+        ...current, status: input.status, providerResultId: input.providerResultId ?? null,
+        error: input.error ?? null, resolvedAt: input.resolvedAt, updatedAt: input.resolvedAt,
+      });
+      return true;
+    },
     sideEffectOperations,
     transitionReschedule: async (id, input) => {
       const current = rows.get(id);
       if (!current || current.status !== input.expectedStatus || current.startsAt !== input.expectedStartsAt) return null;
       const updated: Booking = { ...current, startsAt: input.startsAt, endsAt: input.endsAt, rescheduledFrom: input.rescheduledFrom, updatedAt: input.updatedAt };
       rows.set(id, updated);
+      const version = (rescheduleTransitionVersions.get(id) ?? 0) + 1;
+      rescheduleTransitionVersions.set(id, version);
+      recordMutationKinds(id, input.mutationSideEffectKinds, input.updatedAt, version);
       // patch-11-r1 MEDIUM 2: mirrors src/repo.ts's COALESCE(?, tokens_expire_at) — the real
       // repo binds `input.tokensExpireAt ?? null`, so both an omitted field and an explicit null
       // fall through to COALESCE's "keep the existing value" branch; only a real string moves it.
@@ -406,6 +465,9 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
       // patch-11-r1 MEDIUM 2: see the identical comment in transitionReschedule above.
       const state = tokenState.get(id);
       if (state && input.tokensExpireAt != null) state.tokensExpireAt = input.tokensExpireAt;
+      const version = (rescheduleTransitionVersions.get(id) ?? 0) + 1;
+      rescheduleTransitionVersions.set(id, version);
+      recordMutationKinds(id, input.mutationSideEffectKinds, input.updatedAt, version);
       return updated;
     },
     listOccupancyBookings: async (from, to) => [...rows.values()].filter((item) => item.startsAt >= from && item.startsAt < to),

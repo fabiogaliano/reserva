@@ -4,6 +4,20 @@ import type { BookingEvent, OpsSink } from '../core/events';
 
 export const TOURFLOW_SOURCE = 'website' as const;
 export const TOURFLOW_AUTHORIZATION_HEADER = 'Authorization';
+
+// BK-SIDE-001 (handoff 13): cap the embedded response body (status pages / HTML error bodies are
+// the realistic payloads) so an Error message — which a naive `String(error)` catch could
+// otherwise dump verbatim into logs — is bounded, and expose `status` so a caller can log it as a
+// structured field instead of parsing the message.
+const MAX_ERROR_BODY_CHARS = 200;
+export class TourflowResponseError extends Error {
+  readonly status: number;
+  constructor(status: number, body: string) {
+    super(`Tourflow webhook request failed (${status}): ${body.slice(0, MAX_ERROR_BODY_CHARS)}`);
+    this.name = 'TourflowResponseError';
+    this.status = status;
+  }
+}
 export interface TourflowReservation {
   externalId: string; source: typeof TOURFLOW_SOURCE; operatorSlug?: string; reference: string; tourSlug: string;
   customerName: string | null; customerEmail: string | null; customerPhone: string | null; startsAt: string; endsAt: string;
@@ -46,7 +60,7 @@ export class TourflowOpsSink implements OpsSink {
   }
   async push(event: BookingEvent, booking: Booking): Promise<void> {
     const response = await this.request(this.webhookUrl, { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json', [TOURFLOW_AUTHORIZATION_HEADER]: `Bearer ${this.sharedSecret}` }, body: JSON.stringify(this.mapper(event, booking, undefined, this.operatorSlug)) });
-    if (!response.ok) throw new Error(`Tourflow webhook request failed (${response.status}): ${await response.text()}`);
+    if (!response.ok) throw new TourflowResponseError(response.status, await response.text());
   }
 }
 export function tourflow(options: TourflowOpsSinkOptions): TourflowOpsSink { return new TourflowOpsSink(options); }
