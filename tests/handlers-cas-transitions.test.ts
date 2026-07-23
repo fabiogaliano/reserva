@@ -264,6 +264,7 @@ describe('stale compare-and-set transitions', () => {
             paymentIntent: 'pi_confirm_stale',
             paid: true,
             amountCaptured: seeded.priceCents,
+            currency: config.business.currency,
           }),
           getSession: async () => ({ status: 'open' }),
           refund: async () => ({ refundId: 're_test', amountCents: 0 }),

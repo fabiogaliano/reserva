@@ -94,6 +94,11 @@ function amountOf(value: unknown, field: 'amount_captured' | 'amount_refunded' |
   return typeof amount === 'number' ? amount : undefined;
 }
 
+function currencyOf(value: unknown): string | undefined {
+  const currency = value && typeof value === 'object' ? (value as Record<string, unknown>).currency : undefined;
+  return typeof currency === 'string' ? currency : undefined;
+}
+
 // The charge.refunded payload's `refunds` list has the actual Refund objects; its most recent
 // entry is the refund this event is about. Absent in older API versions/partial payloads, hence
 // optional chaining throughout — the operation record just falls back to no refund id then.
@@ -161,10 +166,14 @@ export const mapPaymentMethods = stripePaymentMethodTypes;
 
 export function sessionStatusFromStripe(session: Stripe.Checkout.Session): SessionStatus {
   const metadata = metadataOf(session);
+  const amountTotal = amountOf(session, 'amount_total');
+  const currency = currencyOf(session);
   return {
     id: session.id,
     status: session.status ?? 'unknown',
     paymentStatus: session.payment_status,
+    ...(amountTotal !== undefined ? { amountTotal } : {}),
+    ...(currency !== undefined ? { currency } : {}),
     paymentIntent: objectId(session.payment_intent),
     ...customerDetailsOf(session),
     ...(metadata ? { metadata } : {}),
@@ -186,7 +195,12 @@ export function stripeEventToParsed(event: Stripe.Event): StripeEventParsed {
     if (session.id) parsed.sessionId = session.id;
     if (paymentIntent) parsed.paymentIntent = paymentIntent;
     if (amountCaptured !== undefined) parsed.amountCaptured = amountCaptured;
-    if (event.type === 'checkout.session.completed') parsed.paid = session.payment_status === 'paid';
+    const currency = currencyOf(session);
+    if (currency !== undefined) parsed.currency = currency;
+    if (event.type === 'checkout.session.completed') {
+      parsed.paid = session.payment_status === 'paid';
+      parsed.paymentStatus = session.payment_status;
+    }
     return parsed;
   }
   if (event.type === 'charge.refunded' || event.type === 'charge.dispute.created') {

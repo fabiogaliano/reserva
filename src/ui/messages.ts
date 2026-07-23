@@ -73,6 +73,8 @@ export const defaultMessages = {
   'confirmation.pendingBody': 'This page updates automatically. It usually takes a few seconds.',
   'confirmation.expiredTitle': 'Checkout expired',
   'confirmation.expiredBody': 'No confirmed payment was found for this session. Your card was not charged — you can start a new booking.',
+  'confirmation.cancelledTitle': 'Booking cancelled',
+  'confirmation.cancelledBody': 'This booking was cancelled and is no longer active.',
   'confirmation.notFoundTitle': 'Booking not found',
   'confirmation.notFoundBody': 'We could not find a booking for this link. Check the link from your email, or start a new booking.',
   'confirmation.startOver': 'Start a new booking',

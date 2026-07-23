@@ -30,7 +30,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
         payments: {
           createCheckout: async () => ({ url: '', sessionId: '' }),
           parseWebhook: async () => ({ id: 'evt_unused', type: 'checkout.session.completed' }),
-          getSession: async () => ({ status: 'complete', paymentStatus: 'paid', paymentIntent: 'pi_status' }),
+          getSession: async () => ({ id: 'cs_status_paid', status: 'complete', paymentStatus: 'paid', amountTotal: seeded.priceCents, currency: config.business.currency, paymentIntent: 'pi_status' }),
           refund: async () => ({ refundId: 're_test', amountCents: 0 }),
         },
         calendar: {
@@ -85,7 +85,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
         payments: {
           createCheckout: async () => ({ url: '', sessionId: '' }),
           parseWebhook: async () => ({ id: 'evt_unused', type: 'checkout.session.completed' }),
-          getSession: async () => ({ status: 'complete', paymentStatus: 'paid', paymentIntent: 'pi_status' }),
+          getSession: async () => ({ id: 'cs_status_leased', status: 'complete', paymentStatus: 'paid', amountTotal: seeded.priceCents, currency: config.business.currency, paymentIntent: 'pi_status' }),
           refund: async () => ({ refundId: 're_test', amountCents: 0 }),
         },
         calendar: {
@@ -137,8 +137,8 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     const sharedProviders = providers({
       payments: {
         createCheckout: async () => ({ url: '', sessionId: '' }),
-        parseWebhook: async () => ({ id: 'evt_race', type: 'checkout.session.completed', sessionId: 'cs_status_race', paymentIntent: 'pi_race', paid: true, amountCaptured: seeded.priceCents }),
-        getSession: async () => ({ status: 'complete', paymentStatus: 'paid', paymentIntent: 'pi_race' }),
+        parseWebhook: async () => ({ id: 'evt_race', type: 'checkout.session.completed', sessionId: 'cs_status_race', paymentIntent: 'pi_race', paid: true, amountCaptured: seeded.priceCents, currency: config.business.currency }),
+        getSession: async () => ({ id: 'cs_status_race', status: 'complete', paymentStatus: 'paid', amountTotal: seeded.priceCents, currency: config.business.currency, paymentIntent: 'pi_race' }),
         refund: async () => ({ refundId: 're_test', amountCents: 0 }),
       },
       calendar: {
@@ -200,6 +200,47 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     expect(repo.rows.get(seeded.id)?.status).toBe('expired');
   });
 
+  it('reports pending when a completed expired session fails payment verification', async () => {
+    const seeded = booking({
+      id: 'b-status-expired-mismatch',
+      status: 'expired',
+      stripeSessionId: 'cs_status_expired_mismatch',
+      priceCents: 10000,
+    });
+    const repo = fakeRepository([seeded]);
+    const warnings: Array<{ message: string; data: Record<string, unknown> | undefined }> = [];
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      logger: { warn: (message, data) => { warnings.push({ message, data }); } },
+      providers: providers({
+        payments: {
+          createCheckout: async () => ({ url: '', sessionId: '' }),
+          parseWebhook: async () => ({ id: 'evt_unused', type: 'checkout.session.completed' }),
+          getSession: async () => ({
+            id: 'cs_status_expired_mismatch',
+            status: 'complete',
+            paymentStatus: 'paid',
+            amountTotal: 9999,
+            currency: config.business.currency,
+          }),
+          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+        },
+      }),
+    });
+
+    const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_expired_mismatch'), context);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ status: 'pending' });
+    expect(warnings).toEqual([{
+      message: 'Stripe payment verification rejected',
+      data: { bookingId: seeded.id, reason: 'amount_mismatch' },
+    }]);
+    expect(repo.rows.get(seeded.id)?.status).toBe('expired');
+  });
+
   it('reports not_found for an unknown session_id', async () => {
     const repo = fakeRepository();
     const context = createBookkitContext({
@@ -252,10 +293,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     expect(repo.rows.get(seeded.id)?.status).toBe('hold');
   });
 
-  it('reports pending for a cancelled booking (spec enum has no cancelled state)', async () => {
-    // handleStatus only re-checks Stripe for 'hold'/'expired' bookings; a cancelled booking
-    // falls straight through to the tri-state response, which has no 'cancelled' case — this
-    // is the spec's own enum gap (see work package 04), pinned here rather than "fixed".
+  it('reports cancelled for cancelled and no-show bookings so terminal states do not poll forever', async () => {
     const seeded = booking({
       id: 'b-status-cancelled',
       status: 'cancelled',
@@ -281,6 +319,17 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
 
     const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_cancelled'), context);
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ status: 'pending' });
+    await expect(response.json()).resolves.toEqual({ status: 'cancelled' });
+
+    const noShowRepo = fakeRepository([booking({ id: 'b-status-no-show', status: 'no_show', stripeSessionId: 'cs_status_no_show' })]);
+    const noShowContext = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo: noShowRepo,
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      providers: providers(),
+    });
+    const noShowResponse = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_no_show'), noShowContext);
+    await expect(noShowResponse.json()).resolves.toEqual({ status: 'cancelled' });
   });
 });

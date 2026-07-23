@@ -47,6 +47,8 @@ export interface StripeEventParsed extends StripeCustomerDetails {
   paymentIntent?: string;
   amountCaptured?: number;
   amountRefunded?: number;
+  currency?: string;
+  paymentStatus?: 'paid' | 'unpaid' | 'no_payment_required' | string;
   // The Stripe Refund id for a charge.refunded event, when Stripe's payload includes one (see
   // stripeEventToParsed) — lets the webhook branch record which refund actually moved the money,
   // not just that a refund happened (BK-REFUND-001).
@@ -59,6 +61,8 @@ export interface SessionStatus extends StripeCustomerDetails {
   id?: string;
   status: 'open' | 'complete' | 'expired' | string;
   paymentStatus?: 'paid' | 'unpaid' | 'no_payment_required' | string;
+  amountTotal?: number;
+  currency?: string;
   paymentIntent?: string | null;
   metadata?: Record<string, string>;
 }

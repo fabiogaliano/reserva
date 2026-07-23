@@ -8,6 +8,7 @@ import {
 } from '../core/booking';
 import { resolveTour, type PickupType } from '../core/config';
 import { availabilityForDay, capacityForDate, defaultCapacityForDate, occupancyFor, type CapacityDefault } from '../core/occupancy';
+import { verifyPayment } from '../core/payment-verification';
 import { priceFor } from '../core/pricing';
 import { generateUniqueReference } from '../core/reference';
 import {
@@ -307,19 +308,25 @@ export function handleStripeWebhook(request: Request, context: BookkitContext): 
     if (event.type === 'checkout.session.completed') {
       const booking = event.bookingId ? await context.repo.getBookingById(event.bookingId) : event.sessionId ? await context.repo.getBookingBySessionId(event.sessionId) : null;
       if (!booking) return json({ received: true });
-      if (booking.stripeSessionId && event.sessionId && booking.stripeSessionId !== event.sessionId) {
-        throw new HttpError(409, 'stripe_session_mismatch', 'Stripe session does not match the booking');
-      }
-      if (booking.priceCents > 0 && event.paid !== true) {
-        context.logger.warn?.('Stripe completed event is not paid', { eventId: event.id, bookingId: booking.id });
-        return json({ received: true });
-      }
-      if (event.amountCaptured !== undefined && event.amountCaptured !== booking.priceCents) {
-        throw new HttpError(409, 'stripe_amount_mismatch', 'Stripe amount does not match the booking price');
+      const verification = verifyPayment(booking, {
+        completed: true,
+        sessionId: event.sessionId,
+        paid: event.paid,
+        paymentStatus: event.paymentStatus,
+        amountTotal: event.amountCaptured,
+        currency: event.currency,
+        expectedCurrency: context.config.business.currency,
+      });
+      if (!verification.allowed) {
+        context.logger.warn?.('Stripe payment verification rejected', { eventId: event.id, bookingId: booking.id, reason: verification.reason });
+        if (verification.reason === 'session_id_missing' || verification.reason === 'session_mismatch') {
+          throw new HttpError(409, 'stripe_session_mismatch', 'Stripe session does not match the booking');
+        }
+        throw new HttpError(409, 'stripe_amount_mismatch', 'Stripe payment does not match the booking price');
       }
       const confirmed = await confirmBookingFromPayment(context, booking, event.paymentIntent ?? null, event);
-      if (event.sessionId && confirmed.stripeSessionId !== event.sessionId) {
-        await context.repo.updateBooking(confirmed.id, { stripeSessionId: event.sessionId, updatedAt: nowIso(context) });
+      if (verification.sessionIdToBackfill && confirmed.stripeSessionId !== verification.sessionIdToBackfill) {
+        await context.repo.updateBooking(confirmed.id, { stripeSessionId: verification.sessionIdToBackfill, updatedAt: nowIso(context) });
       }
     } else if (event.type === 'checkout.session.expired') {
       const booking = event.bookingId ? await context.repo.getBookingById(event.bookingId) : event.sessionId ? await context.repo.getBookingBySessionId(event.sessionId) : null;
@@ -407,13 +414,25 @@ export function handleStatus(request: Request, context: BookkitContext): Promise
     let current = booking;
     if (current.status === 'hold' || current.status === 'expired') {
       const session = await context.providers.payments.getSession(sessionId);
-      if (session.status === 'complete' && (session.paymentStatus === 'paid' || (current.priceCents === 0 && session.paymentStatus === 'no_payment_required'))) {
+      const verification = verifyPayment(current, {
+        completed: session.status === 'complete',
+        sessionId: session.id,
+        paid: session.paymentStatus === 'paid',
+        paymentStatus: session.paymentStatus,
+        amountTotal: session.amountTotal,
+        currency: session.currency,
+        expectedCurrency: context.config.business.currency,
+      });
+      if (verification.allowed) {
         try {
           current = await confirmBookingFromPayment(context, current, session.paymentIntent ?? null, session);
         } catch (error) {
           if (!(error instanceof ConfirmationInProgressError)) throw error;
           current = await context.repo.getBookingById(current.id) ?? current;
         }
+      } else if (session.status === 'complete') {
+        context.logger.warn?.('Stripe payment verification rejected', { bookingId: current.id, reason: verification.reason });
+        return json({ status: 'pending' });
       } else if (session.status === 'expired' && current.status === 'hold') {
         current = await context.repo.expireHold(current.id, nowIso(context))
           ?? await context.repo.getBookingById(current.id)
@@ -434,6 +453,7 @@ export function handleStatus(request: Request, context: BookkitContext): Promise
     }
     if (current.status === 'confirmed') return json({ status: 'confirmed', booking: bookingSummary(context, current) });
     if (current.status === 'expired') return json({ status: 'expired' });
+    if (current.status === 'cancelled' || current.status === 'no_show') return json({ status: 'cancelled' });
     return json({ status: 'pending' });
   });
 }

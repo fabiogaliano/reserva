@@ -48,6 +48,7 @@ describe('late checkout.session.completed on an already-expired hold (spec §6)'
             paymentIntent: 'pi_late',
             paid: true,
             amountCaptured: seeded.priceCents,
+            currency: config.business.currency,
             customerName: 'Grace Hopper',
             customerEmail: 'grace@example.test',
             customerPhone: '+351920000000',

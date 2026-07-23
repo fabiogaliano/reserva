@@ -22,11 +22,11 @@ interface ConfirmedBooking {
   meetingPoint?: { label?: string; mapsUrl?: string };
 }
 
-function brandLine(context: BookkitContext): string {
+function brandLine(context: Pick<BookkitContext, 'config'>): string {
   return `<p class="bk-brand"><a href="${escapeHtml(context.config.business.url)}">${escapeHtml(context.config.business.name)}</a></p>`;
 }
 
-function confirmedBody(context: BookkitContext, messages: BookkitMessages, booking: ConfirmedBooking, locale: string): string {
+function confirmedBody(context: Pick<BookkitContext, 'config'>, messages: BookkitMessages, booking: ConfirmedBooking, locale: string): string {
   const timezone = context.config.business.timezone;
   const start = typeof booking.start === 'string' ? booking.start : '';
   const end = typeof booking.end === 'string' ? booking.end : start;
@@ -82,7 +82,12 @@ function simpleBody(body: string, options: { pending?: boolean; actionHtml?: str
   return `<section class="bk-card">${spinner}<p class="bk-lead">${escapeHtml(body)}</p>${options.actionHtml ?? ''}</section>`;
 }
 
-function confirmationPage(context: BookkitContext, payload: Record<string, unknown>, requestUrl: string, requestedLocale: string | null): string {
+export function confirmationPage(
+  context: Pick<BookkitContext, 'config' | 'routeConfig' | 'viewerTheme'>,
+  payload: Record<string, unknown>,
+  requestUrl: string,
+  requestedLocale: string | null,
+): string {
   const status = typeof payload.status === 'string' ? payload.status : 'not_found';
   const booking: ConfirmedBooking = payload.booking && typeof payload.booking === 'object' ? payload.booking : {};
   const locale = booking.locale ?? requestedLocale ?? context.config.locales.default;
@@ -98,14 +103,18 @@ function confirmationPage(context: BookkitContext, payload: Record<string, unkno
       ? simpleBody(messages['confirmation.pendingBody'], { pending: true })
       : status === 'expired'
         ? simpleBody(messages['confirmation.expiredBody'], { actionHtml: startOver })
-        : simpleBody(messages['confirmation.notFoundBody'], { actionHtml: startOver });
+        : status === 'cancelled'
+          ? simpleBody(messages['confirmation.cancelledBody'], { actionHtml: startOver })
+          : simpleBody(messages['confirmation.notFoundBody'], { actionHtml: startOver });
   const title = status === 'confirmed'
     ? messages['confirmation.title']
     : status === 'pending'
       ? messages['confirmation.pendingTitle']
       : status === 'expired'
         ? messages['confirmation.expiredTitle']
-        : messages['confirmation.notFoundTitle'];
+        : status === 'cancelled'
+          ? messages['confirmation.cancelledTitle']
+          : messages['confirmation.notFoundTitle'];
   const badge = status === 'confirmed'
     ? `<span class="bk-badge bk-badge--ok">${escapeHtml(messages['status.confirmed'])}</span>`
     : status === 'pending'

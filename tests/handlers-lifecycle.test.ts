@@ -162,7 +162,7 @@ describe('Bookkit handlers', () => {
       providers: providers({
         payments: {
           createCheckout: async () => ({ url: '', sessionId: '' }),
-          parseWebhook: async () => ({ id: 'evt_unpaid', type: 'checkout.session.completed', bookingId: seeded.id, sessionId: 'cs_unpaid', paid: false }),
+          parseWebhook: async () => ({ id: 'evt_unpaid', type: 'checkout.session.completed', bookingId: seeded.id, sessionId: 'cs_unpaid', paid: false, amountCaptured: seeded.priceCents, currency: config.business.currency }),
           getSession: async () => ({ status: 'open' }),
           refund: async () => ({ refundId: 're_test', amountCents: 0 }),
         },
@@ -176,7 +176,7 @@ describe('Bookkit handlers', () => {
     });
 
     const response = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(409);
     expect(repo.rows.get(seeded.id)?.status).toBe('hold');
     expect(calendarCreates).toBe(0);
   });
@@ -343,7 +343,7 @@ describe('Bookkit handlers', () => {
       providers: providers({
         payments: {
           createCheckout: async () => ({ url: '', sessionId: '' }),
-          parseWebhook: async () => ({ id: 'evt_expired', type: 'checkout.session.completed', bookingId: seededExpired.id, sessionId: 'cs_expired', paid: true, amountCaptured: seededExpired.priceCents }),
+          parseWebhook: async () => ({ id: 'evt_expired', type: 'checkout.session.completed', bookingId: seededExpired.id, sessionId: 'cs_expired', paid: true, amountCaptured: seededExpired.priceCents, currency: config.business.currency }),
           getSession: async () => ({ status: 'open' }),
           refund: async () => ({ refundId: 're_test', amountCents: 0 }),
         },
@@ -367,7 +367,7 @@ describe('Bookkit handlers', () => {
       providers: providers({
         payments: {
           createCheckout: async () => ({ url: '', sessionId: '' }),
-          parseWebhook: async () => ({ id: 'evt_hold', type: 'checkout.session.completed', bookingId: seededHold.id, sessionId: 'cs_hold', paid: true, amountCaptured: seededHold.priceCents }),
+          parseWebhook: async () => ({ id: 'evt_hold', type: 'checkout.session.completed', bookingId: seededHold.id, sessionId: 'cs_hold', paid: true, amountCaptured: seededHold.priceCents, currency: config.business.currency }),
           getSession: async () => ({ status: 'open' }),
           refund: async () => ({ refundId: 're_test', amountCents: 0 }),
         },

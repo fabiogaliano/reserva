@@ -17,6 +17,8 @@ function makeClient() {
       id: 'cs_1',
       status: 'complete',
       payment_status: 'paid',
+      amount_total: 10000,
+      currency: 'eur',
       payment_intent: 'pi_1',
       metadata: { bookingId: 'booking-1' },
       customer_details: { name: 'Ada Lovelace', email: 'ada@example.com', phone: '+351910000000' },
@@ -31,7 +33,7 @@ function makeClient() {
     },
     webhooks: { constructEventAsync: vi.fn(async () => ({
       id: 'evt_1', type: 'checkout.session.completed', data: { object: {
-        id: 'cs_1', metadata: { bookingId: 'booking-1' }, payment_intent: 'pi_1', amount_total: 10000, payment_status: 'paid',
+        id: 'cs_1', metadata: { bookingId: 'booking-1' }, payment_intent: 'pi_1', amount_total: 10000, currency: 'eur', payment_status: 'paid',
         customer_details: { name: 'Ada Lovelace', email: 'ada@example.com', phone: '+351910000000' },
         custom_fields: [{ key: 'pickup_address', text: { value: 'Praça do Comércio' }, type: 'text' }],
       } },
@@ -123,6 +125,8 @@ describe('StripeProvider', () => {
       id: 'cs_1',
       status: 'complete',
       paymentStatus: 'paid',
+      amountTotal: 10000,
+      currency: 'eur',
       paymentIntent: 'pi_1',
       metadata: { bookingId: 'booking-1' },
       customerName: 'Ada Lovelace',
@@ -215,6 +219,8 @@ describe('StripeProvider', () => {
       paymentIntent: 'pi_1',
       amountCaptured: 10000,
       paid: true,
+      currency: 'eur',
+      paymentStatus: 'paid',
       customerName: 'Ada Lovelace',
       customerEmail: 'ada@example.com',
       customerPhone: '+351910000000',
@@ -234,6 +240,6 @@ describe('Stripe mapping helpers', () => {
   });
 
   it('maps a session to the public status shape', () => {
-    expect(mapSessionStatus({ id: 'cs_1', status: 'open', payment_status: 'unpaid', payment_intent: null, metadata: null } as Stripe.Checkout.Session)).toEqual({ id: 'cs_1', status: 'open', paymentStatus: 'unpaid', paymentIntent: null });
+    expect(mapSessionStatus({ id: 'cs_1', status: 'open', payment_status: 'unpaid', amount_total: 10000, currency: 'eur', payment_intent: null, metadata: null } as Stripe.Checkout.Session)).toEqual({ id: 'cs_1', status: 'open', paymentStatus: 'unpaid', amountTotal: 10000, currency: 'eur', paymentIntent: null });
   });
 });
