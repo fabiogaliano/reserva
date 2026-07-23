@@ -14,6 +14,7 @@ import {
   HoldLimitExceededError,
   MUTATION_SIDE_EFFECT_LEASE_MS,
   type BookingRepository,
+  type MutationSideEffectOperationKind,
   type RefundOperationRecord,
   type SideEffectOperationKind,
   type SideEffectOperationRecord,
@@ -47,7 +48,7 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
   refundOperations: Map<string, RefundOperationRecord>;
   sideEffectOperations: Map<string, SideEffectOperationRecord>;
   tokenState: Map<string, FakeTokenState>;
-  recordMutationSideEffectOperations(bookingId: string, kinds: SideEffectOperationKind[], now: string): Promise<void>;
+  recordMutationSideEffectOperations(bookingId: string, kinds: MutationSideEffectOperationKind[], now: string): Promise<void>;
 } {
   const rows = new Map(seed.map((item) => [item.id, item]));
   const holdIps = new Map<string, string>();
@@ -63,9 +64,8 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
   const sideEffectOperations = new Map<string, SideEffectOperationRecord>();
   const rescheduleTransitionVersions = new Map(seed.map((item) => [item.id, 0]));
   const sideEffectKey = (bookingId: string, kind: SideEffectOperationRecord['kind']) => `${bookingId}:${kind}`;
-  const isSideEffectOperationKind = (kind: string): kind is SideEffectOperationKind => (
-    kind === 'calendar_create' || kind === 'email_confirmation' || kind === 'oversell'
-    || kind.startsWith('email:') || kind.startsWith('tourflow:')
+  const isMutationSideEffectOperationKind = (kind: string): kind is MutationSideEffectOperationKind => (
+    kind.startsWith('email:') || kind.startsWith('tourflow:')
   );
   // BK-SIDE-001 (handoff 13) HIGH-1(a): mirrors src/repo.ts's mutationSideEffectInsert — called
   // by transitionToCancelled/transitionToNoShow/rescheduleWithCapacity below ONLY after each has
@@ -73,10 +73,10 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
   // simple call ordering rather than SQL, since the fake has no concurrent writers to race), and
   // ON CONFLICT DO NOTHING (never overwrites an existing row) so a retried dispatch of the same
   // mutation instance resumes its row instead of duplicating or clobbering it.
-  const recordMutationKinds = (bookingId: string, kinds: SideEffectOperationKind[] | undefined, now: string, rescheduleVersion?: number) => {
+  const recordMutationKinds = (bookingId: string, kinds: MutationSideEffectOperationKind[] | undefined, now: string, rescheduleVersion?: number) => {
     for (const baseKind of kinds ?? []) {
       const candidate = rescheduleVersion === undefined ? baseKind : `${baseKind}:${rescheduleVersion}`;
-      if (!isSideEffectOperationKind(candidate)) throw new Error('Unsupported side effect operation kind');
+      if (!isMutationSideEffectOperationKind(candidate)) throw new Error('Unsupported side effect operation kind');
       const key = sideEffectKey(bookingId, candidate);
       if (!sideEffectOperations.has(key)) sideEffectOperations.set(key, {
         bookingId, kind: candidate, status: 'pending', providerResultId: null, attemptCount: 0,
@@ -132,7 +132,7 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
     const defaults = await repository.listCapacityDefaults();
     return defaultCapacityForDate(localDate, fleetDefaultCapacity, defaults);
   };
-  const repository: BookingRepository & { rows: Map<string, Booking>; settings: Map<string, string>; refundOperations: Map<string, RefundOperationRecord>; sideEffectOperations: Map<string, SideEffectOperationRecord>; tokenState: Map<string, FakeTokenState>; recordMutationSideEffectOperations(bookingId: string, kinds: SideEffectOperationKind[], now: string): Promise<void> } = {
+  const repository: BookingRepository & { rows: Map<string, Booking>; settings: Map<string, string>; refundOperations: Map<string, RefundOperationRecord>; sideEffectOperations: Map<string, SideEffectOperationRecord>; tokenState: Map<string, FakeTokenState>; recordMutationSideEffectOperations(bookingId: string, kinds: MutationSideEffectOperationKind[], now: string): Promise<void> } = {
     rows,
     tokenState,
     sweepExpiredHolds: async (now) => {

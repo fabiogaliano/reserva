@@ -134,10 +134,8 @@ export interface RefundOperationRecord {
 // src/confirmation.ts's mutationSideEffectKinds builds (kept as template-literal patterns, not a
 // bare `string`, so the fixed literals below still get meaningful autocomplete/typo protection).
 export type ConfirmationSideEffectKind = 'calendar_create' | 'email_confirmation' | 'oversell';
-export type SideEffectOperationKind =
-  | ConfirmationSideEffectKind
-  | `email:${string}`
-  | `tourflow:${string}`;
+export type MutationSideEffectOperationKind = `email:${string}` | `tourflow:${string}`;
+export type SideEffectOperationKind = ConfirmationSideEffectKind | MutationSideEffectOperationKind;
 export type SideEffectOperationStatus = 'pending' | 'in_flight' | 'succeeded' | 'failed';
 
 // BK-SIDE-001 (handoff 13) HIGH-2: a claimant that dies between claiming (status -> in_flight)
@@ -225,13 +223,13 @@ export interface BookingRepository {
     // the CAS UPDATE, conditional on the CAS actually winning (see the implementation) — a
     // losing/stale transition attempt can never record, and later drain-send, side effects for a
     // mutation that didn't happen. Omitted/empty = nothing owed (no email/ops provider configured).
-    mutationSideEffectKinds?: SideEffectOperationKind[];
+    mutationSideEffectKinds?: MutationSideEffectOperationKind[];
   }): Promise<Booking | null>;
   transitionToNoShow(id: string, input: {
     expectedStatusIn: BookingStatus[];
     updatedAt: string;
     // BK-SIDE-001 (handoff 13): see the identical field on transitionToCancelled above.
-    mutationSideEffectKinds?: SideEffectOperationKind[];
+    mutationSideEffectKinds?: MutationSideEffectOperationKind[];
   }): Promise<Booking | null>;
   transitionToConfirmed(id: string, input: {
     expectedStatusIn: BookingStatus[];
@@ -284,10 +282,10 @@ export interface BookingRepository {
   // Claimable from 'pending'/'failed', OR an 'in_flight' row whose attempted_at is older than
   // MUTATION_SIDE_EFFECT_LEASE_MS (a killed claimant's stale claim) — never from 'succeeded' (never
   // re-sent) or a live 'in_flight' (no double-claim by a concurrent retry).
-  claimMutationSideEffectOperation(bookingId: string, kind: SideEffectOperationKind, attemptedAt: string): Promise<boolean>;
+  claimMutationSideEffectOperation(bookingId: string, kind: MutationSideEffectOperationKind, attemptedAt: string): Promise<boolean>;
   resolveMutationSideEffectOperation(input: {
     bookingId: string;
-    kind: SideEffectOperationKind;
+    kind: MutationSideEffectOperationKind;
     status: 'succeeded' | 'failed';
     providerResultId?: string | null;
     error?: string | null;
@@ -312,7 +310,7 @@ export interface BookingRepository {
     // existing callers that don't pass one (older tests, mainly) leave tokens_expire_at
     // untouched rather than clobbering it to NULL — see the COALESCE in the implementation.
     tokensExpireAt?: string | null;
-    mutationSideEffectKinds?: SideEffectOperationKind[];
+    mutationSideEffectKinds?: MutationSideEffectOperationKind[];
   }): Promise<Booking | null>;
   // Atomic reschedule write (BK-CAP-001): extends transitionReschedule's CAS (status +
   // starts_at, guarding against a stale read racing a concurrent transition) with the same
@@ -332,7 +330,7 @@ export interface BookingRepository {
     tokensExpireAt?: string | null;
     // Reschedule rows receive the incremented per-booking transition version in the same batch,
     // so a repeated A→B hop cannot collide with an earlier one.
-    mutationSideEffectKinds?: SideEffectOperationKind[];
+    mutationSideEffectKinds?: MutationSideEffectOperationKind[];
   } & CapacityGuardInput): Promise<Booking | null>;
   listOccupancyBookings(from: string, to: string): Promise<Booking[]>;
   listUpcoming(now: string): Promise<Booking[]>;
@@ -718,7 +716,7 @@ export function createBookingRepository(
   // and transition version inseparable without relying on wall-clock uniqueness.
   const mutationSideEffectInsert = (
     bookingId: string,
-    kinds: SideEffectOperationKind[],
+    kinds: MutationSideEffectOperationKind[],
     now: string,
     casPredicate: string,
     casParams: unknown[],

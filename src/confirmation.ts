@@ -10,7 +10,12 @@ import {
 import { localDateKey, parseUtcInstant } from './core/time';
 import type { BookkitContext } from './context';
 import { nowIso } from './context';
-import type { ConfirmationSideEffectKind, SideEffectOperationKind, SideEffectOperationRecord } from './repo';
+import type {
+  ConfirmationSideEffectKind,
+  MutationSideEffectOperationKind,
+  SideEffectOperationKind,
+  SideEffectOperationRecord,
+} from './repo';
 
 export class ConfirmationInProgressError extends Error {
   readonly status = 503;
@@ -73,7 +78,7 @@ async function resolveOperation(
   if (!await context.repo.resolveSideEffectOperation(input)) throw new ConfirmationInProgressError();
 }
 
-function isConfirmationSideEffectOperation(operation: SideEffectOperationRecord): operation is SideEffectOperationRecord & { kind: ConfirmationSideEffectKind } {
+export function isConfirmationSideEffectOperation(operation: SideEffectOperationRecord): operation is SideEffectOperationRecord & { kind: ConfirmationSideEffectKind } {
   return operation.kind === 'calendar_create' || operation.kind === 'email_confirmation' || operation.kind === 'oversell';
 }
 
@@ -300,11 +305,11 @@ function dispatchAnalytics(context: BookkitContext, event: BookingEvent, booking
   else void task;
 }
 
-function emailKind(event: EmailBookingEvent, recipient: EmailRecipientRole | undefined, discriminator: string | undefined): SideEffectOperationKind {
-  return ['email', event, ...(recipient ? [recipient] : []), ...(discriminator ? [discriminator] : [])].join(':') as SideEffectOperationKind;
+function emailKind(event: EmailBookingEvent, recipient: EmailRecipientRole | undefined, discriminator: string | undefined): MutationSideEffectOperationKind {
+  return ['email', event, ...(recipient ? [recipient] : []), ...(discriminator ? [discriminator] : [])].join(':') as MutationSideEffectOperationKind;
 }
-function tourflowKind(event: EmailBookingEvent, discriminator: string | undefined): SideEffectOperationKind {
-  return ['tourflow', event, ...(discriminator ? [discriminator] : [])].join(':') as SideEffectOperationKind;
+function tourflowKind(event: EmailBookingEvent, discriminator: string | undefined): MutationSideEffectOperationKind {
+  return ['tourflow', event, ...(discriminator ? [discriminator] : [])].join(':') as MutationSideEffectOperationKind;
 }
 
 // BK-SIDE-001: terminal events use a stable kind because each can happen only once. Reschedule
@@ -313,8 +318,8 @@ function tourflowKind(event: EmailBookingEvent, discriminator: string | undefine
 export function mutationSideEffectKinds(
   context: BookkitContext,
   event: EmailBookingEvent,
-): SideEffectOperationKind[] {
-  const kinds: SideEffectOperationKind[] = [];
+): MutationSideEffectOperationKind[] {
+  const kinds: MutationSideEffectOperationKind[] = [];
   const email = context.providers.email;
   if (email) {
     if (email.recipientsForEvent && email.sendToRecipient) {
@@ -334,7 +339,7 @@ interface MutationSideEffectAttempt {
   run: () => Promise<void>;
 }
 
-function isMutationSideEffectKind(kind: SideEffectOperationKind): kind is `email:${string}` | `tourflow:${string}` {
+function isMutationSideEffectKind(kind: SideEffectOperationKind): kind is MutationSideEffectOperationKind {
   return kind.startsWith('email:') || kind.startsWith('tourflow:');
 }
 
@@ -349,7 +354,7 @@ function isMutationSideEffectKind(kind: SideEffectOperationKind): kind is `email
 // here: it never affects which provider call gets re-issued, only whether rest[0] happens to be
 // 'customer'/'owner' (recipient) or something else (no recipient, non-split fallback) — real
 // recipient values can never collide with a discriminator, since reschedule versions are numeric.
-function attemptForKind(context: BookkitContext, booking: Booking, kind: SideEffectOperationKind): MutationSideEffectAttempt | null {
+function attemptForKind(context: BookkitContext, booking: Booking, kind: MutationSideEffectOperationKind): MutationSideEffectAttempt | null {
   const [providerName, event, ...rest] = kind.split(':');
   if (!providerName || !event) return null;
   const emailBookingEvent = event as EmailBookingEvent;
@@ -384,7 +389,7 @@ function attemptForKind(context: BookkitContext, booking: Booking, kind: SideEff
 async function runMutationSideEffect(
   context: BookkitContext,
   booking: Booking,
-  kind: SideEffectOperationKind,
+  kind: MutationSideEffectOperationKind,
   attempt: MutationSideEffectAttempt,
 ): Promise<void> {
   const attemptedAt = nowIso(context);

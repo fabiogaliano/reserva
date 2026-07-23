@@ -27,7 +27,15 @@ import {
 import { generateSlots } from '../core/slots';
 import { addDaysToDateKey, enumerateDateKeys, localDateKey, localDateTimeToUtcIso, parseUtcInstant, utcToLocalIso } from '../core/time';
 import { adminOriginAllowed, mintAdminCsrfToken, verifyAdminCsrfToken } from '../admin-csrf';
-import { ConfirmationInProgressError, confirmBookingFromPayment, dispatchMutation, dispatchNonCritical, mutationSideEffectKinds, runOwedMutationSideEffects } from '../confirmation';
+import {
+  ConfirmationInProgressError,
+  confirmBookingFromPayment,
+  dispatchMutation,
+  dispatchNonCritical,
+  isConfirmationSideEffectOperation,
+  mutationSideEffectKinds,
+  runOwedMutationSideEffects,
+} from '../confirmation';
 import type { BookkitContext } from '../context';
 import { getSecret, nowIso } from '../context';
 import { isManageableToken } from '../providers/brevo';
@@ -622,7 +630,7 @@ export function handleStatus(request: Request, context: BookkitContext): Promise
       }
     } else if (current.status === 'confirmed') {
       const confirmationOperations = (await context.repo.listSideEffectOperations(current.id))
-        .filter((operation) => operation.kind === 'calendar_create' || operation.kind === 'email_confirmation' || operation.kind === 'oversell');
+        .filter(isConfirmationSideEffectOperation);
       const needsFulfillment = confirmationOperations.some((operation) => operation.status !== 'succeeded')
         || (confirmationOperations.length === 0 && (!current.calendarSynced || !current.emailSynced));
       if (needsFulfillment) {
