@@ -1,6 +1,10 @@
+import type { D1Database } from '@cloudflare/workers-types';
 import Stripe from 'stripe';
 import { describe, expect, it, vi } from 'vitest';
+import { createBookkitContext } from '../src/context';
+import { handleCheckout } from '../src/handlers';
 import { booking, config } from './fixtures';
+import { fakeRepository, providers } from './fakes';
 import {
   StripeProvider,
   mapSessionStatus,
@@ -12,7 +16,7 @@ import { resolveRouteConfig } from '../src/routes-manifest';
 
 function makeClient() {
   const sessions = {
-    create: vi.fn(async (_params: Stripe.Checkout.SessionCreateParams) => ({ id: 'cs_created', url: 'https://checkout.test/cs_created' })),
+    create: vi.fn(async (_params: Stripe.Checkout.SessionCreateParams, _options?: { idempotencyKey?: string }) => ({ id: 'cs_created', url: 'https://checkout.test/cs_created' })),
     retrieve: vi.fn(async () => ({
       id: 'cs_1',
       status: 'complete',
@@ -59,7 +63,8 @@ describe('StripeProvider', () => {
       payment_intent_data: { metadata: { bookingId: 'booking-1' } },
       custom_fields: [{ key: 'pickup_address', label: { type: 'custom', custom: 'Pickup address' }, type: 'text' }],
       line_items: [{ quantity: 1, price_data: { currency: 'eur', unit_amount: 12000, product_data: { name: 'Vintage tour (en)' } } }],
-    }));
+      // BK-PAY-002: every checkout.sessions.create call carries a deterministic idempotency key.
+    }), { idempotencyKey: 'bookkit-checkout-booking-1' });
   });
 
   // BK-CONFIG-001: expiresInMinutes = max(30, holdMinutes - 5), so holdMinutes at its validateConfig
@@ -94,7 +99,7 @@ describe('StripeProvider', () => {
     const { client, sessions } = makeClient();
     const provider = new StripeProvider('sk_test', 'whsec_test', { client });
     await provider.createCheckout(booking(), config);
-    expect(sessions.create).toHaveBeenCalledWith(expect.not.objectContaining({ custom_fields: expect.anything() }));
+    expect(sessions.create).toHaveBeenCalledWith(expect.not.objectContaining({ custom_fields: expect.anything() }), expect.anything());
   });
 
   it('adds a line-item description when productDescription is provided', async () => {
@@ -108,14 +113,14 @@ describe('StripeProvider', () => {
       line_items: [expect.objectContaining({ price_data: expect.objectContaining({
         product_data: expect.objectContaining({ description: 'Tour of vintage for 4' }),
       }) })],
-    }));
+    }), expect.anything());
   });
 
   it('omits terms-of-service consent when termsOfService is none', async () => {
     const { client, sessions } = makeClient();
     const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client, termsOfService: 'none' });
     await provider.createCheckout(booking(), config);
-    expect(sessions.create).toHaveBeenCalledWith(expect.not.objectContaining({ consent_collection: expect.anything() }));
+    expect(sessions.create).toHaveBeenCalledWith(expect.not.objectContaining({ consent_collection: expect.anything() }), expect.anything());
   });
 
   it('retrieves session status and performs a full refund', async () => {
@@ -227,6 +232,166 @@ describe('StripeProvider', () => {
       pickupAddress: 'Praça do Comércio',
     });
     expect(client.webhooks.constructEventAsync).toHaveBeenCalledWith('{"raw":true}', 't=1,v1=x', 'whsec_test', 300, expect.anything());
+  });
+});
+
+// BK-PAY-002: a lost checkout.sessions.create response used to make handleCheckout expire the
+// hold and let the client retry into a second, orphaned Stripe session for the same intent-to-
+// book. These tests pin the fix: a deterministic per-hold idempotency key, a retry-once that
+// reuses byte-identical params (so Stripe replays instead of 409ing), and unchanged expire-on-
+// error behavior for rejections a retry could never turn into a success.
+describe('Checkout idempotency (BK-PAY-002)', () => {
+  const checkoutRequest = (start = '2026-06-15T08:00:00.000Z') => new Request('https://example.test/api/booking/checkout', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ tourSlug: 'vintage', start, people: 2, pickupType: 'default', locale: 'en' }),
+  });
+
+  it('derives a checkout idempotency key from the booking id: stable for the same booking, distinct across bookings', async () => {
+    const { client, sessions } = makeClient();
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    await provider.createCheckout(booking({ id: 'booking-1' }), config);
+    await provider.createCheckout(booking({ id: 'booking-1' }), config);
+    await provider.createCheckout(booking({ id: 'booking-2' }), config);
+    const keys = sessions.create.mock.calls.map((call) => call[1]?.idempotencyKey);
+    expect(keys).toEqual(['bookkit-checkout-booking-1', 'bookkit-checkout-booking-1', 'bookkit-checkout-booking-2']);
+  });
+
+  it('retries once with the same idempotency key and byte-identical params after an ambiguous (network-ish) failure, replaying the original session', async () => {
+    // Deep snapshots (not the live `params` reference) per call: the provider reuses the same
+    // object across both attempts, so pushing the reference itself would make paramsPerCall[0]
+    // and [1] literally the same object — always "equal" no matter what a drifting implementation
+    // did to it. A structuredClone freezes what each call actually saw at the time it was made.
+    const paramsPerCall: Stripe.Checkout.SessionCreateParams[] = [];
+    let original: { id: string; url: string } | null = null;
+    const create = vi.fn(async (params: Stripe.Checkout.SessionCreateParams, options?: { idempotencyKey?: string }) => {
+      paramsPerCall.push(structuredClone(params));
+      if (!original) {
+        // Simulates Stripe having actually accepted/created the session but the response
+        // getting lost (timeout/connection drop) before it reached the caller.
+        original = { id: 'cs_original', url: 'https://checkout.test/cs_original' };
+        throw new TypeError('fetch failed');
+      }
+      // A real Stripe retry only replays the cached session when the key AND params match the
+      // original request exactly; assert that here too, not just that a key was supplied.
+      expect(options?.idempotencyKey).toBe('bookkit-checkout-booking-1');
+      expect(params).toEqual(paramsPerCall[0]);
+      return original;
+    });
+    const client = {
+      checkout: { sessions: { create, retrieve: vi.fn() } },
+      refunds: { create: vi.fn(), list: vi.fn() },
+      webhooks: { constructEventAsync: vi.fn() },
+    } as unknown as StripeClient;
+    // An advancing clock, not a frozen one: expires_at is derived from `now`, so if a future
+    // regression rebuilt params on retry (re-invoking `now`), a frozen clock could land the retry
+    // in the same second and hide the drift. Each call to `now` here returns a later time, so any
+    // recompute would produce a strictly later expires_at and be caught by the equality checks below.
+    let tick = 0;
+    const now = () => new Date('2026-06-15T08:00:00.000Z').getTime() + (tick++) * 60_000;
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client, now });
+
+    await expect(provider.createCheckout(booking(), config)).resolves.toEqual({
+      url: 'https://checkout.test/cs_original', sessionId: 'cs_original',
+    });
+    expect(create).toHaveBeenCalledTimes(2);
+    // Param drift (e.g. a recomputed expires_at) would make a real Stripe retry 409 instead of
+    // replaying — pin exact equality, not just that both calls happened to succeed.
+    expect(paramsPerCall[1]).toEqual(paramsPerCall[0]);
+    expect(paramsPerCall[1]?.expires_at).toBe(paramsPerCall[0]?.expires_at);
+    expect(create.mock.calls[0]?.[1]).toEqual({ idempotencyKey: 'bookkit-checkout-booking-1' });
+    expect(create.mock.calls[1]?.[1]).toEqual({ idempotencyKey: 'bookkit-checkout-booking-1' });
+  });
+
+  it('handleCheckout: an ambiguous createCheckout failure that recovers on retry does not expire the hold, and stripeSessionId lands on the booking', async () => {
+    let original: { id: string; url: string } | null = null;
+    const create = vi.fn(async (_params: Stripe.Checkout.SessionCreateParams, _options?: { idempotencyKey?: string }) => {
+      if (!original) {
+        original = { id: 'cs_recovered', url: 'https://checkout.test/cs_recovered' };
+        throw new TypeError('fetch failed');
+      }
+      return original;
+    });
+    const client = {
+      checkout: { sessions: { create, retrieve: vi.fn() } },
+      refunds: { create: vi.fn(), list: vi.fn() },
+      webhooks: { constructEventAsync: vi.fn() },
+    } as unknown as StripeClient;
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const repo = fakeRepository();
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      providers: providers({ payments: provider }),
+    });
+
+    const response = await handleCheckout(checkoutRequest(), context);
+    expect(response.status).toBe(201);
+    const body = await response.json() as { bookingId: string };
+    const stored = repo.rows.get(body.bookingId);
+    expect(stored?.status).toBe('hold');
+    expect(stored?.stripeSessionId).toBe('cs_recovered');
+  });
+
+  it('handleCheckout: a definitive Stripe rejection is not retried, and the hold IS still expired (pinned behavior)', async () => {
+    // Declared with the real create() parameter list (even though it always throws) so the mock's
+    // inferred type keeps both positional args and .mock.calls[n][1] type-checks below.
+    const create = vi.fn(async (_params: Stripe.Checkout.SessionCreateParams, _options?: { idempotencyKey?: string }): Promise<Stripe.Checkout.Session> => {
+      throw new Stripe.errors.StripeInvalidRequestError({ message: 'Invalid locale' });
+    });
+    const client = {
+      checkout: { sessions: { create, retrieve: vi.fn() } },
+      refunds: { create: vi.fn(), list: vi.fn() },
+      webhooks: { constructEventAsync: vi.fn() },
+    } as unknown as StripeClient;
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const repo = fakeRepository();
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      providers: providers({ payments: provider }),
+    });
+
+    const response = await handleCheckout(checkoutRequest(), context);
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    // Exactly one attempt: Stripe would replay the same cached rejection on a retry, so retrying
+    // buys nothing and the hold is expired immediately instead.
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create.mock.calls[0]?.[1]).toEqual({ idempotencyKey: expect.stringMatching(/^bookkit-checkout-/) });
+    expect([...repo.rows.values()]).toHaveLength(1);
+    expect([...repo.rows.values()].every((row) => row.status === 'expired')).toBe(true);
+  });
+
+  it('handleCheckout: a 409 idempotency_error (same key, conflicting params) is not retried, and the hold IS still expired', async () => {
+    const create = vi.fn(async (_params: Stripe.Checkout.SessionCreateParams, _options?: { idempotencyKey?: string }): Promise<Stripe.Checkout.Session> => {
+      throw new Stripe.errors.StripeIdempotencyError({ message: 'Keys for idempotent requests can only be used with the same parameters as they were first used with' });
+    });
+    const client = {
+      checkout: { sessions: { create, retrieve: vi.fn() } },
+      refunds: { create: vi.fn(), list: vi.fn() },
+      webhooks: { constructEventAsync: vi.fn() },
+    } as unknown as StripeClient;
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const repo = fakeRepository();
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      providers: providers({ payments: provider }),
+    });
+
+    const response = await handleCheckout(checkoutRequest(), context);
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    // A retry would resend the same params under the same key and 409 again, so it is skipped —
+    // exactly one create() call — and the hold is expired immediately instead.
+    expect(create).toHaveBeenCalledTimes(1);
+    expect([...repo.rows.values()]).toHaveLength(1);
+    expect([...repo.rows.values()].every((row) => row.status === 'expired')).toBe(true);
   });
 });
 

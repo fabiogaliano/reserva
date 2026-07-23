@@ -291,6 +291,14 @@ export function handleCheckout(request: Request, context: BookkitContext): Promi
     }
     if (!booking) throw new Error('Unable to create booking hold');
     try {
+      // BK-PAY-002: the idempotency key createCheckout derives is scoped to this hold, not this
+      // request, so it's fine to expire the hold below on any failure here (a Stripe rejection, a
+      // missing Checkout URL, or the updateBooking write) rather than distinguish them. If the
+      // *whole* POST is retried by the client after a 5xx, this path mints a fresh hold (and thus a
+      // fresh key) rather than reusing this one; that's fine because the idempotency key only needs
+      // to prevent a duplicate payable session per hold, not across holds — this hold's now-expired
+      // row and any session Stripe did create for it still resolve via the late-webhook backfill
+      // path (getBookingBySessionId / metadata.bookingId), same as before this fix.
       const checkout = await context.providers.payments.createCheckout(booking, context.config, context.routeConfig.paths);
       await context.repo.updateBooking(booking.id, { stripeSessionId: checkout.sessionId, updatedAt: nowIso(context) });
       return json({ checkoutUrl: checkout.url, bookingId: booking.id, reference: booking.reference }, 201);

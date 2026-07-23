@@ -8,7 +8,7 @@ import type { BookkitResolvedRouteConfig } from '../routes-manifest';
 
 export interface StripeClient {
   checkout: { sessions: {
-    create(params: Stripe.Checkout.SessionCreateParams): Promise<Stripe.Checkout.Session>;
+    create(params: Stripe.Checkout.SessionCreateParams, options?: { idempotencyKey?: string }): Promise<Stripe.Checkout.Session>;
     retrieve(sessionId: string): Promise<Stripe.Checkout.Session>;
   } };
   refunds: {
@@ -150,6 +150,22 @@ function nowMs(now: () => Date | number): number {
   return value instanceof Date ? value.getTime() : value;
 }
 
+// Errors that mean the request was rejected on its merits (bad params/card/auth/permission) —
+// Stripe's idempotency layer caches and replays error responses too (see refund()'s comment
+// below), so retrying one of these with the same key would just reproduce the same rejection
+// rather than ever succeeding. Everything else (network failures, 5xx, unrecognized errors) is
+// treated as ambiguous — the request may have actually gone through — and is worth one retry.
+// StripeIdempotencyError (409, same key + conflicting params) is also definitive: this provider
+// always resends the identical params object on retry, so a same-key conflict can only mean a
+// different request already used this key — retrying with the same params would 409 again.
+function isDefinitiveStripeError(error: unknown): boolean {
+  return error instanceof Stripe.errors.StripeCardError
+    || error instanceof Stripe.errors.StripeInvalidRequestError
+    || error instanceof Stripe.errors.StripeAuthenticationError
+    || error instanceof Stripe.errors.StripePermissionError
+    || error instanceof Stripe.errors.StripeIdempotencyError;
+}
+
 function defaultSuccessUrl(config: ClientConfig, routePaths?: BookkitResolvedRouteConfig['paths']): string {
   return `${config.business.url.replace(/\/$/, '')}${routePaths?.confirmationPage ?? '/booking-confirmation'}?session_id=${checkoutSessionPlaceholder}`;
 }
@@ -285,9 +301,30 @@ export class StripeProvider implements PaymentProvider {
     if ((this.options.termsOfService ?? 'required') === 'required') {
       params.consent_collection = { terms_of_service: 'required' };
     }
-    const session = await this.stripe.checkout.sessions.create(params);
+    // BK-PAY-002: a deterministic key per hold (not per call) so a lost response and a retried
+    // call both land on the same Stripe session instead of minting a second, orphaned one.
+    const idempotencyKey = `bookkit-checkout-${booking.id}`;
+    const session = await this.createSession(params, idempotencyKey);
     if (!session.url) throw new Error('Stripe Checkout Session did not include a URL');
     return { url: session.url, sessionId: session.id };
+  }
+
+  // Stripe only replays the cached response for a reused idempotency key when the retried request
+  // carries byte-identical params (otherwise it 409s with idempotency_error) — passing the exact
+  // same `params` object reference to both attempts (never rebuilt in between) guarantees that.
+  // A retry is only useful when the first attempt was ambiguous (the response was lost, but the
+  // session may already exist); isDefinitiveStripeError skips the pointless retry-then-rethrow
+  // round trip for a request that was actually rejected.
+  private async createSession(
+    params: Stripe.Checkout.SessionCreateParams,
+    idempotencyKey: string,
+  ): Promise<Stripe.Checkout.Session> {
+    try {
+      return await this.stripe.checkout.sessions.create(params, { idempotencyKey });
+    } catch (error) {
+      if (isDefinitiveStripeError(error)) throw error;
+      return await this.stripe.checkout.sessions.create(params, { idempotencyKey });
+    }
   }
 
   async parseWebhook(request: Request): Promise<StripeEventParsed> {
