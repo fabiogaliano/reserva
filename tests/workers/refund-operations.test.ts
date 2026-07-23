@@ -123,6 +123,35 @@ describe('refund_operations concurrent claim uniqueness on real D1', () => {
     expect(stored?.resolvedAt).toBe('2026-07-21T12:00:00.000Z');
   });
 
+  it('deleteRefundOperation cannot destroy a succeeded row', async () => {
+    const id = 'refund-delete-succeeded';
+    await seedConfirmed(id);
+    await repo.claimRefundOperation({
+      id: 'op-delete-succeeded', bookingId: id, paymentIntent: `pi_${id}`, choice: 'full', requestedAt: '2026-07-21T11:00:00.000Z',
+    });
+    await repo.resolveRefundOperation('op-delete-succeeded', {
+      status: 'succeeded', stripeRefundId: 're-delete-succeeded', amountCents: 12000, resolvedAt: '2026-07-21T11:01:00.000Z',
+    });
+
+    await repo.deleteRefundOperation('op-delete-succeeded');
+
+    await expect(repo.getRefundOperationByBookingId(id)).resolves.toMatchObject({
+      id: 'op-delete-succeeded', status: 'succeeded', stripeRefundId: 're-delete-succeeded', amountCents: 12000,
+    });
+  });
+
+  it('deleteRefundOperation removes a requested row', async () => {
+    const id = 'refund-delete-requested';
+    await seedConfirmed(id);
+    await repo.claimRefundOperation({
+      id: 'op-delete-requested', bookingId: id, paymentIntent: `pi_${id}`, choice: 'full', requestedAt: '2026-07-21T11:00:00.000Z',
+    });
+
+    await repo.deleteRefundOperation('op-delete-requested');
+
+    await expect(repo.getRefundOperationByBookingId(id)).resolves.toBeNull();
+  });
+
   it('upsertRefundOperation never regresses an already-succeeded row', async () => {
     const id = 'refund-upsert-non-regressing';
     await seedConfirmed(id);
