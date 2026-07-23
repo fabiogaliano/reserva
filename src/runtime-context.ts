@@ -243,7 +243,10 @@ export function defineCloudflareBookkitRuntime<TEnv extends object>(
         confirmationLocks,
         verifyAccess: options.verifyAccess
           ? () => options.verifyAccess?.(bindings) ?? false
-          : (requestToVerify) => verifyAccessJwt(requestToVerify, config).then(() => true),
+          // verifyAccessJwt resolves to the verified claims (throws on failure); passing them
+          // through (instead of collapsing to `true`) lets the admin CSRF token bind to the
+          // Access-authenticated subject — see src/admin-csrf.ts.
+          : (requestToVerify) => verifyAccessJwt(requestToVerify, config),
       };
       return createBookkitContext(contextInput);
     },

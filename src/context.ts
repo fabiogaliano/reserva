@@ -1,4 +1,5 @@
 import type { D1Database } from '@cloudflare/workers-types';
+import type { AccessClaims } from './access';
 import { validateConfig, type ClientConfig } from './core/config';
 import type {
   AnalyticsSink,
@@ -46,7 +47,19 @@ export interface BookkitContext {
   secrets?: SecretLookup;
   clock: BookkitClock;
   logger: BookkitLogger;
-  verifyAccess?: (request: Request) => boolean | Promise<boolean>;
+  // The default Cloudflare Access wiring (runtime-context.ts) resolves to the verified JWT claims
+  // (AccessClaims) rather than collapsing to a boolean, so the admin CSRF token (src/admin-csrf.ts)
+  // can bind itself to a specific Access user. A caller-supplied verifyAccess is only contractually
+  // required to return `boolean` (the supported API — see CloudflareBookkitRuntimeOptions.verifyAccess
+  // in runtime-context.ts, which is boolean-only even for the Cloudflare runtime helper's own
+  // override option), and a plain `true` carries no identity to bind a token to. accessAllowed
+  // (src/handlers/index.ts) falls back to an empty/anonymous subject in that case rather than
+  // inventing one — the resulting token is session-agnostic (interchangeable across every
+  // Access-authorized caller) but not weaker: it's still HMAC'd with the real BOOKKIT_CSRF_SECRET
+  // and still gated by the same-origin check, so it does not degrade to the accessAud-as-key
+  // forgery BK-SEC-001 flagged (see src/admin-csrf.ts). Don't try to force per-user binding here —
+  // there is no identity to bind to without extending the verifyAccess contract itself.
+  verifyAccess?: (request: Request) => boolean | AccessClaims | Promise<boolean | AccessClaims>;
   waitUntil?: (promise: Promise<unknown>) => void;
   refundedPayments?: Set<string>;
   confirmationLocks?: Map<string, Promise<void>>;

@@ -25,6 +25,7 @@ import {
 } from '../core/settings';
 import { generateSlots } from '../core/slots';
 import { addDaysToDateKey, enumerateDateKeys, localDateKey, localDateTimeToUtcIso, parseUtcInstant, utcToLocalIso } from '../core/time';
+import { adminOriginAllowed, mintAdminCsrfToken, verifyAdminCsrfToken } from '../admin-csrf';
 import { ConfirmationInProgressError, confirmBookingFromPayment, dispatchMutation, dispatchNonCritical } from '../confirmation';
 import type { BookkitContext } from '../context';
 import { getSecret, nowIso } from '../context';
@@ -50,6 +51,19 @@ import {
 
 function run(handler: () => Promise<Response>): Promise<Response> {
   return handler().catch(errorResponse);
+}
+
+// BK-SEC-001: the successful admin POST redirects already set Cache-Control: no-store, but a
+// thrown HttpError (bad origin, invalid/expired CSRF token, bad Access, validation failure, ...)
+// went through plain errorResponse (src/http.ts), which sets no cache-control at all — a shared
+// cache could then serve a stale admin error page. Scoped to admin POST only: the public booking
+// API's error responses are unaffected.
+function runAdminPost(handler: () => Promise<Response>): Promise<Response> {
+  return handler().catch((error: unknown) => {
+    const response = errorResponse(error);
+    response.headers.set('cache-control', 'no-store');
+    return response;
+  });
 }
 
 function validDateRange(from: string, to: string): string[] {
@@ -599,12 +613,30 @@ export function handleFeed(request: Request, context: BookkitContext): Promise<R
   });
 }
 
-async function accessAllowed(request: Request, context: BookkitContext): Promise<boolean> {
-  if (!context.verifyAccess) return false;
+interface AdminAccess {
+  // The Access-authenticated subject the admin CSRF token binds to ('' when the verifier reports a
+  // plain boolean rather than claims — see the BookkitContext.verifyAccess doc comment).
+  sub: string;
+}
+
+async function accessAllowed(request: Request, context: BookkitContext): Promise<AdminAccess | null> {
+  if (!context.verifyAccess) return null;
   try {
-    return await context.verifyAccess(request);
+    const result = await context.verifyAccess(request);
+    if (!result) return null;
+    // A caller-supplied verifyAccess is only contractually required to return boolean (see
+    // BookkitContext.verifyAccess) — there's no claim in a `true` to bind a per-user token to, so
+    // this falls back to the empty subject. The resulting CSRF token is session-agnostic (any
+    // Access-authorized caller's token verifies for any other), not a weaker token: it's still
+    // unforgeable (HMAC'd with the real BOOKKIT_CSRF_SECRET, see src/admin-csrf.ts) and still
+    // requires layer 1's same-origin check to ever reach the app. Only the default JWT-based
+    // verifyAccessJwt path (src/runtime-context.ts) exposes real claims and gets a user-bound token.
+    if (typeof result === 'boolean') return { sub: '' };
+    const email = typeof result.email === 'string' ? result.email : undefined;
+    const sub = typeof result.sub === 'string' ? result.sub : undefined;
+    return { sub: email ?? sub ?? '' };
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -651,6 +683,9 @@ function adminPage(
   editDate: string,
   capacityDefaults: CapacityDefault[],
   saved: string,
+  // undefined when BOOKKIT_CSRF_SECRET isn't configured (src/admin-csrf.ts mintAdminCsrfToken) — the
+  // field below then renders empty and verifyAdminCsrfToken is a deliberate no-op on the POST side.
+  csrfToken: string | undefined,
 ): string {
   // Admin is operator-facing (behind Cloudflare Access), so copy uses the business default locale.
   const locale = context.config.locales.default;
@@ -832,7 +867,8 @@ function adminPage(
   // sees what they're changing from. The optional To date is the no-JS bulk path — the POST expands
   // the range server-side; the enhancer hides it and uses multi-select with repeated date inputs.
   const editReason = editOverride?.reason ?? '';
-  const overrideForm = `<form method="post" id="bk-override" class="bk-day-form">${adminIsland}`
+  const csrfField = `<input type="hidden" name="csrf_token" value="${escapeHtml(csrfToken)}">`;
+  const overrideForm = `<form method="post" id="bk-override" class="bk-day-form">${csrfField}${adminIsland}`
     + `<h2 data-bookkit-day-title>${escapeHtml(editDate ? formatDayDate(editDate, locale) : messages['admin.overrideTitle'])}</h2>`
     + savedAlert('day')
     + dayDetail
@@ -854,7 +890,7 @@ function adminPage(
   const defaultEntries = capacityDefaults.map((entry) =>
     `<li><span>${escapeHtml(formatMessage(messages['admin.defaultEntry'], { n: entry.capacity, date: formatDayDate(entry.fromDate, locale) }))}`
     + (entry.reason ? `<span class="bk-sub">${escapeHtml(entry.reason)}</span>` : '')
-    + `</span><form method="post"><input type="hidden" name="date" value="${escapeHtml(entry.fromDate)}">`
+    + `</span><form method="post">${csrfField}<input type="hidden" name="date" value="${escapeHtml(entry.fromDate)}">`
     + `<button type="submit" class="bk-btn bk-btn--secondary bk-btn--sm" name="action" value="default-clear">${escapeHtml(messages['admin.remove'])}</button></form></li>`).join('');
   // The fleet-default form is the rare, high-blast-radius task, so it sits behind a collapsed
   // disclosure — one visible form (the day exception) instead of two near-identical ones. It must
@@ -865,7 +901,7 @@ function adminPage(
     : '';
   const defaultForm = `<details class="bk-disclosure" id="bk-default"${saved === 'default' ? ' open' : ''}>`
     + `<summary>${escapeHtml(messages['admin.defaultTitle'])}${scheduledBadge}</summary><div>`
-    + `<form method="post" class="bk-day-form">`
+    + `<form method="post" class="bk-day-form">${csrfField}`
     + savedAlert('default')
     + `<p class="bk-hint">${escapeHtml(messages['admin.defaultHint'])}</p>`
     + `<label class="bk-field"><span>${escapeHtml(messages['admin.defaultFrom'])}</span><input class="bk-input" name="date" type="date" required></label>`
@@ -900,7 +936,8 @@ function adminPage(
 // section (multi-column forms measurably hurt comprehension), plain-language helper text per
 // setting, switches for booleans, a per-field "Reset" where a value deviates from the file config,
 // and a visible saved confirmation after POST. Tabs degrade to plain links without JS.
-function settingsPage(context: BookkitContext, storedRows: Record<string, string>, saved: boolean, sectionParam: string): string {
+// csrfToken is undefined when BOOKKIT_CSRF_SECRET isn't configured — see adminPage's csrfToken param above.
+function settingsPage(context: BookkitContext, storedRows: Record<string, string>, saved: boolean, sectionParam: string, csrfToken: string | undefined): string {
   const locale = context.config.locales.default;
   const messages = resolveMessages(context.config, locale);
   const catalog = messages as Record<string, string>;
@@ -980,7 +1017,7 @@ function settingsPage(context: BookkitContext, storedRows: Record<string, string
       : '';
     return `<form method="post" class="bk-card" id="bk-s-${section}"${section === activeSection ? '' : ' hidden'}><h2>${escapeHtml(sectionTitles[section])}</h2>`
       + `<p class="bk-hint bk-section-hint">${escapeHtml(sectionHints[section])}</p>`
-      + `<input type="hidden" name="section" value="${escapeHtml(section)}">${fields}`
+      + `<input type="hidden" name="csrf_token" value="${escapeHtml(csrfToken)}"><input type="hidden" name="section" value="${escapeHtml(section)}">${fields}`
       + `<div class="bk-actions bk-actions--split"><button type="submit" class="bk-btn" name="action" value="settings-save">${escapeHtml(messages['admin.save'])}</button>${sectionReset}</div></form>`;
   }).join('');
 
@@ -1024,10 +1061,14 @@ function settingsPage(context: BookkitContext, storedRows: Record<string, string
 export function handleAdminGet(request: Request, context: BookkitContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
-    if (!await accessAllowed(request, context)) throw new HttpError(403, 'forbidden', 'Cloudflare Access authorization required');
+    const access = await accessAllowed(request, context);
+    if (!access) throw new HttpError(403, 'forbidden', 'Cloudflare Access authorization required');
+    // Minted fresh per render and embedded as a hidden field in every admin form (BK-SEC-001 layer
+    // 2); handleAdminPost verifies it against the same Access-authenticated subject.
+    const csrfToken = await mintAdminCsrfToken(context, access.sub, context.clock().getTime());
     const requestUrl = new URL(request.url);
     if (requestUrl.searchParams.get('view') === 'settings') {
-      return html(settingsPage(context, await context.repo.listSettings(), requestUrl.searchParams.get('saved') === '1', requestUrl.searchParams.get('section') ?? ''), 200, {
+      return html(settingsPage(context, await context.repo.listSettings(), requestUrl.searchParams.get('saved') === '1', requestUrl.searchParams.get('section') ?? '', csrfToken), 200, {
         'cache-control': 'no-store',
         'referrer-policy': 'no-referrer',
       });
@@ -1047,7 +1088,7 @@ export function handleAdminGet(request: Request, context: BookkitContext): Promi
     };
     const editDate = url.searchParams.get('date')?.trim() ?? '';
     const saved = url.searchParams.get('saved') ?? '';
-    return html(adminPage(context, bookings, overrides, fromDate, toDate, filters, editDate, capacityDefaults, saved), 200, {
+    return html(adminPage(context, bookings, overrides, fromDate, toDate, filters, editDate, capacityDefaults, saved, csrfToken), 200, {
       'cache-control': 'no-store',
       'referrer-policy': 'no-referrer',
     });
@@ -1055,10 +1096,19 @@ export function handleAdminGet(request: Request, context: BookkitContext): Promi
 }
 
 export function handleAdminPost(request: Request, context: BookkitContext): Promise<Response> {
-  return run(async () => {
+  return runAdminPost(async () => {
     if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
-    if (!await accessAllowed(request, context)) throw new HttpError(403, 'forbidden', 'Cloudflare Access authorization required');
+    const access = await accessAllowed(request, context);
+    if (!access) throw new HttpError(403, 'forbidden', 'Cloudflare Access authorization required');
+    // BK-SEC-001 layer 1: Fetch-Metadata / Origin enforcement. Wired only here (the admin mutation
+    // route), never on the public booking API — see src/admin-csrf.ts.
+    if (!adminOriginAllowed(request)) throw new HttpError(403, 'forbidden', 'Cross-origin admin requests are not allowed');
     const form = await request.formData();
+    // BK-SEC-001 layer 2: per-session CSRF token, bound to the same Access-authenticated subject
+    // the request was just verified against.
+    const csrfToken = form.get('csrf_token');
+    const csrfOk = await verifyAdminCsrfToken(context, typeof csrfToken === 'string' ? csrfToken : null, access.sub, context.clock().getTime());
+    if (!csrfOk) throw new HttpError(403, 'forbidden', 'Invalid or expired CSRF token');
     const action = requireString(form.get('action'), 'action');
     if (action.startsWith('settings-')) {
       // Redirect target carries saved=1 so the settings page can confirm the change visibly.
@@ -1069,7 +1119,7 @@ export function handleAdminPost(request: Request, context: BookkitContext): Prom
         const definition = settingDefinitions.find((entry) => entry.key === key);
         if (!definition) throw new HttpError(400, 'validation_failed', 'Unknown setting');
         await context.repo.deleteSetting(definition.key);
-        return new Response(null, { status: 303, headers: { location: location.toString() } });
+        return new Response(null, { status: 303, headers: { location: location.toString(), 'cache-control': 'no-store' } });
       }
       if (action !== 'settings-save' && action !== 'settings-reset') throw new HttpError(400, 'validation_failed', 'Unknown admin action');
       const section = requireString(form.get('section'), 'section');
@@ -1114,7 +1164,7 @@ export function handleAdminPost(request: Request, context: BookkitContext): Prom
         }
       }
       if (operations.length > 0) await context.repo.applySettingsBatch(operations);
-      return new Response(null, { status: 303, headers: { location: location.toString() } });
+      return new Response(null, { status: 303, headers: { location: location.toString(), 'cache-control': 'no-store' } });
     }
     // Day actions may target several days at once: repeated date fields (the enhancer's
     // multi-select) and/or an optional toDate expanding to the contiguous range (the no-JS bulk
@@ -1152,6 +1202,6 @@ export function handleAdminPost(request: Request, context: BookkitContext): Prom
     location.searchParams.set('saved', isDefault ? 'default' : 'day');
     if (!isDefault) location.searchParams.set('date', earliest);
     location.hash = isDefault ? 'bk-default' : 'bk-override';
-    return new Response(null, { status: 303, headers: { location: location.toString() } });
+    return new Response(null, { status: 303, headers: { location: location.toString(), 'cache-control': 'no-store' } });
   });
 }
