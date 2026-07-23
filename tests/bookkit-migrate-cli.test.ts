@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -16,10 +16,11 @@ function fixtureDirectory(): string {
   return directory;
 }
 
-function run(config: string, args: string[] = []) {
+function run(config: string, args: string[] = [], setup?: (cwd: string) => void) {
   const cwd = fixtureDirectory();
   const capturedArgsPath = resolve(cwd, 'wrangler-args.txt');
   writeFileSync(resolve(cwd, 'wrangler.jsonc'), config);
+  setup?.(cwd);
   const result = spawnSync('bun', [scriptPath, ...args], {
     cwd,
     env: {
@@ -115,18 +116,47 @@ describe('bookkit-migrate CLI', () => {
     expect(result.capturedArgs()).toContain('chosen');
   });
 
-  it('forwards --env with its value without treating it as a database name', () => {
-    const result = run('{ "d1_databases": [{ "binding": "BOOKKIT_DB", "database_name": "bookings" }] }', ['--env', 'production']);
+  it('selects the named environment D1 binding instead of the top-level binding', () => {
+    const result = run(`{
+      "d1_databases": [{ "binding": "BOOKKIT_DB", "database_name": "development-bookings" }],
+      "env": {
+        "production": {
+          "d1_databases": [{ "binding": "BOOKKIT_DB", "database_name": "production-bookings" }]
+        }
+      }
+    }`, ['--env', 'production']);
 
     expect(result.status).toBe(0);
-    expect(result.capturedArgs()).toContain('bookings');
+    expect(result.capturedArgs()).toContain('production-bookings');
+    expect(result.capturedArgs()).not.toContain('development-bookings');
     expect(result.capturedArgs()).toContainEqual('--env');
     expect(result.capturedArgs()).toContainEqual('production');
   });
 
+  it('requires an explicit database name when the named environment has no D1 bindings', () => {
+    const result = run('{ "d1_databases": [{ "binding": "BOOKKIT_DB", "database_name": "development-bookings" }] }', ['--env', 'production']);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/environment `production`.*no d1_databases binding.*pass the database name explicitly/s);
+  });
+
+  it('discovers the default config beneath --cwd instead of the process directory', () => {
+    const result = run('{ "d1_databases": [{ "binding": "BOOKKIT_DB", "database_name": "root-bookings" }] }', ['--cwd', 'app'], (cwd) => {
+      const app = resolve(cwd, 'app');
+      mkdirSync(app);
+      writeFileSync(resolve(app, 'wrangler.jsonc'), '{ "d1_databases": [{ "binding": "BOOKKIT_DB", "database_name": "app-bookings" }] }');
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.capturedArgs()).toContain('app-bookings');
+    expect(result.capturedArgs()).not.toContain('root-bookings');
+    expect(result.capturedArgs()).toContainEqual('--cwd');
+    expect(result.capturedArgs()).toContainEqual('app');
+  });
+
   it('forwards --persist-to and value options written with =', () => {
     const persistResult = run('{ "d1_databases": [{ "binding": "BOOKKIT_DB", "database_name": "bookings" }] }', ['--persist-to', '.wrangler/state']);
-    const equalsResult = run('{ "d1_databases": [{ "binding": "BOOKKIT_DB", "database_name": "bookings" }] }', ['--env=production']);
+    const equalsResult = run('{ "env": { "production": { "d1_databases": [{ "binding": "BOOKKIT_DB", "database_name": "bookings" }] } } }', ['--env=production']);
 
     expect(persistResult.status).toBe(0);
     expect(persistResult.capturedArgs()).toContainEqual('--persist-to');
@@ -136,8 +166,9 @@ describe('bookkit-migrate CLI', () => {
   });
 
   it('keeps value options and the database name separate in either order', () => {
-    const before = run('{ "d1_databases": [{ "binding": "BOOKKIT_DB", "database_name": "configured" }] }', ['chosen', '--env', 'production']);
-    const after = run('{ "d1_databases": [{ "binding": "BOOKKIT_DB", "database_name": "configured" }] }', ['--env', 'production', 'chosen']);
+    const config = '{ "env": { "production": { "d1_databases": [{ "binding": "BOOKKIT_DB", "database_name": "configured" }] } } }';
+    const before = run(config, ['chosen', '--env', 'production']);
+    const after = run(config, ['--env', 'production', 'chosen']);
 
     expect(before.status).toBe(0);
     expect(before.capturedArgs()).toContain('chosen');

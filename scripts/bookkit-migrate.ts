@@ -82,16 +82,22 @@ interface D1DatabaseConfig {
 
 type DatabaseSelection =
   | { kind: 'selected'; databaseName: string }
-  | { kind: 'ambiguous'; candidates: string[] };
+  | { kind: 'ambiguous'; candidates: string[] }
+  | { kind: 'environment-missing-databases'; environment: string };
 
-function readDatabaseSelection(configPath: string): DatabaseSelection | undefined {
+function readDatabaseSelection(configPath: string, environment: string | undefined): DatabaseSelection | undefined {
   if (!configPath.endsWith('.json') && !configPath.endsWith('.jsonc')) return undefined;
   try {
     const parsed = JSON.parse(stripJsonc(readFileSync(configPath, 'utf8'))) as {
       d1_databases?: D1DatabaseConfig[];
+      env?: Record<string, { d1_databases?: D1DatabaseConfig[] }>;
     };
-    const databases = parsed.d1_databases;
-    if (!databases) return undefined;
+    // Wrangler environment bindings are non-inheritable, so a named environment must never
+    // select a top-level database merely because its own section omitted d1_databases.
+    const databases = environment === undefined ? parsed.d1_databases : parsed.env?.[environment]?.d1_databases;
+    if (!databases || (environment !== undefined && databases.length === 0)) {
+      return environment === undefined ? undefined : { kind: 'environment-missing-databases', environment };
+    }
     const bookkitDatabase = databases.find((database) => database.binding === 'BOOKKIT_DB');
     if (bookkitDatabase?.database_name) return { kind: 'selected', databaseName: bookkitDatabase.database_name };
     if (databases.length === 1 && databases[0]?.database_name) {
@@ -103,9 +109,9 @@ function readDatabaseSelection(configPath: string): DatabaseSelection | undefine
   }
 }
 
-function defaultConfigPath(): string | undefined {
+function defaultConfigPath(cwd: string): string | undefined {
   return ['wrangler.jsonc', 'wrangler.json', 'wrangler.toml']
-    .map((name) => resolve(process.cwd(), name))
+    .map((name) => resolve(cwd, name))
     .find((candidate) => existsSync(candidate));
 }
 
@@ -143,9 +149,17 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-function parseArgs(argv: string[]): { configPath: string | undefined; databaseName: string | undefined; passthrough: string[] } {
+function parseArgs(argv: string[]): {
+  configPath: string | undefined;
+  cwd: string | undefined;
+  databaseName: string | undefined;
+  environment: string | undefined;
+  passthrough: string[];
+} {
   let configPath: string | undefined;
+  let cwd: string | undefined;
   let databaseName: string | undefined;
+  let environment: string | undefined;
   const passthrough: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -180,10 +194,14 @@ function parseArgs(argv: string[]): { configPath: string | undefined; databaseNa
       }
       if (name === '-c' || name === '--config') {
         configPath = value;
-      } else if (inlineValue === undefined) {
-        passthrough.push(name, value);
       } else {
-        passthrough.push(arg);
+        if (name === '--cwd') cwd = value;
+        if (name === '-e' || name === '--env') environment = value;
+        if (inlineValue === undefined) {
+          passthrough.push(name, value);
+        } else {
+          passthrough.push(arg);
+        }
       }
       if (inlineValue === undefined) index += 1;
       continue;
@@ -191,18 +209,29 @@ function parseArgs(argv: string[]): { configPath: string | undefined; databaseNa
     if (databaseName) fail(`unexpected database name \`${arg}\`; only one database name may be supplied`);
     databaseName = arg;
   }
-  return { configPath, databaseName, passthrough };
+  return { configPath, cwd, databaseName, environment, passthrough };
 }
 
 function main(): void {
-  const { configPath: explicitConfigPath, databaseName: explicitDatabaseName, passthrough } = parseArgs(process.argv.slice(2));
-
-  const configPath = explicitConfigPath ?? defaultConfigPath();
+  const {
+    configPath: explicitConfigPath,
+    cwd: explicitCwd,
+    databaseName: explicitDatabaseName,
+    environment,
+    passthrough,
+  } = parseArgs(process.argv.slice(2));
+  const configCwd = explicitCwd === undefined ? process.cwd() : resolve(process.cwd(), explicitCwd);
+  const configPath = explicitConfigPath === undefined
+    ? defaultConfigPath(configCwd)
+    : resolve(configCwd, explicitConfigPath);
   if (!configPath || !existsSync(configPath)) {
-    fail('no wrangler config found (looked for wrangler.jsonc, wrangler.json, wrangler.toml in the current directory); pass --config <path>');
+    fail(`no wrangler config found (looked for wrangler.jsonc, wrangler.json, wrangler.toml in ${configCwd}); pass --config <path>`);
   }
 
-  const selection = explicitDatabaseName ? undefined : readDatabaseSelection(configPath);
+  const selection = explicitDatabaseName ? undefined : readDatabaseSelection(configPath, environment);
+  if (selection?.kind === 'environment-missing-databases') {
+    fail(`environment \`${selection.environment}\` in ${configPath} has no d1_databases binding; pass the database name explicitly`);
+  }
   if (selection?.kind === 'ambiguous') {
     fail(`multiple D1 databases found in ${configPath}: ${selection.candidates.join(', ')}. Pass one explicitly, e.g. \`bookkit-migrate <database_name> --local\``);
   }
