@@ -12,6 +12,7 @@ const repo = createBookingRepository(db);
 beforeEach(async () => {
   await db.prepare('DELETE FROM bookings').run();
   await db.prepare('DELETE FROM day_overrides').run();
+  await db.prepare('DELETE FROM refund_operations').run();
 });
 
 describe('D1 booking repository', () => {

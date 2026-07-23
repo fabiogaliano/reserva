@@ -1,9 +1,10 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createBookkitContext } from '../src/context';
-import { handleCustomerReschedule, handleOperatorCancel, handleOperatorNoShow, handleOperatorReschedule } from '../src/handlers';
+import { handleCustomerCancel, handleCustomerReschedule, handleOperatorCancel, handleOperatorNoShow, handleOperatorReschedule, handleStripeWebhook } from '../src/handlers';
+import type { RefundOperationRecord } from '../src/repo';
 import { booking, config } from './fixtures';
-import { fakeRepository, providers } from './fakes';
+import { fakeRefundTracker, fakeRepository, providers } from './fakes';
 
 const clock = () => new Date('2026-06-14T08:00:00.000Z');
 const validNewStart = '2026-06-15T08:00:00.000Z';
@@ -86,7 +87,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
       db: {} as D1Database,
       repo,
       clock,
-      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionId: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => { refunds += 1; } } }),
+      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionId: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => { refunds += 1; return { refundId: 're_full', amountCents: seeded.priceCents }; } } }),
     });
 
     const first = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
@@ -112,7 +113,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
       db: {} as D1Database,
       repo,
       clock,
-      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionId: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => { refunds += 1; } } }),
+      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionId: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => { refunds += 1; return { refundId: 're_none', amountCents: seeded.priceCents }; } } }),
     });
 
     const response = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'none' }), context);
@@ -141,7 +142,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     await expect(response.json()).resolves.toMatchObject({ error: { code: 'invalid_transition' } });
   });
 
-  it('a throwing refund() surfaces as a non-2xx response and leaves the row uncancelled', async () => {
+  it('a throwing refund() surfaces as a non-2xx response, but the cancellation is already durable and the failure is recorded on the operation row (BK-REFUND-001)', async () => {
     const seeded = booking({ id: 'b-op-cancel-refund-throws', stripePaymentIntent: 'pi_refund_throws' });
     const repo = fakeRepository([seeded]);
     const context = createBookkitContext({
@@ -154,7 +155,324 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
 
     const response = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
     expect(response.status).toBeGreaterThanOrEqual(400);
-    expect(repo.rows.get(seeded.id)?.status).toBe('confirmed');
+    // The refund decision + cancellation are claimed and committed before Stripe is ever called
+    // (durability requirement), so the booking is cancelled even though the refund call failed —
+    // the failure lives on the operation row for retry/reconciliation instead of being lost.
+    expect(repo.rows.get(seeded.id)?.status).toBe('cancelled');
+    const operation = repo.refundOperations.get(seeded.id);
+    expect(operation?.status).toBe('failed');
+    expect(operation?.error).toContain('refund provider down');
+  });
+
+  it('(F7) a refund=full and refund=none request racing FOR REAL on the same booking: exactly one cancels and refunds, the loser calls no Stripe and gets refund_conflict — including the already-cancelled interleaving that follows (BK-REFUND-001)', async () => {
+    const seeded = booking({ id: 'b-op-cancel-race', stripePaymentIntent: 'pi_refund_race' });
+    const repo = fakeRepository([seeded]);
+    let refunds = 0;
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock,
+      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionId: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => { refunds += 1; return { refundId: 're_race', amountCents: seeded.priceCents }; } } }),
+    });
+
+    // Two REAL handler invocations racing on the same booking via the same repo (not a
+    // pre-seeded winner) — this exercises the actual claim/CAS interleaving between two
+    // in-flight requests, matching how a real double-click or duplicate request would arrive.
+    const [fullResponse, noneResponse] = await Promise.all([
+      handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context),
+      handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'none' }), context),
+    ]);
+
+    const outcomes = [
+      { choice: 'full' as const, response: fullResponse },
+      { choice: 'none' as const, response: noneResponse },
+    ];
+    const winner = outcomes.find((outcome) => outcome.response.status === 200);
+    const loser = outcomes.find((outcome) => outcome.response.status === 409);
+    expect(winner).toBeDefined();
+    expect(loser).toBeDefined();
+    await expect(loser!.response.json()).resolves.toMatchObject({ error: { code: 'refund_conflict' } });
+    // Exactly one cancellation happened, and Stripe was only ever called if 'full' is the winner.
+    expect(repo.rows.get(seeded.id)?.status).toBe('cancelled');
+    const expectedRefunds = winner!.choice === 'full' ? 1 : 0;
+    expect(refunds).toBe(expectedRefunds);
+
+    // Already-cancelled interleaving: a THIRD request replaying the LOSING choice must still be
+    // rejected — it must never silently resume (or re-drive) the winner's decision just because
+    // the booking is now cancelled.
+    const replayLoser = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: loser!.choice }), context);
+    expect(replayLoser.status).toBe(409);
+    await expect(replayLoser.json()).resolves.toMatchObject({ error: { code: 'refund_conflict' } });
+    expect(refunds).toBe(expectedRefunds); // no extra Stripe call from the replayed loser
+
+    // Replaying the WINNING choice is the genuine-retry path: it resolves ok with no new Stripe
+    // call, since that operation already succeeded.
+    const replayWinner = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: winner!.choice }), context);
+    expect(replayWinner.status).toBe(200);
+    expect(refunds).toBe(expectedRefunds);
+  });
+
+  it('a crash between Stripe success and recording it recovers on retry and records the refund id (D1-failure-after-Stripe-success)', async () => {
+    const seeded = booking({ id: 'b-op-cancel-crash-recovery', stripePaymentIntent: 'pi_refund_crash' });
+    const repo = fakeRepository([seeded]);
+    let refunds = 0;
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock,
+      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionId: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => { refunds += 1; return { refundId: 're_crash_recovered', amountCents: seeded.priceCents }; } } }),
+    });
+
+    // Simulate a claim + CAS cancel that both landed, but the process crashed before Stripe was
+    // ever called (or before the result was recorded) — the operation row is left 'requested'.
+    await repo.claimRefundOperation({ id: 'op-crash-1', bookingId: seeded.id, paymentIntent: seeded.stripePaymentIntent, choice: 'full', requestedAt: '2026-06-14T08:00:00.000Z' });
+    repo.rows.set(seeded.id, { ...seeded, status: 'cancelled', cancelledAt: '2026-06-14T08:00:00.000Z', cancelledBy: 'operator' });
+
+    const retry = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
+    expect(retry.status).toBe(200);
+    expect(refunds).toBe(1);
+    const operation = repo.refundOperations.get(seeded.id);
+    expect(operation?.status).toBe('succeeded');
+    expect(operation?.stripeRefundId).toBe('re_crash_recovered');
+  });
+
+  it('(F8) a crash after Stripe succeeds but before the D1 resolve write lands is never recorded as failed, and a retry recovers using the same idempotency key (finding #4)', async () => {
+    const seeded = booking({ id: 'b-op-cancel-post-stripe-d1-crash', stripePaymentIntent: 'pi_post_stripe_crash' });
+    const repo = fakeRepository([seeded]);
+    const { refund, idempotencyKeys } = fakeRefundTracker(() => ({ refundId: 're_post_stripe_crash', amountCents: seeded.priceCents }));
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock,
+      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionId: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund } }),
+    });
+
+    // Make the FIRST attempt to record a 'succeeded' outcome throw, simulating Stripe succeeding
+    // and then the D1 write that would have recorded it failing (crash, timeout, whatever).
+    const realResolve = repo.resolveRefundOperation;
+    let succeededWriteAttempts = 0;
+    repo.resolveRefundOperation = async (id, input) => {
+      if (input.status === 'succeeded') {
+        succeededWriteAttempts += 1;
+        if (succeededWriteAttempts === 1) throw new Error('simulated D1 write failure');
+      }
+      return realResolve(id, input);
+    };
+
+    const first = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
+    // The cancellation itself already committed (CAS ran before Stripe was ever called), so only
+    // the post-Stripe resolve write failed — the caller sees a plain error, not a false 'failed'.
+    expect(first.status).toBeGreaterThanOrEqual(500);
+    expect(repo.rows.get(seeded.id)?.status).toBe('cancelled');
+    // Finding #4: a Stripe-success-then-D1-write-failure must never be recorded as a Stripe
+    // failure — the row stays 'requested', never 'failed'.
+    expect(repo.refundOperations.get(seeded.id)?.status).toBe('requested');
+    expect(idempotencyKeys).toHaveLength(1);
+
+    const retry = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
+    expect(retry.status).toBe(200);
+    const operation = repo.refundOperations.get(seeded.id);
+    expect(operation?.status).toBe('succeeded');
+    expect(operation?.stripeRefundId).toBe('re_post_stripe_crash');
+    // Recovery reused the SAME idempotency key rather than minting a fresh one per attempt.
+    expect(idempotencyKeys).toEqual(['bookkit-refund-pi_post_stripe_crash', 'bookkit-refund-pi_post_stripe_crash']);
+  });
+
+  it('(F9) a completely fresh repo instance (no shared in-memory state) recovering a PENDING operation never calls Stripe until it independently confirms the booking is cancelled (finding #1)', async () => {
+    const seeded = booking({ id: 'b-op-cancel-fresh-repo-pending', stripePaymentIntent: 'pi_fresh_repo_pending' }); // still confirmed
+    const pendingOperation: RefundOperationRecord = {
+      id: 'op-fresh-repo-pending', bookingId: seeded.id, paymentIntent: seeded.stripePaymentIntent, choice: 'full',
+      status: 'requested', stripeRefundId: null, amountCents: null, requestedAt: '2026-06-14T07:00:00.000Z', resolvedAt: null, error: null,
+    };
+    // A brand-new repo instance — no object here is shared with whatever originally produced
+    // this state — seeded to look exactly like a fresh D1 read from a different isolate would: a
+    // same-choice claim already exists, but the booking itself is still 'confirmed' because the
+    // claim-holder hasn't completed its CAS cancel yet.
+    const freshRepo = fakeRepository([seeded]);
+    freshRepo.refundOperations.set(seeded.id, pendingOperation);
+    let refunds = 0;
+    const freshContext = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo: freshRepo,
+      clock,
+      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionId: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => { refunds += 1; return { refundId: 're_should_not_happen', amountCents: seeded.priceCents }; } } }),
+    });
+
+    const response = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), freshContext);
+    expect(refunds).toBe(0);
+    expect(response.status).toBe(409);
+    expect(freshRepo.rows.get(seeded.id)?.status).toBe('confirmed');
+
+    // The claim-holder's CAS now actually lands (simulated directly on this same fresh repo) — a
+    // retry against this same fresh context recovers the pending operation correctly.
+    freshRepo.rows.set(seeded.id, { ...seeded, status: 'cancelled', cancelledAt: '2026-06-14T07:05:00.000Z', cancelledBy: 'operator' });
+    const retry = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), freshContext);
+    expect(retry.status).toBe(200);
+    expect(refunds).toBe(1);
+    expect(freshRepo.refundOperations.get(seeded.id)?.status).toBe('succeeded');
+  });
+
+  it('a lost cancel CAS (e.g. a concurrent reschedule wins) does not leave a permanently-blocking operation row, and never calls Stripe on that lost attempt (finding #3)', async () => {
+    const seeded = booking({ id: 'b-op-cancel-lost-cas', stripePaymentIntent: 'pi_lost_cas' });
+    const repo = fakeRepository([seeded]);
+    let refunds = 0;
+    // Simulate a concurrent reschedule winning the race: the CAS cancel attempt finds starts_at
+    // has already moved (exercised directly rather than via true concurrency — the real
+    // uniqueness/CAS primitives are exercised against D1 in tests/workers/).
+    const realTransition = repo.transitionToCancelled;
+    repo.transitionToCancelled = async (id, input) => {
+      const current = repo.rows.get(id);
+      if (current) repo.rows.set(id, { ...current, startsAt: '2026-06-20T08:00:00.000Z' });
+      return realTransition(id, input);
+    };
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock,
+      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionId: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => { refunds += 1; return { refundId: 're_lost_cas', amountCents: seeded.priceCents }; } } }),
+    });
+
+    const lost = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
+    expect(lost.status).toBe(409);
+    await expect(lost.json()).resolves.toMatchObject({ error: { code: 'slot_unavailable' } });
+    expect(refunds).toBe(0);
+    // The lost claim must not linger as a permanent UNIQUE(booking_id) row: a later legitimate
+    // cancel (against the booking's now-current start time) can still claim and refund.
+    expect(repo.refundOperations.has(seeded.id)).toBe(false);
+
+    repo.transitionToCancelled = realTransition;
+    const retry = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
+    expect(retry.status).toBe(200);
+    expect(refunds).toBe(1);
+    expect(repo.rows.get(seeded.id)?.status).toBe('cancelled');
+  });
+
+  it('a lost operator cancel CAS to a customer cancellation resumes the claimed full refund instead of deleting it', async () => {
+    const seeded = booking({ id: 'b-op-cancel-lost-cas-customer', stripePaymentIntent: 'pi_lost_cas_customer' });
+    const repo = fakeRepository([seeded]);
+    let refunds = 0;
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock,
+      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionId: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => { refunds += 1; return { refundId: 're_lost_cas_customer', amountCents: seeded.priceCents }; } } }),
+    });
+    const realTransition = repo.transitionToCancelled;
+    repo.transitionToCancelled = async (id, input) => {
+      if (input.cancelledBy === 'operator') {
+        const customer = await handleCustomerCancel(new Request('https://example.test/api/booking/cancel', {
+          method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: seeded.cancelToken }),
+        }), context);
+        expect(customer.status).toBe(200);
+      }
+      return realTransition(id, input);
+    };
+
+    const response = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
+    expect(response.status).toBe(200);
+    expect(repo.rows.get(seeded.id)?.status).toBe('cancelled');
+    expect(refunds).toBe(1);
+    expect(repo.refundOperations.get(seeded.id)).toMatchObject({ status: 'succeeded', stripeRefundId: 're_lost_cas_customer' });
+  });
+
+  it('a charge.refunded webhook that wins the operator cancel CAS preserves its succeeded operation row', async () => {
+    const paymentIntent = 'pi_lost_cas_webhook';
+    const seeded = booking({ id: 'b-op-cancel-lost-cas-webhook', stripePaymentIntent: paymentIntent });
+    const repo = fakeRepository([seeded]);
+    let refunds = 0;
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock,
+      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionId: '' }), parseWebhook: async () => ({ id: 'evt_lost_cas_webhook', type: 'charge.refunded', paymentIntent, amountCaptured: seeded.priceCents, amountRefunded: seeded.priceCents, refundId: 're_webhook_won' }), getSession: async () => ({ status: 'open' }), refund: async () => { refunds += 1; return { refundId: 're_should_not_run', amountCents: seeded.priceCents }; } } }),
+    });
+    const realTransition = repo.transitionToCancelled;
+    repo.transitionToCancelled = async (id, input) => {
+      if (input.expectedStartsAt !== undefined) {
+        const webhook = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+        expect(webhook.status).toBe(200);
+      }
+      return realTransition(id, input);
+    };
+
+    const response = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
+    expect(response.status).toBe(200);
+    expect(refunds).toBe(0);
+    expect(repo.refundOperations.get(seeded.id)).toMatchObject({ status: 'succeeded', stripeRefundId: 're_webhook_won', amountCents: seeded.priceCents });
+  });
+
+  it('a same-choice loser re-reads the operation after the winner records success, avoiding a second Stripe call', async () => {
+    const seeded = booking({ id: 'b-op-cancel-same-choice-resolve-race', stripePaymentIntent: 'pi_same_choice_resolve_race' });
+    const repo = fakeRepository([seeded]);
+    let notifyLoserReached: (() => void) | undefined;
+    const loserReached = new Promise<void>((resolve) => { notifyLoserReached = resolve; });
+    let notifyWinnerResolved: (() => void) | undefined;
+    const winnerResolved = new Promise<void>((resolve) => { notifyWinnerResolved = resolve; });
+    const realGetBookingById = repo.getBookingById;
+    repo.getBookingById = async (id) => {
+      notifyLoserReached?.();
+      await winnerResolved;
+      return realGetBookingById(id);
+    };
+    const realTransition = repo.transitionToCancelled;
+    repo.transitionToCancelled = async (id, input) => {
+      const updated = await realTransition(id, input);
+      await loserReached;
+      return updated;
+    };
+    const realResolve = repo.resolveRefundOperation;
+    repo.resolveRefundOperation = async (id, input) => {
+      await realResolve(id, input);
+      if (input.status === 'succeeded') notifyWinnerResolved?.();
+    };
+    let refunds = 0;
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock,
+      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionId: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => {
+        refunds += 1;
+        if (refunds === 1) return { refundId: 're_same_choice', amountCents: seeded.priceCents };
+        throw new Error('second Stripe call');
+      } } }),
+    });
+
+    const [first, second] = await Promise.all([
+      handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context),
+      handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context),
+    ]);
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(refunds).toBe(1);
+    expect(repo.refundOperations.get(seeded.id)).toMatchObject({ status: 'succeeded', stripeRefundId: 're_same_choice' });
+  });
+
+  it('a cross-context retry (fresh context, no shared memory) does not duplicate the Stripe call, because it relies on the durable operation row instead of refundedPayments', async () => {
+    const seeded = booking({ id: 'b-op-cancel-cross-context', stripePaymentIntent: 'pi_refund_cross_context' });
+    const repo = fakeRepository([seeded]);
+    let refunds = 0;
+    const paymentsOverride = { createCheckout: async () => ({ url: '', sessionId: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => { refunds += 1; return { refundId: 're_cross_context', amountCents: seeded.priceCents }; } };
+
+    // Two independently-constructed contexts sharing only the same repo/db — the point of the
+    // durable operation row: no in-memory Set survives across isolates, but the D1 row does.
+    const contextA = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers({ payments: paymentsOverride }) });
+    const contextB = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers({ payments: paymentsOverride }) });
+
+    const first = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), contextA);
+    expect(first.status).toBe(200);
+    expect(refunds).toBe(1);
+
+    const second = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), contextB);
+    expect(second.status).toBe(200);
+    expect(refunds).toBe(1);
   });
 });
 

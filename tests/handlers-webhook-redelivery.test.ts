@@ -41,7 +41,7 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
             amountCaptured: seeded.priceCents,
           }),
           getSession: async () => ({ status: 'open' }),
-          refund: async () => undefined,
+          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
         },
         calendar: {
           listEvents: async () => [],
@@ -115,7 +115,7 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
             amountCaptured: seeded.priceCents,
           }),
           getSession: async () => ({ status: 'open' }),
-          refund: async () => undefined,
+          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
         },
         calendar: {
           listEvents: async () => [],

@@ -320,19 +320,37 @@ export function handleStripeWebhook(request: Request, context: BookkitContext): 
           ? await context.repo.getBookingByPaymentIntent(event.paymentIntent)
           : null;
         const booking = byPayment ?? (event.bookingId ? await context.repo.getBookingById(event.bookingId) : null);
-        if (booking && booking.status !== 'cancelled') {
-          await calendarDelete(context, booking);
+        if (booking) {
           const timestamp = nowIso(context);
-          const updated = await context.repo.transitionToCancelled(booking.id, {
-            // no_show and cancelled are terminal: a refund arriving after either must not
-            // resurrect/overwrite them (spec item 4). CAS loss here is an idempotent no-op —
-            // Stripe still gets 200 below, so a retry never causes redelivery storms.
-            expectedStatusIn: ['hold', 'confirmed', 'expired'],
-            cancelledAt: timestamp, cancelledBy: 'operator', updatedAt: timestamp,
+          // Reconcile the durable operation record regardless of which side (this webhook or an
+          // operator's own claim) ends up owning the booking's cancelled_by — Stripe is the
+          // source of truth for whether the money moved, so its refund id/amount always wins here
+          // (BK-REFUND-001). Upsert rather than claim: a dashboard-initiated refund has no prior
+          // claim to race against.
+          await context.repo.upsertRefundOperation({
+            id: crypto.randomUUID(),
+            bookingId: booking.id,
+            paymentIntent: event.paymentIntent ?? booking.stripePaymentIntent ?? null,
+            choice: 'full',
+            status: 'succeeded',
+            stripeRefundId: event.refundId ?? null,
+            amountCents: event.amountRefunded,
+            requestedAt: timestamp,
+            resolvedAt: timestamp,
           });
-          // A concurrent transition (e.g. a customer cancel) can win this race; when it does,
-          // the booking already reached a terminal state, so there is nothing left to dispatch.
-          if (updated) await dispatchMutation(context, 'booking.cancelled_by_operator', updated);
+          if (booking.status !== 'cancelled') {
+            await calendarDelete(context, booking);
+            const updated = await context.repo.transitionToCancelled(booking.id, {
+              // no_show and cancelled are terminal: a refund arriving after either must not
+              // resurrect/overwrite them (spec item 4). CAS loss here is an idempotent no-op —
+              // Stripe still gets 200 below, so a retry never causes redelivery storms.
+              expectedStatusIn: ['hold', 'confirmed', 'expired'],
+              cancelledAt: timestamp, cancelledBy: 'operator', updatedAt: timestamp,
+            });
+            // A concurrent transition (e.g. a customer cancel) can win this race; when it does,
+            // the booking already reached a terminal state, so there is nothing left to dispatch.
+            if (updated) await dispatchMutation(context, 'booking.cancelled_by_operator', updated);
+          }
         }
       }
     } else if (event.type === 'charge.dispute.created') {
@@ -507,6 +525,69 @@ async function operatorBooking(context: BookkitContext, request: Request, body: 
   return booking;
 }
 
+// Executes (or resumes) the Stripe side of a claimed refund operation and records the outcome
+// (BK-REFUND-001). Safe to call more than once for the same operation id: refund() carries
+// Stripe's own idempotency key, so a resumed/retried call cannot double-refund even when a
+// previous attempt's D1 write never landed (crash between Stripe success and recording it).
+async function resolvePendingRefund(
+  context: BookkitContext,
+  bookingId: string,
+  operationId: string,
+  choice: 'full' | 'none',
+  paymentIntent: string | null,
+): Promise<void> {
+  if (choice === 'none' || !paymentIntent) {
+    await context.repo.resolveRefundOperation(operationId, { status: 'succeeded', resolvedAt: nowIso(context) });
+    return;
+  }
+  // A same-choice loser can hold a stale requested snapshot while the winner records success.
+  // Re-read immediately before Stripe so it does not turn that success into a needless retry.
+  const current = await context.repo.getRefundOperationByBookingId(bookingId);
+  if (current?.id !== operationId || current.status === 'succeeded') return;
+  let result: { refundId: string; amountCents: number };
+  try {
+    result = await context.providers.payments.refund(paymentIntent);
+  } catch (error) {
+    // Only a failure of the Stripe call itself is a genuine refund failure — record it so the
+    // operation row remains for retry/reconciliation.
+    await context.repo.resolveRefundOperation(operationId, {
+      status: 'failed', error: error instanceof Error ? error.message : 'Refund failed', resolvedAt: nowIso(context),
+    });
+    throw new HttpError(502, 'refund_failed', 'The refund could not be completed; it will be retried');
+  }
+  // Stripe has already moved the money by this point — a failure recording that outcome to D1
+  // must never be classified as a Stripe failure (that would misreport a completed refund as
+  // failed, or mark it 'failed' forever). Let a write failure here propagate as a plain error
+  // instead: the row stays 'requested', and a retry recovers the same result via Stripe's
+  // idempotency key (or, once that key's ~24h window has lapsed, via refunds.list reconciliation
+  // in StripeProvider.refund) rather than ever double-refunding or losing the outcome.
+  await context.repo.resolveRefundOperation(operationId, {
+    status: 'succeeded', stripeRefundId: result.refundId, amountCents: result.amountCents, resolvedAt: nowIso(context),
+  });
+}
+
+// Reconciles a request against the refund-operation row for an already-cancelled booking
+// (BK-REFUND-001). Used both when the booking was already cancelled on entry and when this
+// request's own CAS cancel attempt lost to a concurrent same-choice winner. In both cases Stripe
+// may only be touched for the operation that actually won the claim, and only once its choice
+// matches this request's own — a different-choice request must never drive (or silently agree
+// with) another request's Stripe call.
+async function reconcileCancelledRefund(
+  context: BookkitContext,
+  booking: Booking,
+  refund: 'full' | 'none',
+): Promise<Response> {
+  const existing = await context.repo.getRefundOperationByBookingId(booking.id);
+  if (!existing) return json({ ok: true }); // nothing was ever claimed for this booking.
+  if (existing.choice !== refund) {
+    throw new HttpError(409, 'refund_conflict', 'A different refund decision already won for this booking');
+  }
+  if (existing.status !== 'succeeded') {
+    await resolvePendingRefund(context, booking.id, existing.id, existing.choice, existing.paymentIntent ?? booking.stripePaymentIntent ?? null);
+  }
+  return json({ ok: true });
+}
+
 export function handleOperatorCancel(request: Request, context: BookkitContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
@@ -514,28 +595,66 @@ export function handleOperatorCancel(request: Request, context: BookkitContext):
     const booking = await operatorBooking(context, request, body);
     const refund = body.refund === 'full' ? 'full' : body.refund === 'none' ? 'none' : null;
     if (!refund) throw new HttpError(400, 'validation_failed', 'refund must be full or none');
-    if (booking.status === 'cancelled') return json({ ok: true });
-    if (booking.status !== 'confirmed') throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
-    await calendarDelete(context, booking);
-    if (refund === 'full' && booking.stripePaymentIntent && !context.refundedPayments?.has(booking.id)) {
-      await context.providers.payments.refund(booking.stripePaymentIntent);
-      context.refundedPayments?.add(booking.id);
+
+    if (booking.status === 'cancelled') {
+      // Already cancelled, but the refund claimed for it might not have finished (a crash
+      // between the Stripe call and recording it, or an earlier Stripe failure never retried).
+      // Resume it instead of silently reporting ok while the money side is unresolved — but only
+      // when this request's own choice is the one that actually won the claim (finding #2).
+      return reconcileCancelledRefund(context, booking, refund);
     }
+    if (booking.status !== 'confirmed') throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
+
+    // Claim-then-act (BK-REFUND-001): the refund decision is durably recorded before Stripe is
+    // ever touched, so a refund=full and refund=none request racing on this booking can never
+    // both call Stripe. Winning this claim only earns the right to attempt the CAS cancel below —
+    // it is that CAS transition, not the claim, that is the authoritative gate: Stripe is only
+    // ever reached once the booking is confirmed durably cancelled (finding #1).
+    const operationId = crypto.randomUUID();
+    const claimed = await context.repo.claimRefundOperation({
+      id: operationId, bookingId: booking.id, paymentIntent: booking.stripePaymentIntent ?? null,
+      choice: refund, requestedAt: nowIso(context),
+    });
+    if (!claimed) {
+      // Lost the claim to a concurrent request for this booking. Same choice = treat as the same
+      // logical operation and resume it; a different choice already won = surface the conflict
+      // rather than silently agreeing with (or fighting) a decision this request didn't make.
+      const existing = await context.repo.getRefundOperationByBookingId(booking.id);
+      if (!existing || existing.choice !== refund) {
+        throw new HttpError(409, 'refund_conflict', 'A different refund decision already won for this booking');
+      }
+      if (existing.status === 'succeeded') return json({ ok: true });
+      // The claim-holder may not have finished the CAS cancel yet — verify the booking is
+      // actually cancelled before ever calling Stripe. Never resume a same-choice claim's refund
+      // against a booking that isn't confirmed-cancelled (finding #1).
+      const fresh = await context.repo.getBookingById(booking.id);
+      if (fresh?.status !== 'cancelled') throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
+      await resolvePendingRefund(context, booking.id, existing.id, existing.choice, existing.paymentIntent ?? booking.stripePaymentIntent ?? null);
+      return json({ ok: true });
+    }
+
+    await calendarDelete(context, booking);
     const cancelled = cancelBooking(booking, 'operator', nowIso(context));
     const updated = await context.repo.transitionToCancelled(cancelled.id, {
       expectedStatusIn: ['confirmed'], expectedStartsAt: booking.startsAt,
       cancelledAt: cancelled.updatedAt, cancelledBy: 'operator', updatedAt: cancelled.updatedAt,
     });
     if (!updated) {
-      // Same conflict-only rule as the customer cancel path: a concurrent reschedule (still
-      // confirmed, different starts_at) is a slot conflict, anything else is a wrong-state 409.
       const fresh = await context.repo.getBookingById(cancelled.id);
+      if (fresh?.status === 'cancelled') return reconcileCancelledRefund(context, fresh, refund);
+      // A non-cancelled winner makes this request's decision unusable. The repository only
+      // deletes requested rows, so a webhook's already-recorded Stripe success cannot be lost.
+      await context.repo.deleteRefundOperation(operationId);
       if (fresh?.status === 'confirmed' && fresh.startsAt !== booking.startsAt) {
         throw new HttpError(409, 'slot_unavailable', 'The selected slot is no longer available');
       }
       throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
     }
+
+    // Dispatch first: the cancellation itself is already durable at this point (CAS above), so
+    // downstream notification must not depend on whether the refund call that follows succeeds.
     await dispatchMutation(context, 'booking.cancelled_by_operator', updated);
+    await resolvePendingRefund(context, booking.id, operationId, refund, booking.stripePaymentIntent ?? null);
     return json({ ok: true });
   });
 }

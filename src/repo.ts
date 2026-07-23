@@ -34,6 +34,25 @@ export class HoldLimitExceededError extends Error {
   }
 }
 
+// BK-REFUND-001: a durable record of a refund decision + its Stripe outcome, replacing the
+// in-memory refundedPayments Set. One row per booking (UNIQUE booking_id — see migrations/
+// 0006_refund_operations.sql) so exactly one request can claim a booking's refund decision.
+export type RefundChoice = 'full' | 'none';
+export type RefundOperationStatus = 'requested' | 'succeeded' | 'failed';
+
+export interface RefundOperationRecord {
+  id: string;
+  bookingId: string;
+  paymentIntent: string | null;
+  choice: RefundChoice;
+  status: RefundOperationStatus;
+  stripeRefundId: string | null;
+  amountCents: number | null;
+  requestedAt: string;
+  resolvedAt: string | null;
+  error: string | null;
+}
+
 export interface BookingUpdate {
   pickupAddress?: string | null;
   customerName?: string | null;
@@ -120,6 +139,49 @@ export interface BookingRepository {
   // Applies every key of a settings section in one D1 batch (all-or-nothing) — see
   // core/settings.ts mergeAndValidateSettings, which the admin save path runs first.
   applySettingsBatch(operations: SettingsBatchOperation[]): Promise<void>;
+  // Compare-and-set claim: succeeds (true) only when no operation row exists yet for this
+  // booking_id, so a refund=full and refund=none request racing on the same booking can never
+  // both proceed to call Stripe (BK-REFUND-001). The loser calls getRefundOperationByBookingId to
+  // see which decision won.
+  claimRefundOperation(input: {
+    id: string;
+    bookingId: string;
+    paymentIntent: string | null;
+    choice: RefundChoice;
+    requestedAt: string;
+  }): Promise<boolean>;
+  getRefundOperationByBookingId(bookingId: string): Promise<RefundOperationRecord | null>;
+  // Records the Stripe outcome of a claimed operation. Safe to call more than once (e.g. a
+  // resumed/retried operation) — it's a conditional UPDATE by id (WHERE status != 'succeeded'),
+  // not a plain write: status only ever advances (requested -> succeeded/failed), so a stale
+  // attempt (e.g. an operator retry racing the charge.refunded webhook) can never downgrade an
+  // already-succeeded row to 'failed' or clear its recorded refund id/amount (BK-REFUND-001).
+  resolveRefundOperation(id: string, input: {
+    status: 'succeeded' | 'failed';
+    stripeRefundId?: string | null;
+    amountCents?: number | null;
+    error?: string | null;
+    resolvedAt: string;
+  }): Promise<void>;
+  // Removes this request's still-pending claim after its own CAS cancel loses to a non-cancelled
+  // winner (e.g. a reschedule), so it cannot block a later legitimate cancellation. A succeeded
+  // row is deliberately retained because it is the durable record that Stripe moved the money.
+  deleteRefundOperation(id: string): Promise<void>;
+  // Stripe-initiated refunds (e.g. from the dashboard) arrive via webhook with no prior claim —
+  // upsert so operator- and Stripe-initiated refunds reconcile through the same record instead of
+  // drifting apart. Does not overwrite requested_at on an existing row.
+  upsertRefundOperation(input: {
+    id: string;
+    bookingId: string;
+    paymentIntent: string | null;
+    choice: RefundChoice;
+    status: RefundOperationStatus;
+    stripeRefundId: string | null;
+    amountCents: number | null;
+    requestedAt: string;
+    resolvedAt: string | null;
+    error?: string | null;
+  }): Promise<void>;
 }
 
 interface BookingRow {
@@ -199,6 +261,37 @@ const bookingColumns = `id, reference, tour_slug, people, pickup_type, pickup_ad
 async function first<T>(result: Promise<D1Result<T>>): Promise<T | null> {
   return (await result).results[0] ?? null;
 }
+
+interface RefundOperationRow {
+  id: string;
+  booking_id: string;
+  payment_intent: string | null;
+  choice: RefundChoice;
+  status: RefundOperationStatus;
+  stripe_refund_id: string | null;
+  amount_cents: number | null;
+  requested_at: string;
+  resolved_at: string | null;
+  error: string | null;
+}
+
+function mapRefundOperation(row: RefundOperationRow): RefundOperationRecord {
+  return {
+    id: row.id,
+    bookingId: row.booking_id,
+    paymentIntent: row.payment_intent,
+    choice: row.choice,
+    status: row.status,
+    stripeRefundId: row.stripe_refund_id,
+    amountCents: row.amount_cents === null ? null : Number(row.amount_cents),
+    requestedAt: row.requested_at,
+    resolvedAt: row.resolved_at,
+    error: row.error,
+  };
+}
+
+const refundOperationColumns = `id, booking_id, payment_intent, choice, status, stripe_refund_id,
+  amount_cents, requested_at, resolved_at, error`;
 
 export function createBookingRepository(db: D1Database): BookingRepository {
   const oneBooking = async (sql: string, ...params: unknown[]): Promise<Booking | null> => {
@@ -422,6 +515,53 @@ export function createBookingRepository(db: D1Database): BookingRepository {
         ? db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').bind(operation.key, operation.value)
         : db.prepare('DELETE FROM settings WHERE key = ?').bind(operation.key));
       await db.batch(statements);
+    },
+    async claimRefundOperation(input) {
+      // Same conditional-insert idiom as insertHold's per-IP cap: the WHERE NOT EXISTS makes this
+      // a single-statement compare-and-set, backed by the UNIQUE(booking_id) constraint as the
+      // real safety net under concurrent writers.
+      const result = await db.prepare(
+        `INSERT INTO refund_operations (id, booking_id, payment_intent, choice, status, requested_at)
+         SELECT ?, ?, ?, ?, 'requested', ?
+         WHERE NOT EXISTS (SELECT 1 FROM refund_operations WHERE booking_id = ?)`,
+      ).bind(input.id, input.bookingId, input.paymentIntent, input.choice, input.requestedAt, input.bookingId).run();
+      return result.meta.changes > 0;
+    },
+    async getRefundOperationByBookingId(bookingId) {
+      const row = await first(db.prepare(
+        `SELECT ${refundOperationColumns} FROM refund_operations WHERE booking_id = ?`,
+      ).bind(bookingId).all<RefundOperationRow>());
+      return row ? mapRefundOperation(row) : null;
+    },
+    async resolveRefundOperation(id, input) {
+      // WHERE status != 'succeeded' is the CAS guard: once a row has succeeded (recorded either
+      // here or by the charge.refunded webhook's upsert), it is terminal — no later resolve call
+      // can regress its status or overwrite its stripe_refund_id/amount_cents.
+      await db.prepare(
+        `UPDATE refund_operations SET status = ?, stripe_refund_id = ?, amount_cents = ?, error = ?, resolved_at = ?
+         WHERE id = ? AND status != 'succeeded'`,
+      ).bind(input.status, input.stripeRefundId ?? null, input.amountCents ?? null, input.error ?? null, input.resolvedAt, id).run();
+    },
+    async deleteRefundOperation(id) {
+      await db.prepare("DELETE FROM refund_operations WHERE id = ? AND status = 'requested'").bind(id).run();
+    },
+    async upsertRefundOperation(input) {
+      // Preserve a terminal Stripe outcome; only its reconciliation timestamp may advance.
+      await db.prepare(
+        `INSERT INTO refund_operations (id, booking_id, payment_intent, choice, status, stripe_refund_id, amount_cents, requested_at, resolved_at, error)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(booking_id) DO UPDATE SET
+           payment_intent = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.payment_intent ELSE excluded.payment_intent END,
+           choice = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.choice ELSE excluded.choice END,
+           status = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.status ELSE excluded.status END,
+           stripe_refund_id = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.stripe_refund_id ELSE excluded.stripe_refund_id END,
+           amount_cents = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.amount_cents ELSE excluded.amount_cents END,
+           resolved_at = excluded.resolved_at,
+           error = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.error ELSE excluded.error END`
+      ).bind(
+        input.id, input.bookingId, input.paymentIntent, input.choice, input.status,
+        input.stripeRefundId, input.amountCents, input.requestedAt, input.resolvedAt, input.error ?? null,
+      ).run();
     },
   };
 }

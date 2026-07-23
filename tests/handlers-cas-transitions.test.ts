@@ -199,7 +199,7 @@ describe('stale compare-and-set transitions', () => {
             amountRefunded: seeded.priceCents,
           }),
           getSession: async () => ({ status: 'open' }),
-          refund: async () => undefined,
+          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
         },
         email: { send: async (event) => { emails.push(event); } },
       }),
@@ -259,7 +259,7 @@ describe('stale compare-and-set transitions', () => {
             amountCaptured: seeded.priceCents,
           }),
           getSession: async () => ({ status: 'open' }),
-          refund: async () => undefined,
+          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
         },
         calendar: {
           listEvents: async () => [],

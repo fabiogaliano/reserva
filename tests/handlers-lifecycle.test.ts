@@ -164,7 +164,7 @@ describe('Bookkit handlers', () => {
           createCheckout: async () => ({ url: '', sessionId: '' }),
           parseWebhook: async () => ({ id: 'evt_unpaid', type: 'checkout.session.completed', bookingId: seeded.id, sessionId: 'cs_unpaid', paid: false }),
           getSession: async () => ({ status: 'open' }),
-          refund: async () => undefined,
+          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
         },
         calendar: {
           listEvents: async () => [],
@@ -198,7 +198,7 @@ describe('Bookkit handlers', () => {
           createCheckout: async () => ({ url: '', sessionId: '' }),
           parseWebhook: async () => ({ id: 'evt_dispute', type: 'charge.dispute.created', paymentIntent: 'pi_dispute' }),
           getSession: async () => ({ status: 'open' }),
-          refund: async () => undefined,
+          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
         },
         ops: {
           push: async (event) => {
@@ -342,7 +342,7 @@ describe('Bookkit handlers', () => {
           createCheckout: async () => ({ url: '', sessionId: '' }),
           parseWebhook: async () => ({ id: 'evt_expired', type: 'checkout.session.completed', bookingId: seededExpired.id, sessionId: 'cs_expired', paid: true, amountCaptured: seededExpired.priceCents }),
           getSession: async () => ({ status: 'open' }),
-          refund: async () => undefined,
+          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
         },
       }),
     });
@@ -366,7 +366,7 @@ describe('Bookkit handlers', () => {
           createCheckout: async () => ({ url: '', sessionId: '' }),
           parseWebhook: async () => ({ id: 'evt_hold', type: 'checkout.session.completed', bookingId: seededHold.id, sessionId: 'cs_hold', paid: true, amountCaptured: seededHold.priceCents }),
           getSession: async () => ({ status: 'open' }),
-          refund: async () => undefined,
+          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
         },
       }),
     });

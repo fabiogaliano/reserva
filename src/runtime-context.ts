@@ -202,7 +202,6 @@ export function defineCloudflareBookkitRuntime<TEnv extends object>(
   const config = validateConfig(configInput);
   const migrationsTable = requireMigrationsTableName(options.migrationsTable ?? D1_MIGRATIONS_TABLE);
   const secretBindings = new Set<string>(options.secretBindings ?? ['TOURFLOW_SHARED_SECRET']);
-  const refundedPayments = new Set<string>();
   const confirmationLocks = new Map<string, Promise<void>>();
   // Memoized across every request this isolate handles: the schema check must run once at
   // first context creation, not on every request (see checkBookkitMigrationsApplied above).
@@ -239,7 +238,6 @@ export function defineCloudflareBookkitRuntime<TEnv extends object>(
         },
         ...(logger ? { logger } : {}),
         ...(waitUntil ? { waitUntil } : {}),
-        refundedPayments,
         confirmationLocks,
         verifyAccess: options.verifyAccess
           ? () => options.verifyAccess?.(bindings) ?? false

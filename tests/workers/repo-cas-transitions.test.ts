@@ -11,6 +11,7 @@ const repo = createBookingRepository(db);
 
 beforeEach(async () => {
   await db.prepare('DELETE FROM bookings').run();
+  await db.prepare('DELETE FROM refund_operations').run();
 });
 
 // BK-DATA-001 pairwise interleavings against real D1: each test seeds one booking, applies

@@ -11,7 +11,11 @@ export interface StripeClient {
     create(params: Stripe.Checkout.SessionCreateParams): Promise<Stripe.Checkout.Session>;
     retrieve(sessionId: string): Promise<Stripe.Checkout.Session>;
   } };
-  refunds: { create(params: Stripe.RefundCreateParams, options?: { idempotencyKey?: string }): Promise<Stripe.Refund> };
+  refunds: {
+    create(params: Stripe.RefundCreateParams, options?: { idempotencyKey?: string }): Promise<Stripe.Refund>;
+    // Optional: only needed for the already-fully-refunded reconciliation path in refund() below.
+    list?(params: Stripe.RefundListParams): Promise<Stripe.ApiList<Stripe.Refund>>;
+  };
   webhooks: { constructEventAsync(
     payload: string,
     signature: string,
@@ -88,6 +92,16 @@ function bookingIdOf(value: unknown): string | undefined {
 function amountOf(value: unknown, field: 'amount_captured' | 'amount_refunded' | 'amount_total'): number | undefined {
   const amount = value && typeof value === 'object' ? (value as Record<string, unknown>)[field] : undefined;
   return typeof amount === 'number' ? amount : undefined;
+}
+
+// The charge.refunded payload's `refunds` list has the actual Refund objects; its most recent
+// entry is the refund this event is about. Absent in older API versions/partial payloads, hence
+// optional chaining throughout — the operation record just falls back to no refund id then.
+function refundIdOf(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const refunds = (value as { refunds?: { data?: Array<{ id?: string }> } }).refunds;
+  const id = refunds?.data?.[0]?.id;
+  return typeof id === 'string' ? id : undefined;
 }
 
 function paymentIntentOf(value: unknown): string | undefined {
@@ -181,10 +195,12 @@ export function stripeEventToParsed(event: Stripe.Event): StripeEventParsed {
     const paymentIntent = paymentIntentOf(charge);
     const amountCaptured = amountOf(charge, 'amount_captured');
     const amountRefunded = amountOf(charge, 'amount_refunded');
+    const refundId = event.type === 'charge.refunded' ? refundIdOf(charge) : undefined;
     if (bookingId) parsed.bookingId = bookingId;
     if (paymentIntent) parsed.paymentIntent = paymentIntent;
     if (amountCaptured !== undefined) parsed.amountCaptured = amountCaptured;
     if (amountRefunded !== undefined) parsed.amountRefunded = amountRefunded;
+    if (refundId !== undefined) parsed.refundId = refundId;
     if (charge.paid !== undefined) parsed.paid = charge.paid;
   }
   return parsed;
@@ -277,11 +293,34 @@ export class StripeProvider implements PaymentProvider {
     return sessionStatusFromStripe(await this.stripe.checkout.sessions.retrieve(sessionId));
   }
 
-  async refund(paymentIntent: string): Promise<void> {
-    await this.stripe.refunds.create(
-      { payment_intent: paymentIntent },
-      { idempotencyKey: `bookkit-refund-${paymentIntent}` },
-    );
+  async refund(paymentIntent: string): Promise<{ refundId: string; amountCents: number }> {
+    try {
+      const refund = await this.stripe.refunds.create(
+        { payment_intent: paymentIntent },
+        { idempotencyKey: `bookkit-refund-${paymentIntent}` },
+      );
+      return { refundId: refund.id, amountCents: refund.amount };
+    } catch (error) {
+      // Key replay cannot be trusted to tell us whether the refund actually happened: keys are
+      // pruned after ~24h (a retried call past that window reaches Stripe as brand new and finds
+      // the charge already entirely refunded, which Stripe rejects), and *within* the window
+      // Stripe replays the exact saved result including error responses — even a cached 500 that
+      // has nothing to do with refunds (handoff caveats a/b). Neither case is reliably
+      // distinguishable from a genuine failure by error message alone, so always reconcile via
+      // refunds.list and only let the original error surface when no successful refund is on file.
+      const reconciled = await this.findExistingRefund(paymentIntent);
+      if (reconciled) return reconciled;
+      throw error;
+    }
+  }
+
+  private async findExistingRefund(paymentIntent: string): Promise<{ refundId: string; amountCents: number } | null> {
+    const list = await this.stripe.refunds.list?.({ payment_intent: paymentIntent, limit: 5 });
+    // Only a refund that actually succeeded is success-equivalent to the failed create() call —
+    // a pending/failed/canceled refund on file means the money hasn't (or won't) moved, so the
+    // original error must still surface rather than being masked as a false success.
+    const refund = list?.data.find((candidate) => candidate.status === 'succeeded');
+    return refund ? { refundId: refund.id, amountCents: refund.amount } : null;
   }
 }
 

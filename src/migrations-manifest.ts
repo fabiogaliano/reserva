@@ -8,4 +8,5 @@ export const BOOKKIT_MIGRATIONS = [
   '0003_hold_ip.sql',
   '0004_capacity_defaults.sql',
   '0005_settings.sql',
+  '0006_refund_operations.sql',
 ] as const;

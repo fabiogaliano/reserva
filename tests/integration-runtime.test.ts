@@ -8,7 +8,7 @@ const payments = {
   createCheckout: async () => ({ url: 'https://checkout.test', sessionId: 'cs_test' }),
   parseWebhook: async () => ({ id: 'evt_test', type: 'unknown' as const }),
   getSession: async () => ({ status: 'open' as const }),
-  refund: async () => undefined,
+  refund: async () => ({ refundId: 're_test', amountCents: 0 }),
 };
 
 describe('Cloudflare runtime helpers', () => {
@@ -37,7 +37,6 @@ describe('Cloudflare runtime helpers', () => {
       request,
       locals: { env: { BOOKKIT_DB: db, BOOKKIT_CACHE: cache } },
     });
-    expect(nextContext.refundedPayments).toBe(context.refundedPayments);
     expect(nextContext.confirmationLocks).toBe(context.confirmationLocks);
   });
 

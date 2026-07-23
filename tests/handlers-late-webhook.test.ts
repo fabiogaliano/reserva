@@ -46,7 +46,7 @@ describe('late checkout.session.completed on an already-expired hold (spec §6)'
             pickupAddress: 'Rossio',
           }),
           getSession: async () => ({ status: 'open' }),
-          refund: async () => undefined,
+          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
         },
         calendar: {
           listEvents: async () => [],

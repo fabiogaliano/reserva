@@ -43,6 +43,7 @@ const providers: BookkitProviders = {
     },
     async refund(paymentIntent) {
       console.info('[bookkit demo] refund', { paymentIntent });
+      return { refundId: `local_refund_${paymentIntent}`, amountCents: 0 };
     },
   },
   calendar: {

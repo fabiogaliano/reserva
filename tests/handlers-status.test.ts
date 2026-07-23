@@ -31,7 +31,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
           createCheckout: async () => ({ url: '', sessionId: '' }),
           parseWebhook: async () => ({ id: 'evt_unused', type: 'checkout.session.completed' }),
           getSession: async () => ({ status: 'complete', paymentStatus: 'paid', paymentIntent: 'pi_status' }),
-          refund: async () => undefined,
+          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
         },
         calendar: {
           listEvents: async () => [],
@@ -86,7 +86,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
           createCheckout: async () => ({ url: '', sessionId: '' }),
           parseWebhook: async () => ({ id: 'evt_unused', type: 'checkout.session.completed' }),
           getSession: async () => ({ status: 'complete', paymentStatus: 'paid', paymentIntent: 'pi_status' }),
-          refund: async () => undefined,
+          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
         },
         calendar: {
           listEvents: async () => [],
@@ -139,7 +139,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
         createCheckout: async () => ({ url: '', sessionId: '' }),
         parseWebhook: async () => ({ id: 'evt_race', type: 'checkout.session.completed', sessionId: 'cs_status_race', paymentIntent: 'pi_race', paid: true, amountCaptured: seeded.priceCents }),
         getSession: async () => ({ status: 'complete', paymentStatus: 'paid', paymentIntent: 'pi_race' }),
-        refund: async () => undefined,
+        refund: async () => ({ refundId: 're_test', amountCents: 0 }),
       },
       calendar: {
         listEvents: async () => [],
@@ -189,7 +189,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
           createCheckout: async () => ({ url: '', sessionId: '' }),
           parseWebhook: async () => ({ id: 'evt_unused', type: 'checkout.session.completed' }),
           getSession: async () => ({ status: 'expired' }),
-          refund: async () => undefined,
+          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
         },
       }),
     });
@@ -234,7 +234,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
           createCheckout: async () => ({ url: '', sessionId: '' }),
           parseWebhook: async () => ({ id: 'evt_unused', type: 'checkout.session.completed' }),
           getSession: async () => ({ status: 'open' }),
-          refund: async () => undefined,
+          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
         },
         calendar: {
           listEvents: async () => [],
@@ -274,7 +274,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
           createCheckout: async () => ({ url: '', sessionId: '' }),
           parseWebhook: async () => ({ id: 'evt_unused', type: 'checkout.session.completed' }),
           getSession: async () => { throw new Error('getSession should not be called for a cancelled booking'); },
-          refund: async () => undefined,
+          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
         },
       }),
     });

@@ -61,7 +61,6 @@ export interface BookkitContext {
   // there is no identity to bind to without extending the verifyAccess contract itself.
   verifyAccess?: (request: Request) => boolean | AccessClaims | Promise<boolean | AccessClaims>;
   waitUntil?: (promise: Promise<unknown>) => void;
-  refundedPayments?: Set<string>;
   confirmationLocks?: Map<string, Promise<void>>;
   // Resolved (prefix-applied) route paths + group flags, so handlers that render links/redirects
   // (e.g. the admin page's manage links) agree with wherever the integration actually mounted
@@ -99,7 +98,6 @@ export function createBookkitContext(input: BookkitContextInput): BookkitContext
       ...input.providers,
       analytics: input.providers.analytics ?? noopAnalyticsSink,
     },
-    refundedPayments: input.refundedPayments ?? new Set(),
     confirmationLocks: input.confirmationLocks ?? new Map(),
     routeConfig: input.routeConfig ?? defaultRouteConfig,
   };

@@ -1,16 +1,19 @@
 import type { BookkitProviders } from '../src/context';
 import type { Booking } from '../src/core/booking';
-import { HoldLimitExceededError, type BookingRepository } from '../src/repo';
+import type { PaymentProvider } from '../src/core/events';
+import { HoldLimitExceededError, type BookingRepository, type RefundOperationRecord } from '../src/repo';
 import { booking } from './fixtures';
 
 // Shared in-memory fake repository + provider harness for handler tests.
 // Kept general (seed bookings, override individual repo methods / providers)
 // so other test files can build on it without re-implementing this plumbing.
-export function fakeRepository(seed: Booking[] = []): BookingRepository & { rows: Map<string, Booking>; settings: Map<string, string> } {
+export function fakeRepository(seed: Booking[] = []): BookingRepository & { rows: Map<string, Booking>; settings: Map<string, string>; refundOperations: Map<string, RefundOperationRecord> } {
   const rows = new Map(seed.map((item) => [item.id, item]));
   const holdIps = new Map<string, string>();
   const settings = new Map<string, string>();
   const leases = new Map<string, { token: string; until: string }>();
+  // Keyed by booking_id, mirroring the real table's UNIQUE(booking_id) constraint.
+  const refundOperations = new Map<string, RefundOperationRecord>();
   const find = (predicate: (item: Booking) => boolean) => [...rows.values()].find(predicate) ?? null;
   return {
     rows,
@@ -131,6 +134,70 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & { rows
         else settings.delete(operation.key);
       }
     },
+    refundOperations,
+    // Mirrors src/repo.ts's WHERE NOT EXISTS conditional insert: claims only when no operation
+    // row exists yet for this booking_id, so a racing loser can be told who won.
+    claimRefundOperation: async (input) => {
+      if (refundOperations.has(input.bookingId)) return false;
+      refundOperations.set(input.bookingId, {
+        id: input.id, bookingId: input.bookingId, paymentIntent: input.paymentIntent,
+        choice: input.choice, status: 'requested', stripeRefundId: null, amountCents: null,
+        requestedAt: input.requestedAt, resolvedAt: null, error: null,
+      });
+      return true;
+    },
+    getRefundOperationByBookingId: async (bookingId) => refundOperations.get(bookingId) ?? null,
+    // Mirrors src/repo.ts's conditional UPDATE ... WHERE status != 'succeeded': once a row has
+    // succeeded, no later resolve call (a stale operator retry, say) may regress its status or
+    // clear its recorded refund id/amount.
+    resolveRefundOperation: async (id, input) => {
+      const current = [...refundOperations.values()].find((operation) => operation.id === id);
+      if (!current || current.status === 'succeeded') return;
+      refundOperations.set(current.bookingId, {
+        ...current,
+        status: input.status,
+        stripeRefundId: input.stripeRefundId ?? null,
+        amountCents: input.amountCents ?? null,
+        error: input.error ?? null,
+        resolvedAt: input.resolvedAt,
+      });
+    },
+    // Mirrors the requested-status guard in src/repo.ts so a completed Stripe outcome survives
+    // a stale losing cancellation request.
+    deleteRefundOperation: async (id) => {
+      const entry = [...refundOperations.entries()].find(([, operation]) => operation.id === id && operation.status === 'requested');
+      if (entry) refundOperations.delete(entry[0]);
+    },
+    upsertRefundOperation: async (input) => {
+      const current = refundOperations.get(input.bookingId);
+      if (current?.status === 'succeeded') {
+        refundOperations.set(input.bookingId, { ...current, resolvedAt: input.resolvedAt });
+        return;
+      }
+      refundOperations.set(input.bookingId, {
+        id: input.id, bookingId: input.bookingId, paymentIntent: input.paymentIntent,
+        choice: input.choice, status: input.status, stripeRefundId: input.stripeRefundId,
+        amountCents: input.amountCents, requestedAt: current?.requestedAt ?? input.requestedAt,
+        resolvedAt: input.resolvedAt, error: input.error ?? null,
+      });
+    },
+  };
+}
+
+// Records the idempotency key each refund() call would carry (mirroring StripeProvider's own
+// deterministic `bookkit-refund-<paymentIntent>` derivation) so tests can assert a retried refund
+// reuses the same key instead of minting a fresh one per attempt (BK-REFUND-001 F10). `resultFor`
+// lets a test control the returned refund id/amount, or throw to simulate a Stripe-side failure.
+export function fakeRefundTracker(
+  resultFor: (paymentIntent: string, callNumber: number) => { refundId: string; amountCents: number } = (paymentIntent) => ({ refundId: `re_${paymentIntent}`, amountCents: 0 }),
+): { refund: PaymentProvider['refund']; idempotencyKeys: string[] } {
+  const idempotencyKeys: string[] = [];
+  return {
+    idempotencyKeys,
+    refund: async (paymentIntent) => {
+      idempotencyKeys.push(`bookkit-refund-${paymentIntent}`);
+      return resultFor(paymentIntent, idempotencyKeys.length);
+    },
   };
 }
 
@@ -151,7 +218,7 @@ export function providers(overrides: Partial<BookkitProviders> = {}): BookkitPro
         pickupAddress: 'Praça do Comércio',
       }),
       getSession: async () => ({ status: 'open' }),
-      refund: async () => undefined,
+      refund: async () => ({ refundId: 're_test', amountCents: 0 }),
     },
     calendar: {
       listEvents: async () => [],

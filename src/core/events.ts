@@ -47,6 +47,10 @@ export interface StripeEventParsed extends StripeCustomerDetails {
   paymentIntent?: string;
   amountCaptured?: number;
   amountRefunded?: number;
+  // The Stripe Refund id for a charge.refunded event, when Stripe's payload includes one (see
+  // stripeEventToParsed) — lets the webhook branch record which refund actually moved the money,
+  // not just that a refund happened (BK-REFUND-001).
+  refundId?: string;
   paid?: boolean;
   raw?: unknown;
 }
@@ -85,7 +89,9 @@ export interface PaymentProvider {
   ): Promise<{ url: string; sessionId: string }>;
   parseWebhook(request: Request): Promise<StripeEventParsed>;
   getSession(sessionId: string): Promise<SessionStatus>;
-  refund(paymentIntent: string): Promise<void>;
+  // Returns the Stripe refund id + amount instead of discarding them (BK-REFUND-001), so the
+  // caller can record what actually happened rather than just that the call didn't throw.
+  refund(paymentIntent: string): Promise<{ refundId: string; amountCents: number }>;
 }
 
 export interface OpsSink {

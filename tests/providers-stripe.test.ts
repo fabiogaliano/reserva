@@ -25,7 +25,10 @@ function makeClient() {
   };
   const client = {
     checkout: { sessions },
-    refunds: { create: vi.fn(async () => ({ id: 're_1' })) },
+    refunds: {
+      create: vi.fn(async () => ({ id: 're_1', amount: 10000 })),
+      list: vi.fn(async () => ({ data: [] })),
+    },
     webhooks: { constructEventAsync: vi.fn(async () => ({
       id: 'evt_1', type: 'checkout.session.completed', data: { object: {
         id: 'cs_1', metadata: { bookingId: 'booking-1' }, payment_intent: 'pi_1', amount_total: 10000, payment_status: 'paid',
@@ -127,11 +130,71 @@ describe('StripeProvider', () => {
       customerPhone: '+351910000000',
       pickupAddress: 'Praça do Comércio',
     });
-    await provider.refund('pi_1');
+    await expect(provider.refund('pi_1')).resolves.toEqual({ refundId: 're_1', amountCents: 10000 });
     expect(client.refunds.create).toHaveBeenCalledWith(
       { payment_intent: 'pi_1' },
       { idempotencyKey: 'bookkit-refund-pi_1' },
     );
+  });
+
+  it('reconciles an already-refunded error via refunds.list instead of surfacing a false failure', async () => {
+    const client = {
+      checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
+      refunds: {
+        create: vi.fn(async () => { throw new Error('Charge ch_1 has already been refunded.'); }),
+        list: vi.fn(async () => ({ data: [{ id: 're_existing', amount: 12000, status: 'succeeded' }] })),
+      },
+      webhooks: { constructEventAsync: vi.fn() },
+    } as unknown as StripeClient;
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    await expect(provider.refund('pi_1')).resolves.toEqual({ refundId: 're_existing', amountCents: 12000 });
+    expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 5 });
+  });
+
+  // BK-REFUND-001 (finding #6): Stripe replays a cached idempotent result *including* error
+  // responses, even a cached 500 unrelated to refunds by message — so gating reconciliation on an
+  // "already refunded" message match (the pre-fix behaviour) misses exactly the caveat-(b)
+  // scenario this test drives: a generic/opaque error whose underlying refund actually succeeded.
+  it('reconciles a replayed cached error via refunds.list even when the error message does not mention a refund', async () => {
+    const client = {
+      checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
+      refunds: {
+        create: vi.fn(async () => { throw new Error('Request failed with status code 500'); }),
+        list: vi.fn(async () => ({ data: [{ id: 're_from_cache', amount: 9000, status: 'succeeded' }] })),
+      },
+      webhooks: { constructEventAsync: vi.fn() },
+    } as unknown as StripeClient;
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    await expect(provider.refund('pi_1')).resolves.toEqual({ refundId: 're_from_cache', amountCents: 9000 });
+    expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 5 });
+  });
+
+  it('does not treat a pending/failed refund on file as success-equivalent — the original error still surfaces', async () => {
+    const client = {
+      checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
+      refunds: {
+        create: vi.fn(async () => { throw new Error('Your card was declined.'); }),
+        list: vi.fn(async () => ({ data: [{ id: 're_pending', amount: 12000, status: 'pending' }] })),
+      },
+      webhooks: { constructEventAsync: vi.fn() },
+    } as unknown as StripeClient;
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    await expect(provider.refund('pi_1')).rejects.toThrow('Your card was declined.');
+    expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 5 });
+  });
+
+  it('surfaces a genuine refund failure unchanged when no successful refund is on file', async () => {
+    const client = {
+      checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
+      refunds: {
+        create: vi.fn(async () => { throw new Error('Your card was declined.'); }),
+        list: vi.fn(async () => ({ data: [] })),
+      },
+      webhooks: { constructEventAsync: vi.fn() },
+    } as unknown as StripeClient;
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    await expect(provider.refund('pi_1')).rejects.toThrow('Your card was declined.');
+    expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 5 });
   });
 
   it('rejects missing webhook signatures with a typed client error', async () => {
@@ -166,7 +229,8 @@ describe('Stripe mapping helpers', () => {
     expect(stripePaymentMethodTypes(['card', 'mb_way'])).toEqual(['card', 'mb_way']);
     expect(mapStripeEvent({ id: 'evt_refund', type: 'charge.refunded', data: { object: {
       metadata: { bookingId: 'booking-1' }, payment_intent: { id: 'pi_1' }, amount_captured: 10000, amount_refunded: 10000,
-    } } } as unknown as Stripe.Event)).toMatchObject({ bookingId: 'booking-1', paymentIntent: 'pi_1', amountCaptured: 10000, amountRefunded: 10000 });
+      refunds: { data: [{ id: 're_1' }] },
+    } } } as unknown as Stripe.Event)).toMatchObject({ bookingId: 'booking-1', paymentIntent: 'pi_1', amountCaptured: 10000, amountRefunded: 10000, refundId: 're_1' });
   });
 
   it('maps a session to the public status shape', () => {
