@@ -77,6 +77,53 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
     expect(afterSecond).toMatchObject({ status: 'confirmed', calendarSynced: true, emailSynced: true });
   });
 
+  it('drains a pending cancellation effect when Stripe redelivers a completed session for a terminal booking', async () => {
+    const sessionId = 'cs_redelivery_terminal_mutation';
+    const paymentIntent = 'pi_redelivery_terminal_mutation';
+    const seeded = booking({
+      id: 'b-redelivery-terminal-mutation',
+      status: 'cancelled',
+      cancelledAt: '2026-06-14T07:00:00.000Z',
+      cancelledBy: 'operator',
+      stripeSessionId: sessionId,
+      stripePaymentIntent: paymentIntent,
+    });
+    const repo = fakeRepository([seeded]);
+    const kind = 'email:booking.cancelled_by_operator';
+    await repo.recordMutationSideEffectOperations(seeded.id, [kind], '2026-06-14T07:00:00.000Z');
+    let emails = 0;
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      providers: providers({
+        payments: {
+          createCheckout: async () => ({ url: '', sessionId: '' }),
+          parseWebhook: async () => ({
+            id: 'evt_redelivery_terminal_mutation',
+            type: 'checkout.session.completed',
+            bookingId: seeded.id,
+            sessionId,
+            paymentIntent,
+            paid: true,
+            amountCaptured: seeded.priceCents,
+            currency: config.business.currency,
+          }),
+          getSession: async () => ({ status: 'open' }),
+          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+        },
+        email: { send: async () => { emails += 1; } },
+      }),
+    });
+
+    const response = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+
+    expect(response.status).toBe(200);
+    expect(emails).toBe(1);
+    expect(repo.sideEffectOperations.get(`${seeded.id}:${kind}`)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
+  });
+
   it('email fails first (calendar already succeeded): redelivery does not re-run calendar, retries only email, and a failing ops sink never causes a non-2xx', async () => {
     const seeded = booking({
       id: 'b-redelivery-email',

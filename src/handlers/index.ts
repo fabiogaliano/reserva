@@ -483,6 +483,7 @@ export function handleStripeWebhook(request: Request, context: BookkitContext): 
         throw new HttpError(409, 'stripe_amount_mismatch', 'Stripe payment does not match the booking price');
       }
       const confirmed = await confirmBookingFromPayment(context, booking, event.paymentIntent ?? null, event);
+      await runOwedMutationSideEffects(context, confirmed);
       if (verification.sessionIdToBackfill && confirmed.stripeSessionId !== verification.sessionIdToBackfill) {
         await context.repo.updateBooking(confirmed.id, { stripeSessionId: verification.sessionIdToBackfill, updatedAt: nowIso(context) });
       }
