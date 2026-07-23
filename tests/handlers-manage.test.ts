@@ -2,6 +2,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createBookkitContext } from '../src/context';
 import { handleManage } from '../src/handlers';
+import { utcToLocalIso } from '../src/core/time';
 import { booking, config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
@@ -28,11 +29,19 @@ function manageRequest(token?: string): Request {
 // tokens don't (they can also mark no-show once the tour has started).
 describe('GET /manage (spec §11)', () => {
   it('customer token outside the cutoff can cancel and reschedule, and reports the booking summary + deadline', async () => {
-    const seeded = booking({ id: 'b-manage-customer-open', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z' });
+    const seeded = booking({
+      id: 'b-manage-customer-open',
+      startsAt: '2026-06-15T09:00:00.000Z',
+      endsAt: '2026-06-15T10:00:00.000Z',
+      customerPhone: '+351111111111',
+      pickupAddress: 'Rua do Arsenal 1, Lisbon',
+    });
     const context = manageContext([seeded]);
 
     const response = await handleManage(manageRequest(seeded.cancelToken), context);
     expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer');
     const payload = await response.json() as Record<string, unknown>;
     expect(payload.role).toBe('customer');
     expect(payload.canCancel).toBe(true);
@@ -44,7 +53,17 @@ describe('GET /manage (spec §11)', () => {
       reference: seeded.reference,
       tourSlug: seeded.tourSlug,
       people: seeded.people,
-      meetingPoint: config.tours.vintage!.meetingPoint,
+      pickupType: seeded.pickupType,
+      pickupAddress: seeded.pickupAddress,
+      start: utcToLocalIso(seeded.startsAt, config.business.timezone),
+      end: utcToLocalIso(seeded.endsAt, config.business.timezone),
+      locale: seeded.locale,
+      priceCents: seeded.priceCents,
+      customerName: seeded.customerName,
+      customerEmail: seeded.customerEmail,
+      customerPhone: seeded.customerPhone,
+      status: seeded.status,
+      meetingPoint: config.tours.vintage?.meetingPoint,
     });
   });
 
@@ -88,6 +107,8 @@ describe('GET /manage (spec §11)', () => {
     const context = manageContext([booking({ id: 'b-manage-unknown' })]);
     const response = await handleManage(manageRequest('no-such-token'), context);
     expect(response.status).toBe(403);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer');
     await expect(response.json()).resolves.toMatchObject({ error: { code: 'forbidden' } });
   });
 

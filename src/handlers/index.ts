@@ -54,6 +54,12 @@ function run(handler: () => Promise<Response>): Promise<Response> {
   return handler().catch(errorResponse);
 }
 
+function withSensitiveHeaders(response: Response): Response {
+  response.headers.set('cache-control', 'no-store');
+  response.headers.set('referrer-policy', 'no-referrer');
+  return response;
+}
+
 // BK-SEC-001: the successful admin POST redirects already set Cache-Control: no-store, but a
 // thrown HttpError (bad origin, invalid/expired CSRF token, bad Access, validation failure, ...)
 // went through plain errorResponse (src/http.ts), which sets no cache-control at all — a shared
@@ -412,6 +418,23 @@ function bookingSummary(context: BookkitContext, booking: Booking): Record<strin
   };
 }
 
+function confirmationSummary(context: BookkitContext, booking: Booking): Record<string, unknown> {
+  const tour = resolveTour(context.config, booking.tourSlug);
+  return {
+    reference: booking.reference,
+    tourSlug: booking.tourSlug,
+    start: utcToLocalIso(booking.startsAt, context.config.business.timezone),
+    end: utcToLocalIso(booking.endsAt, context.config.business.timezone),
+    people: booking.people,
+    priceCents: booking.priceCents,
+    meetingPoint: tour.meetingPoint,
+    locale: booking.locale,
+  };
+}
+
+// Anchored on immutable createdAt so polling and fulfillment retries cannot renew access; four hours covers the normal hold TTL plus post-payment viewing.
+const STATUS_DETAIL_GRACE_MS = 4 * 60 * 60_000;
+
 export function handleStatus(request: Request, context: BookkitContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
@@ -459,11 +482,15 @@ export function handleStatus(request: Request, context: BookkitContext): Promise
         }
       }
     }
-    if (current.status === 'confirmed') return json({ status: 'confirmed', booking: bookingSummary(context, current) });
+    if (current.status === 'confirmed') {
+      const age = parseUtcInstant(nowIso(context)).getTime() - parseUtcInstant(current.createdAt).getTime();
+      if (age > STATUS_DETAIL_GRACE_MS) return json({ status: 'confirmed' });
+      return json({ status: 'confirmed', booking: confirmationSummary(context, current) });
+    }
     if (current.status === 'expired') return json({ status: 'expired' });
     if (current.status === 'cancelled' || current.status === 'no_show') return json({ status: 'cancelled' });
     return json({ status: 'pending' });
-  });
+  }).then(withSensitiveHeaders);
 }
 
 async function tokenBooking(context: BookkitContext, token: string, operator = false): Promise<Booking> {
@@ -483,7 +510,7 @@ export function handleManage(request: Request, context: BookkitContext): Promise
     const operator = !customer;
     const now = nowIso(context);
     return json({ booking: bookingSummary(context, booking), role: operator ? 'operator' : 'customer', canCancel: operator ? booking.status === 'confirmed' : canCancelBooking(booking, now, context.config.booking.cancelCutoffHours), canReschedule: operator ? booking.status === 'confirmed' : canRescheduleBooking(booking, now, context.config.booking.reschedule.cutoffHours, context.config.booking.reschedule.enabled), canNoShow: operator && booking.status === 'confirmed' && parseUtcInstant(booking.startsAt).getTime() < parseUtcInstant(now).getTime(), deadline: new Date(parseUtcInstant(booking.startsAt).getTime() - context.config.booking.cancelCutoffHours * 3_600_000).toISOString() });
-  });
+  }).then(withSensitiveHeaders);
 }
 
 async function calendarDelete(context: BookkitContext, booking: Booking): Promise<void> {

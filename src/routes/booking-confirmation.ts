@@ -90,6 +90,7 @@ export function confirmationPage(
 ): string {
   const status = typeof payload.status === 'string' ? payload.status : 'not_found';
   const booking: ConfirmedBooking = payload.booking && typeof payload.booking === 'object' ? payload.booking : {};
+  const hasConfirmedBooking = typeof booking.reference === 'string' && booking.reference.length > 0;
   const locale = booking.locale ?? requestedLocale ?? context.config.locales.default;
   const messages = resolveMessages(context.config, locale);
   // Meta refresh (not script polling) keeps the pending→confirmed webhook race handled without
@@ -98,7 +99,9 @@ export function confirmationPage(
   // Both dead-end states tell the visitor to start over, so give them the button that does it.
   const startOver = `<div class="bk-actions"><a class="bk-btn" href="${escapeHtml(context.config.business.url)}">${escapeHtml(messages['confirmation.startOver'])}</a></div>`;
   const body = status === 'confirmed'
-    ? confirmedBody(context, messages, booking, locale)
+    ? hasConfirmedBooking
+      ? confirmedBody(context, messages, booking, locale)
+      : simpleBody(messages['confirmation.detailsEmailed'])
     : status === 'pending'
       ? simpleBody(messages['confirmation.pendingBody'], { pending: true })
       : status === 'expired'

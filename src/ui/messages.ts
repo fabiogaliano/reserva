@@ -65,6 +65,7 @@ export const defaultMessages = {
   // Confirmation page
   'confirmation.title': 'Booking confirmed',
   'confirmation.lead': 'Thank you — your tour is booked. A confirmation email is on its way.',
+  'confirmation.detailsEmailed': 'Your booking is confirmed. Full details and a link to manage your booking were emailed to you.',
   'confirmation.whatsNextTitle': "What's next",
   'confirmation.whatsNextBody': 'Save your reference and arrive a few minutes early. If you chose a custom pickup, we will contact you to confirm the address.',
   'confirmation.addToCalendar': 'Add to calendar',

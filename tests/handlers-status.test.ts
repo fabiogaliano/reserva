@@ -6,6 +6,11 @@ import { utcToLocalIso } from '../src/core/time';
 import { booking, config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
+function expectSensitiveHeaders(response: Response): void {
+  expect(response.headers.get('cache-control')).toBe('no-store');
+  expect(response.headers.get('referrer-policy')).toBe('no-referrer');
+}
+
 describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
   it('confirms a paid hold, runs calendar+email once, and reports the local-offset start time', async () => {
     const seeded = booking({
@@ -14,6 +19,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       holdExpiresAt: '2026-06-14T09:00:00.000Z',
       stripeSessionId: 'cs_status_paid',
       stripePaymentIntent: null,
+      createdAt: '2026-06-14T07:30:00.000Z',
       calendarSynced: false,
       emailSynced: false,
       tourflowSynced: false,
@@ -45,14 +51,28 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
 
     const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_paid'), context);
     expect(response.status).toBe(200);
+    expectSensitiveHeaders(response);
     const payload = await response.json() as { status: string; booking: Record<string, unknown> };
     expect(payload.status).toBe('confirmed');
     expect(payload.booking).toMatchObject({
       reference: seeded.reference,
       tourSlug: seeded.tourSlug,
+      start: utcToLocalIso(seeded.startsAt, config.business.timezone),
+      end: utcToLocalIso(seeded.endsAt, config.business.timezone),
       people: seeded.people,
-      meetingPoint: config.tours.vintage!.meetingPoint,
+      priceCents: seeded.priceCents,
+      meetingPoint: config.tours.vintage?.meetingPoint,
+      locale: seeded.locale,
     });
+    expect(Object.keys(payload.booking).sort()).toEqual([
+      'end', 'locale', 'meetingPoint', 'people', 'priceCents', 'reference', 'start', 'tourSlug',
+    ]);
+    expect(payload.booking).not.toHaveProperty('customerEmail');
+    expect(payload.booking).not.toHaveProperty('customerPhone');
+    expect(payload.booking).not.toHaveProperty('customerName');
+    expect(payload.booking).not.toHaveProperty('pickupAddress');
+    expect(payload.booking).not.toHaveProperty('pickupType');
+    expect(payload.booking).not.toHaveProperty('status');
     expect(payload.booking.start).toBe(utcToLocalIso(seeded.startsAt, config.business.timezone));
     expect(payload.booking.start).not.toBe(seeded.startsAt);
     expect(calendarCreates).toBe(1);
@@ -100,6 +120,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
 
     const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_leased'), context);
     expect(response.status).toBe(200);
+    expectSensitiveHeaders(response);
     const payload = await response.json() as { status: string };
     expect(payload.status).toBe('pending');
     expect(calendarCreates).toBe(0);
@@ -164,6 +185,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     // /status never errors — it reports confirmed, or pending while the other side holds the lease.
     expect([200, 503]).toContain(webhookResponse.status);
     expect(statusResponse.status).toBe(200);
+    expectSensitiveHeaders(statusResponse);
     const statusPayload = await statusResponse.json() as { status: string };
     expect(['confirmed', 'pending']).toContain(statusPayload.status);
     expect(calendarCreates).toBe(1);
@@ -196,6 +218,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
 
     const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_expiring'), context);
     expect(response.status).toBe(200);
+    expectSensitiveHeaders(response);
     await expect(response.json()).resolves.toEqual({ status: 'expired' });
     expect(repo.rows.get(seeded.id)?.status).toBe('expired');
   });
@@ -233,6 +256,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
 
     const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_expired_mismatch'), context);
     expect(response.status).toBe(200);
+    expectSensitiveHeaders(response);
     await expect(response.json()).resolves.toEqual({ status: 'pending' });
     expect(warnings).toEqual([{
       message: 'Stripe payment verification rejected',
@@ -253,6 +277,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
 
     const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_unknown'), context);
     expect(response.status).toBe(200);
+    expectSensitiveHeaders(response);
     await expect(response.json()).resolves.toEqual({ status: 'not_found' });
   });
 
@@ -288,9 +313,86 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
 
     const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_open'), context);
     expect(response.status).toBe(200);
+    expectSensitiveHeaders(response);
     await expect(response.json()).resolves.toEqual({ status: 'pending' });
     expect(calendarCreates).toBe(0);
     expect(repo.rows.get(seeded.id)?.status).toBe('hold');
+  });
+
+  it('withholds confirmed details after the status detail grace window', async () => {
+    const seeded = booking({
+      id: 'b-status-confirmed-aged',
+      stripeSessionId: 'cs_status_confirmed_aged',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-06-14T08:00:00.000Z',
+      calendarSynced: true,
+      emailSynced: true,
+    });
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo: fakeRepository([seeded]),
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      providers: providers(),
+    });
+
+    const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_confirmed_aged'), context);
+    expect(response.status).toBe(200);
+    expectSensitiveHeaders(response);
+    const payload = await response.json() as Record<string, unknown>;
+    expect(payload).toEqual({ status: 'confirmed' });
+    expect(payload).not.toHaveProperty('booking');
+  });
+
+  it('does not renew confirmed details when fulfillment updates the booking', async () => {
+    const now = '2026-06-14T08:00:00.000Z';
+    const seeded = booking({
+      id: 'b-status-confirmed-renewal',
+      stripeSessionId: 'cs_status_confirmed_renewal',
+      createdAt: '2026-06-14T03:00:00.000Z',
+      updatedAt: '2026-06-14T07:59:00.000Z',
+      calendarSynced: false,
+      emailSynced: true,
+    });
+    const repo = fakeRepository([seeded]);
+    repo.sideEffectOperations.set(`${seeded.id}:calendar_create`, {
+      bookingId: seeded.id, kind: 'calendar_create', status: 'failed', providerResultId: null,
+      attemptCount: 1, attemptedAt: seeded.updatedAt, resolvedAt: seeded.updatedAt, error: 'Calendar unavailable',
+      createdAt: seeded.updatedAt, updatedAt: seeded.updatedAt,
+    });
+    repo.sideEffectOperations.set(`${seeded.id}:email_confirmation`, {
+      bookingId: seeded.id, kind: 'email_confirmation', status: 'succeeded', providerResultId: null,
+      attemptCount: 1, attemptedAt: seeded.updatedAt, resolvedAt: seeded.updatedAt, error: null,
+      createdAt: seeded.updatedAt, updatedAt: seeded.updatedAt,
+    });
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock: () => new Date(now),
+      providers: providers(),
+    });
+
+    const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_confirmed_renewal'), context);
+    expect(response.status).toBe(200);
+    expectSensitiveHeaders(response);
+    await expect(response.json()).resolves.toEqual({ status: 'confirmed' });
+    expect(repo.rows.get(seeded.id)).toMatchObject({ createdAt: seeded.createdAt, updatedAt: now, calendarSynced: true });
+  });
+
+  it('returns sensitive headers for a missing session_id error', async () => {
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo: fakeRepository(),
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      providers: providers(),
+    });
+
+    const response = await handleStatus(new Request('https://example.test/api/booking/status'), context);
+    expect(response.status).toBe(400);
+    expectSensitiveHeaders(response);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed' } });
   });
 
   it('reports cancelled for cancelled and no-show bookings so terminal states do not poll forever', async () => {
@@ -319,6 +421,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
 
     const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_cancelled'), context);
     expect(response.status).toBe(200);
+    expectSensitiveHeaders(response);
     await expect(response.json()).resolves.toEqual({ status: 'cancelled' });
 
     const noShowRepo = fakeRepository([booking({ id: 'b-status-no-show', status: 'no_show', stripeSessionId: 'cs_status_no_show' })]);
@@ -330,6 +433,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       providers: providers(),
     });
     const noShowResponse = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_no_show'), noShowContext);
+    expectSensitiveHeaders(noShowResponse);
     await expect(noShowResponse.json()).resolves.toEqual({ status: 'cancelled' });
   });
 });
