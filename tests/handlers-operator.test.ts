@@ -104,6 +104,78 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     expect(refunds).toBe(1);
   });
 
+  it('executes and records a goodwill refund requested after a customer cancellation', async () => {
+    const seeded = booking({
+      id: 'b-op-cancel-customer-goodwill',
+      status: 'cancelled',
+      cancelledAt: '2026-06-14T07:00:00.000Z',
+      cancelledBy: 'customer',
+      stripePaymentIntent: 'pi_customer_goodwill',
+    });
+    const repo = fakeRepository([seeded]);
+    let refunds = 0;
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock,
+      providers: providers({ payments: {
+        createCheckout: async () => ({ url: '', sessionId: '' }),
+        parseWebhook: async () => { throw new Error('unused'); },
+        getSession: async () => ({ status: 'open' }),
+        refund: async () => {
+          refunds += 1;
+          return { refundId: 're_customer_goodwill', amountCents: seeded.priceCents };
+        },
+      } }),
+    });
+
+    const first = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
+    expect(first.status).toBe(200);
+    expect(refunds).toBe(1);
+    expect(repo.refundOperations.get(seeded.id)).toMatchObject({
+      choice: 'full', status: 'succeeded', stripeRefundId: 're_customer_goodwill', amountCents: seeded.priceCents,
+    });
+
+    const second = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
+    expect(second.status).toBe(200);
+    expect(refunds).toBe(1);
+  });
+
+  it('rejects a goodwill refund without a payment intent without creating an operation', async () => {
+    const seeded = booking({
+      id: 'b-op-cancel-customer-no-payment-intent',
+      status: 'cancelled',
+      cancelledAt: '2026-06-14T07:00:00.000Z',
+      cancelledBy: 'customer',
+      stripePaymentIntent: null,
+    });
+    const repo = fakeRepository([seeded]);
+    let refunds = 0;
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock,
+      providers: providers({ payments: {
+        createCheckout: async () => ({ url: '', sessionId: '' }),
+        parseWebhook: async () => { throw new Error('unused'); },
+        getSession: async () => ({ status: 'open' }),
+        refund: async () => {
+          refunds += 1;
+          return { refundId: 're_should_not_run', amountCents: seeded.priceCents };
+        },
+      } }),
+    });
+
+    const response = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'refund_payment_intent_missing' } });
+    expect(refunds).toBe(0);
+    expect(repo.refundOperations.has(seeded.id)).toBe(false);
+    expect(repo.rows.get(seeded.id)).toMatchObject({ status: 'cancelled', cancelledBy: 'customer' });
+  });
+
   it('refund: none cancels without ever calling refund()', async () => {
     const seeded = booking({ id: 'b-op-cancel-refund-none', stripePaymentIntent: 'pi_refund_none' });
     const repo = fakeRepository([seeded]);

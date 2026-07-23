@@ -856,7 +856,32 @@ async function reconcileCancelledRefund(
   refund: 'full' | 'none',
 ): Promise<Response> {
   const existing = await context.repo.getRefundOperationByBookingId(booking.id);
-  if (!existing) return json({ ok: true }); // nothing was ever claimed for this booking.
+  if (!existing) {
+    if (refund === 'none') return json({ ok: true });
+    if (booking.stripePaymentIntent === null) {
+      throw new HttpError(409, 'refund_payment_intent_missing', 'Cannot refund a booking without a Stripe payment intent');
+    }
+    const operationId = crypto.randomUUID();
+    const claimed = await context.repo.claimRefundOperation({
+      id: operationId,
+      bookingId: booking.id,
+      paymentIntent: booking.stripePaymentIntent,
+      choice: refund,
+      requestedAt: nowIso(context),
+    });
+    if (claimed) {
+      await resolvePendingRefund(context, booking.id, operationId, refund, booking.stripePaymentIntent);
+      return json({ ok: true });
+    }
+    const concurrent = await context.repo.getRefundOperationByBookingId(booking.id);
+    if (!concurrent || concurrent.choice !== refund) {
+      throw new HttpError(409, 'refund_conflict', 'A different refund decision already won for this booking');
+    }
+    if (concurrent.status !== 'succeeded') {
+      await resolvePendingRefund(context, booking.id, concurrent.id, concurrent.choice, concurrent.paymentIntent ?? booking.stripePaymentIntent);
+    }
+    return json({ ok: true });
+  }
   if (existing.choice !== refund) {
     throw new HttpError(409, 'refund_conflict', 'A different refund decision already won for this booking');
   }
