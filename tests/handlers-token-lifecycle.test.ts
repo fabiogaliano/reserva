@@ -35,7 +35,9 @@ describe('manage-token expiry and revocation (BK-SEC-002)', () => {
     const repo = fakeRepository([seeded]);
     // tokensExpireAt in the past relative to `clock` — mirrors a row insertHoldWithCapacity wrote
     // once booking.tokenExpiryDays has already elapsed.
-    repo.tokenState.set(seeded.id, { cancelTokenHash: null, operatorTokenHash: null, tokensExpireAt: '2026-06-01T00:00:00.000Z', cancelTokenRevokedAt: null });
+    const state = repo.tokenState.get(seeded.id);
+    if (!state) throw new Error('Seeded token state is missing');
+    repo.tokenState.set(seeded.id, { ...state, tokensExpireAt: '2026-06-01T00:00:00.000Z' });
     const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const response = await handleManage(manageRequest(seeded.cancelToken), context);
@@ -46,7 +48,9 @@ describe('manage-token expiry and revocation (BK-SEC-002)', () => {
   it('denies an expired operator token identically', async () => {
     const seeded = booking({ id: 'b-token-expired-operator', operatorToken: 'expiring-operator-token' });
     const repo = fakeRepository([seeded]);
-    repo.tokenState.set(seeded.id, { cancelTokenHash: null, operatorTokenHash: null, tokensExpireAt: '2026-06-01T00:00:00.000Z', cancelTokenRevokedAt: null });
+    const state = repo.tokenState.get(seeded.id);
+    if (!state) throw new Error('Seeded token state is missing');
+    repo.tokenState.set(seeded.id, { ...state, tokensExpireAt: '2026-06-01T00:00:00.000Z' });
     const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const response = await handleManage(manageRequest(seeded.operatorToken), context);

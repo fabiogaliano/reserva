@@ -22,28 +22,26 @@ import {
 } from '../src/repo';
 import { booking } from './fixtures';
 
-// BK-SEC-002: mirrors the DB-side cancel_token_hash/operator_token_hash/tokens_expire_at/
-// cancel_token_revoked_at columns (migrations/0009_token_hashing.sql), kept as a side map rather
-// than folded into the `Booking` object stored in `rows`. This split matters for what a test can
-// observe: `rows` stays the "hydrated" view (Booking.cancelToken/operatorToken always the real,
-// presentable value, exactly like a decrypted src/repo.ts read) so every pre-existing test that
-// reads a seeded/created booking's `.cancelToken` off `rows` keeps working unmodified; `tokenState`
-// is the "raw storage" view a test can inspect to assert the stored representation is not the
-// presented token (mirrors the real repo's hash column) and that presenting it back doesn't
-// authenticate. A row with no tokenState entry can't happen here — every row, seeded or inserted,
-// gets one (with null hashes for a seeded row, mirroring a pre-migration legacy row that hasn't
-// been backfilled yet).
+// BK-SEC-002: mirrors the DB-side token columns while keeping the usable values separate from
+// `rows`, which is the fake's at-rest representation. The optional encryption key represents
+// whether a real repository could decrypt *_token_enc on hydrated reads.
 interface FakeTokenState {
+  cancelToken: string;
+  operatorToken: string;
   cancelTokenHash: string | null;
   operatorTokenHash: string | null;
   tokensExpireAt: string | null;
   cancelTokenRevokedAt: string | null;
 }
 
+export interface FakeRepositoryOptions {
+  tokenEncryptionKey?: string;
+}
+
 // Shared in-memory fake repository + provider harness for handler tests.
 // Kept general (seed bookings, override individual repo methods / providers)
 // so other test files can build on it without re-implementing this plumbing.
-export function fakeRepository(seed: Booking[] = []): BookingRepository & {
+export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOptions = {}): BookingRepository & {
   rows: Map<string, Booking>;
   settings: Map<string, string>;
   refundOperations: Map<string, RefundOperationRecord>;
@@ -51,14 +49,27 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
   tokenState: Map<string, FakeTokenState>;
   recordMutationSideEffectOperations(bookingId: string, kinds: MutationSideEffectOperationKind[], now: string): Promise<void>;
 } {
-  const rows = new Map(seed.map((item) => [item.id, item]));
+  const placeholderToken = (id: string, role: 'cancel' | 'operator') => `nohash:${id}:${role}`;
+  const storeTokens = (item: Booking): Booking => ({
+    ...item,
+    cancelToken: placeholderToken(item.id, 'cancel'),
+    operatorToken: placeholderToken(item.id, 'operator'),
+  });
+  const rows = new Map(seed.map((item) => [item.id, storeTokens(item)]));
   const holdIps = new Map<string, string>();
   const settings = new Map<string, string>();
   const leases = new Map<string, { token: string; until: string }>();
-  // Seeded rows start out exactly like a not-yet-backfilled legacy row (null hashes) — see the
-  // FakeTokenState doc comment above.
+  // Seeded rows model a legacy hash-null row for lookup compatibility, but their raw token
+  // columns remain unusable placeholders so non-hydrated reads cannot render live links.
   const tokenState = new Map<string, FakeTokenState>(
-    seed.map((item) => [item.id, { cancelTokenHash: null, operatorTokenHash: null, tokensExpireAt: null, cancelTokenRevokedAt: null }]),
+    seed.map((item) => [item.id, {
+      cancelToken: item.cancelToken,
+      operatorToken: item.operatorToken,
+      cancelTokenHash: null,
+      operatorTokenHash: null,
+      tokensExpireAt: null,
+      cancelTokenRevokedAt: null,
+    }]),
   );
   // Keyed by booking_id, mirroring the real table's UNIQUE(booking_id) constraint.
   const refundOperations = new Map<string, RefundOperationRecord>();
@@ -91,6 +102,11 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
   // NULL row, so the same COALESCE(units, 1) / COALESCE(endsAt, row.endsAt) fallback applies.
   const occupancyMeta = new Map<string, { units: number; endsAt: string }>();
   const find = (predicate: (item: Booking) => boolean) => [...rows.values()].find(predicate) ?? null;
+  const hydrateBooking = (item: Booking): Booking => {
+    const state = tokenState.get(item.id);
+    if (!state || options.tokenEncryptionKey === undefined) return item;
+    return { ...item, cancelToken: state.cancelToken, operatorToken: state.operatorToken };
+  };
   const guardDuplicatePaymentIntent = (bookingId: string, paymentIntent: string | null | undefined): void => {
     if (paymentIntent === null || paymentIntent === undefined) return;
     if (find((item) => item.id !== bookingId && item.stripePaymentIntent === paymentIntent)) {
@@ -155,7 +171,7 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
       if (!current || current.status !== 'hold') return null;
       const expired = { ...current, status: 'expired' as const, holdExpiresAt: null, updatedAt: now };
       rows.set(id, expired);
-      return expired;
+      return hydrateBooking(expired);
     },
     acquireConfirmationLease: async (id, token, now, leaseUntil) => {
       // The real repo's UPDATE ... WHERE id = ? matches no row for unknown ids.
@@ -174,10 +190,19 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
     releaseConfirmationLease: async (id, token) => {
       if (leases.get(id)?.token === token) leases.delete(id);
     },
-    getBookingById: async (id) => rows.get(id) ?? null,
+    getBookingById: async (id) => {
+      const item = rows.get(id);
+      return item ? hydrateBooking(item) : null;
+    },
     getBookingByReference: async (reference) => find((item) => item.reference === reference),
-    getBookingBySessionId: async (sessionId) => find((item) => item.stripeSessionId === sessionId),
-    getBookingByPaymentIntent: async (paymentIntent) => find((item) => item.stripePaymentIntent === paymentIntent),
+    getBookingBySessionId: async (sessionId) => {
+      const item = find((candidate) => candidate.stripeSessionId === sessionId);
+      return item ? hydrateBooking(item) : null;
+    },
+    getBookingByPaymentIntent: async (paymentIntent) => {
+      const item = find((candidate) => candidate.stripePaymentIntent === paymentIntent);
+      return item ? hydrateBooking(item) : null;
+    },
     // BK-SEC-002: mirrors src/repo.ts's hash-first lookup with a guarded legacy-plaintext
     // fallback + lazy backfill. now gates tokensExpireAt, and (cancel token only) presence of
     // cancelTokenRevokedAt, exactly the same way the real repo's WHERE clause does — an expired
@@ -188,13 +213,13 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
         const state = tokenState.get(item.id);
         if (!state || state.cancelTokenRevokedAt !== null) continue;
         if (state.tokensExpireAt !== null && state.tokensExpireAt <= now) continue;
-        if (state.cancelTokenHash === hash) return item;
-        if (state.cancelTokenHash === null && item.cancelToken === token) {
+        if (state.cancelTokenHash === hash) return hydrateBooking(item);
+        if (state.cancelTokenHash === null && state.cancelToken === token) {
           // Lazy backfill: first presentation of a legacy plaintext token upgrades the tracked
           // hash, closing the plaintext-fallback branch for next time (src/repo.ts does the same
           // via an UPDATE guarded by `cancel_token_hash IS NULL`).
           state.cancelTokenHash = hash;
-          return item;
+          return hydrateBooking(item);
         }
       }
       return null;
@@ -207,10 +232,10 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
         const state = tokenState.get(item.id);
         if (!state) continue;
         if (state.tokensExpireAt !== null && state.tokensExpireAt <= now) continue;
-        if (state.operatorTokenHash === hash) return item;
-        if (state.operatorTokenHash === null && item.operatorToken === token) {
+        if (state.operatorTokenHash === hash) return hydrateBooking(item);
+        if (state.operatorTokenHash === null && state.operatorToken === token) {
           state.operatorTokenHash = hash;
-          return item;
+          return hydrateBooking(item);
         }
       }
       return null;
@@ -227,17 +252,20 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
         if (active.length >= input.maxActiveHoldsForIp) throw new HoldLimitExceededError();
       }
       const created: Booking = { ...booking(), ...input, pickupAddress: null, customerName: null, customerEmail: null, customerPhone: null, status: 'hold', stripeSessionId: null, stripePaymentIntent: null, calendarEventId: null, calendarSynced: false, emailSynced: false, tourflowSynced: false, remindedAt: null, reviewRequestedAt: null, cancelledAt: null, cancelledBy: null, rescheduledFrom: null };
-      rows.set(created.id, created);
+      const stored = storeTokens(created);
+      rows.set(stored.id, stored);
       // BK-SEC-002: a newly created row is hash-backed from the start (never "legacy"), mirroring
       // src/repo.ts's insertHold/insertHoldWithCapacity, which write only a hash.
-      tokenState.set(created.id, {
+      tokenState.set(stored.id, {
+        cancelToken: input.cancelToken,
+        operatorToken: input.operatorToken,
         cancelTokenHash: await sha256Base64Url(input.cancelToken),
         operatorTokenHash: await sha256Base64Url(input.operatorToken),
         tokensExpireAt: input.tokensExpireAt ?? null,
         cancelTokenRevokedAt: null,
       });
-      if (input.holdIp) holdIps.set(created.id, input.holdIp);
-      return created;
+      if (input.holdIp) holdIps.set(stored.id, input.holdIp);
+      return hydrateBooking(stored);
     },
     // Mirrors src/repo.ts's insertHoldWithCapacity: the hold-ip cap still throws
     // HoldLimitExceededError, but a capacity loss returns null instead.
@@ -268,12 +296,20 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
       const used = maxConcurrentInInterval(input.startsAt, input.occupancyEndsAt, input.createdAt);
       if (used + input.occupancyUnits > capacity) return null;
       const created: Booking = { ...booking(), ...input, pickupAddress: null, customerName: null, customerEmail: null, customerPhone: null, status: 'hold', stripeSessionId: null, stripePaymentIntent: null, calendarEventId: null, calendarSynced: false, emailSynced: false, tourflowSynced: false, remindedAt: null, reviewRequestedAt: null, cancelledAt: null, cancelledBy: null, rescheduledFrom: null };
-      rows.set(created.id, created);
-      occupancyMeta.set(created.id, { units: input.occupancyUnits, endsAt: input.occupancyEndsAt });
+      const stored = storeTokens(created);
+      rows.set(stored.id, stored);
+      occupancyMeta.set(stored.id, { units: input.occupancyUnits, endsAt: input.occupancyEndsAt });
       // BK-SEC-002: see the identical comment in insertHold above.
-      tokenState.set(created.id, { cancelTokenHash, operatorTokenHash, tokensExpireAt: input.tokensExpireAt ?? null, cancelTokenRevokedAt: null });
-      if (input.holdIp) holdIps.set(created.id, input.holdIp);
-      return created;
+      tokenState.set(stored.id, {
+        cancelToken: input.cancelToken,
+        operatorToken: input.operatorToken,
+        cancelTokenHash,
+        operatorTokenHash,
+        tokensExpireAt: input.tokensExpireAt ?? null,
+        cancelTokenRevokedAt: null,
+      });
+      if (input.holdIp) holdIps.set(stored.id, input.holdIp);
+      return hydrateBooking(stored);
     },
     updateBooking: async (id, patch) => {
       const current = rows.get(id);
@@ -281,7 +317,7 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
       guardDuplicatePaymentIntent(id, patch.stripePaymentIntent);
       const updated = { ...current, ...patch } as Booking;
       rows.set(id, updated);
-      return updated;
+      return hydrateBooking(updated);
     },
     // Mirrors src/repo.ts's conditional UPDATE ... WHERE id = ? AND status IN (...): only
     // apply the mutation (and return the new row) when the current status still matches;
@@ -300,7 +336,7 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
       // BK-SIDE-001 (handoff 13): only reached once the CAS above has already confirmed this
       // transition applies — see recordMutationKinds's doc comment.
       recordMutationKinds(id, input.mutationSideEffectKinds, input.updatedAt);
-      return updated;
+      return hydrateBooking(updated);
     },
     transitionToNoShow: async (id, input) => {
       const current = rows.get(id);
@@ -310,7 +346,7 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
       recordMutationKinds(id, input.mutationSideEffectKinds, input.updatedAt);
       const state = tokenState.get(id);
       if (state && state.cancelTokenRevokedAt === null) state.cancelTokenRevokedAt = input.updatedAt;
-      return updated;
+      return hydrateBooking(updated);
     },
     transitionToConfirmed: async (id, input) => {
       const current = rows.get(id);
@@ -320,7 +356,7 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
       const defined = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
       const updated: Booking = { ...current, ...defined, status: 'confirmed', holdExpiresAt: null, updatedAt };
       rows.set(id, updated);
-      return updated;
+      return hydrateBooking(updated);
     },
     confirmWithSideEffectOperations: async (id, input) => {
       const current = rows.get(id);
@@ -344,7 +380,7 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
           attemptCount: 0, attemptedAt: null, resolvedAt: updatedAt, error: null, createdAt: updatedAt, updatedAt,
         });
       }
-      return updated;
+      return hydrateBooking(updated);
     },
     applyConfirmedPaymentDetails: async (id, patch, leaseToken, updatedAt) => {
       const current = rows.get(id);
@@ -449,7 +485,7 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
       // fall through to COALESCE's "keep the existing value" branch; only a real string moves it.
       const state = tokenState.get(id);
       if (state && input.tokensExpireAt != null) state.tokensExpireAt = input.tokensExpireAt;
-      return updated;
+      return hydrateBooking(updated);
     },
     // Mirrors src/repo.ts's rescheduleWithCapacity: transitionReschedule's CAS plus the same
     // max-concurrency capacity guard as insertHoldWithCapacity, excluding this booking's own id
@@ -479,17 +515,19 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
       const version = (rescheduleTransitionVersions.get(id) ?? 0) + 1;
       rescheduleTransitionVersions.set(id, version);
       recordMutationKinds(id, input.mutationSideEffectKinds, input.updatedAt, version);
-      return updated;
+      return hydrateBooking(updated);
     },
     listOccupancyBookings: async (from, to) => [...rows.values()].filter((item) => item.startsAt >= from && item.startsAt < to),
     // Mirrors src/repo.ts:260-267 — starts_at >= now AND (confirmed OR (hold AND hold_expires_at > now)), ordered by starts_at.
     listUpcoming: async (now) => [...rows.values()]
       .filter((item) => item.startsAt >= now && (item.status === 'confirmed' || (item.status === 'hold' && item.holdExpiresAt !== null && item.holdExpiresAt > now)))
-      .sort((a, b) => a.startsAt.localeCompare(b.startsAt)),
+      .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
+      .map(hydrateBooking),
     // Mirrors src/repo.ts:268 — updated_at > since, ordered by updated_at.
     listSince: async (since) => [...rows.values()]
       .filter((item) => item.updatedAt > since)
-      .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt)),
+      .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))
+      .map(hydrateBooking),
     getDayOverride: async () => null,
     listDayOverrides: async () => [],
     upsertDayOverride: async () => undefined,

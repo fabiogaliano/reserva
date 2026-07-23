@@ -103,8 +103,12 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
   it('manage links carry each row\'s operator token (URL-encoded) and never leak a cancel_token', async () => {
     const first = booking({ id: 'b-admin-links-1', reference: 'LVT-2026-200', startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z', operatorToken: 'operator+token/one', cancelToken: 'cancel-token-one-secret' });
     const second = booking({ id: 'b-admin-links-2', reference: 'LVT-2026-201', startsAt: '2026-06-21T09:00:00.000Z', endsAt: '2026-06-21T10:00:00.000Z', operatorToken: 'operator-token-two', cancelToken: 'cancel-token-two-secret' });
-    const repo = fakeRepository([first, second]);
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const repo = fakeRepository([first, second], { tokenEncryptionKey: 'handlers-admin-token-key' });
+    const secrets = async (name: string) => {
+      if (name === 'BOOKKIT_TOKEN_ENC_KEY') return 'handlers-admin-token-key';
+      return csrfSecrets(name);
+    };
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets });
 
     const response = await handleAdminGet(adminGetRequest(), context);
     const body = await response.text();

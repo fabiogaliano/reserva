@@ -173,10 +173,11 @@ describe('server-rendered HTML URL consistency', () => {
     const context = createBookkitContext({
       config,
       db: {} as D1Database,
-      repo: fakeRepository([seeded]),
+      repo: fakeRepository([seeded], { tokenEncryptionKey: 'route-token-key' }),
       clock,
       verifyAccess: async () => true,
       providers: providers(),
+      secrets: async (name) => (name === 'BOOKKIT_TOKEN_ENC_KEY' ? 'route-token-key' : undefined),
       routeConfig: resolveRouteConfig('/en', { admin: true, ops: true }),
     });
 
@@ -192,10 +193,11 @@ describe('server-rendered HTML URL consistency', () => {
     const context = createBookkitContext({
       config,
       db: {} as D1Database,
-      repo: fakeRepository([seeded]),
+      repo: fakeRepository([seeded], { tokenEncryptionKey: 'route-token-key' }),
       clock,
       verifyAccess: async () => true,
       providers: providers(),
+      secrets: async (name) => (name === 'BOOKKIT_TOKEN_ENC_KEY' ? 'route-token-key' : undefined),
     });
 
     expect(context.routeConfig.groups).toEqual({ admin: true, ops: true });
