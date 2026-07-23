@@ -52,6 +52,7 @@ export default {
       cutoffHours: 24,
     },
     limitedThreshold: 2,
+    calendarMaxStaleSeconds: 15 * 60,
     maxHoldsPerIp: 4,
   },
   locales: {

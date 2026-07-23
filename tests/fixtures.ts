@@ -34,6 +34,7 @@ export const config: ClientConfig = {
     cancelCutoffHours: 24,
     reschedule: { enabled: true, cutoffHours: 24 },
     limitedThreshold: 2,
+    calendarMaxStaleSeconds: 15 * 60,
   },
   locales: { supported: ['en', 'pt-BR'], default: 'en' },
   payments: { methods: ['card', 'mb_way'] },

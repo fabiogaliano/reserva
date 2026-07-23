@@ -7,7 +7,7 @@ import {
   type Booking,
 } from '../core/booking';
 import { resolveTour, type PickupType } from '../core/config';
-import { availabilityForDay, capacityForDate, defaultCapacityForDate, occupancyFor, type CapacityDefault } from '../core/occupancy';
+import { availabilityForDay, capacityForDate, defaultCapacityForDate, occupancyFor, type CalEvent, type CapacityDefault } from '../core/occupancy';
 import { verifyPayment } from '../core/payment-verification';
 import { priceFor } from '../core/pricing';
 import { generateUniqueReference } from '../core/reference';
@@ -82,7 +82,133 @@ function validDateRange(from: string, to: string): string[] {
   return enumerateDateKeys(from, to);
 }
 
-async function availabilityPayload(request: Request, context: BookkitContext, now: string): Promise<{ timezone: string; days: unknown[] }> {
+const CALENDAR_FRESH_SECONDS = 60;
+const CALENDAR_STORED_AT_HEADER = 'x-bookkit-calendar-stored-at';
+const calendarReadFlights = new Map<string, Promise<CalEvent[]>>();
+
+function maxPartySize(tour: ReturnType<typeof resolveTour>): number {
+  return Math.max(...tour.pricing.map((rule) => rule.maxPeople));
+}
+
+function assertSupportedPartySize(tour: ReturnType<typeof resolveTour>, people: number): void {
+  if (people > maxPartySize(tour)) {
+    throw new HttpError(400, 'validation_failed', `people must not exceed the configured maximum of ${maxPartySize(tour)}`);
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function cachedEventTime(value: unknown): string | { dateTime?: string; date?: string } | undefined {
+  if (typeof value === 'string') return value;
+  if (!isRecord(value)) return undefined;
+  const dateTime = typeof value.dateTime === 'string' ? value.dateTime : undefined;
+  const date = typeof value.date === 'string' ? value.date : undefined;
+  return dateTime || date ? { ...(dateTime ? { dateTime } : {}), ...(date ? { date } : {}) } : undefined;
+}
+
+function cachedCalendarEvents(value: unknown): CalEvent[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const events: CalEvent[] = [];
+  for (const item of value) {
+    if (!isRecord(item)) return undefined;
+    const start = cachedEventTime(item.start);
+    const end = cachedEventTime(item.end);
+    if (!start || !end) return undefined;
+    let privateProperties: Record<string, string> | undefined;
+    if (isRecord(item.extendedProperties) && isRecord(item.extendedProperties.private)) {
+      privateProperties = {};
+      for (const [key, property] of Object.entries(item.extendedProperties.private)) {
+        if (typeof property === 'string') privateProperties[key] = property;
+      }
+    }
+    events.push({
+      start,
+      end,
+      ...(typeof item.id === 'string' ? { id: item.id } : {}),
+      ...(typeof item.allDay === 'boolean' ? { allDay: item.allDay } : {}),
+      ...(typeof item.bookkitBookingId === 'string' ? { bookkitBookingId: item.bookkitBookingId } : {}),
+      ...(privateProperties ? { extendedProperties: { private: privateProperties } } : {}),
+    });
+  }
+  return events;
+}
+
+function calendarWindow(fromUtc: string, toUtc: string, timezone: string): { fromUtc: string; toUtc: string } {
+  const fromDate = localDateKey(fromUtc, timezone);
+  const finalInstant = new Date(parseUtcInstant(toUtc).getTime() - 1);
+  const toDate = addDaysToDateKey(localDateKey(finalInstant, timezone), 1);
+  return {
+    fromUtc: localDateTimeToUtcIso(`${fromDate}T00:00`, timezone),
+    toUtc: localDateTimeToUtcIso(`${toDate}T00:00`, timezone),
+  };
+}
+
+function calendarCacheRequest(context: BookkitContext, calendarKey: string, fromUtc: string, toUtc: string): Request {
+  const url = new URL('/__bookkit/calendar-occupancy', context.config.business.url);
+  url.search = new URLSearchParams({ calendar: calendarKey, from: fromUtc, to: toUtc }).toString();
+  return new Request(url.toString(), { method: 'GET' });
+}
+
+interface CalendarEventsResult {
+  events: CalEvent[];
+  stale: boolean;
+}
+
+async function calendarEventsForWindow(context: BookkitContext, fromUtc: string, toUtc: string, now: string): Promise<CalendarEventsResult> {
+  const calendar = context.providers.calendar;
+  if (!calendar) return { events: [], stale: false };
+  const window = calendarWindow(fromUtc, toUtc, context.config.business.timezone);
+  const cacheKey = calendarCacheRequest(context, calendar.cacheKey ?? 'default', window.fromUtc, window.toUtc);
+  let cached: { events: CalEvent[]; ageMs: number } | undefined;
+  if (context.cache) {
+    try {
+      const hit = await context.cache.match(cacheKey);
+      if (hit) {
+        const storedAt = hit.headers.get(CALENDAR_STORED_AT_HEADER);
+        const events = cachedCalendarEvents(await hit.json());
+        const storedAtMs = storedAt ? Date.parse(storedAt) : Number.NaN;
+        const ageMs = parseUtcInstant(now).getTime() - storedAtMs;
+        if (events && Number.isFinite(storedAtMs) && ageMs >= 0) cached = { events, ageMs };
+      }
+    } catch {
+      // A malformed or unavailable cache must not make a healthy calendar unavailable.
+    }
+  }
+  if (cached && cached.ageMs <= CALENDAR_FRESH_SECONDS * 1_000) return { events: cached.events, stale: false };
+  const existingFlight = calendarReadFlights.get(cacheKey.url);
+  const flight = existingFlight ?? Promise.resolve().then(() => calendar.listEvents(window.fromUtc, window.toUtc));
+  if (!existingFlight) calendarReadFlights.set(cacheKey.url, flight);
+  try {
+    const events = await flight;
+    if (context.cache) {
+      try {
+        // caches.default is per-colo, so this outage grace is intentionally local to each datacenter.
+        await context.cache.put(cacheKey, json(events, 200, {
+          'cache-control': `public, max-age=${context.config.booking.calendarMaxStaleSeconds}`,
+          [CALENDAR_STORED_AT_HEADER]: now,
+        }));
+      } catch {
+        // Calendar data is still authoritative when a cache write fails.
+      }
+    }
+    return { events, stale: false };
+  } catch {
+    if (cached && cached.ageMs <= context.config.booking.calendarMaxStaleSeconds * 1_000) return { events: cached.events, stale: true };
+    throw new HttpError(503, 'calendar_unavailable', 'Calendar availability is temporarily unavailable');
+  } finally {
+    if (calendarReadFlights.get(cacheKey.url) === flight) calendarReadFlights.delete(cacheKey.url);
+  }
+}
+
+interface AvailabilityInput {
+  people: number;
+  dates: string[];
+  tour: ReturnType<typeof resolveTour>;
+}
+
+function availabilityInput(request: Request, context: BookkitContext): AvailabilityInput {
   const url = new URL(request.url);
   const tourSlug = requireString(url.searchParams.get('tour'), 'tour');
   if (!context.config.tours[tourSlug]) throw new HttpError(400, 'validation_failed', 'Unknown tour');
@@ -91,12 +217,18 @@ async function availabilityPayload(request: Request, context: BookkitContext, no
   const to = requireString(url.searchParams.get('to'), 'to');
   const dates = validDateRange(from, to);
   const tour = resolveTour(context.config, tourSlug);
+  assertSupportedPartySize(tour, people);
   try {
     priceFor(tour, people, 'default');
     priceFor(tour, people, 'custom');
   } catch {
     throw new HttpError(400, 'validation_failed', 'No price is configured for this party size');
   }
+  return { people, dates, tour };
+}
+
+async function availabilityPayload(context: BookkitContext, now: string, input: AvailabilityInput): Promise<{ payload: { timezone: string; days: unknown[] }; stale: boolean }> {
+  const { people, dates, tour } = input;
   const firstDay = dates[0];
   const lastDay = dates[dates.length - 1];
   if (!firstDay || !lastDay) throw new HttpError(400, 'validation_failed', 'Date range is empty');
@@ -108,9 +240,12 @@ async function availabilityPayload(request: Request, context: BookkitContext, no
     new Date(horizonStart.getTime() - lookback * 60_000).toISOString(),
     horizonEnd.toISOString(),
   );
-  const calendarEvents = context.providers.calendar
-    ? await context.providers.calendar.listEvents(new Date(horizonStart.getTime() - lookback * 60_000).toISOString(), horizonEnd.toISOString())
-    : [];
+  const calendar = await calendarEventsForWindow(
+    context,
+    new Date(horizonStart.getTime() - lookback * 60_000).toISOString(),
+    horizonEnd.toISOString(),
+    now,
+  );
   const overrides = await context.repo.listDayOverrides(firstDay, lastDay);
   const overridesByDate = new Map(overrides.map((override) => [override.date, override]));
   const capacityDefaults = await context.repo.listCapacityDefaults();
@@ -131,7 +266,7 @@ async function availabilityPayload(request: Request, context: BookkitContext, no
       capacity: capacityInfo.capacity,
       ...(capacityInfo.closedReason !== undefined ? { closedReason: capacityInfo.closedReason } : {}),
       bookings,
-      calendarEvents,
+      calendarEvents: calendar.events,
       tours: context.config.tours,
       requestedPeople: people,
       now,
@@ -140,28 +275,31 @@ async function availabilityPayload(request: Request, context: BookkitContext, no
       limitedThreshold: context.config.booking.limitedThreshold,
     });
   });
-  return { timezone: context.config.business.timezone, days };
+  return { payload: { timezone: context.config.business.timezone, days }, stale: calendar.stale };
 }
 
 export function handleAvailability(request: Request, context: BookkitContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
+    const input = availabilityInput(request, context);
     const now = nowIso(context);
     await context.repo.sweepExpiredHolds(now);
-    const normalized = new URL(request.url);
-    normalized.searchParams.sort();
-    const cacheKey = new Request(normalized.toString(), { method: 'GET' });
-    if (context.cache) {
-      const hit = await context.cache.match(cacheKey);
+    const availabilityCache = context.providers.calendar ? undefined : context.cache;
+    let cacheKey: Request | undefined;
+    if (availabilityCache) {
+      const normalized = new URL(request.url);
+      normalized.searchParams.sort();
+      cacheKey = new Request(normalized.toString(), { method: 'GET' });
+      const hit = await availabilityCache.match(cacheKey);
       if (hit) return hit;
     }
-    const payload = await availabilityPayload(request, context, now);
-    if (context.cache) {
+    const { payload, stale } = await availabilityPayload(context, now, input);
+    if (availabilityCache && cacheKey) {
       const response = json(payload, 200, { 'cache-control': 'public, max-age=60' });
-      await context.cache.put(cacheKey, response.clone());
+      await availabilityCache.put(cacheKey, response.clone());
       return response;
     }
-    return json(payload, 200, { 'cache-control': 'no-store' });
+    return json(payload, 200, { 'cache-control': stale ? 'no-store' : context.providers.calendar ? 'public, max-age=60' : 'no-store' });
   });
 }
 
@@ -208,9 +346,7 @@ async function checkSlot(
   const windowStart = new Date(parseUtcInstant(candidate.startsAt).getTime() - lookback * 60_000).toISOString();
   const windowEnd = new Date(parseUtcInstant(candidate.endsAt).getTime() + candidate.tour.turnaroundMin * 60_000).toISOString();
   const bookings = await context.repo.listOccupancyBookings(windowStart, windowEnd);
-  const calendarEvents = context.providers.calendar
-    ? await context.providers.calendar.listEvents(windowStart, windowEnd)
-    : [];
+  const { events: calendarEvents } = await calendarEventsForWindow(context, windowStart, windowEnd, now);
   const day = availabilityForDay({
     date: localDate,
     timezone: context.config.business.timezone,
@@ -248,6 +384,7 @@ export function handleCheckout(request: Request, context: BookkitContext): Promi
     if (!context.config.locales.supported.includes(locale)) throw new HttpError(400, 'validation_failed', 'Unsupported locale');
     const now = nowIso(context);
     await context.repo.sweepExpiredHolds(now);
+    assertSupportedPartySize(resolveTour(context.config, tourSlug), people);
     const candidate = await checkSlot(context, tourSlug, people, start, now);
     let priceCents: number;
     try {

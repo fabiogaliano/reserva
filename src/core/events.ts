@@ -79,6 +79,8 @@ export interface EmailProvider {
 }
 
 export interface CalendarProvider {
+  // Distinguishes occupancy cache entries when a deployment can select calendar sources.
+  cacheKey?: string;
   listEvents(fromUtc: string, toUtc: string): Promise<CalEvent[]>;
   createEvent(booking: Booking, config: ClientConfig): Promise<string>;
   patchEvent(eventId: string, booking: Booking, config?: ClientConfig): Promise<void>;

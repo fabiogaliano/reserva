@@ -20,6 +20,12 @@ export interface GoogleCalendarProviderOptions extends GoogleAuthOptions {
 }
 interface GoogleEvent { id?: string; summary?: string; description?: string; start?: { dateTime?: string; date?: string; timeZone?: string }; end?: { dateTime?: string; date?: string; timeZone?: string }; attendees?: Array<{ email?: string; displayName?: string; responseStatus?: string }>; extendedProperties?: { private?: Record<string, string> } }
 
+const MAX_LIST_PAGES = 10;
+
+function retryDelay(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 25 + Math.floor(Math.random() * 25)));
+}
+
 function eventToCalEvent(event: GoogleEvent): CalEvent {
   const start = event.start?.dateTime ?? event.start?.date;
   const end = event.end?.dateTime ?? event.end?.date;
@@ -51,6 +57,7 @@ function eventPayload(booking: Booking, config: ClientConfig | undefined, _timez
 }
 
 export class GoogleCalendarProvider implements CalendarProvider {
+  readonly cacheKey: string;
   private readonly calendarId: string;
   private readonly auth: GoogleCalendarAuth;
   private readonly request: typeof fetch;
@@ -59,6 +66,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
   constructor(options: GoogleCalendarProviderOptions) {
     if (!options.calendarId) throw new Error('Google calendarId is required');
     this.calendarId = options.calendarId;
+    this.cacheKey = options.calendarId;
     this.auth = options.auth ?? new GoogleServiceAccountAuth(options);
     // A bare global fetch stored as a method throws "Illegal invocation" in
     // workerd, which rebinds `this` to the instance; wrap it so `this` stays
@@ -85,11 +93,22 @@ export class GoogleCalendarProvider implements CalendarProvider {
     const token = await this.auth.getAccessToken();
     const events: CalEvent[] = [];
     let pageToken: string | undefined;
+    let pages = 0;
     do {
+      if (pages >= MAX_LIST_PAGES) throw new Error(`Google Calendar pagination exceeded ${MAX_LIST_PAGES} pages`);
       const params: Record<string, string> = { singleEvents: 'true', timeMin: fromUtc, timeMax: toUtc };
       if (pageToken) params.pageToken = pageToken;
-      const response = await this.request(this.url('', params), { headers: { accept: 'application/json', authorization: `Bearer ${token}` } });
-      if (!response.ok) throw new Error(`Google Calendar request failed (${response.status})`);
+      let response: Response | undefined;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const candidate = await this.request(this.url('', params), { headers: { accept: 'application/json', authorization: `Bearer ${token}` } });
+        if (candidate.ok || (candidate.status !== 429 && candidate.status < 500) || attempt === 1) {
+          response = candidate;
+          break;
+        }
+        await retryDelay();
+      }
+      if (!response?.ok) throw new Error(`Google Calendar request failed (${response?.status ?? 'unknown'})`);
+      pages += 1;
       const body = await response.json() as { items?: GoogleEvent[]; nextPageToken?: string };
       for (const event of body.items ?? []) {
         try {

@@ -110,6 +110,8 @@ Every route is server-only with `prerender: false`:
 
 The endpoint files are intentionally thin. They import `virtual:bookkit/runtime`, create a request-scoped context, and delegate to the handler exports. JSON errors use `{ error: { code, message } }`. Cloudflare Access provides admin authorization through the runtime context.
 
+Configure IP rate limiting for the public `/availability` route at the Cloudflare edge (WAF or rate-limiting rules), not inside this library. Bookkit normalizes calendar occupancy caching, but edge enforcement is where client IP policy belongs.
+
 Bookkit mounts its routes with `injectRoute()`, never through a project-level `src/fetch.ts`, so nothing here needs that file. Note that Astro 7's `fetchFile` config option defaults to `'fetch'`: Astro treats `src/fetch.ts` (or `.js`/`.mjs`/`.mts`) in your project as a custom fetch-handler entrypoint. Do not use that filename for unrelated code in a project that also uses bookkit.
 
 ## Route customization

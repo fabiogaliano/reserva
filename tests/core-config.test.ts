@@ -67,6 +67,12 @@ describe('core config and pricing validation', () => {
     expect(() => validateConfig(invalid)).toThrow(/missing custom pricing for people=5/);
   });
 
+  it('defaults calendar outage grace to 15 minutes and rejects a shorter-than-freshness window', () => {
+    const { calendarMaxStaleSeconds: _calendarMaxStaleSeconds, ...bookingWithoutGrace } = config.booking;
+    expect(validateConfig({ ...config, booking: bookingWithoutGrace }).booking.calendarMaxStaleSeconds).toBe(15 * 60);
+    expect(() => validateConfig({ ...config, booking: { ...config.booking, calendarMaxStaleSeconds: 59 } })).toThrow();
+  });
+
   it('rejects a hold below the Stripe expiry safety margin', () => {
     expect(() => validateConfig({ ...config, booking: { ...config.booking, holdMinutes: 34 } })).toThrow(/at least 35/);
   });

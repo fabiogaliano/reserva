@@ -61,6 +61,7 @@ export interface ClientConfig {
       cutoffHours: number;
     };
     limitedThreshold: number;
+    calendarMaxStaleSeconds: number;
     maxHoldsPerIp?: number;
   };
   locales: {
@@ -138,6 +139,7 @@ export const clientConfigSchema = z.object({
     cancelCutoffHours: z.number().nonnegative(),
     reschedule: z.object({ enabled: z.boolean(), cutoffHours: z.number().nonnegative() }),
     limitedThreshold: z.number().int().nonnegative(),
+    calendarMaxStaleSeconds: z.number().int().min(60).default(15 * 60),
     maxHoldsPerIp: z.number().int().positive().optional(),
   }),
   locales: z.object({

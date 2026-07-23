@@ -83,4 +83,27 @@ describe('Google Calendar provider', () => {
     expect(request).toHaveBeenCalledTimes(2);
     expect(String(request.mock.calls[1]?.[0])).toContain('pageToken=page-2');
   });
+
+  it('stops an endlessly paginated Calendar response at the page cap', async () => {
+    const auth = { getAccessToken: async () => 'token' } as GoogleServiceAccountAuth;
+    const request = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ items: [], nextPageToken: 'next-page' }), {
+      headers: { 'content-type': 'application/json' },
+    }));
+    const provider = new GoogleCalendarProvider({ calendarId: 'primary@example.test', auth, fetch: request });
+
+    await expect(provider.listEvents('2026-07-21T00:00:00Z', '2026-07-22T00:00:00Z')).rejects.toThrow('pagination exceeded 10 pages');
+    expect(request).toHaveBeenCalledTimes(10);
+  });
+
+  it('retries one rate-limited Calendar page before failing', async () => {
+    const auth = { getAccessToken: async () => 'token' } as GoogleServiceAccountAuth;
+    const request = vi.fn<typeof fetch>(async () => {
+      if (request.mock.calls.length === 1) return new Response('', { status: 429 });
+      return new Response(JSON.stringify({ items: [] }), { headers: { 'content-type': 'application/json' } });
+    });
+    const provider = new GoogleCalendarProvider({ calendarId: 'primary@example.test', auth, fetch: request });
+
+    await expect(provider.listEvents('2026-07-21T00:00:00Z', '2026-07-22T00:00:00Z')).resolves.toEqual([]);
+    expect(request).toHaveBeenCalledTimes(2);
+  });
 });
