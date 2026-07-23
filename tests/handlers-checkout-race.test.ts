@@ -11,12 +11,17 @@ const checkoutRequest = (people: number) => new Request('https://example.test/ap
   body: JSON.stringify({ tourSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', people, pickupType: 'default', locale: 'en' }),
 });
 
-describe('checkout race for the last slot (spec §11 / §6 accepted TOCTOU)', () => {
-  it('allows both concurrent checkouts to hold the same last slot when interleaved (documents the accepted oversell window)', async () => {
+describe('checkout race for the last slot (BK-CAP-001 / AR-001 — was spec §11 / §6 accepted TOCTOU, now fixed)', () => {
+  // Intentional behavior-change test, not a weakening: this is the same interleaving harness
+  // that used to prove the accepted oversell window (both checkouts succeeding). It now proves
+  // the fix — insertHoldWithCapacity re-evaluates occupancy inside the same atomic INSERT as the
+  // write, so only one of two requests that both read the slot as empty can still win the write.
+  it('lets only one of two concurrent checkouts hold the last slot when interleaved: one 201, one 409, exactly one hold row', async () => {
     const repo = fakeRepository();
     const singleCapacityConfig = { ...config, fleet: { defaultCapacity: 1 } };
     // Gate listOccupancyBookings so both requests finish reading (and see the slot
-    // empty) before either proceeds to insertHold — this forces the documented TOCTOU.
+    // empty) before either proceeds to insertHoldWithCapacity — this forces the interleaving
+    // that used to cause the oversell; the atomic write below is what now prevents it.
     let readers = 0;
     let releaseReaders = (): void => undefined;
     const bothRead = new Promise<void>((resolve) => { releaseReaders = resolve; });
@@ -41,9 +46,11 @@ describe('checkout race for the last slot (spec §11 / §6 accepted TOCTOU)', ()
       handleCheckout(checkoutRequest(2), context),
     ]);
 
-    expect(first.status).toBe(201);
-    expect(second.status).toBe(201);
-    expect([...repo.rows.values()].filter((row) => row.status === 'hold')).toHaveLength(2);
+    const statuses = [first.status, second.status].sort();
+    expect(statuses).toEqual([201, 409]);
+    const loser = first.status === 409 ? first : second;
+    await expect(loser.json()).resolves.toMatchObject({ error: { code: 'slot_unavailable' } });
+    expect([...repo.rows.values()].filter((row) => row.status === 'hold')).toHaveLength(1);
   });
 
   it('rejects the second sequential checkout for the last slot with 409 slot_unavailable', async () => {

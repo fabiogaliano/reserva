@@ -34,6 +34,20 @@ export class HoldLimitExceededError extends Error {
   }
 }
 
+// BK-CAP-001 / AR-001 (handoff 05): shared inputs for the atomic capacity guard used by both
+// insertHoldWithCapacity and rescheduleWithCapacity. occupancyUnits/occupancyEndsAt describe the
+// interval the *requesting* write needs (occupancyFor(tour, people) units, and endsAt + that
+// tour's turnaroundMin — the same window src/core/occupancy.ts uses for overlap); localDate is
+// the resolved local-date key (see core/time.ts localDateKey) the capacity lookup runs against;
+// fleetDefaultCapacity is the fallback when neither a day override nor a capacity default apply
+// (see core/occupancy.ts capacityForDate/defaultCapacityForDate, which this mirrors in SQL).
+export interface CapacityGuardInput {
+  occupancyUnits: number;
+  occupancyEndsAt: string;
+  localDate: string;
+  fleetDefaultCapacity: number;
+}
+
 // BK-REFUND-001: a durable record of a refund decision + its Stripe outcome, replacing the
 // in-memory refundedPayments Set. One row per booking (UNIQUE booking_id — see migrations/
 // 0006_refund_operations.sql) so exactly one request can claim a booking's refund decision.
@@ -103,6 +117,12 @@ export interface BookingRepository {
   getBookingByOperatorToken(token: string): Promise<Booking | null>;
   countReferencesForYear(prefix: string): Promise<number>;
   insertHold(input: BookingInsert): Promise<Booking>;
+  // Atomic checkout write (BK-CAP-001 / AR-001): same per-IP hold-cap guard as insertHold, plus
+  // a single-statement capacity guard (occupied units in the target interval + requested <=
+  // capacity resolved for localDate). Returns null when the capacity guard loses the race —
+  // distinct from HoldLimitExceededError, which is still thrown for the unrelated per-IP cap —
+  // so the caller can surface the existing slot_unavailable 409 rather than a new error code.
+  insertHoldWithCapacity(input: BookingInsert & CapacityGuardInput): Promise<Booking | null>;
   updateBooking(id: string, patch: BookingUpdate): Promise<Booking>;
   // Compare-and-set status transitions: each issues a single conditional UPDATE scoped to
   // expectedStatusIn (or, for reschedule, status + starts_at) and returns null when the
@@ -169,6 +189,21 @@ export interface BookingRepository {
     rescheduledFrom: string;
     updatedAt: string;
   }): Promise<Booking | null>;
+  // Atomic reschedule write (BK-CAP-001): extends transitionReschedule's CAS (status +
+  // starts_at, guarding against a stale read racing a concurrent transition) with the same
+  // capacity guard as insertHoldWithCapacity, excluding this booking's own current occupancy
+  // from the "occupied" side so moving within/into a window it already partly occupies isn't
+  // double-counted against itself. Returns null on either the CAS loss or the capacity loss —
+  // the caller (rescheduleWithToken) already maps any null here to the existing 409 codes.
+  rescheduleWithCapacity(id: string, input: {
+    expectedStatus: BookingStatus;
+    expectedStartsAt: string;
+    startsAt: string;
+    endsAt: string;
+    rescheduledFrom: string;
+    updatedAt: string;
+    now: string;
+  } & CapacityGuardInput): Promise<Booking | null>;
   listOccupancyBookings(from: string, to: string): Promise<Booking[]>;
   listUpcoming(now: string): Promise<Booking[]>;
   listSince(since: string): Promise<Booking[]>;
@@ -449,6 +484,103 @@ export function createBookingRepository(db: D1Database): BookingRepository {
       if (!created) throw new Error('Booking insert did not return a row');
       return created;
     },
+    // BK-CAP-001 / AR-001: same per-IP hold-cap guard as insertHold, plus a capacity guard —
+    // both evaluated in the same WHERE clause of one INSERT ... SELECT, so D1's single-writer,
+    // single-statement-transaction semantics make "check occupancy, then insert" atomic (see
+    // handoff 05 / the D1 concurrency FAQ cited there). The capacity subexpression mirrors
+    // core/occupancy.ts: capacityForDate (day override, else the capacity_defaults row with the
+    // latest from_date <= localDate, else fleetDefaultCapacity, each floored at 0 via the
+    // 2+-argument MAX).
+    //
+    // patch-05-r1 Fix 1: the occupancy test is a faithful MAX-CONCURRENCY test, not a SUM of
+    // every overlapping booking's units — SUM over-counts bookings that overlap the requested
+    // window but never overlap EACH OTHER (e.g. one ending as the other starts) and produces
+    // false 409s. This mirrors core/occupancy.ts's maxAtBoundaries exactly: the max is always
+    // attained at some point where an active booking starts, so "max-concurrent + requested <=
+    // capacity" is equivalent to "no candidate point p has SUM(units covering p) + requested >
+    // capacity", where candidate points are the request's own start plus every active
+    // overlapping booking's own starts_at (already >= the request start, by construction).
+    // "Active" = status IN ('hold','confirmed') AND (not a hold, or its hold hasn't expired).
+    // "Covering p" = starts_at <= p AND COALESCE(occupancy_ends_at, ends_at) > p — the same
+    // COALESCE fallback as before, so pre-migration NULL rows count as one default-turnaround
+    // unit (see migrations/0008).
+    //
+    // Known limitation (unchanged from before this task, not a regression): this guard only sees
+    // the bookings table. External (non-bookkit) Google Calendar events are folded into
+    // availability by checkSlot's pre-check (src/handlers/index.ts, via availabilityForDay) but
+    // are NOT part of this atomic statement — checkSlot's calendar read was already a
+    // non-atomic, best-effort pre-check before BK-CAP-001, so this is not a new gap. Atomic
+    // calendar-aware occupancy is out of scope here (see handoff 14); do not mirror calendar
+    // events into D1 to close it.
+    async insertHoldWithCapacity(input) {
+      const holdIp = input.holdIp ?? null;
+      const holdLimit = input.maxActiveHoldsForIp ?? null;
+      const result = await db.prepare(
+        `INSERT INTO bookings (
+          id, reference, tour_slug, people, pickup_type, starts_at, ends_at, locale, price_cents,
+          status, hold_expires_at, cancel_token, operator_token, hold_ip, occupancy_units,
+          occupancy_ends_at, created_at, updated_at
+        )
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'hold', ?, ?, ?, ?, ?, ?, ?, ?
+        WHERE (? IS NULL OR (
+            SELECT COUNT(*) FROM bookings WHERE hold_ip = ? AND status = 'hold' AND hold_expires_at >= ?
+          ) < ?)
+          AND NOT EXISTS (
+            SELECT 1 FROM (
+              SELECT ? AS p
+              UNION
+              SELECT b1.starts_at AS p FROM bookings b1
+                WHERE b1.status IN ('hold', 'confirmed')
+                  AND (b1.status != 'hold' OR b1.hold_expires_at >= ?)
+                  AND b1.starts_at >= ?
+                  AND b1.starts_at < ?
+                  AND COALESCE(b1.occupancy_ends_at, b1.ends_at) > ?
+            ) pts
+            WHERE (
+              SELECT COALESCE(SUM(COALESCE(b2.occupancy_units, 1)), 0) FROM bookings b2
+                WHERE b2.status IN ('hold', 'confirmed')
+                  AND (b2.status != 'hold' OR b2.hold_expires_at >= ?)
+                  AND b2.starts_at <= pts.p
+                  AND COALESCE(b2.occupancy_ends_at, b2.ends_at) > pts.p
+            ) + ? > MAX(0, COALESCE(
+              (SELECT capacity FROM day_overrides WHERE date = ?),
+              (SELECT capacity FROM capacity_defaults WHERE from_date <= ? ORDER BY from_date DESC LIMIT 1),
+              ?
+            ))
+          )`,
+      ).bind(
+        input.id, input.reference, input.tourSlug, input.people, input.pickupType,
+        input.startsAt, input.endsAt, input.locale, input.priceCents, input.holdExpiresAt,
+        input.cancelToken, input.operatorToken, holdIp, input.occupancyUnits, input.occupancyEndsAt,
+        input.createdAt, input.updatedAt,
+        holdLimit, holdIp, input.createdAt, holdLimit,
+        // NOT EXISTS candidate points: the request's own start, then every active overlapping
+        // booking's own starts_at (b1.starts_at in [reqStart, reqEnd) that still covers reqStart).
+        input.startsAt,
+        input.createdAt, input.startsAt, input.occupancyEndsAt, input.startsAt,
+        // sum-at-point (b2) + requestedUnits > capacity resolution.
+        input.createdAt,
+        input.occupancyUnits,
+        input.localDate, input.localDate, input.fleetDefaultCapacity,
+      ).run();
+      if (result.meta.changes === 0) {
+        // Reclassify a losing write: the hold-ip cap throws (matching insertHold's contract for
+        // existing callers), anything else is a capacity loss reported as null. This re-check is
+        // for error *classification* only — the atomic WHERE clause above already made the
+        // authoritative accept/reject decision, so a benign staleness here can misreport which
+        // guard tripped but can never cause an oversell.
+        if (holdLimit !== null) {
+          const row = await first(db.prepare(
+            `SELECT COUNT(*) AS count FROM bookings WHERE hold_ip = ? AND status = 'hold' AND hold_expires_at >= ?`,
+          ).bind(holdIp, input.createdAt).all<{ count: number }>());
+          if (Number(row?.count ?? 0) >= holdLimit) throw new HoldLimitExceededError();
+        }
+        return null;
+      }
+      const created = await oneBooking('SELECT ' + bookingColumns + ' FROM bookings WHERE id = ?', input.id);
+      if (!created) throw new Error('Booking insert did not return a row');
+      return created;
+    },
     async updateBooking(id, patch) {
       const entries = Object.entries(patch).filter(([, value]) => value !== undefined);
       if (entries.length === 0) {
@@ -629,6 +761,62 @@ export function createBookingRepository(db: D1Database): BookingRepository {
         `UPDATE bookings SET starts_at = ?, ends_at = ?, rescheduled_from = ?, updated_at = ?
          WHERE id = ? AND status = ? AND starts_at = ?`,
       ).bind(input.startsAt, input.endsAt, input.rescheduledFrom, input.updatedAt, id, input.expectedStatus, input.expectedStartsAt).run();
+      if (result.meta.changes === 0) return null;
+      return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
+    },
+    // BK-CAP-001: transitionReschedule's CAS (status + starts_at) plus the same max-concurrency
+    // capacity guard as insertHoldWithCapacity (patch-05-r1 Fix 1 — see the comment there for the
+    // NOT EXISTS shape and the retained calendar-occupancy limitation), with `id != ?` excluding
+    // this booking's own current row from BOTH the candidate points and the covering-sum
+    // subqueries — otherwise a move within/into a window this booking already occupies would
+    // count itself against its own request (see the "excludes its own occupancy" test).
+    //
+    // patch-05-r1 Fix 3: occupancy_units is now re-asserted on every reschedule (computed from
+    // occupancyFor(tour, people) at the call site — party size doesn't change on a reschedule).
+    // This opportunistically self-heals a legacy NULL row (see migrations/0008) the first time it
+    // is ever moved, instead of leaving it undercounted as 1 unit forever.
+    async rescheduleWithCapacity(id, input) {
+      const result = await db.prepare(
+        `UPDATE bookings
+         SET starts_at = ?, ends_at = ?, rescheduled_from = ?, occupancy_units = ?, occupancy_ends_at = ?, updated_at = ?
+         WHERE id = ? AND status = ? AND starts_at = ?
+           AND NOT EXISTS (
+             SELECT 1 FROM (
+               SELECT ? AS p
+               UNION
+               SELECT b1.starts_at AS p FROM bookings b1
+                 WHERE b1.id != ?
+                   AND b1.status IN ('hold', 'confirmed')
+                   AND (b1.status != 'hold' OR b1.hold_expires_at >= ?)
+                   AND b1.starts_at >= ?
+                   AND b1.starts_at < ?
+                   AND COALESCE(b1.occupancy_ends_at, b1.ends_at) > ?
+             ) pts
+             WHERE (
+               SELECT COALESCE(SUM(COALESCE(b2.occupancy_units, 1)), 0) FROM bookings b2
+                 WHERE b2.id != ?
+                   AND b2.status IN ('hold', 'confirmed')
+                   AND (b2.status != 'hold' OR b2.hold_expires_at >= ?)
+                   AND b2.starts_at <= pts.p
+                   AND COALESCE(b2.occupancy_ends_at, b2.ends_at) > pts.p
+             ) + ? > MAX(0, COALESCE(
+               (SELECT capacity FROM day_overrides WHERE date = ?),
+               (SELECT capacity FROM capacity_defaults WHERE from_date <= ? ORDER BY from_date DESC LIMIT 1),
+               ?
+             ))
+           )`,
+      ).bind(
+        input.startsAt, input.endsAt, input.rescheduledFrom, input.occupancyUnits, input.occupancyEndsAt, input.updatedAt,
+        id, input.expectedStatus, input.expectedStartsAt,
+        // NOT EXISTS candidate points (self-excluded): the request's own start, then every other
+        // active overlapping booking's own starts_at.
+        input.startsAt,
+        id, input.now, input.startsAt, input.occupancyEndsAt, input.startsAt,
+        // sum-at-point (b2, self-excluded) + requestedUnits > capacity resolution.
+        id, input.now,
+        input.occupancyUnits,
+        input.localDate, input.localDate, input.fleetDefaultCapacity,
+      ).run();
       if (result.meta.changes === 0) return null;
       return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
     },

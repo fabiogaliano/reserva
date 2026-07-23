@@ -290,7 +290,10 @@ describe('Bookkit handlers', () => {
 
   it('recovers from 11 consecutive reference collisions — beyond the old retry cap of 8 — without changing the reference format', async () => {
     const repo = fakeRepository();
-    const realInsertHold = repo.insertHold;
+    // BK-CAP-001: handleCheckout now writes through insertHoldWithCapacity (the atomic
+    // capacity-guarded INSERT), not the old unconditional insertHold — hook that entry point so
+    // this still exercises the real retry loop instead of silently no-op-ing.
+    const realInsertHold = repo.insertHoldWithCapacity;
     let insertAttempts = 0;
     // 11 forced collisions exceeds the old retry cap (8, i.e. attempts 0-7 with an unconditional
     // rethrow on attempt 7): this proves the cap was actually raised to 12, not just that some
@@ -298,7 +301,7 @@ describe('Bookkit handlers', () => {
     // was just attempted as taken (rather than pre-computing a fixed sequence range) keeps this
     // deterministic regardless of the now-random 1-5 jump: each attempt is failed and blocked by
     // reacting to its actual generated reference, not by guessing where the jump landed.
-    repo.insertHold = async (input) => {
+    repo.insertHoldWithCapacity = async (input) => {
       insertAttempts += 1;
       if (insertAttempts <= 11) {
         // Simulate concurrent requests winning each candidate before this request can insert it.

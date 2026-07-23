@@ -2,6 +2,14 @@ import type { BookkitProviders } from '../src/context';
 import type { Booking } from '../src/core/booking';
 import type { PaymentProvider } from '../src/core/events';
 import {
+  defaultCapacityForDate,
+  getOccupancyIntervals,
+  maxConcurrentOccupancy,
+  resolveCapacity,
+  type OccupancyBooking,
+  type OccupancyTour,
+} from '../src/core/occupancy';
+import {
   HoldLimitExceededError,
   type BookingRepository,
   type RefundOperationRecord,
@@ -26,8 +34,55 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
   const refundOperations = new Map<string, RefundOperationRecord>();
   const sideEffectOperations = new Map<string, SideEffectOperationRecord>();
   const sideEffectKey = (bookingId: string, kind: SideEffectOperationRecord['kind']) => `${bookingId}:${kind}`;
+  // Mirrors the occupancy_units / occupancy_ends_at columns migration 0008 adds (see
+  // src/repo.ts insertHoldWithCapacity / rescheduleWithCapacity): rows seeded directly via the
+  // `booking()` fixture (bypassing these methods) have no entry here, matching a pre-migration
+  // NULL row, so the same COALESCE(units, 1) / COALESCE(endsAt, row.endsAt) fallback applies.
+  const occupancyMeta = new Map<string, { units: number; endsAt: string }>();
   const find = (predicate: (item: Booking) => boolean) => [...rows.values()].find(predicate) ?? null;
-  return {
+  // patch-05-r1 Fix 2: reuse the REAL getOccupancyIntervals/maxConcurrentOccupancy (src/core/
+  // occupancy.ts) instead of a hand-rolled SUM-of-overlaps calc that could silently drift from
+  // src/repo.ts's own NOT-EXISTS max-concurrency guard (see the Fix 1 comment there). Each row's
+  // already-resolved occupancy_ends_at/occupancy_units (tracked in `occupancyMeta`, falling back
+  // to COALESCE(_, endsAt)/COALESCE(_, 1) for rows seeded outside these methods, matching a
+  // pre-migration-0008 NULL row) is smuggled through a trivial zero-turnaround tour whose
+  // occupancyFor is the identity on a synthetic `people` count — that lets getOccupancyIntervals
+  // do the real active/overlap bookkeeping instead of a second, parallel implementation of it.
+  const zeroTurnaroundTour: OccupancyTour = { turnaroundMin: 0, occupancyFor: (units) => units };
+  const toOccupancyBooking = (item: Booking): OccupancyBooking => {
+    const meta = occupancyMeta.get(item.id);
+    return {
+      id: item.id,
+      status: item.status,
+      startsAt: item.startsAt,
+      endsAt: meta?.endsAt ?? item.endsAt,
+      holdExpiresAt: item.holdExpiresAt,
+      people: meta?.units ?? 1,
+    };
+  };
+  // Max-concurrent occupancy in [targetStart, targetEnd) — the same semantic src/repo.ts's guard
+  // now evaluates via NOT EXISTS (patch-05-r1 Fix 1), not the sum of every overlapping booking.
+  const maxConcurrentInInterval = (targetStart: string, targetEnd: string, now: string, excludeId?: string): number => {
+    const intervals = getOccupancyIntervals({
+      bookings: [...rows.values()].map(toOccupancyBooking),
+      tour: zeroTurnaroundTour,
+      now,
+      ...(excludeId !== undefined ? { excludeBookingId: excludeId } : {}),
+    });
+    return maxConcurrentOccupancy(intervals, targetStart, targetEnd);
+  };
+  // Mirrors capacityForDate/defaultCapacityForDate (core/occupancy.ts): a day override for
+  // localDate wins outright; otherwise the capacity_defaults row with the latest from_date <=
+  // localDate applies; otherwise fleetDefaultCapacity. Calls through `repository` (not a
+  // captured local) so a test overriding repo.getDayOverride/listCapacityDefaults (same pattern
+  // as overriding repo.listOccupancyBookings elsewhere in these tests) is honored here too.
+  const resolveCapacityFake = async (localDate: string, fleetDefaultCapacity: number): Promise<number> => {
+    const override = await repository.getDayOverride(localDate);
+    if (override) return resolveCapacity(override.capacity);
+    const defaults = await repository.listCapacityDefaults();
+    return defaultCapacityForDate(localDate, fleetDefaultCapacity, defaults);
+  };
+  const repository: BookingRepository & { rows: Map<string, Booking>; settings: Map<string, string>; refundOperations: Map<string, RefundOperationRecord>; sideEffectOperations: Map<string, SideEffectOperationRecord> } = {
     rows,
     sweepExpiredHolds: async (now) => {
       let changes = 0;
@@ -80,6 +135,34 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
       }
       const created: Booking = { ...booking(), ...input, pickupAddress: null, customerName: null, customerEmail: null, customerPhone: null, status: 'hold', stripeSessionId: null, stripePaymentIntent: null, calendarEventId: null, calendarSynced: false, emailSynced: false, tourflowSynced: false, remindedAt: null, reviewRequestedAt: null, cancelledAt: null, cancelledBy: null, rescheduledFrom: null };
       rows.set(created.id, created);
+      if (input.holdIp) holdIps.set(created.id, input.holdIp);
+      return created;
+    },
+    // Mirrors src/repo.ts's insertHoldWithCapacity: the hold-ip cap still throws
+    // HoldLimitExceededError, but a capacity loss returns null instead.
+    //
+    // patch-05-r1 Fix 2: the async capacity resolution runs FIRST (its own await is fine — no
+    // reader has touched `rows`/`holdIps` yet, so nothing here is order-sensitive to it). Every
+    // read of `rows`/`holdIps`/`occupancyMeta` that the decision depends on, the decision itself,
+    // and the write are then one synchronous block with NO await in between, so a concurrent call
+    // can never interleave between "decide" and "write" (mirrors D1 evaluating hold-limit +
+    // capacity in the single WHERE of one INSERT statement).
+    insertHoldWithCapacity: async (input) => {
+      const capacity = await resolveCapacityFake(input.localDate, input.fleetDefaultCapacity);
+      if (input.holdIp && input.maxActiveHoldsForIp) {
+        const active = [...rows.values()].filter((item) =>
+          holdIps.get(item.id) === input.holdIp
+          && item.status === 'hold'
+          && item.holdExpiresAt !== null
+          && item.holdExpiresAt >= input.createdAt,
+        );
+        if (active.length >= input.maxActiveHoldsForIp) throw new HoldLimitExceededError();
+      }
+      const used = maxConcurrentInInterval(input.startsAt, input.occupancyEndsAt, input.createdAt);
+      if (used + input.occupancyUnits > capacity) return null;
+      const created: Booking = { ...booking(), ...input, pickupAddress: null, customerName: null, customerEmail: null, customerPhone: null, status: 'hold', stripeSessionId: null, stripePaymentIntent: null, calendarEventId: null, calendarSynced: false, emailSynced: false, tourflowSynced: false, remindedAt: null, reviewRequestedAt: null, cancelledAt: null, cancelledBy: null, rescheduledFrom: null };
+      rows.set(created.id, created);
+      occupancyMeta.set(created.id, { units: input.occupancyUnits, endsAt: input.occupancyEndsAt });
       if (input.holdIp) holdIps.set(created.id, input.holdIp);
       return created;
     },
@@ -209,6 +292,30 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
       rows.set(id, updated);
       return updated;
     },
+    // Mirrors src/repo.ts's rescheduleWithCapacity: transitionReschedule's CAS plus the same
+    // max-concurrency capacity guard as insertHoldWithCapacity, excluding this booking's own id
+    // from the occupancy calc so a move within a window it already occupies isn't counted
+    // against itself. patch-05-r1 Fix 3: occupancy_units is now re-asserted (self-healing a
+    // legacy NULL row), matching src/repo.ts.
+    //
+    // patch-05-r1 Fix 2 (atomicity): the CAS pre-check used to read `current` BEFORE the
+    // `await resolveCapacityFake`, so two concurrent reschedules of the SAME booking could both
+    // capture the pre-write row, both pass the stale CAS check, and the loser would then
+    // unconditionally clobber the winner's write once its own await resumed. Resolving capacity
+    // FIRST (before touching `rows` at all) and doing CAS + occupancy decision + write as one
+    // synchronous block after it closes that gap — no concurrent call can observe `rows` between
+    // this call's decide and its write (mirrors D1's single UPDATE ... WHERE transaction).
+    rescheduleWithCapacity: async (id, input) => {
+      const capacity = await resolveCapacityFake(input.localDate, input.fleetDefaultCapacity);
+      const current = rows.get(id);
+      if (!current || current.status !== input.expectedStatus || current.startsAt !== input.expectedStartsAt) return null;
+      const used = maxConcurrentInInterval(input.startsAt, input.occupancyEndsAt, input.now, id);
+      if (used + input.occupancyUnits > capacity) return null;
+      const updated: Booking = { ...current, startsAt: input.startsAt, endsAt: input.endsAt, rescheduledFrom: input.rescheduledFrom, updatedAt: input.updatedAt };
+      rows.set(id, updated);
+      occupancyMeta.set(id, { units: input.occupancyUnits, endsAt: input.occupancyEndsAt });
+      return updated;
+    },
     listOccupancyBookings: async (from, to) => [...rows.values()].filter((item) => item.startsAt >= from && item.startsAt < to),
     // Mirrors src/repo.ts:260-267 — starts_at >= now AND (confirmed OR (hold AND hold_expires_at > now)), ordered by starts_at.
     listUpcoming: async (now) => [...rows.values()]
@@ -285,6 +392,7 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & {
       });
     },
   };
+  return repository;
 }
 
 // Records the idempotency key each refund() call would carry (mirroring StripeProvider's own

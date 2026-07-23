@@ -109,8 +109,11 @@ describe('stale compare-and-set transitions', () => {
   it('a reschedule that loses a race to a concurrent cancel gets 409 instead of moving the row', async () => {
     const seeded = booking({ id: 'b-reschedule-vs-cancel', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z' });
     const repo = fakeRepository([seeded]);
-    const realTransition = repo.transitionReschedule;
-    repo.transitionReschedule = async (id, input) => {
+    // BK-CAP-001: rescheduleWithToken now writes through rescheduleWithCapacity (the atomic
+    // capacity-guarded UPDATE), not the old unconditional transitionReschedule — hook that entry
+    // point so this still exercises the real CAS instead of silently no-op-ing.
+    const realTransition = repo.rescheduleWithCapacity;
+    repo.rescheduleWithCapacity = async (id, input) => {
       const current = repo.rows.get(id);
       if (current) repo.rows.set(id, { ...current, status: 'cancelled', cancelledAt: '2026-06-14T08:00:00.000Z', cancelledBy: 'customer' });
       return realTransition(id, input);
@@ -131,8 +134,10 @@ describe('stale compare-and-set transitions', () => {
     // stale-transition test per converted handler, and the operator one wasn't covered yet.
     const seeded = booking({ id: 'b-op-reschedule-vs-cancel', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z' });
     const repo = fakeRepository([seeded]);
-    const realTransition = repo.transitionReschedule;
-    repo.transitionReschedule = async (id, input) => {
+    // BK-CAP-001: see the customer-reschedule-vs-cancel test above — hook the atomic
+    // rescheduleWithCapacity entry point rescheduleWithToken now actually writes through.
+    const realTransition = repo.rescheduleWithCapacity;
+    repo.rescheduleWithCapacity = async (id, input) => {
       const current = repo.rows.get(id);
       if (current) repo.rows.set(id, { ...current, status: 'cancelled', cancelledAt: '2026-06-14T08:00:00.000Z', cancelledBy: 'operator' });
       return realTransition(id, input);
@@ -150,8 +155,10 @@ describe('stale compare-and-set transitions', () => {
   it('a reschedule that loses a race to a concurrent reschedule gets 409 slot_unavailable instead of clobbering the winner', async () => {
     const seeded = booking({ id: 'b-reschedule-vs-reschedule', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z' });
     const repo = fakeRepository([seeded]);
-    const realTransition = repo.transitionReschedule;
-    repo.transitionReschedule = async (id, input) => {
+    // BK-CAP-001: see the reschedule-vs-cancel test above — hook the atomic
+    // rescheduleWithCapacity entry point rescheduleWithToken now actually writes through.
+    const realTransition = repo.rescheduleWithCapacity;
+    repo.rescheduleWithCapacity = async (id, input) => {
       const current = repo.rows.get(id);
       if (current) {
         repo.rows.set(id, {

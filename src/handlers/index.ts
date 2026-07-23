@@ -7,7 +7,7 @@ import {
   type Booking,
 } from '../core/booking';
 import { resolveTour, type PickupType } from '../core/config';
-import { availabilityForDay, capacityForDate, defaultCapacityForDate, type CapacityDefault } from '../core/occupancy';
+import { availabilityForDay, capacityForDate, defaultCapacityForDate, occupancyFor, type CapacityDefault } from '../core/occupancy';
 import { priceFor } from '../core/pricing';
 import { generateUniqueReference } from '../core/reference';
 import {
@@ -253,23 +253,35 @@ export function handleCheckout(request: Request, context: BookkitContext): Promi
     const referenceExists = async (candidateReference: string): Promise<boolean> =>
       (await context.repo.getBookingByReference(candidateReference)) !== null;
     let sequence = await context.repo.countReferencesForYear(prefix) + 1;
+    // BK-CAP-001 / AR-001: checkSlot above is only a fast-path pre-check (read-then-write TOCTOU
+    // — two concurrent checkouts can both pass it for the same last unit). insertHoldWithCapacity
+    // is the authority: it re-evaluates occupied-units-in-interval + requested <= capacity inside
+    // the same atomic INSERT ... SELECT ... WHERE as the write itself, so only one concurrent
+    // request for the last unit can ever succeed.
+    const occupancyUnits = occupancyFor(candidate.tour, people);
+    const occupancyEndsAt = new Date(parseUtcInstant(candidate.endsAt).getTime() + candidate.tour.turnaroundMin * 60_000).toISOString();
+    const localDate = localDateKey(candidate.startsAt, context.config.business.timezone);
     let booking: Booking | null = null;
     for (let attempt = 0; attempt < 12; attempt += 1) {
       const reference = await generateUniqueReference(context.config.business.shortCode, year, sequence, referenceExists);
       try {
         const holdLimit = context.config.booking.maxHoldsPerIp;
-        booking = await context.repo.insertHold({
+        const created = await context.repo.insertHoldWithCapacity({
           id: crypto.randomUUID(), reference, tourSlug, people, pickupType,
           startsAt: candidate.startsAt, endsAt: candidate.endsAt, locale, priceCents,
           holdExpiresAt: new Date(parseUtcInstant(now).getTime() + context.config.booking.holdMinutes * 60_000).toISOString(),
           cancelToken: tokenBytes(), operatorToken: tokenBytes(), createdAt: now, updatedAt: now,
+          occupancyUnits, occupancyEndsAt, localDate, fleetDefaultCapacity: context.config.fleet.defaultCapacity,
           ...(holdLimit ? { holdIp: clientIp(request), maxActiveHoldsForIp: holdLimit } : {}),
         });
+        if (!created) throw new HttpError(409, 'slot_unavailable', 'The selected slot is no longer available');
+        booking = created;
         break;
       } catch (error) {
         if (error instanceof HoldLimitExceededError) {
           throw new HttpError(429, 'too_many_holds', error.message);
         }
+        if (error instanceof HttpError) throw error;
         // Classify the insert failure by re-checking the DB rather than parsing the error
         // message: the table has other UNIQUE columns, so message-sniffing could misfire.
         if (attempt === 11 || !(await referenceExists(reference))) throw error;
@@ -496,18 +508,30 @@ async function rescheduleWithToken(context: BookkitContext, booking: Booking, ne
   if (!operator && !canRescheduleBooking(booking, now, context.config.booking.reschedule.cutoffHours, context.config.booking.reschedule.enabled)) throw new HttpError(403, 'past_cutoff', 'The reschedule deadline has passed');
   const candidate = await checkSlot(context, booking.tourSlug, booking.people, newStart, now, booking.id);
   const next = rescheduleBooking(booking, candidate.startsAt, candidate.tour.durationMin, now);
-  const updated = await context.repo.transitionReschedule(next.id, {
+  // BK-CAP-001: checkSlot above is only a fast-path pre-check (read-then-write TOCTOU — two
+  // concurrent reschedules into the same last unit can both pass it). rescheduleWithCapacity is
+  // the authority: it re-evaluates the CAS (status + starts_at) and occupied-units-in-interval +
+  // requested <= capacity inside the same atomic UPDATE ... WHERE as the write itself.
+  const occupancyUnits = occupancyFor(candidate.tour, booking.people);
+  const occupancyEndsAt = new Date(parseUtcInstant(next.endsAt).getTime() + candidate.tour.turnaroundMin * 60_000).toISOString();
+  const localDate = localDateKey(next.startsAt, context.config.business.timezone);
+  const updated = await context.repo.rescheduleWithCapacity(next.id, {
     expectedStatus: 'confirmed',
     expectedStartsAt: booking.startsAt,
     startsAt: next.startsAt,
     endsAt: next.endsAt,
     rescheduledFrom: booking.startsAt,
     updatedAt: next.updatedAt,
+    now,
+    occupancyUnits, occupancyEndsAt, localDate, fleetDefaultCapacity: context.config.fleet.defaultCapacity,
   });
   if (!updated) {
     const fresh = await context.repo.getBookingById(next.id);
     if (!fresh || fresh.status !== 'confirmed') throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be rescheduled');
-    // Status is still confirmed but starts_at moved under us — a concurrent reschedule won.
+    // Status is still confirmed but the write lost the atomic guard — either a concurrent
+    // reschedule moved starts_at, or no capacity remained (someone else took the last unit, or
+    // an admin day-override shrank capacity concurrently). Both surface identically: the slot
+    // this request computed availability against is gone.
     throw new HttpError(409, 'slot_unavailable', 'The selected slot is no longer available');
   }
   await calendarPatch(context, updated);
