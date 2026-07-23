@@ -20,12 +20,20 @@ describe('late checkout.session.completed on an already-expired hold (spec §6)'
       emailSynced: false,
       tourflowSynced: false,
     });
-    const repo = fakeRepository([seeded]);
+    const occupied = booking({
+      id: 'b-late-occupied',
+      status: 'confirmed',
+      startsAt: seeded.startsAt,
+      endsAt: seeded.endsAt,
+      calendarSynced: true,
+      emailSynced: true,
+    });
+    const repo = fakeRepository([seeded, occupied]);
     let calendarCreates = 0;
     let emails = 0;
     const warnings: Array<[string, Record<string, unknown> | undefined]> = [];
     const context = createBookkitContext({
-      config,
+      config: { ...config, fleet: { defaultCapacity: 1 } },
       db: {} as D1Database,
       repo,
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
@@ -69,6 +77,10 @@ describe('late checkout.session.completed on an already-expired hold (spec §6)'
       customerEmail: 'grace@example.test',
       customerPhone: '+351920000000',
       pickupAddress: 'Rossio',
+    });
+    expect(repo.sideEffectOperations.get(`${seeded.id}:oversell`)).toMatchObject({
+      status: 'succeeded',
+      providerResultId: 'capacity_exceeded',
     });
     // WP-01 (Fix 2) added this warning so operators get a signal on the accepted oversell path.
     expect(warnings).toContainEqual([

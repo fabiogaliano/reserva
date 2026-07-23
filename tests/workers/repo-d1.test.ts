@@ -12,6 +12,7 @@ const repo = createBookingRepository(db);
 beforeEach(async () => {
   await db.prepare('DELETE FROM bookings').run();
   await db.prepare('DELETE FROM day_overrides').run();
+  await db.prepare('DELETE FROM side_effect_operations').run();
   await db.prepare('DELETE FROM refund_operations').run();
 });
 
@@ -96,6 +97,40 @@ describe('D1 booking repository', () => {
     await repo.transitionToConfirmed(created.id, { expectedStatusIn: ['hold'], updatedAt: '2026-07-21T10:01:00.000Z' });
     await expect(repo.expireHold(created.id, '2026-07-21T10:02:00.000Z')).resolves.toBeNull();
     await expect(repo.getBookingById(created.id)).resolves.toMatchObject({ status: 'confirmed' });
+  });
+
+  it('rolls back the confirmation status when creating its outbox rows fails inside the same batch', async () => {
+    const created = await repo.insertHold({
+      id: 'booking-outbox-atomic',
+      reference: 'BKT-2026-OUTBOX',
+      tourSlug: 'vintage',
+      people: 2,
+      pickupType: 'default',
+      startsAt: '2026-08-01T09:00:00.000Z',
+      endsAt: '2026-08-01T10:00:00.000Z',
+      locale: 'en',
+      priceCents: 12000,
+      holdExpiresAt: '2026-07-21T10:35:00.000Z',
+      cancelToken: 'cancel-token-outbox',
+      operatorToken: 'operator-token-outbox',
+      createdAt: '2026-07-21T10:00:00.000Z',
+      updatedAt: '2026-07-21T10:00:00.000Z',
+    });
+    await repo.acquireConfirmationLease(created.id, 'lease-outbox', '2026-07-21T10:00:00.000Z', '2026-07-21T10:05:00.000Z');
+    await db.prepare(`CREATE TRIGGER fail_confirmation_outbox
+      BEFORE INSERT ON side_effect_operations
+      BEGIN SELECT RAISE(ABORT, 'outbox insert failed'); END`).run();
+
+    await expect(repo.confirmWithSideEffectOperations(created.id, {
+      expectedStatusIn: ['hold'],
+      leaseToken: 'lease-outbox',
+      oversold: false,
+      updatedAt: '2026-07-21T10:01:00.000Z',
+    })).rejects.toThrow('outbox insert failed');
+
+    expect((await repo.getBookingById(created.id))?.status).toBe('hold');
+    await expect(db.prepare('SELECT * FROM side_effect_operations WHERE booking_id = ?').bind(created.id).all()).resolves.toMatchObject({ results: [] });
+    await db.prepare('DROP TRIGGER fail_confirmation_outbox').run();
   });
 
   it('persists capacity overrides and returns only changed feed rows', async () => {

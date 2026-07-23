@@ -407,6 +407,18 @@ export function handleStatus(request: Request, context: BookkitContext): Promise
           ?? await context.repo.getBookingById(current.id)
           ?? current;
       }
+    } else if (current.status === 'confirmed') {
+      const operations = await context.repo.listSideEffectOperations(current.id);
+      const needsFulfillment = operations.some((operation) => operation.status !== 'succeeded')
+        || (operations.length === 0 && (!current.calendarSynced || !current.emailSynced));
+      if (needsFulfillment) {
+        try {
+          current = await confirmBookingFromPayment(context, current);
+        } catch (error) {
+          if (!(error instanceof ConfirmationInProgressError)) throw error;
+          current = await context.repo.getBookingById(current.id) ?? current;
+        }
+      }
     }
     if (current.status === 'confirmed') return json({ status: 'confirmed', booking: bookingSummary(context, current) });
     if (current.status === 'expired') return json({ status: 'expired' });

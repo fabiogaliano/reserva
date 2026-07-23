@@ -9,4 +9,5 @@ export const BOOKKIT_MIGRATIONS = [
   '0004_capacity_defaults.sql',
   '0005_settings.sql',
   '0006_refund_operations.sql',
+  '0007_side_effect_outbox.sql',
 ] as const;

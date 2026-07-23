@@ -1,7 +1,16 @@
 import type { Booking } from './core/booking';
+import { resolveTour } from './core/config';
 import type { BookingEvent, EmailBookingEvent, StripeCustomerDetails } from './core/events';
+import {
+  capacityForDate,
+  defaultCapacityForDate,
+  getOccupancyIntervals,
+  isSlotAvailable,
+} from './core/occupancy';
+import { localDateKey, parseUtcInstant } from './core/time';
 import type { BookkitContext } from './context';
 import { nowIso } from './context';
+import type { SideEffectOperationRecord } from './repo';
 
 export class ConfirmationInProgressError extends Error {
   readonly status = 503;
@@ -13,70 +22,162 @@ export class ConfirmationInProgressError extends Error {
   }
 }
 
+async function expiredHoldOversold(context: BookkitContext, booking: Booking, now: string): Promise<boolean> {
+  const tour = resolveTour(context.config, booking.tourSlug);
+  const date = localDateKey(booking.startsAt, context.config.business.timezone);
+  const [override, capacityDefaults] = await Promise.all([
+    context.repo.getDayOverride(date),
+    context.repo.listCapacityDefaults(),
+  ]);
+  const lookback = Math.max(...Object.values(context.config.tours).map((candidate) => candidate.durationMin + candidate.turnaroundMin));
+  const windowStart = new Date(parseUtcInstant(booking.startsAt).getTime() - lookback * 60_000).toISOString();
+  const windowEnd = new Date(parseUtcInstant(booking.endsAt).getTime() + tour.turnaroundMin * 60_000).toISOString();
+  const [bookings, calendarEvents] = await Promise.all([
+    context.repo.listOccupancyBookings(windowStart, windowEnd),
+    context.providers.calendar ? context.providers.calendar.listEvents(windowStart, windowEnd) : Promise.resolve([]),
+  ]);
+  const capacity = capacityForDate(
+    date,
+    defaultCapacityForDate(date, context.config.fleet.defaultCapacity, capacityDefaults),
+    override ? [override] : [],
+  ).capacity;
+  return !isSlotAvailable(booking.startsAt, booking.endsAt, {
+    capacity,
+    intervals: getOccupancyIntervals({
+      bookings,
+      calendarEvents,
+      tour,
+      tours: context.config.tours,
+      now,
+    }),
+    requestedUnits: tour.occupancyFor ? tour.occupancyFor(booking.people) : 1,
+    turnaroundMin: tour.turnaroundMin,
+  });
+}
+
+async function renewConfirmationLease(context: BookkitContext, bookingId: string, token: string): Promise<void> {
+  const now = context.clock();
+  const renewed = await context.repo.renewConfirmationLease(
+    bookingId,
+    token,
+    now.toISOString(),
+    new Date(now.getTime() + 5 * 60_000).toISOString(),
+  );
+  if (!renewed) throw new ConfirmationInProgressError();
+}
+
+async function resolveOperation(
+  context: BookkitContext,
+  input: Parameters<BookkitContext['repo']['resolveSideEffectOperation']>[0],
+): Promise<void> {
+  if (!await context.repo.resolveSideEffectOperation(input)) throw new ConfirmationInProgressError();
+}
+
+async function executeOperation(
+  context: BookkitContext,
+  booking: Booking,
+  operation: SideEffectOperationRecord,
+  token: string,
+): Promise<void> {
+  if (operation.status === 'succeeded' || operation.kind === 'oversell') return;
+  await renewConfirmationLease(context, booking.id, token);
+  if (!await context.repo.claimSideEffectOperation(booking.id, operation.kind, token, nowIso(context))) {
+    throw new ConfirmationInProgressError();
+  }
+  try {
+    await renewConfirmationLease(context, booking.id, token);
+    const providerResultId = operation.kind === 'calendar_create'
+      ? context.providers.calendar
+        ? await context.providers.calendar.createEvent(booking, context.config)
+        : null
+      : (context.providers.email
+        ? await context.providers.email.send('booking.confirmed', booking, context.config, context.routeConfig.paths)
+        : null);
+    await renewConfirmationLease(context, booking.id, token);
+    await resolveOperation(context, {
+      bookingId: booking.id,
+      kind: operation.kind,
+      leaseToken: token,
+      status: 'succeeded',
+      ...(providerResultId ? { providerResultId } : {}),
+      resolvedAt: nowIso(context),
+    });
+  } catch (error) {
+    if (error instanceof ConfirmationInProgressError) throw error;
+    await resolveOperation(context, {
+      bookingId: booking.id,
+      kind: operation.kind,
+      leaseToken: token,
+      status: 'failed',
+      error: String(error),
+      resolvedAt: nowIso(context),
+    });
+    throw error;
+  }
+}
+
 async function confirmBookingFromPaymentUnlocked(
   context: BookkitContext,
   booking: Booking,
+  token: string,
   paymentIntent?: string | null,
   details: StripeCustomerDetails = {},
 ): Promise<Booking> {
   const now = nowIso(context);
-  const shouldDispatchConfirmation = booking.status !== 'confirmed'
-    || !booking.calendarSynced
-    || !booking.emailSynced
-    || !booking.tourflowSynced;
   const customerPatch: StripeCustomerDetails = {};
   if (details.customerName !== undefined) customerPatch.customerName = details.customerName;
   if (details.customerEmail !== undefined) customerPatch.customerEmail = details.customerEmail;
   if (details.customerPhone !== undefined) customerPatch.customerPhone = details.customerPhone;
   if (details.pickupAddress !== undefined) customerPatch.pickupAddress = details.pickupAddress;
   let current = booking;
+  let shouldDispatchConfirmation = current.status !== 'confirmed';
+  let transitionApplied = false;
   if (current.status === 'hold' || current.status === 'expired') {
+    let oversold = false;
     if (current.status === 'expired') {
-      // Spec §6: payment can land after a hold's window expires; we still honor it,
-      // accepting a possible one-slot oversell, but an operator needs a signal.
       context.logger.warn?.('confirming expired hold after payment; possible one-slot oversell', {
         bookingId: current.id,
         reference: current.reference,
         startsAt: current.startsAt,
       });
+      try {
+        oversold = await expiredHoldOversold(context, current, now);
+      } catch (error) {
+        context.logger.warn?.('could not recheck capacity for expired paid hold', { bookingId: current.id, error: String(error) });
+        oversold = true;
+      }
     }
-    const result = await context.repo.transitionToConfirmed(current.id, {
+    const result = await context.repo.confirmWithSideEffectOperations(current.id, {
       expectedStatusIn: ['hold', 'expired'],
       ...(paymentIntent !== undefined ? { stripePaymentIntent: paymentIntent } : {}),
       ...customerPatch,
+      leaseToken: token,
+      oversold,
       updatedAt: now,
     });
-    // A concurrent cancel/no-show doesn't take the confirmation lease, so it can win this
-    // race; re-read and fall through — the status !== 'confirmed' check below then returns
-    // the terminal row as-is instead of resurrecting it.
+    transitionApplied = result !== null;
     current = result ?? await context.repo.getBookingById(current.id) ?? current;
-  } else if (paymentIntent || Object.keys(customerPatch).length > 0) {
-    current = await context.repo.updateBooking(current.id, {
-      ...(paymentIntent ? { stripePaymentIntent: paymentIntent } : {}),
-      ...customerPatch,
-      updatedAt: now,
-    });
+    if (!transitionApplied && current.status !== 'confirmed') throw new ConfirmationInProgressError();
   }
   if (current.status !== 'confirmed') return current;
 
-  if (!current.calendarSynced) {
-    if (context.providers.calendar) {
-      const eventId = current.calendarEventId
-        ? current.calendarEventId
-        : await context.providers.calendar.createEvent(current, context.config);
-      current = await context.repo.updateBooking(current.id, {
-        calendarEventId: eventId,
-        calendarSynced: true,
-        updatedAt: nowIso(context),
-      });
-    } else {
-      current = await context.repo.updateBooking(current.id, { calendarSynced: true, updatedAt: nowIso(context) });
+  if (!transitionApplied && (paymentIntent !== undefined || Object.keys(customerPatch).length > 0)) {
+    await renewConfirmationLease(context, current.id, token);
+    if (!await context.repo.applyConfirmedPaymentDetails(current.id, {
+      ...(paymentIntent !== undefined ? { stripePaymentIntent: paymentIntent } : {}),
+      ...customerPatch,
+    }, token, nowIso(context))) {
+      throw new ConfirmationInProgressError();
     }
+    current = await context.repo.getBookingById(current.id) ?? current;
   }
-  if (!current.emailSynced) {
-    if (context.providers.email) await context.providers.email.send('booking.confirmed', current, context.config, context.routeConfig.paths);
-    current = await context.repo.updateBooking(current.id, { emailSynced: true, updatedAt: nowIso(context) });
-  }
+
+  await renewConfirmationLease(context, current.id, token);
+  await context.repo.ensureConfirmationSideEffectOperations(current.id, token, nowIso(context));
+  const operations = await context.repo.listSideEffectOperations(current.id);
+  shouldDispatchConfirmation ||= operations.some((operation) => operation.status !== 'succeeded');
+  for (const operation of operations) await executeOperation(context, current, operation, token);
+  current = await context.repo.getBookingById(current.id) ?? current;
   if (shouldDispatchConfirmation) dispatchNonCritical(context, 'booking.confirmed', current);
   return current;
 }
@@ -102,7 +203,7 @@ async function confirmBookingWithLease(
   }
   try {
     const current = await context.repo.getBookingById(booking.id) ?? booking;
-    return await confirmBookingFromPaymentUnlocked(context, current, paymentIntent, details);
+    return await confirmBookingFromPaymentUnlocked(context, current, token, paymentIntent, details);
   } finally {
     await context.repo.releaseConfirmationLease(booking.id, token);
   }

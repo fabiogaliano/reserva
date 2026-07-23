@@ -225,8 +225,8 @@ describe('stale compare-and-set transitions', () => {
       tourflowSynced: false,
     });
     const repo = fakeRepository([seeded]);
-    const realTransition = repo.transitionToConfirmed;
-    repo.transitionToConfirmed = async (id, input) => {
+    const realTransition = repo.confirmWithSideEffectOperations;
+    repo.confirmWithSideEffectOperations = async (id, input) => {
       const current = repo.rows.get(id);
       if (current) {
         repo.rows.set(id, {
@@ -272,7 +272,7 @@ describe('stale compare-and-set transitions', () => {
     });
 
     const response = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(503);
     const row = repo.rows.get(seeded.id);
     expect(row?.status).toBe('cancelled');
     expect(row?.cancelledBy).toBe('operator');

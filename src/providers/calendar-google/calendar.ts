@@ -47,7 +47,7 @@ function eventPayload(booking: Booking, config: ClientConfig | undefined, _timez
     config?.tours[booking.tourSlug]?.meetingPoint.mapsUrl,
   ].filter(Boolean).join('\n');
   const attendee = booking.customerEmail ? { email: booking.customerEmail, ...(booking.customerName ? { displayName: booking.customerName } : {}) } : undefined;
-  return { summary: title, description, start: { dateTime: booking.startsAt }, end: { dateTime: booking.endsAt }, ...(attendee ? { attendees: [attendee] } : {}), extendedProperties: { private: { bookkitBookingId: booking.id } } };
+  return { id: booking.id.replaceAll('-', ''), summary: title, description, start: { dateTime: booking.startsAt }, end: { dateTime: booking.endsAt }, ...(attendee ? { attendees: [attendee] } : {}), extendedProperties: { private: { bookkitBookingId: booking.id } } };
 }
 
 export class GoogleCalendarProvider implements CalendarProvider {
@@ -103,7 +103,18 @@ export class GoogleCalendarProvider implements CalendarProvider {
     return events;
   }
   async createEvent(booking: Booking, config: ClientConfig): Promise<string> {
-    const response = await this.call('?sendUpdates=all', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(eventPayload(booking, config, config.business.timezone || this.timezone)) });
+    const eventId = booking.id.replaceAll('-', '');
+    const response = await this.request(this.url('?sendUpdates=all'), {
+      method: 'POST',
+      headers: {
+        accept: 'application/json',
+        authorization: `Bearer ${await this.auth.getAccessToken()}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(eventPayload(booking, config, config.business.timezone || this.timezone)),
+    });
+    if (response.status === 409) return eventId;
+    if (!response.ok) throw new Error(`Google Calendar request failed (${response.status})`);
     const body = await response.json() as GoogleEvent;
     if (!body.id) throw new Error('Google Calendar create response omitted event id');
     return body.id;

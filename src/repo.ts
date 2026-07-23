@@ -53,6 +53,22 @@ export interface RefundOperationRecord {
   error: string | null;
 }
 
+export type SideEffectOperationKind = 'calendar_create' | 'email_confirmation' | 'oversell';
+export type SideEffectOperationStatus = 'pending' | 'in_flight' | 'succeeded' | 'failed';
+
+export interface SideEffectOperationRecord {
+  bookingId: string;
+  kind: SideEffectOperationKind;
+  status: SideEffectOperationStatus;
+  providerResultId: string | null;
+  attemptCount: number;
+  attemptedAt: string | null;
+  resolvedAt: string | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface BookingUpdate {
   pickupAddress?: string | null;
   customerName?: string | null;
@@ -77,6 +93,7 @@ export interface BookingRepository {
   sweepExpiredHolds(now: string): Promise<number>;
   expireHold(id: string, now: string): Promise<Booking | null>;
   acquireConfirmationLease(id: string, token: string, now: string, leaseUntil: string): Promise<boolean>;
+  renewConfirmationLease(id: string, token: string, now: string, leaseUntil: string): Promise<boolean>;
   releaseConfirmationLease(id: string, token: string): Promise<void>;
   getBookingById(id: string): Promise<Booking | null>;
   getBookingByReference(reference: string): Promise<Booking | null>;
@@ -114,6 +131,36 @@ export interface BookingRepository {
     pickupAddress?: string | null;
     updatedAt: string;
   }): Promise<Booking | null>;
+  confirmWithSideEffectOperations(id: string, input: {
+    expectedStatusIn: BookingStatus[];
+    stripePaymentIntent?: string | null;
+    customerName?: string | null;
+    customerEmail?: string | null;
+    customerPhone?: string | null;
+    pickupAddress?: string | null;
+    leaseToken: string;
+    oversold: boolean;
+    updatedAt: string;
+  }): Promise<Booking | null>;
+  applyConfirmedPaymentDetails(id: string, patch: {
+    stripePaymentIntent?: string | null;
+    customerName?: string | null;
+    customerEmail?: string | null;
+    customerPhone?: string | null;
+    pickupAddress?: string | null;
+  }, leaseToken: string, updatedAt: string): Promise<boolean>;
+  ensureConfirmationSideEffectOperations(id: string, leaseToken: string, now: string): Promise<void>;
+  listSideEffectOperations(bookingId: string): Promise<SideEffectOperationRecord[]>;
+  claimSideEffectOperation(bookingId: string, kind: Exclude<SideEffectOperationKind, 'oversell'>, leaseToken: string, attemptedAt: string): Promise<boolean>;
+  resolveSideEffectOperation(input: {
+    bookingId: string;
+    kind: Exclude<SideEffectOperationKind, 'oversell'>;
+    leaseToken: string;
+    status: 'succeeded' | 'failed';
+    providerResultId?: string | null;
+    error?: string | null;
+    resolvedAt: string;
+  }): Promise<boolean>;
   transitionReschedule(id: string, input: {
     expectedStatus: BookingStatus;
     expectedStartsAt: string;
@@ -293,6 +340,37 @@ function mapRefundOperation(row: RefundOperationRow): RefundOperationRecord {
 const refundOperationColumns = `id, booking_id, payment_intent, choice, status, stripe_refund_id,
   amount_cents, requested_at, resolved_at, error`;
 
+interface SideEffectOperationRow {
+  booking_id: string;
+  kind: SideEffectOperationKind;
+  status: SideEffectOperationStatus;
+  provider_result_id: string | null;
+  attempt_count: number;
+  attempted_at: string | null;
+  resolved_at: string | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+const sideEffectOperationColumns = `booking_id, kind, status, provider_result_id, attempt_count,
+  attempted_at, resolved_at, error, created_at, updated_at`;
+
+function mapSideEffectOperation(row: SideEffectOperationRow): SideEffectOperationRecord {
+  return {
+    bookingId: row.booking_id,
+    kind: row.kind,
+    status: row.status,
+    providerResultId: row.provider_result_id,
+    attemptCount: Number(row.attempt_count),
+    attemptedAt: row.attempted_at,
+    resolvedAt: row.resolved_at,
+    error: row.error,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 export function createBookingRepository(db: D1Database): BookingRepository {
   const oneBooking = async (sql: string, ...params: unknown[]): Promise<Booking | null> => {
     const row = await first(db.prepare(sql).bind(...params).all<BookingRow>());
@@ -320,6 +398,13 @@ export function createBookingRepository(db: D1Database): BookingRepository {
         `UPDATE bookings SET confirmation_lease_token = ?, confirmation_lease_until = ?
          WHERE id = ? AND (confirmation_lease_until IS NULL OR confirmation_lease_until < ?)`,
       ).bind(token, leaseUntil, id, now).run();
+      return result.meta.changes > 0;
+    },
+    async renewConfirmationLease(id, token, now, leaseUntil) {
+      const result = await db.prepare(
+        `UPDATE bookings SET confirmation_lease_until = ?
+         WHERE id = ? AND confirmation_lease_token = ? AND confirmation_lease_until >= ?`,
+      ).bind(leaseUntil, id, token, now).run();
       return result.meta.changes > 0;
     },
     async releaseConfirmationLease(id, token) {
@@ -433,6 +518,111 @@ export function createBookingRepository(db: D1Database): BookingRepository {
       ).bind(...entries.map(([, value]) => value), updatedAt, id, ...expectedStatusIn).run();
       if (result.meta.changes === 0) return null;
       return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
+    },
+    async confirmWithSideEffectOperations(id, input) {
+      const { expectedStatusIn, updatedAt, leaseToken, oversold, ...patch } = input;
+      const columnMap: Record<string, string> = {
+        stripePaymentIntent: 'stripe_payment_intent', customerName: 'customer_name',
+        customerEmail: 'customer_email', customerPhone: 'customer_phone', pickupAddress: 'pickup_address',
+      };
+      const entries = Object.entries(patch).filter(([, value]) => value !== undefined);
+      const columns = entries.map(([key]) => columnMap[key]);
+      if (columns.some((column) => !column)) throw new Error('Unsupported confirmation field');
+      const placeholders = expectedStatusIn.map(() => '?').join(', ');
+      const setClauses = [`status = 'confirmed'`, 'hold_expires_at = NULL', ...columns.map((column) => `${column} = ?`), 'updated_at = ?'];
+      const operation = (kind: SideEffectOperationKind, status: SideEffectOperationStatus, providerResultId: string | null, resolvedAt: string | null) => db.prepare(
+        `INSERT INTO side_effect_operations (
+           booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
+         )
+         SELECT ?, ?, ?, ?, 0, NULL, ?, NULL, ?, ?
+         WHERE EXISTS (
+           SELECT 1 FROM bookings
+           WHERE id = ? AND status = 'confirmed' AND confirmation_lease_token = ?
+         )
+         ON CONFLICT(booking_id, kind) DO NOTHING`,
+      ).bind(id, kind, status, providerResultId, resolvedAt, updatedAt, updatedAt, id, leaseToken);
+      const results = await db.batch([
+        db.prepare(
+          `UPDATE bookings SET ${setClauses.join(', ')}
+           WHERE id = ? AND status IN (${placeholders}) AND confirmation_lease_token = ?`,
+        ).bind(...entries.map(([, value]) => value), updatedAt, id, ...expectedStatusIn, leaseToken),
+        operation('calendar_create', 'pending', null, null),
+        operation('email_confirmation', 'pending', null, null),
+        ...(oversold ? [operation('oversell', 'succeeded', 'capacity_exceeded', updatedAt)] : []),
+      ]);
+      if ((results[0]?.meta.changes ?? 0) === 0) return null;
+      return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
+    },
+    async applyConfirmedPaymentDetails(id, patch, leaseToken, updatedAt) {
+      const columnMap: Record<string, string> = {
+        stripePaymentIntent: 'stripe_payment_intent', customerName: 'customer_name',
+        customerEmail: 'customer_email', customerPhone: 'customer_phone', pickupAddress: 'pickup_address',
+      };
+      const entries = Object.entries(patch).filter(([, value]) => value !== undefined);
+      if (entries.length === 0) return false;
+      const columns = entries.map(([key]) => columnMap[key]);
+      if (columns.some((column) => !column)) throw new Error('Unsupported confirmation field');
+      const result = await db.prepare(
+        `UPDATE bookings SET ${columns.map((column) => `${column} = COALESCE(${column}, ?)`).join(', ')}, updated_at = ?
+         WHERE id = ? AND status = 'confirmed' AND confirmation_lease_token = ?`,
+      ).bind(...entries.map(([, value]) => value), updatedAt, id, leaseToken).run();
+      return result.meta.changes > 0;
+    },
+    async ensureConfirmationSideEffectOperations(id, leaseToken, now) {
+      const operation = (kind: Exclude<SideEffectOperationKind, 'oversell'>, syncedColumn: 'calendar_synced' | 'email_synced') => db.prepare(
+        `INSERT INTO side_effect_operations (
+           booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
+         )
+         SELECT ?, ?,
+           CASE WHEN ${syncedColumn} = 1 THEN 'succeeded' ELSE 'pending' END,
+           CASE WHEN ? = 'calendar_create' THEN calendar_event_id ELSE NULL END,
+           0, NULL, CASE WHEN ${syncedColumn} = 1 THEN ? ELSE NULL END, NULL, ?, ?
+         FROM bookings
+         WHERE id = ? AND status = 'confirmed' AND confirmation_lease_token = ?
+         ON CONFLICT(booking_id, kind) DO NOTHING`,
+      ).bind(id, kind, kind, now, now, now, id, leaseToken);
+      await db.batch([
+        operation('calendar_create', 'calendar_synced'),
+        operation('email_confirmation', 'email_synced'),
+      ]);
+    },
+    async listSideEffectOperations(bookingId) {
+      const result = await db.prepare(
+        `SELECT ${sideEffectOperationColumns} FROM side_effect_operations WHERE booking_id = ? ORDER BY kind`,
+      ).bind(bookingId).all<SideEffectOperationRow>();
+      return result.results.map(mapSideEffectOperation);
+    },
+    async claimSideEffectOperation(bookingId, kind, leaseToken, attemptedAt) {
+      const result = await db.prepare(
+        `UPDATE side_effect_operations
+         SET status = 'in_flight', attempt_count = attempt_count + 1, attempted_at = ?, error = NULL, updated_at = ?
+         WHERE booking_id = ? AND kind = ? AND status != 'succeeded'
+           AND EXISTS (
+             SELECT 1 FROM bookings WHERE id = ? AND confirmation_lease_token = ?
+           )`,
+      ).bind(attemptedAt, attemptedAt, bookingId, kind, bookingId, leaseToken).run();
+      return result.meta.changes > 0;
+    },
+    async resolveSideEffectOperation(input) {
+      const bookingFlag = input.kind === 'calendar_create' ? 'calendar_synced' : 'email_synced';
+      const result = await db.batch([
+        db.prepare(
+          `UPDATE side_effect_operations
+           SET status = ?, provider_result_id = ?, error = ?, resolved_at = ?, updated_at = ?
+           WHERE booking_id = ? AND kind = ? AND status != 'succeeded'
+             AND EXISTS (
+               SELECT 1 FROM bookings WHERE id = ? AND confirmation_lease_token = ?
+             )`,
+        ).bind(
+          input.status, input.providerResultId ?? null, input.error ?? null, input.resolvedAt, input.resolvedAt,
+          input.bookingId, input.kind, input.bookingId, input.leaseToken,
+        ),
+        db.prepare(
+          `UPDATE bookings SET ${bookingFlag} = ?, calendar_event_id = CASE WHEN ? = 'calendar_create' THEN ? ELSE calendar_event_id END, updated_at = ?
+           WHERE id = ? AND confirmation_lease_token = ?`,
+        ).bind(input.status === 'succeeded' ? 1 : 0, input.kind, input.providerResultId ?? null, input.resolvedAt, input.bookingId, input.leaseToken),
+      ]);
+      return (result[0]?.meta.changes ?? 0) > 0;
     },
     async transitionReschedule(id, input) {
       const result = await db.prepare(

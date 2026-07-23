@@ -46,13 +46,25 @@ describe('Google Calendar provider', () => {
     expect(request).toHaveBeenCalledWith(expect.stringContaining('singleEvents=true'), expect.objectContaining({ headers: expect.objectContaining({ authorization: 'Bearer token' }) }));
     const createCall = request.mock.calls[1];
     expect(String(createCall?.[0])).toContain('sendUpdates=all');
-    expect(JSON.parse(String(createCall?.[1]?.body))).toEqual(expect.objectContaining({ extendedProperties: { private: expect.objectContaining({ bookkitBookingId: 'booking-1' }) } }));
+    expect(JSON.parse(String(createCall?.[1]?.body))).toEqual(expect.objectContaining({
+      id: 'booking1',
+      extendedProperties: { private: expect.objectContaining({ bookkitBookingId: 'booking-1' }) },
+    }));
     await provider.patchEvent('created', booking({ startsAt: '2026-07-21T11:00:00.000Z', endsAt: '2026-07-21T12:00:00.000Z' }), config);
     await provider.deleteEvent('created');
     expect(request.mock.calls[2]?.[1]).toEqual(expect.objectContaining({ method: 'PATCH' }));
     expect(String(request.mock.calls[2]?.[0])).toContain('/created?sendUpdates=all');
     expect(String(request.mock.calls[2]?.[1]?.body)).toContain(config.tours.vintage!.meetingPoint.mapsUrl);
     expect(request.mock.calls[3]?.[1]).toEqual(expect.objectContaining({ method: 'DELETE' }));
+  });
+
+  it('treats a deterministic event-id conflict as an already-created event', async () => {
+    const auth = { getAccessToken: async () => 'token' } as GoogleServiceAccountAuth;
+    const request = async (): Promise<Response> => new Response('', { status: 409 });
+    const provider = new GoogleCalendarProvider({ calendarId: 'primary@example.test', auth, fetch: request });
+
+    await expect(provider.createEvent(booking({ id: '0a1b2c3d-4e5f-6789-a0b1-c2d3e4f5a6b7' }), config))
+      .resolves.toBe('0a1b2c3d4e5f6789a0b1c2d3e4f5a6b7');
   });
 
   it('follows Calendar pagination tokens', async () => {

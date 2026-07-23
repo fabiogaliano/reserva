@@ -1,19 +1,31 @@
 import type { BookkitProviders } from '../src/context';
 import type { Booking } from '../src/core/booking';
 import type { PaymentProvider } from '../src/core/events';
-import { HoldLimitExceededError, type BookingRepository, type RefundOperationRecord } from '../src/repo';
+import {
+  HoldLimitExceededError,
+  type BookingRepository,
+  type RefundOperationRecord,
+  type SideEffectOperationRecord,
+} from '../src/repo';
 import { booking } from './fixtures';
 
 // Shared in-memory fake repository + provider harness for handler tests.
 // Kept general (seed bookings, override individual repo methods / providers)
 // so other test files can build on it without re-implementing this plumbing.
-export function fakeRepository(seed: Booking[] = []): BookingRepository & { rows: Map<string, Booking>; settings: Map<string, string>; refundOperations: Map<string, RefundOperationRecord> } {
+export function fakeRepository(seed: Booking[] = []): BookingRepository & {
+  rows: Map<string, Booking>;
+  settings: Map<string, string>;
+  refundOperations: Map<string, RefundOperationRecord>;
+  sideEffectOperations: Map<string, SideEffectOperationRecord>;
+} {
   const rows = new Map(seed.map((item) => [item.id, item]));
   const holdIps = new Map<string, string>();
   const settings = new Map<string, string>();
   const leases = new Map<string, { token: string; until: string }>();
   // Keyed by booking_id, mirroring the real table's UNIQUE(booking_id) constraint.
   const refundOperations = new Map<string, RefundOperationRecord>();
+  const sideEffectOperations = new Map<string, SideEffectOperationRecord>();
+  const sideEffectKey = (bookingId: string, kind: SideEffectOperationRecord['kind']) => `${bookingId}:${kind}`;
   const find = (predicate: (item: Booking) => boolean) => [...rows.values()].find(predicate) ?? null;
   return {
     rows,
@@ -37,6 +49,12 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & { rows
       if (!rows.has(id)) return false;
       const current = leases.get(id);
       if (current && current.until >= now) return false;
+      leases.set(id, { token, until: leaseUntil });
+      return true;
+    },
+    renewConfirmationLease: async (id, token, now, leaseUntil) => {
+      const current = leases.get(id);
+      if (!current || current.token !== token || current.until < now) return false;
       leases.set(id, { token, until: leaseUntil });
       return true;
     },
@@ -99,6 +117,91 @@ export function fakeRepository(seed: Booking[] = []): BookingRepository & { rows
       rows.set(id, updated);
       return updated;
     },
+    confirmWithSideEffectOperations: async (id, input) => {
+      const current = rows.get(id);
+      if (!current || !input.expectedStatusIn.includes(current.status) || leases.get(id)?.token !== input.leaseToken) return null;
+      const { expectedStatusIn, leaseToken, oversold, updatedAt, ...patch } = input;
+      const defined = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
+      const updated: Booking = { ...current, ...defined, status: 'confirmed', holdExpiresAt: null, updatedAt };
+      rows.set(id, updated);
+      for (const kind of ['calendar_create', 'email_confirmation'] as const) {
+        const key = sideEffectKey(id, kind);
+        if (!sideEffectOperations.has(key)) sideEffectOperations.set(key, {
+          bookingId: id, kind, status: 'pending', providerResultId: null, attemptCount: 0,
+          attemptedAt: null, resolvedAt: null, error: null, createdAt: updatedAt, updatedAt,
+        });
+      }
+      if (oversold) {
+        const key = sideEffectKey(id, 'oversell');
+        if (!sideEffectOperations.has(key)) sideEffectOperations.set(key, {
+          bookingId: id, kind: 'oversell', status: 'succeeded', providerResultId: 'capacity_exceeded',
+          attemptCount: 0, attemptedAt: null, resolvedAt: updatedAt, error: null, createdAt: updatedAt, updatedAt,
+        });
+      }
+      return updated;
+    },
+    applyConfirmedPaymentDetails: async (id, patch, leaseToken, updatedAt) => {
+      const current = rows.get(id);
+      if (!current || current.status !== 'confirmed' || leases.get(id)?.token !== leaseToken) return false;
+      const updated: Booking = {
+        ...current,
+        ...(current.stripePaymentIntent === null && patch.stripePaymentIntent !== undefined ? { stripePaymentIntent: patch.stripePaymentIntent } : {}),
+        ...(current.customerName === null && patch.customerName !== undefined ? { customerName: patch.customerName } : {}),
+        ...(current.customerEmail === null && patch.customerEmail !== undefined ? { customerEmail: patch.customerEmail } : {}),
+        ...(current.customerPhone === null && patch.customerPhone !== undefined ? { customerPhone: patch.customerPhone } : {}),
+        ...(current.pickupAddress === null && patch.pickupAddress !== undefined ? { pickupAddress: patch.pickupAddress } : {}),
+        updatedAt,
+      };
+      rows.set(id, updated);
+      return true;
+    },
+    ensureConfirmationSideEffectOperations: async (id, leaseToken, now) => {
+      if (rows.get(id)?.status !== 'confirmed' || leases.get(id)?.token !== leaseToken) return;
+      const booking = rows.get(id);
+      if (!booking) return;
+      for (const kind of ['calendar_create', 'email_confirmation'] as const) {
+        const key = sideEffectKey(id, kind);
+        const synced = kind === 'calendar_create' ? booking.calendarSynced : booking.emailSynced;
+        if (!sideEffectOperations.has(key)) sideEffectOperations.set(key, {
+          bookingId: id, kind, status: synced ? 'succeeded' : 'pending',
+          providerResultId: kind === 'calendar_create' ? booking.calendarEventId : null,
+          attemptCount: 0, attemptedAt: null, resolvedAt: synced ? now : null, error: null,
+          createdAt: now, updatedAt: now,
+        });
+      }
+    },
+    listSideEffectOperations: async (bookingId) => [...sideEffectOperations.values()]
+      .filter((operation) => operation.bookingId === bookingId)
+      .sort((a, b) => a.kind.localeCompare(b.kind)),
+    claimSideEffectOperation: async (bookingId, kind, leaseToken, attemptedAt) => {
+      const key = sideEffectKey(bookingId, kind);
+      const current = sideEffectOperations.get(key);
+      if (!current || current.status === 'succeeded' || leases.get(bookingId)?.token !== leaseToken) return false;
+      sideEffectOperations.set(key, {
+        ...current, status: 'in_flight', attemptCount: current.attemptCount + 1,
+        attemptedAt, error: null, updatedAt: attemptedAt,
+      });
+      return true;
+    },
+    resolveSideEffectOperation: async (input) => {
+      const key = sideEffectKey(input.bookingId, input.kind);
+      const operation = sideEffectOperations.get(key);
+      const current = rows.get(input.bookingId);
+      if (!operation || !current || operation.status === 'succeeded' || leases.get(input.bookingId)?.token !== input.leaseToken) return false;
+      sideEffectOperations.set(key, {
+        ...operation, status: input.status, providerResultId: input.providerResultId ?? null,
+        error: input.error ?? null, resolvedAt: input.resolvedAt, updatedAt: input.resolvedAt,
+      });
+      rows.set(input.bookingId, {
+        ...current,
+        ...(input.kind === 'calendar_create'
+          ? { calendarSynced: input.status === 'succeeded', calendarEventId: input.providerResultId ?? null }
+          : { emailSynced: input.status === 'succeeded' }),
+        updatedAt: input.resolvedAt,
+      });
+      return true;
+    },
+    sideEffectOperations,
     transitionReschedule: async (id, input) => {
       const current = rows.get(id);
       if (!current || current.status !== input.expectedStatus || current.startsAt !== input.expectedStartsAt) return null;
