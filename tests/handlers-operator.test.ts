@@ -176,6 +176,55 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     expect(repo.rows.get(seeded.id)).toMatchObject({ status: 'cancelled', cancelledBy: 'customer' });
   });
 
+  it('rejects a full refund without a payment intent before claiming or cancelling, while none still cancels', async () => {
+    const seeded = booking({ id: 'b-op-cancel-confirmed-no-payment-intent', stripePaymentIntent: null });
+    const repo = fakeRepository([seeded]);
+    let refunds = 0;
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock,
+      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionId: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => {
+        refunds += 1;
+        return { refundId: 're_should_not_run', amountCents: seeded.priceCents };
+      } } }),
+    });
+
+    const full = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
+    expect(full.status).toBe(409);
+    await expect(full.json()).resolves.toMatchObject({ error: { code: 'refund_payment_intent_missing' } });
+    expect(repo.rows.get(seeded.id)?.status).toBe('confirmed');
+    expect(repo.refundOperations.has(seeded.id)).toBe(false);
+    expect(refunds).toBe(0);
+
+    const none = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'none' }), context);
+    expect(none.status).toBe(200);
+    expect(repo.rows.get(seeded.id)?.status).toBe('cancelled');
+    expect(repo.refundOperations.get(seeded.id)).toMatchObject({ choice: 'none', status: 'succeeded' });
+    expect(refunds).toBe(0);
+  });
+
+  it('marks a legacy full-refund operation without a payment intent as failed instead of succeeded', async () => {
+    const seeded = booking({
+      id: 'b-op-cancel-legacy-no-payment-intent',
+      status: 'cancelled',
+      cancelledAt: '2026-06-14T07:00:00.000Z',
+      cancelledBy: 'operator',
+      stripePaymentIntent: null,
+    });
+    const repo = fakeRepository([seeded]);
+    await repo.claimRefundOperation({
+      id: 'op-legacy-no-payment-intent', bookingId: seeded.id, paymentIntent: null, choice: 'full', requestedAt: '2026-06-14T07:00:00.000Z',
+    });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+
+    const response = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'refund_payment_intent_missing' } });
+    expect(repo.refundOperations.get(seeded.id)).toMatchObject({ status: 'failed', error: 'Stripe payment intent is missing' });
+  });
+
   it('refund: none cancels without ever calling refund()', async () => {
     const seeded = booking({ id: 'b-op-cancel-refund-none', stripePaymentIntent: 'pi_refund_none' });
     const repo = fakeRepository([seeded]);

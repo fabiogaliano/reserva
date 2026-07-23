@@ -837,9 +837,17 @@ async function resolvePendingRefund(
   choice: 'full' | 'none',
   paymentIntent: string | null,
 ): Promise<void> {
-  if (choice === 'none' || !paymentIntent) {
+  if (choice === 'none') {
     await context.repo.resolveRefundOperation(operationId, { status: 'succeeded', resolvedAt: nowIso(context) });
     return;
+  }
+  if (!paymentIntent) {
+    // Legacy requested rows can bypass the pre-claim guard below. They must remain visibly
+    // unresolved rather than claiming a full refund succeeded when Stripe was never called.
+    await context.repo.resolveRefundOperation(operationId, {
+      status: 'failed', error: 'Stripe payment intent is missing', resolvedAt: nowIso(context),
+    });
+    throw new HttpError(409, 'refund_payment_intent_missing', 'Cannot refund a booking without a Stripe payment intent');
   }
   // A same-choice loser can hold a stale requested snapshot while the winner records success.
   // Re-read immediately before Stripe so it does not turn that success into a needless retry.
@@ -962,6 +970,11 @@ export function handleOperatorCancel(request: Request, context: BookkitContext):
       return reconcileCancelledRefund(context, booking, refund);
     }
     if (booking.status !== 'confirmed') throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
+    if (refund === 'full' && booking.stripePaymentIntent === null) {
+      // Free bookings also use refund='none': requiring an intent for every 'full' choice keeps
+      // the durable operation record an honest statement that Stripe money was refunded.
+      throw new HttpError(409, 'refund_payment_intent_missing', 'Cannot refund a booking without a Stripe payment intent');
+    }
 
     // Claim-then-act (BK-REFUND-001): the refund decision is durably recorded before Stripe is
     // ever touched, so a refund=full and refund=none request racing on this booking can never
