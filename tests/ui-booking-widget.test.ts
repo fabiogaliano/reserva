@@ -14,10 +14,12 @@ const widgetPath = resolve(import.meta.dirname, '..', 'src/components/BookingWid
 const widgetSource = readFileSync(widgetPath, 'utf8');
 
 describe('BookingWidget.astro (BK-CAP-002: threshold + units)', () => {
-  it('threads limitedThreshold from props into the scriptData JSON island', () => {
+  it('keeps the prop threshold as a static-mode fallback and prefers availability response policy', () => {
     expect(widgetSource).toMatch(/limitedThreshold\?: number;/); // Props
     expect(widgetSource).toMatch(/limitedThreshold = 3,/); // destructured with a default
-    expect(widgetSource).toMatch(/const scriptData = \{[\s\S]*?limitedThreshold,[\s\S]*?\}/); // fed into the island
+    expect(widgetSource).toMatch(/const scriptData = \{[\s\S]*?limitedThreshold,[\s\S]*?\}/); // fallback island
+    expect(widgetSource).toContain('interface AvailabilityResponse { days?: AvailabilityDay[]; limitedThreshold?: number; error?: { message?: string } }');
+    expect(widgetSource).toContain('data.limitedThreshold = limitedThreshold');
   });
 
   it('declares remainingBookings on the client-side slot type and gates the scarcity hint on it, not the hardcoded 3', () => {

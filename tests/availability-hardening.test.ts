@@ -103,6 +103,7 @@ describe('calendar availability hardening', () => {
     expect(stale.status).toBe(200);
     expect(stale.headers.get('cache-control')).toBe('no-store');
     await expect(stale.json()).resolves.toMatchObject({
+      limitedThreshold: config.booking.limitedThreshold,
       days: [{
         slots: expect.not.arrayContaining([expect.objectContaining({ start: expect.stringContaining('T09:00:00') })]),
       }],

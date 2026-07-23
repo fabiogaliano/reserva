@@ -28,9 +28,8 @@ interface Props {
   // Pass the tour's pricing rules (config.tours[slug].pricing) to show a live price; omit to hide.
   pricing?: PricingRuleProp[];
   currency?: string;
-  // Pass config.booking.limitedThreshold so the slot scarcity hint matches the same operator-set
-  // knob the server uses for a day's overall "limited" status. Defaults to the widget's prior
-  // hardcoded threshold for consumers that don't wire it up.
+  // Used when availability is static: fetched availability supplies the server-configured value,
+  // while this fallback preserves scarcity hints for startOptions-only consumers.
   limitedThreshold?: number;
   // Shown in the <noscript> fallback as a way to book without JavaScript — pass
   // config.business.contact.email / .phone. Either, both, or neither may be supplied.
@@ -218,6 +217,7 @@ const pickupCopy: Record<'default' | 'custom', { label: string; hint: string }> 
 
   interface AvailabilitySlot { start: string; remaining: number; remainingBookings: number }
   interface AvailabilityDay { date: string; status: string; closedReason?: string; slots: AvailabilitySlot[] }
+  interface AvailabilityResponse { days?: AvailabilityDay[]; limitedThreshold?: number; error?: { message?: string } }
   interface ResolvedPriceTable {
     default: number[];
     custom: number[];
@@ -342,8 +342,14 @@ const pickupCopy: Record<'default' | 'custom', { label: string; hint: string }> 
     if (!keepError) clearError(form);
     try {
       const response = await fetch(`${availabilityEndpoint}?${query}`, { cache: 'no-store' });
-      const result = await response.json() as { days?: AvailabilityDay[]; error?: { message?: string } };
+      const result = await response.json() as AvailabilityResponse;
       if (!response.ok || !result.days) throw new Error(result.error?.message ?? data.i18n.errorAvailability);
+      // Availability is server-configured, so its threshold takes precedence over this render's
+      // fallback prop and keeps slot hints aligned with the day statuses in this same response.
+      const limitedThreshold = result.limitedThreshold;
+      if (typeof limitedThreshold === 'number' && Number.isInteger(limitedThreshold) && limitedThreshold >= 0) {
+        data.limitedThreshold = limitedThreshold;
+      }
       const days = new Map(result.days.map((day) => [day.date, day]));
       // Reassigning the property re-renders the month grid, so sold-out/closed days grey out as
       // soon as availability (or the party size, which changes it) arrives.

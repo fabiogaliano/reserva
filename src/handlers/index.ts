@@ -236,7 +236,7 @@ function availabilityInput(request: Request, context: BookkitContext): Availabil
   return { people, dates, tour };
 }
 
-async function availabilityPayload(context: BookkitContext, now: string, input: AvailabilityInput): Promise<{ payload: { timezone: string; days: unknown[] }; stale: boolean }> {
+async function availabilityPayload(context: BookkitContext, now: string, input: AvailabilityInput): Promise<{ payload: { timezone: string; limitedThreshold: number; days: unknown[] }; stale: boolean }> {
   const { people, dates, tour } = input;
   const firstDay = dates[0];
   const lastDay = dates[dates.length - 1];
@@ -284,7 +284,12 @@ async function availabilityPayload(context: BookkitContext, now: string, input: 
       limitedThreshold: context.config.booking.limitedThreshold,
     });
   });
-  return { payload: { timezone: context.config.business.timezone, days }, stale: calendar.stale };
+  return {
+    // The widget consumes this with every availability refresh, so its slot hints follow the
+    // same server policy as the day-level statuses instead of a consumer-supplied default.
+    payload: { timezone: context.config.business.timezone, limitedThreshold: context.config.booking.limitedThreshold, days },
+    stale: calendar.stale,
+  };
 }
 
 export function handleAvailability(request: Request, context: BookkitContext): Promise<Response> {
