@@ -353,7 +353,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     expect(idempotencyKeys).toEqual(['bookkit-refund-pi_post_stripe_crash', 'bookkit-refund-pi_post_stripe_crash']);
   });
 
-  it('(F9) a completely fresh repo instance (no shared in-memory state) recovering a PENDING operation never calls Stripe until it independently confirms the booking is cancelled (finding #1)', async () => {
+  it('(F9) a completely fresh repo instance resumes a requested same-choice operation from durable state', async () => {
     const seeded = booking({ id: 'b-op-cancel-fresh-repo-pending', stripePaymentIntent: 'pi_fresh_repo_pending' }); // still confirmed
     const pendingOperation: RefundOperationRecord = {
       id: 'op-fresh-repo-pending', bookingId: seeded.id, paymentIntent: seeded.stripePaymentIntent, choice: 'full',
@@ -361,8 +361,8 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     };
     // A brand-new repo instance — no object here is shared with whatever originally produced
     // this state — seeded to look exactly like a fresh D1 read from a different isolate would: a
-    // same-choice claim already exists, but the booking itself is still 'confirmed' because the
-    // claim-holder hasn't completed its CAS cancel yet.
+    // same-choice claim already exists, but the booking is still confirmed because the original
+    // claim-holder crashed before its CAS.
     const freshRepo = fakeRepository([seeded]);
     freshRepo.refundOperations.set(seeded.id, pendingOperation);
     let refunds = 0;
@@ -375,17 +375,52 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     });
 
     const response = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), freshContext);
-    expect(refunds).toBe(0);
-    expect(response.status).toBe(409);
-    expect(freshRepo.rows.get(seeded.id)?.status).toBe('confirmed');
+    expect(response.status).toBe(200);
+    expect(refunds).toBe(1);
+    expect(freshRepo.rows.get(seeded.id)?.status).toBe('cancelled');
+    expect(freshRepo.refundOperations.get(seeded.id)?.status).toBe('succeeded');
 
-    // The claim-holder's CAS now actually lands (simulated directly on this same fresh repo) — a
-    // retry against this same fresh context recovers the pending operation correctly.
-    freshRepo.rows.set(seeded.id, { ...seeded, status: 'cancelled', cancelledAt: '2026-06-14T07:05:00.000Z', cancelledBy: 'operator' });
     const retry = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), freshContext);
     expect(retry.status).toBe(200);
     expect(refunds).toBe(1);
-    expect(freshRepo.refundOperations.get(seeded.id)?.status).toBe('succeeded');
+  });
+
+  it('resumes a requested same-choice claim when its first cancellation attempt crashes before the CAS', async () => {
+    const seeded = booking({ id: 'b-op-cancel-resume-requested', stripePaymentIntent: 'pi_resume_requested' });
+    const repo = fakeRepository([seeded]);
+    const realTransition = repo.transitionToCancelled;
+    let transitionAttempts = 0;
+    repo.transitionToCancelled = async (id, input) => {
+      transitionAttempts += 1;
+      if (transitionAttempts === 1) throw new Error('simulated worker crash');
+      return realTransition(id, input);
+    };
+    let refunds = 0;
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock,
+      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionId: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => {
+        refunds += 1;
+        return { refundId: 're_resume_requested', amountCents: seeded.priceCents };
+      } } }),
+    });
+
+    const crashed = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
+    expect(crashed.status).toBeGreaterThanOrEqual(500);
+    expect(repo.rows.get(seeded.id)?.status).toBe('confirmed');
+    expect(repo.refundOperations.get(seeded.id)).toMatchObject({ choice: 'full', status: 'requested' });
+
+    const conflict = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'none' }), context);
+    expect(conflict.status).toBe(409);
+    await expect(conflict.json()).resolves.toMatchObject({ error: { code: 'refund_conflict' } });
+
+    const retry = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
+    expect(retry.status).toBe(200);
+    expect(repo.rows.get(seeded.id)?.status).toBe('cancelled');
+    expect(repo.refundOperations.get(seeded.id)).toMatchObject({ status: 'succeeded', stripeRefundId: 're_resume_requested' });
+    expect(refunds).toBe(1);
   });
 
   it('a lost cancel CAS (e.g. a concurrent reschedule wins) does not leave a permanently-blocking operation row, and never calls Stripe on that lost attempt (finding #3)', async () => {
