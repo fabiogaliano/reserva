@@ -48,7 +48,7 @@ function operatorRequest(path: string, body: Record<string, unknown>): Request {
 
 describe('stale compare-and-set transitions', () => {
   it('a customer cancel that loses a race to a concurrent operator no-show gets 409 instead of corrupting the row', async () => {
-    const seeded = booking({ id: 'b-cancel-vs-noshow', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z' });
+    const seeded = booking({ id: 'b-cancel-vs-noshow', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z', calendarEventId: 'cal-cancel-vs-noshow' });
     const repo = fakeRepository([seeded]);
     const realTransition = repo.transitionToCancelled;
     repo.transitionToCancelled = async (id, input) => {
@@ -56,7 +56,14 @@ describe('stale compare-and-set transitions', () => {
       if (current) repo.rows.set(id, { ...current, status: 'no_show', updatedAt: '2026-06-14T08:00:01.000Z' });
       return realTransition(id, input);
     };
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    let deletes = 0;
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock,
+      providers: providers({ calendar: { listEvents: async () => [], createEvent: async () => 'unused', patchEvent: async () => undefined, deleteEvent: async () => { deletes += 1; } } }),
+    });
 
     const response = await handleCustomerCancel(cancelRequest(seeded.cancelToken), context);
     expect(response.status).toBe(409);
@@ -65,10 +72,11 @@ describe('stale compare-and-set transitions', () => {
     expect(row?.status).toBe('no_show');
     expect(row?.cancelledBy).toBeNull();
     expect(row?.cancelledAt).toBeNull();
+    expect(deletes).toBe(0);
   });
 
   it('an operator cancel that loses a race to a concurrent no-show gets 409 instead of corrupting the row', async () => {
-    const seeded = booking({ id: 'b-op-cancel-vs-noshow' });
+    const seeded = booking({ id: 'b-op-cancel-vs-noshow', calendarEventId: 'cal-op-cancel-vs-noshow' });
     const repo = fakeRepository([seeded]);
     const realTransition = repo.transitionToCancelled;
     repo.transitionToCancelled = async (id, input) => {
@@ -76,7 +84,14 @@ describe('stale compare-and-set transitions', () => {
       if (current) repo.rows.set(id, { ...current, status: 'no_show', updatedAt: '2026-06-14T08:00:01.000Z' });
       return realTransition(id, input);
     };
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    let deletes = 0;
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock,
+      providers: providers({ calendar: { listEvents: async () => [], createEvent: async () => 'unused', patchEvent: async () => undefined, deleteEvent: async () => { deletes += 1; } } }),
+    });
 
     const response = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'none' }), context);
     expect(response.status).toBe(409);
@@ -84,6 +99,7 @@ describe('stale compare-and-set transitions', () => {
     const row = repo.rows.get(seeded.id);
     expect(row?.status).toBe('no_show');
     expect(row?.cancelledBy).toBeNull();
+    expect(deletes).toBe(0);
   });
 
   it('an operator no-show that loses a race to a concurrent cancel gets 409 instead of corrupting the row', async () => {
@@ -181,7 +197,7 @@ describe('stale compare-and-set transitions', () => {
   });
 
   it('a charge.refunded cancellation that loses a race to a concurrent customer cancel does not overwrite cancelledBy', async () => {
-    const seeded = booking({ id: 'b-refund-vs-cancel', stripePaymentIntent: 'pi_refund_stale' });
+    const seeded = booking({ id: 'b-refund-vs-cancel', stripePaymentIntent: 'pi_refund_stale', calendarEventId: 'cal-refund-vs-cancel' });
     const repo = fakeRepository([seeded]);
     const realTransition = repo.transitionToCancelled;
     repo.transitionToCancelled = async (id, input) => {
@@ -190,6 +206,7 @@ describe('stale compare-and-set transitions', () => {
       return realTransition(id, input);
     };
     const emails: string[] = [];
+    let deletes = 0;
     const context = createBookkitContext({
       config,
       db: {} as D1Database,
@@ -209,6 +226,7 @@ describe('stale compare-and-set transitions', () => {
           refund: async () => ({ refundId: 're_test', amountCents: 0 }),
         },
         email: { send: async (event) => { emails.push(event); } },
+        calendar: { listEvents: async () => [], createEvent: async () => 'unused', patchEvent: async () => undefined, deleteEvent: async () => { deletes += 1; } },
       }),
     });
 
@@ -218,6 +236,7 @@ describe('stale compare-and-set transitions', () => {
     expect(row?.status).toBe('cancelled');
     expect(row?.cancelledBy).toBe('customer');
     expect(emails).not.toContain('booking.cancelled_by_operator');
+    expect(deletes).toBe(0);
   });
 
   it('a payment confirmation that loses a race to a concurrent operator cancel does not resurrect the booking', async () => {

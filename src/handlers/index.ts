@@ -525,7 +525,6 @@ export function handleStripeWebhook(request: Request, context: BookkitContext): 
             resolvedAt: timestamp,
           });
           if (booking.status !== 'cancelled') {
-            await calendarDelete(context, booking);
             const updated = await context.repo.transitionToCancelled(booking.id, {
               // no_show and cancelled are terminal: a refund arriving after either must not
               // resurrect/overwrite them (spec item 4). CAS loss here is an idempotent no-op —
@@ -535,8 +534,11 @@ export function handleStripeWebhook(request: Request, context: BookkitContext): 
               mutationSideEffectKinds: mutationSideEffectKinds(context, 'booking.cancelled_by_operator'),
             });
             // A concurrent transition (e.g. a customer cancel) can win this race; when it does,
-            // the booking already reached a terminal state, so there is nothing left to dispatch.
-            if (updated) await dispatchMutation(context, 'booking.cancelled_by_operator', updated);
+            // it owns the calendar event too. Only the CAS winner may delete and dispatch.
+            if (updated) {
+              await deleteCalendarAfterCancellation(context, booking);
+              await dispatchMutation(context, 'booking.cancelled_by_operator', updated);
+            }
           } else {
             // BK-SIDE-001 (handoff 13): idempotent redelivery of an already-cancelled booking —
             // still a booking-touching request, so drain any rows a prior delivery left owed
@@ -699,6 +701,19 @@ async function calendarDelete(context: BookkitContext, booking: Booking): Promis
   if (booking.calendarEventId && context.providers.calendar) await context.providers.calendar.deleteEvent(booking.calendarEventId);
 }
 
+async function deleteCalendarAfterCancellation(context: BookkitContext, booking: Booking): Promise<void> {
+  try {
+    await calendarDelete(context, booking);
+  } catch (error) {
+    // The CAS has already made the cancellation durable; retain a recoverable stale event rather
+    // than reporting the cancellation as failed after its authoritative transition succeeded.
+    context.logger.error?.('Calendar delete failed after booking cancellation', {
+      bookingId: booking.id,
+      error: error instanceof Error ? error.message : 'Calendar delete failed',
+    });
+  }
+}
+
 async function calendarPatch(context: BookkitContext, booking: Booking): Promise<void> {
   if (booking.calendarEventId && context.providers.calendar) {
     await context.providers.calendar.patchEvent(booking.calendarEventId, booking, context.config);
@@ -714,7 +729,6 @@ export function handleCustomerCancel(request: Request, context: BookkitContext):
     if (booking.status === 'cancelled') return json({ ok: true });
     if (booking.status !== 'confirmed') throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
     if (!canCancelBooking(booking, nowIso(context), context.config.booking.cancelCutoffHours)) throw new HttpError(403, 'past_cutoff', 'The cancellation deadline has passed');
-    await calendarDelete(context, booking);
     const cancelled = cancelBooking(booking, 'customer', nowIso(context));
     const updated = await context.repo.transitionToCancelled(cancelled.id, {
       expectedStatusIn: ['confirmed'], expectedStartsAt: booking.startsAt,
@@ -731,6 +745,7 @@ export function handleCustomerCancel(request: Request, context: BookkitContext):
       }
       throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
     }
+    await deleteCalendarAfterCancellation(context, booking);
     await dispatchMutation(context, 'booking.cancelled_by_customer', updated);
     return json({ ok: true });
   });
@@ -905,7 +920,6 @@ async function completeClaimedOperatorCancellation(
   operationId: string,
   refund: 'full' | 'none',
 ): Promise<Response> {
-  await calendarDelete(context, booking);
   const cancelled = cancelBooking(booking, 'operator', nowIso(context));
   const updated = await context.repo.transitionToCancelled(cancelled.id, {
     expectedStatusIn: ['confirmed'], expectedStartsAt: booking.startsAt,
@@ -924,8 +938,9 @@ async function completeClaimedOperatorCancellation(
     throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
   }
 
-  // Dispatch first: the cancellation itself is already durable at this point (CAS above), so
-  // downstream notification must not depend on whether the refund call that follows succeeds.
+  // The CAS made cancellation durable, so calendar cleanup is best-effort; dispatch and refund
+  // must continue even when the recoverable external delete fails.
+  await deleteCalendarAfterCancellation(context, booking);
   await dispatchMutation(context, 'booking.cancelled_by_operator', updated);
   await resolvePendingRefund(context, booking.id, operationId, refund, booking.stripePaymentIntent ?? null);
   return json({ ok: true });
