@@ -221,18 +221,38 @@ describe('refund_operations concurrent claim uniqueness on real D1', () => {
     await expect(repo.getBookingById(lostId)).resolves.toMatchObject({ status: 'no_show' });
   });
 
-  it('allows an expired operator token only for requested or failed refund recovery', async () => {
+  it('allows an expired operator token only for requested or failed refund recovery, including guarded legacy lookup', async () => {
+    const now = '2026-07-21T12:00:00.000Z';
     const id = 'refund-token-recovery';
     await seedConfirmed(id);
     await db.prepare('UPDATE bookings SET tokens_expire_at = ? WHERE id = ?').bind('2026-07-01T00:00:00.000Z', id).run();
     const token = `operator-${id}`;
-    await expect(repo.getBookingByOperatorToken(token, '2026-07-21T12:00:00.000Z')).resolves.toBeNull();
+    await expect(repo.getBookingByOperatorToken(token, now)).resolves.toBeNull();
+    await expect(repo.getBookingByOperatorTokenForRefundRecovery(token, now)).resolves.toBeNull();
     await repo.claimRefundOperation({ id: 'op-token', bookingId: id, paymentIntent: `pi_${id}`, choice: 'full', requestedAt: '2026-07-21T11:00:00.000Z' });
-    await expect(repo.getBookingByOperatorTokenForRefundRecovery(token, '2026-07-21T12:00:00.000Z')).resolves.toMatchObject({ id });
+    await expect(repo.getBookingByOperatorTokenForRefundRecovery(token, now)).resolves.toMatchObject({ id });
     await repo.resolveRefundOperation('op-token', { status: 'failed', error: 'retry', resolvedAt: '2026-07-21T11:01:00.000Z' });
-    await expect(repo.getBookingByOperatorTokenForRefundRecovery(token, '2026-07-21T12:00:00.000Z')).resolves.toMatchObject({ id });
+    await expect(repo.getBookingByOperatorTokenForRefundRecovery(token, now)).resolves.toMatchObject({ id });
     await repo.resolveRefundOperation('op-token', { status: 'succeeded', stripeRefundId: 're_token', amountCents: 12000, resolvedAt: '2026-07-21T11:02:00.000Z' });
-    await expect(repo.getBookingByOperatorTokenForRefundRecovery(token, '2026-07-21T12:00:00.000Z')).resolves.toBeNull();
+    await expect(repo.getBookingByOperatorTokenForRefundRecovery(token, now)).resolves.toBeNull();
+
+    const legacyId = 'refund-token-recovery-legacy';
+    const legacyToken = `operator-${legacyId}`;
+    await seedConfirmed(legacyId);
+    await db.prepare(
+      `UPDATE bookings
+       SET operator_token = ?, operator_token_hash = NULL, operator_token_enc = NULL,
+           tokens_expire_at = ?
+       WHERE id = ?`,
+    ).bind(legacyToken, '2026-07-01T00:00:00.000Z', legacyId).run();
+    await expect(repo.getBookingByOperatorTokenForRefundRecovery(legacyToken, now)).resolves.toBeNull();
+    await repo.claimRefundOperation({ id: 'op-token-legacy', bookingId: legacyId, paymentIntent: `pi_${legacyId}`, choice: 'full', requestedAt: '2026-07-21T11:00:00.000Z' });
+    await expect(repo.getBookingByOperatorTokenForRefundRecovery(legacyToken, now)).resolves.toMatchObject({ id: legacyId });
+    const legacyRow = (await db.prepare(
+      'SELECT operator_token, operator_token_hash FROM bookings WHERE id = ?',
+    ).bind(legacyId).all<{ operator_token: string; operator_token_hash: string | null }>()).results[0];
+    expect(legacyRow?.operator_token_hash).toBeTruthy();
+    expect(legacyRow?.operator_token).not.toBe(legacyToken);
   });
 
   it('resolveRefundOperation never downgrades an already-succeeded row (status only ever advances)', async () => {

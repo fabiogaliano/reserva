@@ -1,7 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createBookkitContext } from '../src/context';
-import { handleCustomerCancel, handleCustomerReschedule, handleOperatorCancel, handleOperatorNoShow, handleOperatorReschedule, handleStripeWebhook } from '../src/handlers';
+import { handleCustomerCancel, handleCustomerReschedule, handleManage, handleOperatorCancel, handleOperatorNoShow, handleOperatorReschedule, handleStripeWebhook } from '../src/handlers';
 import type { RefundOperationRecord } from '../src/repo';
 import { booking, config } from './fixtures';
 import { fakeRefundTracker, fakeRepository, providers } from './fakes';
@@ -257,15 +257,19 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
       } }),
     });
 
-    const recovery = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
-    expect(recovery.status).toBe(200);
-    expect(refunds).toBe(1);
-    expect(repo.refundOperations.get(seeded.id)).toMatchObject({ status: 'succeeded' });
-
+    const manage = await handleManage(new Request(`https://example.test/api/booking/manage?token=${seeded.operatorToken}`), context);
+    expect(manage.status).toBe(403);
     const reschedule = await handleOperatorReschedule(operatorRequest('reschedule', {
       operatorToken: seeded.operatorToken, newStart: validNewStart,
     }), context);
     expect(reschedule.status).toBe(403);
+    const noShow = await handleOperatorNoShow(operatorRequest('no-show', { operatorToken: seeded.operatorToken }), context);
+    expect(noShow.status).toBe(403);
+
+    const recovery = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
+    expect(recovery.status).toBe(200);
+    expect(refunds).toBe(1);
+    expect(repo.refundOperations.get(seeded.id)).toMatchObject({ status: 'succeeded' });
   });
 
   it('refund: none cancels without ever calling refund()', async () => {
