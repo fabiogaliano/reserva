@@ -346,54 +346,47 @@ export class StripeProvider implements PaymentProvider {
 
   async refund(paymentIntent: string, expectedAmountCents: number): Promise<{ refundId: string; amountCents: number }> {
     const idempotencyKey = `bookkit-refund-${paymentIntent}`;
-    let created: Stripe.Refund | undefined;
+    let created: Stripe.Refund;
     try {
       created = await this.stripe.refunds.create(
         { payment_intent: paymentIntent, metadata: { bookkit_refund_key: idempotencyKey } },
         { idempotencyKey },
       );
-      if (created.status !== 'succeeded') {
-        throw new Error(`Stripe refund ${created.id} did not succeed (status ${created.status ?? 'unknown'})`);
-      }
-      if (created.amount === expectedAmountCents) {
-        return { refundId: created.id, amountCents: expectedAmountCents };
-      }
-      throw new Error(`Stripe refund amount ${created.amount} did not by itself cover expected total ${expectedAmountCents}`);
     } catch (error) {
-      // A full Stripe refund after an earlier partial refund returns only the remaining amount, so
-      // compare the cumulative succeeded total while still requiring a refund owned by this
-      // deterministic request. `created` proves ownership when this call returned successfully;
-      // after an ambiguous failure, only the persisted metadata marker can do so.
-      const reconciled = await this.findExistingRefund(
-        paymentIntent,
-        expectedAmountCents,
-        idempotencyKey,
-        created,
-      );
+      if (isDefinitiveStripeError(error)) throw error;
+      // A list result is proof of success only when the refund carries this request's marker and
+      // its own amount is exact.
+      const reconciled = await this.findExistingRefund(paymentIntent, expectedAmountCents, idempotencyKey);
       if (reconciled) return reconciled;
       throw error;
     }
+    if (created.status !== 'succeeded') {
+      throw new Error(`Stripe refund ${created.id} did not succeed (status ${created.status ?? 'unknown'})`);
+    }
+    if (created.amount !== expectedAmountCents) {
+      throw new Error(`Stripe refund amount ${created.amount} did not match expected total ${expectedAmountCents}`);
+    }
+    return { refundId: created.id, amountCents: expectedAmountCents };
   }
 
   private async findExistingRefund(
     paymentIntent: string,
     expectedAmountCents: number,
     idempotencyKey: string,
-    created?: Stripe.Refund,
   ): Promise<{ refundId: string; amountCents: number } | null> {
-    const list = await this.stripe.refunds.list?.({ payment_intent: paymentIntent, limit: 100 });
-    if (!list) return null;
-    const succeeded = list.data.filter((candidate) => candidate.status === 'succeeded');
-    const marked = succeeded.find((candidate) => candidate.metadata?.bookkit_refund_key === idempotencyKey);
-    const owned = created?.status === 'succeeded' ? created : marked;
-    if (!owned) return null;
-    const listedTotal = succeeded.reduce((total, candidate) => total + candidate.amount, 0);
-    const total = succeeded.some((candidate) => candidate.id === owned.id)
-      ? listedTotal
-      : listedTotal + owned.amount;
-    return total >= expectedAmountCents
-      ? { refundId: owned.id, amountCents: expectedAmountCents }
-      : null;
+    try {
+      const list = await this.stripe.refunds.list?.({ payment_intent: paymentIntent, limit: 100 });
+      if (!list) return null;
+      const matched = list.data.find((candidate) => (
+        candidate.status === 'succeeded'
+        && candidate.amount === expectedAmountCents
+        && candidate.metadata?.bookkit_refund_key === idempotencyKey
+      ));
+      return matched ? { refundId: matched.id, amountCents: expectedAmountCents } : null;
+    } catch {
+      // Listing is only reconciliation evidence; retain the original create failure if unavailable.
+      return null;
+    }
   }
 }
 

@@ -445,6 +445,28 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     expect(idempotencyKeys).toEqual(['bookkit-refund-pi_post_stripe_crash', 'bookkit-refund-pi_post_stripe_crash']);
   });
 
+  // BK-REFUND-001 (audit requirement 5): the handler must forward the booking's full expected
+  // price as the second argument to payments.refund() so the provider can reject partial-amount
+  // reconciliations. Without this, a stale or unrelated historical Stripe refund with a different
+  // amount could satisfy reconciliation even though the customer still owes money.
+  it('passes the booking\'s priceCents as the expectedAmountCents argument to payments.refund()', async () => {
+    const seeded = booking({ id: 'b-op-cancel-expected-amount', stripePaymentIntent: 'pi_expected_amount' });
+    const repo = fakeRepository([seeded]);
+    const { refund, expectedAmounts } = fakeRefundTracker(() => ({ refundId: 're_expected_amount', amountCents: seeded.priceCents }));
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock,
+      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionId: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund } }),
+    });
+
+    const response = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
+    expect(response.status).toBe(200);
+    // The provider must receive the booking's full price, not zero, undefined, or an arbitrary value.
+    expect(expectedAmounts).toEqual([seeded.priceCents]);
+  });
+
   it('(F9) a completely fresh repo instance resumes a requested same-choice operation from durable state', async () => {
     const seeded = booking({ id: 'b-op-cancel-fresh-repo-pending', stripePaymentIntent: 'pi_fresh_repo_pending' }); // still confirmed
     const pendingOperation: RefundOperationRecord = {

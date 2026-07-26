@@ -633,18 +633,22 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
   return repository;
 }
 
-// Records the idempotency key each refund() call would carry (mirroring StripeProvider's own
-// deterministic `bookkit-refund-<paymentIntent>` derivation) so tests can assert a retried refund
-// reuses the same key instead of minting a fresh one per attempt (BK-REFUND-001 F10). `resultFor`
+// Records the idempotency key and expected amount each refund() call would carry (mirroring
+// StripeProvider's own deterministic `bookkit-refund-<paymentIntent>` derivation) so tests can
+// assert a retried refund reuses the same key instead of minting a fresh one per attempt
+// (BK-REFUND-001 F10), and that callers forward the booking's full expected amount. `resultFor`
 // lets a test control the returned refund id/amount, or throw to simulate a Stripe-side failure.
 export function fakeRefundTracker(
   resultFor: (paymentIntent: string, callNumber: number) => { refundId: string; amountCents: number } = (paymentIntent) => ({ refundId: `re_${paymentIntent}`, amountCents: 0 }),
-): { refund: PaymentProvider['refund']; idempotencyKeys: string[] } {
+): { refund: PaymentProvider['refund']; idempotencyKeys: string[]; expectedAmounts: number[] } {
   const idempotencyKeys: string[] = [];
+  const expectedAmounts: number[] = [];
   return {
     idempotencyKeys,
-    refund: async (paymentIntent) => {
+    expectedAmounts,
+    refund: async (paymentIntent, expectedAmountCents) => {
       idempotencyKeys.push(`bookkit-refund-${paymentIntent}`);
+      expectedAmounts.push(expectedAmountCents);
       return resultFor(paymentIntent, idempotencyKeys.length);
     },
   };
