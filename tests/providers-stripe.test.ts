@@ -14,6 +14,29 @@ import {
 } from '../src/providers/stripe';
 import { resolveRouteConfig } from '../src/routes-manifest';
 
+function stripeRefund(
+  id: string,
+  amount: number,
+  options: { status?: string; metadata?: Record<string, string>; paymentIntent?: string } = {},
+): Stripe.Refund {
+  return {
+    id,
+    object: 'refund',
+    amount,
+    balance_transaction: null,
+    charge: null,
+    created: 0,
+    currency: 'eur',
+    metadata: options.metadata ?? {},
+    payment_intent: options.paymentIntent ?? 'pi_1',
+    reason: null,
+    receipt_number: null,
+    source_transfer_reversal: null,
+    status: options.status ?? 'succeeded',
+    transfer_reversal: null,
+  };
+}
+
 function makeClient() {
   const sessions = {
     create: vi.fn(async (_params: Stripe.Checkout.SessionCreateParams, _options?: { idempotencyKey?: string }) => ({ id: 'cs_created', url: 'https://checkout.test/cs_created' })),
@@ -32,7 +55,7 @@ function makeClient() {
   const client = {
     checkout: { sessions },
     refunds: {
-      create: vi.fn(async () => ({ id: 're_1', amount: 10000 })),
+      create: vi.fn(async () => stripeRefund('re_1', 10000)),
       list: vi.fn(async () => ({ data: [] })),
     },
     webhooks: { constructEventAsync: vi.fn(async () => ({
@@ -139,11 +162,36 @@ describe('StripeProvider', () => {
       customerPhone: '+351910000000',
       pickupAddress: 'Praça do Comércio',
     });
-    await expect(provider.refund('pi_1')).resolves.toEqual({ refundId: 're_1', amountCents: 10000 });
+    await expect(provider.refund('pi_1', 10000)).resolves.toEqual({ refundId: 're_1', amountCents: 10000 });
     expect(client.refunds.create).toHaveBeenCalledWith(
-      { payment_intent: 'pi_1' },
+      { payment_intent: 'pi_1', metadata: { bookkit_refund_key: 'bookkit-refund-pi_1' } },
       { idempotencyKey: 'bookkit-refund-pi_1' },
     );
+  });
+
+  it('rejects a successful partial create response when the cumulative refund is still short', async () => {
+    const { client } = makeClient();
+    client.refunds.create = vi.fn(async () => stripeRefund('re_partial', 2000));
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    await expect(provider.refund('pi_1', 10000)).rejects.toThrow('did not by itself cover expected total 10000');
+  });
+
+  it('accepts the remaining refund after an earlier partial when the cumulative total is full', async () => {
+    const { client } = makeClient();
+    client.refunds.create = vi.fn(async () => stripeRefund('re_remaining', 8000, {
+      metadata: { bookkit_refund_key: 'bookkit-refund-pi_1' },
+    }));
+    client.refunds.list = vi.fn(async () => ({
+      object: 'list' as const,
+      url: '/v1/refunds',
+      has_more: false,
+      data: [stripeRefund('re_historical_partial', 2000, { metadata: { source: 'dashboard' } })],
+    }));
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+
+    await expect(provider.refund('pi_1', 10000)).resolves.toEqual({
+      refundId: 're_remaining', amountCents: 10000,
+    });
   });
 
   it('reconciles an already-refunded error via refunds.list instead of surfacing a false failure', async () => {
@@ -151,13 +199,13 @@ describe('StripeProvider', () => {
       checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
       refunds: {
         create: vi.fn(async () => { throw new Error('Charge ch_1 has already been refunded.'); }),
-        list: vi.fn(async () => ({ data: [{ id: 're_existing', amount: 12000, status: 'succeeded' }] })),
+        list: vi.fn(async () => ({ data: [{ id: 're_existing', amount: 10000, status: 'succeeded', metadata: { bookkit_refund_key: 'bookkit-refund-pi_1' } }] })),
       },
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
     const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
-    await expect(provider.refund('pi_1')).resolves.toEqual({ refundId: 're_existing', amountCents: 12000 });
-    expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 5 });
+    await expect(provider.refund('pi_1', 10000)).resolves.toEqual({ refundId: 're_existing', amountCents: 10000 });
+    expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 100 });
   });
 
   // BK-REFUND-001 (finding #6): Stripe replays a cached idempotent result *including* error
@@ -169,13 +217,55 @@ describe('StripeProvider', () => {
       checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
       refunds: {
         create: vi.fn(async () => { throw new Error('Request failed with status code 500'); }),
-        list: vi.fn(async () => ({ data: [{ id: 're_from_cache', amount: 9000, status: 'succeeded' }] })),
+        list: vi.fn(async () => ({ data: [{ id: 're_from_cache', amount: 10000, status: 'succeeded', metadata: { bookkit_refund_key: 'bookkit-refund-pi_1' } }] })),
       },
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
     const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
-    await expect(provider.refund('pi_1')).resolves.toEqual({ refundId: 're_from_cache', amountCents: 9000 });
-    expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 5 });
+    await expect(provider.refund('pi_1', 10000)).resolves.toEqual({ refundId: 're_from_cache', amountCents: 10000 });
+    expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 100 });
+  });
+
+  it('does not reconcile a historical partial refund as this request’s full refund', async () => {
+    const client = {
+      checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
+      refunds: {
+        create: vi.fn(async () => { throw new Error('Request failed with status code 500'); }),
+        list: vi.fn(async () => ({ data: [stripeRefund('re_partial', 2000, { metadata: { bookkit_refund_key: 'other-request' } })] })),
+      },
+      webhooks: { constructEventAsync: vi.fn() },
+    } as unknown as StripeClient;
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    await expect(provider.refund('pi_1', 10000)).rejects.toThrow('Request failed with status code 500');
+  });
+
+  it('does not reconcile an unrelated historical full refund without this request’s marker', async () => {
+    const client = {
+      checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
+      refunds: {
+        create: vi.fn(async () => { throw new Error('Request failed with status code 500'); }),
+        list: vi.fn(async () => ({ data: [stripeRefund('re_other_full', 10000)] })),
+      },
+      webhooks: { constructEventAsync: vi.fn() },
+    } as unknown as StripeClient;
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    await expect(provider.refund('pi_1', 10000)).rejects.toThrow('Request failed with status code 500');
+  });
+
+  it('reconciles a marked remaining refund plus an earlier historical partial', async () => {
+    const client = {
+      checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
+      refunds: {
+        create: vi.fn(async () => { throw new Error('Request failed with status code 500'); }),
+        list: vi.fn(async () => ({ data: [
+          stripeRefund('re_remaining', 8000, { metadata: { bookkit_refund_key: 'bookkit-refund-pi_1' } }),
+          stripeRefund('re_historical_partial', 2000),
+        ] })),
+      },
+      webhooks: { constructEventAsync: vi.fn() },
+    } as unknown as StripeClient;
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    await expect(provider.refund('pi_1', 10000)).resolves.toEqual({ refundId: 're_remaining', amountCents: 10000 });
   });
 
   it('does not treat a pending/failed refund on file as success-equivalent — the original error still surfaces', async () => {
@@ -188,8 +278,8 @@ describe('StripeProvider', () => {
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
     const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
-    await expect(provider.refund('pi_1')).rejects.toThrow('Your card was declined.');
-    expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 5 });
+    await expect(provider.refund('pi_1', 10000)).rejects.toThrow('Your card was declined.');
+    expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 100 });
   });
 
   it('surfaces a genuine refund failure unchanged when no successful refund is on file', async () => {
@@ -202,8 +292,8 @@ describe('StripeProvider', () => {
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
     const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
-    await expect(provider.refund('pi_1')).rejects.toThrow('Your card was declined.');
-    expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 5 });
+    await expect(provider.refund('pi_1', 10000)).rejects.toThrow('Your card was declined.');
+    expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 100 });
   });
 
   it('rejects missing webhook signatures with a typed client error', async () => {

@@ -21,6 +21,6 @@ Useful pages and endpoints:
 - `/api/booking/availability` — availability JSON
 - `/api/booking/feed?since=...` — incremental feed; use `Authorization: Bearer local-tourflow-secret`
 
-The simulated email provider prints customer and operator management URLs in the terminal. The owner dashboard also links to the operator view for every booking.
+The simulated email provider prints customer and operator management URLs in the terminal. The owner dashboard also links to the operator view for every booking. `wrangler.jsonc` includes a local-only `BOOKKIT_TOKEN_ENC_KEY` so newly created tokens can be encrypted and regenerated for those links; production deployments must configure this as a Worker secret before accepting bookings.
 
 To start with an empty database, stop the server and remove `.wrangler/state`, then run `bun run demo` again.

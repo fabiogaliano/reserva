@@ -17,7 +17,6 @@ import {
   type BookingRepository,
   type MutationSideEffectOperationKind,
   type RefundOperationRecord,
-  type SideEffectOperationKind,
   type SideEffectOperationRecord,
 } from '../src/repo';
 import { booking } from './fixtures';
@@ -77,7 +76,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
   const rescheduleTransitionVersions = new Map(seed.map((item) => [item.id, 0]));
   const sideEffectKey = (bookingId: string, kind: SideEffectOperationRecord['kind']) => `${bookingId}:${kind}`;
   const isMutationSideEffectOperationKind = (kind: string): kind is MutationSideEffectOperationKind => (
-    kind.startsWith('email:') || kind.startsWith('tourflow:')
+    kind === 'calendar_delete' || kind.startsWith('email:') || kind.startsWith('tourflow:')
   );
   // BK-SIDE-001 (handoff 13) HIGH-1(a): mirrors src/repo.ts's mutationSideEffectInsert — called
   // by transitionToCancelled/transitionToNoShow/rescheduleWithCapacity below ONLY after each has
@@ -240,6 +239,21 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       }
       return null;
     },
+    getBookingByOperatorTokenForRefundRecovery: async (token, now) => {
+      const hash = await sha256Base64Url(token);
+      for (const item of rows.values()) {
+        const state = tokenState.get(item.id);
+        if (!state) continue;
+        const expired = state.tokensExpireAt !== null && state.tokensExpireAt <= now;
+        if (expired && !['requested', 'failed'].includes(refundOperations.get(item.id)?.status ?? '')) continue;
+        if (state.operatorTokenHash === hash) return hydrateBooking(item);
+        if (state.operatorTokenHash === null && state.operatorToken === token) {
+          state.operatorTokenHash = hash;
+          return hydrateBooking(item);
+        }
+      }
+      return null;
+    },
     countReferencesForYear: async (prefix) => [...rows.values()].filter((item) => item.reference.startsWith(prefix)).length,
     insertHold: async (input) => {
       if (input.holdIp && input.maxActiveHoldsForIp) {
@@ -338,6 +352,10 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       // transition applies — see recordMutationKinds's doc comment.
       recordMutationKinds(id, input.mutationSideEffectKinds, input.updatedAt);
       return hydrateBooking(updated);
+    },
+    upsertRefundOperationAndTransitionToCancelled: async (refund, id, input) => {
+      await repository.reconcileStripeRefundOperation(refund);
+      return repository.transitionToCancelled(id, input);
     },
     transitionToNoShow: async (id, input) => {
       const current = rows.get(id);
@@ -519,7 +537,9 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       recordMutationKinds(id, input.mutationSideEffectKinds, input.updatedAt, version);
       return hydrateBooking(updated);
     },
-    listOccupancyBookings: async (from, to) => [...rows.values()].filter((item) => item.startsAt >= from && item.startsAt < to),
+    listOccupancyBookings: async (from, to) => [...rows.values()]
+      .filter((item) => (item.status === 'hold' || item.status === 'confirmed') && item.startsAt >= from && item.startsAt < to)
+      .sort((a, b) => a.startsAt.localeCompare(b.startsAt)),
     // Mirrors src/repo.ts:260-267 — starts_at >= now AND (confirmed OR (hold AND hold_expires_at > now)), ordered by starts_at.
     listUpcoming: async (now) => [...rows.values()]
       .filter((item) => item.startsAt >= now && (item.status === 'confirmed' || (item.status === 'hold' && item.holdExpiresAt !== null && item.holdExpiresAt > now)))
@@ -586,6 +606,19 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     upsertRefundOperation: async (input) => {
       const current = refundOperations.get(input.bookingId);
       if (current?.status === 'succeeded') {
+        refundOperations.set(input.bookingId, { ...current, resolvedAt: input.resolvedAt });
+        return;
+      }
+      refundOperations.set(input.bookingId, {
+        id: current?.id ?? input.id, bookingId: input.bookingId, paymentIntent: input.paymentIntent,
+        choice: input.choice, status: input.status, stripeRefundId: input.stripeRefundId,
+        amountCents: input.amountCents, requestedAt: current?.requestedAt ?? input.requestedAt,
+        resolvedAt: input.resolvedAt, error: input.error ?? null,
+      });
+    },
+    reconcileStripeRefundOperation: async (input) => {
+      const current = refundOperations.get(input.bookingId);
+      if (current?.status === 'succeeded' && current.choice === 'full') {
         refundOperations.set(input.bookingId, { ...current, resolvedAt: input.resolvedAt });
         return;
       }

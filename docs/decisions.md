@@ -6,29 +6,25 @@ or internal inconsistency that the implementation cannot resolve alone. Each sta
 current behavior and a recommendation for the next spec revision, so it doesn't get
 re-litigated.
 
-## 1. `/status` has no `cancelled` state
+## 1. `/status` adopts a `cancelled` state
 
-**Context.** The spec's `GET /api/booking/status` response enum is
-`pending | confirmed | expired | not_found`. There is no value for a booking that was
-confirmed and then cancelled.
+**Context.** The original spec's `GET /api/booking/status` response enum was
+`pending | confirmed | expired | not_found`, with no value for a booking that confirmed
+and was later cancelled. The original implementation therefore fell through to
+`pending`, which was spec-compliant but misleading.
 
-**Current behavior.** If a booking is confirmed and then cancelled before the customer's
-confirmation-page poll reaches `handleStatus` (`src/handlers/index.ts`), the handler
-falls through its status checks (only `confirmed` and `expired` are special-cased) to
-the default `return json({ status: 'pending' })`. This is spec-compliant but misleading:
-the customer's confirmation page reports "pending" for a booking that will never
-confirm.
+**Decision.** Bookkit now returns `{ status: 'cancelled' }` for both cancelled and
+no-show bookings. This additive state lets the confirmation page stop polling and show
+an honest terminal result. Existing clients must continue handling unknown states
+conservatively until the external spec adopts the same enum value.
 
-**Decision / recommendation.** Add `cancelled` to the `/status` response enum in the
-next spec revision and have the handler return it for cancelled bookings. This is
-additive for clients — anything already treating unknown values conservatively is
-unaffected — and lets the confirmation page render an honest message instead of a
-stuck "pending" state. Until the spec is revised, the current "pending" behavior stands
-and is pinned by a test (work package 02, task 3).
+**Current behavior.** `handleStatus` in `src/handlers/index.ts` explicitly maps
+`cancelled` and `no_show` bookings to the public `cancelled` state. Handler tests pin
+that response; `pending` remains reserved for holds or completed sessions whose payment
+cannot yet be verified.
 
-**Revisit when.** The spec gets a next revision, or if support tickets show customers
-are confused by a confirmation page stuck on "pending" for a booking that was actually
-cancelled.
+**Revisit when.** The external contract is revised, so its response enum and examples
+can document the already-adopted behavior.
 
 ## 2. Customer-route wrong-state error code
 

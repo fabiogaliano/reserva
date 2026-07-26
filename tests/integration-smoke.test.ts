@@ -15,4 +15,14 @@ describe('Astro smoke fixture', () => {
       expect(manifest).toContain(`"route": "${path}"`);
     }
   });
+
+  it('declares the payment fields and local token key exercised by the workers smoke test', () => {
+    const fixture = resolve(import.meta.dirname, '../examples/smoke-site');
+    const runtime = readFileSync(resolve(fixture, 'src/runtime.ts'), 'utf8');
+    const wrangler = readFileSync(resolve(fixture, 'wrangler.jsonc'), 'utf8');
+    expect(runtime).toContain('amountTotal: session.amountTotal');
+    expect(runtime).toContain('currency: session.currency');
+    expect(runtime).toContain("secretBindings: ['BOOKKIT_TOKEN_ENC_KEY', 'TOURFLOW_SHARED_SECRET']");
+    expect(wrangler).toContain('"BOOKKIT_TOKEN_ENC_KEY"');
+  });
 });

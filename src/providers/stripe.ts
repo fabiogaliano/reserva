@@ -344,34 +344,56 @@ export class StripeProvider implements PaymentProvider {
     return sessionStatusFromStripe(await this.stripe.checkout.sessions.retrieve(sessionId));
   }
 
-  async refund(paymentIntent: string): Promise<{ refundId: string; amountCents: number }> {
+  async refund(paymentIntent: string, expectedAmountCents: number): Promise<{ refundId: string; amountCents: number }> {
+    const idempotencyKey = `bookkit-refund-${paymentIntent}`;
+    let created: Stripe.Refund | undefined;
     try {
-      const refund = await this.stripe.refunds.create(
-        { payment_intent: paymentIntent },
-        { idempotencyKey: `bookkit-refund-${paymentIntent}` },
+      created = await this.stripe.refunds.create(
+        { payment_intent: paymentIntent, metadata: { bookkit_refund_key: idempotencyKey } },
+        { idempotencyKey },
       );
-      return { refundId: refund.id, amountCents: refund.amount };
+      if (created.status !== 'succeeded') {
+        throw new Error(`Stripe refund ${created.id} did not succeed (status ${created.status ?? 'unknown'})`);
+      }
+      if (created.amount === expectedAmountCents) {
+        return { refundId: created.id, amountCents: expectedAmountCents };
+      }
+      throw new Error(`Stripe refund amount ${created.amount} did not by itself cover expected total ${expectedAmountCents}`);
     } catch (error) {
-      // Key replay cannot be trusted to tell us whether the refund actually happened: keys are
-      // pruned after ~24h (a retried call past that window reaches Stripe as brand new and finds
-      // the charge already entirely refunded, which Stripe rejects), and *within* the window
-      // Stripe replays the exact saved result including error responses — even a cached 500 that
-      // has nothing to do with refunds (handoff caveats a/b). Neither case is reliably
-      // distinguishable from a genuine failure by error message alone, so always reconcile via
-      // refunds.list and only let the original error surface when no successful refund is on file.
-      const reconciled = await this.findExistingRefund(paymentIntent);
+      // A full Stripe refund after an earlier partial refund returns only the remaining amount, so
+      // compare the cumulative succeeded total while still requiring a refund owned by this
+      // deterministic request. `created` proves ownership when this call returned successfully;
+      // after an ambiguous failure, only the persisted metadata marker can do so.
+      const reconciled = await this.findExistingRefund(
+        paymentIntent,
+        expectedAmountCents,
+        idempotencyKey,
+        created,
+      );
       if (reconciled) return reconciled;
       throw error;
     }
   }
 
-  private async findExistingRefund(paymentIntent: string): Promise<{ refundId: string; amountCents: number } | null> {
-    const list = await this.stripe.refunds.list?.({ payment_intent: paymentIntent, limit: 5 });
-    // Only a refund that actually succeeded is success-equivalent to the failed create() call —
-    // a pending/failed/canceled refund on file means the money hasn't (or won't) moved, so the
-    // original error must still surface rather than being masked as a false success.
-    const refund = list?.data.find((candidate) => candidate.status === 'succeeded');
-    return refund ? { refundId: refund.id, amountCents: refund.amount } : null;
+  private async findExistingRefund(
+    paymentIntent: string,
+    expectedAmountCents: number,
+    idempotencyKey: string,
+    created?: Stripe.Refund,
+  ): Promise<{ refundId: string; amountCents: number } | null> {
+    const list = await this.stripe.refunds.list?.({ payment_intent: paymentIntent, limit: 100 });
+    if (!list) return null;
+    const succeeded = list.data.filter((candidate) => candidate.status === 'succeeded');
+    const marked = succeeded.find((candidate) => candidate.metadata?.bookkit_refund_key === idempotencyKey);
+    const owned = created?.status === 'succeeded' ? created : marked;
+    if (!owned) return null;
+    const listedTotal = succeeded.reduce((total, candidate) => total + candidate.amount, 0);
+    const total = succeeded.some((candidate) => candidate.id === owned.id)
+      ? listedTotal
+      : listedTotal + owned.amount;
+    return total >= expectedAmountCents
+      ? { refundId: owned.id, amountCents: expectedAmountCents }
+      : null;
   }
 }
 

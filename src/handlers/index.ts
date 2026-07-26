@@ -518,33 +518,36 @@ export function handleStripeWebhook(request: Request, context: BookkitContext): 
           // source of truth for whether the money moved, so its refund id/amount always wins here
           // (BK-REFUND-001). Upsert rather than claim: a dashboard-initiated refund has no prior
           // claim to race against.
-          await context.repo.upsertRefundOperation({
+          const refund = {
             id: crypto.randomUUID(),
             bookingId: booking.id,
             paymentIntent: event.paymentIntent ?? booking.stripePaymentIntent ?? null,
-            choice: 'full',
-            status: 'succeeded',
+            choice: 'full' as const,
+            status: 'succeeded' as const,
             stripeRefundId: event.refundId ?? null,
             amountCents: event.amountRefunded,
             requestedAt: timestamp,
             resolvedAt: timestamp,
-          });
+          };
           if (booking.status !== 'cancelled') {
-            const updated = await context.repo.transitionToCancelled(booking.id, {
+            const updated = await context.repo.upsertRefundOperationAndTransitionToCancelled(refund, booking.id, {
               // no_show and cancelled are terminal: a refund arriving after either must not
               // resurrect/overwrite them (spec item 4). CAS loss here is an idempotent no-op —
               // Stripe still gets 200 below, so a retry never causes redelivery storms.
               expectedStatusIn: ['hold', 'confirmed', 'expired'],
               cancelledAt: timestamp, cancelledBy: 'operator', updatedAt: timestamp,
-              mutationSideEffectKinds: mutationSideEffectKinds(context, 'booking.cancelled_by_operator'),
+              mutationSideEffectKinds: cancellationSideEffectKinds(context, booking, 'booking.cancelled_by_operator'),
             });
-            // A concurrent transition (e.g. a customer cancel) can win this race; when it does,
-            // it owns the calendar event too. Only the CAS winner may delete and dispatch.
+            // A concurrent transition (e.g. a customer cancel) can win this race. Only the CAS
+            // winner may record and dispatch operator-cancellation side effects.
             if (updated) {
-              await deleteCalendarAfterCancellation(context, booking);
               await dispatchMutation(context, 'booking.cancelled_by_operator', updated);
+            } else {
+              const fresh = await context.repo.getBookingById(booking.id);
+              if (fresh) await runOwedMutationSideEffects(context, fresh);
             }
           } else {
+            await context.repo.reconcileStripeRefundOperation(refund);
             // BK-SIDE-001 (handoff 13): idempotent redelivery of an already-cancelled booking —
             // still a booking-touching request, so drain any rows a prior delivery left owed
             // (e.g. the isolate died between this same webhook's earlier CAS win and its attempt).
@@ -671,9 +674,13 @@ export function handleStatus(request: Request, context: BookkitContext): Promise
 // and, for the cancel token, revocation (cancel_token_revoked_at) as part of the same lookup
 // query (src/repo.ts) — an expired or revoked token comes back as a plain null here, identical to
 // an unknown one, so this stays a single `if (!booking) throw 403` with no separate check needed.
-async function tokenBooking(context: BookkitContext, token: string, operator = false): Promise<Booking> {
+async function tokenBooking(context: BookkitContext, token: string, operator = false, refundRecovery = false): Promise<Booking> {
   const now = nowIso(context);
-  const booking = operator ? await context.repo.getBookingByOperatorToken(token, now) : await context.repo.getBookingByCancelToken(token, now);
+  const booking = operator
+    ? await (refundRecovery
+      ? context.repo.getBookingByOperatorTokenForRefundRecovery(token, now)
+      : context.repo.getBookingByOperatorToken(token, now))
+    : await context.repo.getBookingByCancelToken(token, now);
   if (!booking) throw new HttpError(403, 'forbidden', 'Invalid booking token');
   // BK-SIDE-001 (handoff 13): every caller of tokenBooking is a mutation-adjacent request
   // (customer cancel/reschedule, and — via operatorBooking below — operator cancel/reschedule/
@@ -702,21 +709,15 @@ export function handleManage(request: Request, context: BookkitContext): Promise
   }).then(withSensitiveHeaders);
 }
 
-async function calendarDelete(context: BookkitContext, booking: Booking): Promise<void> {
-  if (booking.calendarEventId && context.providers.calendar) await context.providers.calendar.deleteEvent(booking.calendarEventId);
-}
-
-async function deleteCalendarAfterCancellation(context: BookkitContext, booking: Booking): Promise<void> {
-  try {
-    await calendarDelete(context, booking);
-  } catch (error) {
-    // The CAS has already made the cancellation durable; retain a recoverable stale event rather
-    // than reporting the cancellation as failed after its authoritative transition succeeded.
-    context.logger.error?.('Calendar delete failed after booking cancellation', {
-      bookingId: booking.id,
-      error: error instanceof Error ? error.message : 'Calendar delete failed',
-    });
-  }
+function cancellationSideEffectKinds(
+  context: BookkitContext,
+  booking: Booking,
+  event: 'booking.cancelled_by_customer' | 'booking.cancelled_by_operator',
+) {
+  return [
+    ...mutationSideEffectKinds(context, event),
+    ...(booking.calendarEventId ? ['calendar_delete' as const] : []),
+  ];
 }
 
 async function calendarPatch(context: BookkitContext, booking: Booking): Promise<void> {
@@ -738,7 +739,7 @@ export function handleCustomerCancel(request: Request, context: BookkitContext):
     const updated = await context.repo.transitionToCancelled(cancelled.id, {
       expectedStatusIn: ['confirmed'], expectedStartsAt: booking.startsAt,
       cancelledAt: cancelled.updatedAt, cancelledBy: 'customer', updatedAt: cancelled.updatedAt,
-      mutationSideEffectKinds: mutationSideEffectKinds(context, 'booking.cancelled_by_customer'),
+      mutationSideEffectKinds: cancellationSideEffectKinds(context, booking, 'booking.cancelled_by_customer'),
     });
     if (!updated) {
       // CAS loss always surfaces as a conflict here (never an idempotent 200): a concurrent
@@ -750,7 +751,6 @@ export function handleCustomerCancel(request: Request, context: BookkitContext):
       }
       throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
     }
-    await deleteCalendarAfterCancellation(context, booking);
     await dispatchMutation(context, 'booking.cancelled_by_customer', updated);
     return json({ ok: true });
   });
@@ -766,6 +766,12 @@ async function rescheduleWithToken(context: BookkitContext, booking: Booking, ne
   if (!operator && !canRescheduleBooking(booking, now, context.config.booking.reschedule.cutoffHours, context.config.booking.reschedule.enabled)) throw new HttpError(403, 'past_cutoff', 'The reschedule deadline has passed');
   const candidate = await checkSlot(context, booking.tourSlug, booking.people, newStart, now, booking.id);
   const next = rescheduleBooking(booking, candidate.startsAt, candidate.tour.durationMin, now);
+  if (next.startsAt === booking.startsAt && next.endsAt === booking.endsAt) {
+    // A prior calendar patch can fail after the transition and notification debt committed. Retrying
+    // the same target must repair that patch without minting a second reschedule version or notice.
+    await calendarPatch(context, booking);
+    return booking;
+  }
   // BK-CAP-001: checkSlot above is only a fast-path pre-check (read-then-write TOCTOU — two
   // concurrent reschedules into the same last unit can both pass it). rescheduleWithCapacity is
   // the authority: it re-evaluates the CAS (status + starts_at) and occupied-units-in-interval +
@@ -815,9 +821,14 @@ export function handleCustomerReschedule(request: Request, context: BookkitConte
   });
 }
 
-async function operatorBooking(context: BookkitContext, request: Request, body: Record<string, unknown>): Promise<Booking> {
+async function operatorBooking(
+  context: BookkitContext,
+  request: Request,
+  body: Record<string, unknown>,
+  refundRecovery = false,
+): Promise<Booking> {
   const operatorToken = typeof body.operatorToken === 'string' ? body.operatorToken : null;
-  if (operatorToken) return tokenBooking(context, operatorToken, true);
+  if (operatorToken) return tokenBooking(context, operatorToken, true, refundRecovery);
   const expected = await getSecret(context, 'TOURFLOW_SHARED_SECRET');
   const supplied = bearerToken(request);
   if (!expected || !supplied || !constantTimeEqual(expected, supplied)) throw new HttpError(403, 'forbidden', 'Operator authorization required');
@@ -837,11 +848,12 @@ async function operatorBooking(context: BookkitContext, request: Request, body: 
 // previous attempt's D1 write never landed (crash between Stripe success and recording it).
 async function resolvePendingRefund(
   context: BookkitContext,
-  bookingId: string,
+  booking: Booking,
   operationId: string,
   choice: 'full' | 'none',
   paymentIntent: string | null,
 ): Promise<void> {
+  const { id: bookingId, priceCents } = booking;
   if (choice === 'none') {
     await context.repo.resolveRefundOperation(operationId, { status: 'succeeded', resolvedAt: nowIso(context) });
     return;
@@ -860,7 +872,7 @@ async function resolvePendingRefund(
   if (current?.id !== operationId || current.status === 'succeeded') return;
   let result: { refundId: string; amountCents: number };
   try {
-    result = await context.providers.payments.refund(paymentIntent);
+    result = await context.providers.payments.refund(paymentIntent, priceCents);
   } catch (error) {
     // Only a failure of the Stripe call itself is a genuine refund failure — record it so the
     // operation row remains for retry/reconciliation.
@@ -906,7 +918,7 @@ async function reconcileCancelledRefund(
       requestedAt: nowIso(context),
     });
     if (claimed) {
-      await resolvePendingRefund(context, booking.id, operationId, refund, booking.stripePaymentIntent);
+      await resolvePendingRefund(context, booking, operationId, refund, booking.stripePaymentIntent);
       return json({ ok: true });
     }
     const concurrent = await context.repo.getRefundOperationByBookingId(booking.id);
@@ -914,7 +926,7 @@ async function reconcileCancelledRefund(
       throw new HttpError(409, 'refund_conflict', 'A different refund decision already won for this booking');
     }
     if (concurrent.status !== 'succeeded') {
-      await resolvePendingRefund(context, booking.id, concurrent.id, concurrent.choice, concurrent.paymentIntent ?? booking.stripePaymentIntent);
+      await resolvePendingRefund(context, booking, concurrent.id, concurrent.choice, concurrent.paymentIntent ?? booking.stripePaymentIntent);
     }
     return json({ ok: true });
   }
@@ -922,7 +934,7 @@ async function reconcileCancelledRefund(
     throw new HttpError(409, 'refund_conflict', 'A different refund decision already won for this booking');
   }
   if (existing.status !== 'succeeded') {
-    await resolvePendingRefund(context, booking.id, existing.id, existing.choice, existing.paymentIntent ?? booking.stripePaymentIntent ?? null);
+    await resolvePendingRefund(context, booking, existing.id, existing.choice, existing.paymentIntent ?? booking.stripePaymentIntent ?? null);
   }
   return json({ ok: true });
 }
@@ -937,7 +949,7 @@ async function completeClaimedOperatorCancellation(
   const updated = await context.repo.transitionToCancelled(cancelled.id, {
     expectedStatusIn: ['confirmed'], expectedStartsAt: booking.startsAt,
     cancelledAt: cancelled.updatedAt, cancelledBy: 'operator', updatedAt: cancelled.updatedAt,
-    mutationSideEffectKinds: mutationSideEffectKinds(context, 'booking.cancelled_by_operator'),
+    mutationSideEffectKinds: cancellationSideEffectKinds(context, booking, 'booking.cancelled_by_operator'),
   });
   if (!updated) {
     const fresh = await context.repo.getBookingById(cancelled.id);
@@ -951,11 +963,8 @@ async function completeClaimedOperatorCancellation(
     throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
   }
 
-  // The CAS made cancellation durable, so calendar cleanup is best-effort; dispatch and refund
-  // must continue even when the recoverable external delete fails.
-  await deleteCalendarAfterCancellation(context, booking);
   await dispatchMutation(context, 'booking.cancelled_by_operator', updated);
-  await resolvePendingRefund(context, booking.id, operationId, refund, booking.stripePaymentIntent ?? null);
+  await resolvePendingRefund(context, booking, operationId, refund, booking.stripePaymentIntent ?? null);
   return json({ ok: true });
 }
 
@@ -963,7 +972,7 @@ export function handleOperatorCancel(request: Request, context: BookkitContext):
   return run(async () => {
     if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const body = await requestJson(request);
-    const booking = await operatorBooking(context, request, body);
+    const booking = await operatorBooking(context, request, body, true);
     const refund = body.refund === 'full' ? 'full' : body.refund === 'none' ? 'none' : null;
     if (!refund) throw new HttpError(400, 'validation_failed', 'refund must be full or none');
 
@@ -1009,7 +1018,7 @@ export function handleOperatorCancel(request: Request, context: BookkitContext):
       // The claim-holder may have won its CAS but not resolved Stripe yet. Never resume its
       // refund until the booking is durably cancelled (finding #1).
       if (fresh?.status !== 'cancelled') throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
-      await resolvePendingRefund(context, booking.id, existing.id, existing.choice, existing.paymentIntent ?? booking.stripePaymentIntent ?? null);
+      await resolvePendingRefund(context, booking, existing.id, existing.choice, existing.paymentIntent ?? booking.stripePaymentIntent ?? null);
       return json({ ok: true });
     }
 

@@ -196,9 +196,10 @@ describe('stale compare-and-set transitions', () => {
     expect(row?.startsAt).toBe('2026-06-16T09:00:00.000Z');
   });
 
-  it('a charge.refunded cancellation that loses a race to a concurrent customer cancel does not overwrite cancelledBy', async () => {
+  it('a charge.refunded cancellation that loses a race to a concurrent customer cancel drains the winner’s outbox without overwriting it', async () => {
     const seeded = booking({ id: 'b-refund-vs-cancel', stripePaymentIntent: 'pi_refund_stale', calendarEventId: 'cal-refund-vs-cancel' });
     const repo = fakeRepository([seeded]);
+    await repo.recordMutationSideEffectOperations(seeded.id, ['email:booking.cancelled_by_customer'], '2026-06-14T08:00:00.000Z');
     const realTransition = repo.transitionToCancelled;
     repo.transitionToCancelled = async (id, input) => {
       const current = repo.rows.get(id);
@@ -235,6 +236,7 @@ describe('stale compare-and-set transitions', () => {
     const row = repo.rows.get(seeded.id);
     expect(row?.status).toBe('cancelled');
     expect(row?.cancelledBy).toBe('customer');
+    expect(emails).toContain('booking.cancelled_by_customer');
     expect(emails).not.toContain('booking.cancelled_by_operator');
     expect(deletes).toBe(0);
   });

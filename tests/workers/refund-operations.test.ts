@@ -10,8 +10,9 @@ const db = (env as unknown as TestEnv).BOOKKIT_DB;
 const repo = createBookingRepository(db);
 
 beforeEach(async () => {
-  await db.prepare('DELETE FROM bookings').run();
+  await db.prepare('DELETE FROM side_effect_operations').run();
   await db.prepare('DELETE FROM refund_operations').run();
+  await db.prepare('DELETE FROM bookings').run();
 });
 
 async function seedConfirmed(id: string): Promise<void> {
@@ -172,6 +173,68 @@ describe('refund_operations concurrent claim uniqueness on real D1', () => {
   // BK-REFUND-001 finding #5: resolveRefundOperation must be non-regressing against real D1 — a
   // succeeded row (e.g. already recorded by the charge.refunded webhook) can never be downgraded
   // to 'failed' or have its refund id/amount cleared by a later, stale operator-side attempt.
+  it('authoritative Stripe data corrects an earlier none/succeeded audit row', async () => {
+    const id = 'refund-authoritative-correction';
+    await seedConfirmed(id);
+    await repo.claimRefundOperation({ id: 'op-none', bookingId: id, paymentIntent: null, choice: 'none', requestedAt: '2026-07-21T11:00:00.000Z' });
+    await repo.resolveRefundOperation('op-none', { status: 'succeeded', resolvedAt: '2026-07-21T11:00:01.000Z' });
+
+    await repo.reconcileStripeRefundOperation({
+      id: 'op-stripe', bookingId: id, paymentIntent: `pi_${id}`, choice: 'full', status: 'succeeded',
+      stripeRefundId: 're_authoritative', amountCents: 12000,
+      requestedAt: '2026-07-21T12:00:00.000Z', resolvedAt: '2026-07-21T12:00:00.000Z',
+    });
+
+    await expect(repo.getRefundOperationByBookingId(id)).resolves.toMatchObject({
+      id: 'op-none', choice: 'full', status: 'succeeded', paymentIntent: `pi_${id}`,
+      stripeRefundId: 're_authoritative', amountCents: 12000,
+    });
+  });
+
+  it('records an authoritative refund and cancellation in one D1 batch while preserving the refund on CAS loss', async () => {
+    const id = 'refund-atomic-cancel';
+    await seedConfirmed(id);
+    const timestamp = '2026-07-21T12:00:00.000Z';
+    const updated = await repo.upsertRefundOperationAndTransitionToCancelled({
+      id: 'op-atomic', bookingId: id, paymentIntent: `pi_${id}`, choice: 'full', status: 'succeeded',
+      stripeRefundId: 're_atomic', amountCents: 12000, requestedAt: timestamp, resolvedAt: timestamp,
+    }, id, {
+      expectedStatusIn: ['confirmed'], cancelledAt: timestamp, cancelledBy: 'operator', updatedAt: timestamp,
+      mutationSideEffectKinds: ['calendar_delete', 'email:booking.cancelled_by_operator'],
+    });
+    expect(updated).toMatchObject({ status: 'cancelled' });
+    await expect(repo.getRefundOperationByBookingId(id)).resolves.toMatchObject({ status: 'succeeded', stripeRefundId: 're_atomic' });
+    await expect(repo.listSideEffectOperations(id)).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'calendar_delete', status: 'pending' }),
+      expect.objectContaining({ kind: 'email:booking.cancelled_by_operator', status: 'pending' }),
+    ]));
+
+    const lostId = 'refund-atomic-cas-loss';
+    await seedConfirmed(lostId);
+    await repo.transitionToNoShow(lostId, { expectedStatusIn: ['confirmed'], updatedAt: timestamp });
+    const lost = await repo.upsertRefundOperationAndTransitionToCancelled({
+      id: 'op-cas-loss', bookingId: lostId, paymentIntent: `pi_${lostId}`, choice: 'full', status: 'succeeded',
+      stripeRefundId: 're_cas_loss', amountCents: 12000, requestedAt: timestamp, resolvedAt: timestamp,
+    }, lostId, { expectedStatusIn: ['confirmed'], cancelledAt: timestamp, cancelledBy: 'operator', updatedAt: timestamp });
+    expect(lost).toBeNull();
+    await expect(repo.getRefundOperationByBookingId(lostId)).resolves.toMatchObject({ status: 'succeeded', stripeRefundId: 're_cas_loss' });
+    await expect(repo.getBookingById(lostId)).resolves.toMatchObject({ status: 'no_show' });
+  });
+
+  it('allows an expired operator token only for requested or failed refund recovery', async () => {
+    const id = 'refund-token-recovery';
+    await seedConfirmed(id);
+    await db.prepare('UPDATE bookings SET tokens_expire_at = ? WHERE id = ?').bind('2026-07-01T00:00:00.000Z', id).run();
+    const token = `operator-${id}`;
+    await expect(repo.getBookingByOperatorToken(token, '2026-07-21T12:00:00.000Z')).resolves.toBeNull();
+    await repo.claimRefundOperation({ id: 'op-token', bookingId: id, paymentIntent: `pi_${id}`, choice: 'full', requestedAt: '2026-07-21T11:00:00.000Z' });
+    await expect(repo.getBookingByOperatorTokenForRefundRecovery(token, '2026-07-21T12:00:00.000Z')).resolves.toMatchObject({ id });
+    await repo.resolveRefundOperation('op-token', { status: 'failed', error: 'retry', resolvedAt: '2026-07-21T11:01:00.000Z' });
+    await expect(repo.getBookingByOperatorTokenForRefundRecovery(token, '2026-07-21T12:00:00.000Z')).resolves.toMatchObject({ id });
+    await repo.resolveRefundOperation('op-token', { status: 'succeeded', stripeRefundId: 're_token', amountCents: 12000, resolvedAt: '2026-07-21T11:02:00.000Z' });
+    await expect(repo.getBookingByOperatorTokenForRefundRecovery(token, '2026-07-21T12:00:00.000Z')).resolves.toBeNull();
+  });
+
   it('resolveRefundOperation never downgrades an already-succeeded row (status only ever advances)', async () => {
     const id = 'refund-resolve-non-regressing';
     await seedConfirmed(id);

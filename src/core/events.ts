@@ -113,9 +113,9 @@ export interface PaymentProvider {
   ): Promise<{ url: string; sessionId: string }>;
   parseWebhook(request: Request): Promise<StripeEventParsed>;
   getSession(sessionId: string): Promise<SessionStatus>;
-  // Returns the Stripe refund id + amount instead of discarding them (BK-REFUND-001), so the
-  // caller can record what actually happened rather than just that the call didn't throw.
-  refund(paymentIntent: string): Promise<{ refundId: string; amountCents: number }>;
+  // The expected total lets a retry distinguish an incomplete historical partial refund from a
+  // completed full refund; amountCents reports the cumulative total the operation satisfied.
+  refund(paymentIntent: string, expectedAmountCents: number): Promise<{ refundId: string; amountCents: number }>;
 }
 
 export interface OpsSink {

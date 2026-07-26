@@ -334,13 +334,13 @@ export function mutationSideEffectKinds(
 }
 
 interface MutationSideEffectAttempt {
-  event: EmailBookingEvent;
-  provider: 'email' | 'tourflow';
+  event: EmailBookingEvent | 'calendar_delete';
+  provider: 'calendar' | 'email' | 'tourflow';
   run: () => Promise<void>;
 }
 
 function isMutationSideEffectKind(kind: SideEffectOperationKind): kind is MutationSideEffectOperationKind {
-  return kind.startsWith('email:') || kind.startsWith('tourflow:');
+  return kind === 'calendar_delete' || kind.startsWith('email:') || kind.startsWith('tourflow:');
 }
 
 // BK-SIDE-001 (handoff 13) HIGH-1(b): reconstructs a runnable attempt from a durable row's `kind`
@@ -355,6 +355,19 @@ function isMutationSideEffectKind(kind: SideEffectOperationKind): kind is Mutati
 // 'customer'/'owner' (recipient) or something else (no recipient, non-split fallback) — real
 // recipient values can never collide with a discriminator, since reschedule versions are numeric.
 function attemptForKind(context: BookkitContext, booking: Booking, kind: MutationSideEffectOperationKind): MutationSideEffectAttempt | null {
+  if (kind === 'calendar_delete') {
+    const calendar = context.providers.calendar;
+    if (!calendar) return null;
+    return {
+      event: 'calendar_delete',
+      provider: 'calendar',
+      run: async () => {
+        if (!booking.calendarEventId) return;
+        await calendar.deleteEvent(booking.calendarEventId);
+        await context.repo.updateBooking(booking.id, { calendarEventId: null, updatedAt: nowIso(context) });
+      },
+    };
+  }
   const [providerName, event, ...rest] = kind.split(':');
   if (!providerName || !event) return null;
   const emailBookingEvent = event as EmailBookingEvent;
@@ -414,8 +427,8 @@ async function runMutationSideEffect(
 }
 
 // BK-SIDE-001 (handoff 13) HIGH-1(b): the request-driven drain. Lists this booking's side-effect
-// operations and claims->runs->resolves every non-succeeded email:%/tourflow:% row (the
-// confirmation-path literals are skipped — those drain through executeOperation/handleStatus's
+// operations and claims->runs->resolves every non-succeeded calendar_delete/email:%/tourflow:%
+// row (the confirmation-path literals are skipped — those drain through executeOperation/handleStatus's
 // needsFulfillment instead). Called from every mutation handler AFTER its own transition (so newly
 // -recorded rows get their first attempt immediately) AND from every place a booking is loaded for
 // a mutation-adjacent request — idempotent short-circuits, handleManage, handleStatus — so rows

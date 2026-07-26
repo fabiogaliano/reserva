@@ -2,7 +2,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createBookkitContext } from '../src/context';
 import { DEFAULT_TOKEN_EXPIRY_DAYS } from '../src/core/config';
-import { handleCustomerCancel, handleCustomerReschedule } from '../src/handlers';
+import { handleCustomerCancel, handleCustomerReschedule, handleOperatorCancel } from '../src/handlers';
 import { booking, config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
@@ -101,24 +101,36 @@ describe('POST /cancel (customer, spec §11)', () => {
     expect(repo.rows.get(seeded.id)?.status).toBe('confirmed');
   });
 
-  it('keeps a successful cancellation durable when calendar deletion fails', async () => {
-    // A stale calendar event is recoverable; the authoritative booking transition must not be
-    // reported as failed after its CAS has already committed.
+  it('records a failed calendar deletion for an operator retry after cancellation', async () => {
     const seeded = booking({ id: 'b-cancel-calendar-fails', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z', calendarEventId: 'cal-fails' });
     const repo = fakeRepository([seeded]);
+    let attempts = 0;
     const context = createBookkitContext({
       config,
       db: {} as D1Database,
       repo,
       clock,
       providers: providers({
-        calendar: { listEvents: async () => [], createEvent: async () => 'unused', patchEvent: async () => undefined, deleteEvent: async () => { throw new Error('calendar unavailable'); } },
+        calendar: {
+          listEvents: async () => [], createEvent: async () => 'unused', patchEvent: async () => undefined,
+          deleteEvent: async () => { attempts += 1; if (attempts === 1) throw new Error('calendar unavailable'); },
+        },
       }),
     });
 
     const response = await handleCustomerCancel(cancelRequest(seeded.cancelToken), context);
     expect(response.status).toBe(200);
     expect(repo.rows.get(seeded.id)?.status).toBe('cancelled');
+    expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_delete`)).toMatchObject({ status: 'failed' });
+
+    const retry = await handleOperatorCancel(new Request('https://example.test/api/booking/operator/cancel', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ operatorToken: seeded.operatorToken, refund: 'none' }),
+    }), context);
+    expect(retry.status).toBe(200);
+    expect(attempts).toBe(2);
+    expect(repo.rows.get(seeded.id)?.calendarEventId).toBeNull();
+    expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_delete`)).toMatchObject({ status: 'succeeded' });
   });
 
   it('rejects cancel on a wrong-state (hold) row with 409 invalid_transition', async () => {
@@ -167,6 +179,37 @@ describe('POST /reschedule (customer, spec §11)', () => {
     expect(row?.people).toBe(seeded.people);
     expect(patches).toBe(1);
     expect(emails).toEqual(['booking.rescheduled']);
+  });
+
+  it('retries a failed calendar patch at the same target without a second reschedule notification', async () => {
+    const seeded = booking({
+      id: 'b-reschedule-patch-retry', startsAt: '2026-06-15T09:00:00.000Z',
+      endsAt: '2026-06-15T10:00:00.000Z', calendarEventId: 'cal-retry',
+    });
+    const repo = fakeRepository([seeded]);
+    let patches = 0;
+    const emails: string[] = [];
+    const context = createBookkitContext({
+      config, db: {} as D1Database, repo, clock,
+      providers: providers({
+        calendar: {
+          listEvents: async () => [], createEvent: async () => 'unused', deleteEvent: async () => undefined,
+          patchEvent: async () => { patches += 1; if (patches === 1) throw new Error('calendar unavailable'); },
+        },
+        email: { send: async (event) => { emails.push(event); } },
+      }),
+    });
+
+    const first = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, validNewStart), context);
+    expect(first.status).toBe(500);
+    expect(repo.rows.get(seeded.id)?.startsAt).toBe(validNewStart);
+    expect(repo.sideEffectOperations.size).toBe(1);
+
+    const retry = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, validNewStart), context);
+    expect(retry.status).toBe(200);
+    expect(patches).toBe(2);
+    expect(emails).toEqual(['booking.rescheduled']);
+    expect(repo.sideEffectOperations.size).toBe(1);
   });
 
   it('excludes its own occupancy at the route layer: moving within an overlapping window at capacity 1 must not 409 against itself', async () => {

@@ -130,11 +130,11 @@ export interface RefundOperationRecord {
 
 // BK-SIDE-001 (handoff 13): the mutation-path outbox (record/claim/resolveMutationSideEffectOperation
 // below) reuses this same table/type rather than a second mechanism, so `kind` widens beyond the
-// confirmation path's fixed three literals to the dynamic 'email:...'/'tourflow:...' strings
-// src/confirmation.ts's mutationSideEffectKinds builds (kept as template-literal patterns, not a
+// confirmation path's fixed three literals to calendar deletion and the dynamic
+// 'email:...'/'tourflow:...' strings src/confirmation.ts builds (kept as template-literal patterns, not a
 // bare `string`, so the fixed literals below still get meaningful autocomplete/typo protection).
 export type ConfirmationSideEffectKind = 'calendar_create' | 'email_confirmation' | 'oversell';
-export type MutationSideEffectOperationKind = `email:${string}` | `tourflow:${string}`;
+export type MutationSideEffectOperationKind = 'calendar_delete' | `email:${string}` | `tourflow:${string}`;
 export type SideEffectOperationKind = ConfirmationSideEffectKind | MutationSideEffectOperationKind;
 export type SideEffectOperationStatus = 'pending' | 'in_flight' | 'succeeded' | 'failed';
 
@@ -146,6 +146,30 @@ export type SideEffectOperationStatus = 'pending' | 'in_flight' | 'succeeded' | 
 // acquireConfirmationLease/renewConfirmationLease) — both are "how long before we assume the
 // original claimant is dead" judgment calls with no reason to differ.
 export const MUTATION_SIDE_EFFECT_LEASE_MS = 5 * 60_000;
+
+export interface CancellationTransitionInput {
+  expectedStatusIn: BookingStatus[];
+  // Prevents a cancellation decision calculated against a stale pre-reschedule start from landing.
+  expectedStartsAt?: string;
+  cancelledAt: string;
+  cancelledBy: CancellationActor;
+  updatedAt: string;
+  // Recorded atomically only when this transition's CAS wins.
+  mutationSideEffectKinds?: MutationSideEffectOperationKind[];
+}
+
+export interface RefundOperationUpsertInput {
+  id: string;
+  bookingId: string;
+  paymentIntent: string | null;
+  choice: RefundChoice;
+  status: RefundOperationStatus;
+  stripeRefundId: string | null;
+  amountCents: number | null;
+  requestedAt: string;
+  resolvedAt: string | null;
+  error?: string | null;
+}
 
 export interface SideEffectOperationRecord {
   bookingId: string;
@@ -195,6 +219,7 @@ export interface BookingRepository {
   // oracle distinguishing "expired" from "never existed").
   getBookingByCancelToken(token: string, now: string): Promise<Booking | null>;
   getBookingByOperatorToken(token: string, now: string): Promise<Booking | null>;
+  getBookingByOperatorTokenForRefundRecovery(token: string, now: string): Promise<Booking | null>;
   countReferencesForYear(prefix: string): Promise<number>;
   insertHold(input: BookingInsert): Promise<Booking>;
   // Atomic checkout write (BK-CAP-001 / AR-001): same per-IP hold-cap guard as insertHold, plus
@@ -208,23 +233,14 @@ export interface BookingRepository {
   // expectedStatusIn (or, for reschedule, status + starts_at) and returns null when the
   // predicate didn't match (the caller lost the race), so a stale in-memory read can never
   // overwrite a row that has already moved to a different state.
-  transitionToCancelled(id: string, input: {
-    expectedStatusIn: BookingStatus[];
-    // Optional guard against a concurrent reschedule: when set, the UPDATE also requires
-    // starts_at to still match, so a cancel decision computed against a stale start time
-    // (refund/notice windows) can never land after the booking has already moved.
-    expectedStartsAt?: string;
-    cancelledAt: string;
-    cancelledBy: CancellationActor;
-    updatedAt: string;
-    // BK-SIDE-001 (handoff 13) HIGH-1(a): kinds this transition owes durable delivery for (built
-    // by src/confirmation.ts's mutationSideEffectKinds from the CURRENTLY configured providers
-    // before the transition is attempted). Recorded as 'pending' rows in the SAME atomic write as
-    // the CAS UPDATE, conditional on the CAS actually winning (see the implementation) — a
-    // losing/stale transition attempt can never record, and later drain-send, side effects for a
-    // mutation that didn't happen. Omitted/empty = nothing owed (no email/ops provider configured).
-    mutationSideEffectKinds?: MutationSideEffectOperationKind[];
-  }): Promise<Booking | null>;
+  transitionToCancelled(id: string, input: CancellationTransitionInput): Promise<Booking | null>;
+  // The refund outcome and cancellation share a D1 batch so a failed webhook delivery cannot
+  // leave a paid booking occupying capacity after its authoritative Stripe refund was recorded.
+  upsertRefundOperationAndTransitionToCancelled(
+    refund: RefundOperationUpsertInput,
+    id: string,
+    input: CancellationTransitionInput,
+  ): Promise<Booking | null>;
   transitionToNoShow(id: string, input: {
     expectedStatusIn: BookingStatus[];
     updatedAt: string;
@@ -377,21 +393,11 @@ export interface BookingRepository {
   // winner (e.g. a reschedule), so it cannot block a later legitimate cancellation. A succeeded
   // row is deliberately retained because it is the durable record that Stripe moved the money.
   deleteRefundOperation(id: string): Promise<void>;
-  // Stripe-initiated refunds (e.g. from the dashboard) arrive via webhook with no prior claim —
-  // upsert so operator- and Stripe-initiated refunds reconcile through the same record instead of
-  // drifting apart. Does not overwrite requested_at on an existing row.
-  upsertRefundOperation(input: {
-    id: string;
-    bookingId: string;
-    paymentIntent: string | null;
-    choice: RefundChoice;
-    status: RefundOperationStatus;
-    stripeRefundId: string | null;
-    amountCents: number | null;
-    requestedAt: string;
-    resolvedAt: string | null;
-    error?: string | null;
-  }): Promise<void>;
+  // A non-authoritative upsert preserves any terminal outcome, so stale caller data cannot
+  // regress a recorded Stripe refund. Does not overwrite requested_at on an existing row.
+  upsertRefundOperation(input: RefundOperationUpsertInput): Promise<void>;
+  // Only a verified charge.refunded webhook may correct an earlier none/succeeded audit row.
+  reconcileStripeRefundOperation(input: RefundOperationUpsertInput): Promise<void>;
 }
 
 interface BookingRow {
@@ -740,6 +746,51 @@ export function createBookingRepository(
     );
   };
 
+  const cancellationUpdate = (id: string, input: CancellationTransitionInput) => {
+    const placeholders = input.expectedStatusIn.map(() => '?').join(', ');
+    const startsAtClause = input.expectedStartsAt !== undefined ? ' AND starts_at = ?' : '';
+    const casPredicate = `id = ? AND status IN (${placeholders})${startsAtClause}`;
+    const casParams = [id, ...input.expectedStatusIn, ...(input.expectedStartsAt !== undefined ? [input.expectedStartsAt] : [])];
+    const updateStmt = db.prepare(
+      `UPDATE bookings SET status = 'cancelled', cancelled_at = ?, cancelled_by = ?, updated_at = ?,
+         cancel_token_revoked_at = COALESCE(cancel_token_revoked_at, ?)
+       WHERE ${casPredicate}`,
+    ).bind(input.cancelledAt, input.cancelledBy, input.updatedAt, input.cancelledAt, ...casParams);
+    return { casPredicate, casParams, updateStmt };
+  };
+
+  const refundOperationUpsertStmt = (input: RefundOperationUpsertInput) => db.prepare(
+    `INSERT INTO refund_operations (id, booking_id, payment_intent, choice, status, stripe_refund_id, amount_cents, requested_at, resolved_at, error)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(booking_id) DO UPDATE SET
+       payment_intent = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.payment_intent ELSE excluded.payment_intent END,
+       choice = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.choice ELSE excluded.choice END,
+       status = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.status ELSE excluded.status END,
+       stripe_refund_id = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.stripe_refund_id ELSE excluded.stripe_refund_id END,
+       amount_cents = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.amount_cents ELSE excluded.amount_cents END,
+       resolved_at = excluded.resolved_at,
+       error = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.error ELSE excluded.error END`,
+  ).bind(
+    input.id, input.bookingId, input.paymentIntent, input.choice, input.status,
+    input.stripeRefundId, input.amountCents, input.requestedAt, input.resolvedAt, input.error ?? null,
+  );
+
+  const stripeRefundReconciliationStmt = (input: RefundOperationUpsertInput) => db.prepare(
+    `INSERT INTO refund_operations (id, booking_id, payment_intent, choice, status, stripe_refund_id, amount_cents, requested_at, resolved_at, error)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(booking_id) DO UPDATE SET
+       payment_intent = CASE WHEN refund_operations.status = 'succeeded' AND refund_operations.choice = 'full' THEN refund_operations.payment_intent ELSE excluded.payment_intent END,
+       choice = CASE WHEN refund_operations.status = 'succeeded' AND refund_operations.choice = 'full' THEN refund_operations.choice ELSE excluded.choice END,
+       status = CASE WHEN refund_operations.status = 'succeeded' AND refund_operations.choice = 'full' THEN refund_operations.status ELSE excluded.status END,
+       stripe_refund_id = CASE WHEN refund_operations.status = 'succeeded' AND refund_operations.choice = 'full' THEN refund_operations.stripe_refund_id ELSE excluded.stripe_refund_id END,
+       amount_cents = CASE WHEN refund_operations.status = 'succeeded' AND refund_operations.choice = 'full' THEN refund_operations.amount_cents ELSE excluded.amount_cents END,
+       resolved_at = excluded.resolved_at,
+       error = CASE WHEN refund_operations.status = 'succeeded' AND refund_operations.choice = 'full' THEN refund_operations.error ELSE excluded.error END`,
+  ).bind(
+    input.id, input.bookingId, input.paymentIntent, input.choice, input.status,
+    input.stripeRefundId, input.amountCents, input.requestedAt, input.resolvedAt, input.error ?? null,
+  );
+
   return {
     async sweepExpiredHolds(now) {
       const result = await db.prepare(
@@ -842,6 +893,29 @@ export function createBookingRepository(
         `SELECT ${bookingColumns} FROM bookings
          WHERE operator_token = ? AND operator_token_hash IS NULL
            AND (tokens_expire_at IS NULL OR tokens_expire_at > ?)`,
+      ).bind(token, now).all<BookingRow>());
+      if (!legacyRow) return null;
+      const enc = key ? await encryptToken(key, token) : null;
+      await db.prepare(
+        `UPDATE bookings SET operator_token_hash = ?, operator_token_enc = ?, operator_token = ?
+         WHERE id = ? AND operator_token_hash IS NULL`,
+      ).bind(hash, enc, placeholderToken(), legacyRow.id).run();
+      return hydrateBooking(legacyRow, key);
+    },
+    async getBookingByOperatorTokenForRefundRecovery(token, now) {
+      const key = await resolveTokenKey();
+      const hash = await sha256Base64Url(token);
+      const expiry = `(tokens_expire_at IS NULL OR tokens_expire_at > ?
+        OR EXISTS (SELECT 1 FROM refund_operations
+                   WHERE refund_operations.booking_id = bookings.id
+                     AND refund_operations.status IN ('requested', 'failed')))`;
+      const hashRow = await first(db.prepare(
+        `SELECT ${bookingColumns} FROM bookings WHERE operator_token_hash = ? AND ${expiry}`,
+      ).bind(hash, now).all<BookingRow>());
+      if (hashRow) return hydrateBooking(hashRow, key);
+      const legacyRow = await first(db.prepare(
+        `SELECT ${bookingColumns} FROM bookings
+         WHERE operator_token = ? AND operator_token_hash IS NULL AND ${expiry}`,
       ).bind(token, now).all<BookingRow>());
       if (!legacyRow) return null;
       const enc = key ? await encryptToken(key, token) : null;
@@ -1023,24 +1097,7 @@ export function createBookingRepository(
       return updated;
     },
     async transitionToCancelled(id, input) {
-      const placeholders = input.expectedStatusIn.map(() => '?').join(', ');
-      // starts_at clause is appended only when the caller supplies it, so callers that don't
-      // care about a concurrent reschedule (e.g. the refund webhook) keep the original scope.
-      const startsAtClause = input.expectedStartsAt !== undefined ? ' AND starts_at = ?' : '';
-      const casPredicate = `id = ? AND status IN (${placeholders})${startsAtClause}`;
-      const casParams = [id, ...input.expectedStatusIn, ...(input.expectedStartsAt !== undefined ? [input.expectedStartsAt] : [])];
-      const updateStmt = db.prepare(
-        `UPDATE bookings SET status = 'cancelled', cancelled_at = ?, cancelled_by = ?, updated_at = ?,
-           cancel_token_revoked_at = COALESCE(cancel_token_revoked_at, ?)
-         WHERE ${casPredicate}`,
-      ).bind(
-        input.cancelledAt, input.cancelledBy, input.updatedAt,
-        // BK-SEC-002: a cancelled booking's customer link has no further legitimate use (see
-        // migrations/0009_token_hashing.sql for why only the customer token, not the operator
-        // one). COALESCE keeps this idempotent if a row is somehow re-touched here.
-        input.cancelledAt,
-        ...casParams,
-      );
+      const { casPredicate, casParams, updateStmt } = cancellationUpdate(id, input);
       const kinds = input.mutationSideEffectKinds ?? [];
       if (kinds.length === 0) {
         const result = await updateStmt.run();
@@ -1049,6 +1106,16 @@ export function createBookingRepository(
       }
       const results = await db.batch([mutationSideEffectInsert(id, kinds, input.updatedAt, casPredicate, casParams), updateStmt]);
       if ((results[1]?.meta.changes ?? 0) === 0) return null;
+      return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
+    },
+    async upsertRefundOperationAndTransitionToCancelled(refund, id, input) {
+      const { casPredicate, casParams, updateStmt } = cancellationUpdate(id, input);
+      const kinds = input.mutationSideEffectKinds ?? [];
+      const statements = [stripeRefundReconciliationStmt(refund)];
+      if (kinds.length > 0) statements.push(mutationSideEffectInsert(id, kinds, input.updatedAt, casPredicate, casParams));
+      statements.push(updateStmt);
+      const results = await db.batch(statements);
+      if ((results[results.length - 1]?.meta.changes ?? 0) === 0) return null;
       return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
     },
     async transitionToNoShow(id, input) {
@@ -1439,22 +1506,10 @@ export function createBookingRepository(
       await db.prepare("DELETE FROM refund_operations WHERE id = ? AND status = 'requested'").bind(id).run();
     },
     async upsertRefundOperation(input) {
-      // Preserve a terminal Stripe outcome; only its reconciliation timestamp may advance.
-      await db.prepare(
-        `INSERT INTO refund_operations (id, booking_id, payment_intent, choice, status, stripe_refund_id, amount_cents, requested_at, resolved_at, error)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(booking_id) DO UPDATE SET
-           payment_intent = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.payment_intent ELSE excluded.payment_intent END,
-           choice = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.choice ELSE excluded.choice END,
-           status = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.status ELSE excluded.status END,
-           stripe_refund_id = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.stripe_refund_id ELSE excluded.stripe_refund_id END,
-           amount_cents = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.amount_cents ELSE excluded.amount_cents END,
-           resolved_at = excluded.resolved_at,
-           error = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.error ELSE excluded.error END`
-      ).bind(
-        input.id, input.bookingId, input.paymentIntent, input.choice, input.status,
-        input.stripeRefundId, input.amountCents, input.requestedAt, input.resolvedAt, input.error ?? null,
-      ).run();
+      await refundOperationUpsertStmt(input).run();
+    },
+    async reconcileStripeRefundOperation(input) {
+      await stripeRefundReconciliationStmt(input).run();
     },
   };
 }

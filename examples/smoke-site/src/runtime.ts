@@ -9,10 +9,12 @@ import config from './config';
 // generated `Env` from worker-configuration.d.ts instead of declaring it by hand.
 interface Env {
   BOOKKIT_DB: D1Database;
+  BOOKKIT_TOKEN_ENC_KEY: string;
   TOURFLOW_SHARED_SECRET: string;
 }
 
 const calendarEvents = new Map<string, CalEvent>();
+const checkoutSessions = new Map<string, { amountTotal: number; currency: string }>();
 
 function manageUrl(token: string): string {
   return `${config.business.url}/booking/manage?token=${encodeURIComponent(token)}`;
@@ -22,6 +24,7 @@ const providers: BookkitProviders = {
   payments: {
     async createCheckout(booking) {
       const sessionId = `local_session_${booking.id}`;
+      checkoutSessions.set(sessionId, { amountTotal: booking.priceCents, currency: config.business.currency });
       return {
         sessionId,
         url: `/booking-confirmation?session_id=${encodeURIComponent(sessionId)}`,
@@ -31,10 +34,14 @@ const providers: BookkitProviders = {
       return await request.json() as StripeEventParsed;
     },
     async getSession(sessionId) {
+      const session = checkoutSessions.get(sessionId);
+      if (!session) return { id: sessionId, status: 'open', paymentStatus: 'unpaid' };
       return {
         id: sessionId,
         status: 'complete',
         paymentStatus: 'paid',
+        amountTotal: session.amountTotal,
+        currency: session.currency,
         paymentIntent: `local_payment_${sessionId}`,
         customerName: 'Local Demo Customer',
         customerEmail: 'customer@example.test',
@@ -99,6 +106,6 @@ const providers: BookkitProviders = {
 
 export default defineCloudflareBookkitRuntime<Env>(config, {
   providers,
-  secretBindings: ['TOURFLOW_SHARED_SECRET'],
+  secretBindings: ['BOOKKIT_TOKEN_ENC_KEY', 'TOURFLOW_SHARED_SECRET'],
   verifyAccess: () => true,
 });

@@ -225,6 +225,49 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     expect(repo.refundOperations.get(seeded.id)).toMatchObject({ status: 'failed', error: 'Stripe payment intent is missing' });
   });
 
+  it.each(['requested', 'failed'] as const)('allows an expired operator token to recover a %s refund only through cancellation', async (status) => {
+    const seeded = booking({
+      id: `b-expired-${status}-refund`,
+      status: 'cancelled',
+      cancelledAt: '2026-06-14T07:00:00.000Z',
+      cancelledBy: 'operator',
+      stripePaymentIntent: `pi_expired_${status}`,
+    });
+    const repo = fakeRepository([seeded]);
+    await repo.claimRefundOperation({
+      id: `op-expired-${status}`, bookingId: seeded.id, paymentIntent: seeded.stripePaymentIntent,
+      choice: 'full', requestedAt: '2026-06-14T07:00:00.000Z',
+    });
+    if (status === 'failed') {
+      await repo.resolveRefundOperation(`op-expired-${status}`, {
+        status: 'failed', error: 'temporary failure', resolvedAt: '2026-06-14T07:01:00.000Z',
+      });
+    }
+    const tokenState = repo.tokenState.get(seeded.id);
+    if (!tokenState) throw new Error('Seeded booking token state is missing');
+    tokenState.tokensExpireAt = '2026-06-14T07:30:00.000Z';
+    let refunds = 0;
+    const context = createBookkitContext({
+      config, db: {} as D1Database, repo, clock,
+      providers: providers({ payments: {
+        createCheckout: async () => ({ url: '', sessionId: '' }),
+        parseWebhook: async () => { throw new Error('unused'); },
+        getSession: async () => ({ status: 'open' }),
+        refund: async () => { refunds += 1; return { refundId: `re_${status}`, amountCents: seeded.priceCents }; },
+      } }),
+    });
+
+    const recovery = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
+    expect(recovery.status).toBe(200);
+    expect(refunds).toBe(1);
+    expect(repo.refundOperations.get(seeded.id)).toMatchObject({ status: 'succeeded' });
+
+    const reschedule = await handleOperatorReschedule(operatorRequest('reschedule', {
+      operatorToken: seeded.operatorToken, newStart: validNewStart,
+    }), context);
+    expect(reschedule.status).toBe(403);
+  });
+
   it('refund: none cancels without ever calling refund()', async () => {
     const seeded = booking({ id: 'b-op-cancel-refund-none', stripePaymentIntent: 'pi_refund_none' });
     const repo = fakeRepository([seeded]);
