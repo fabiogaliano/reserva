@@ -196,18 +196,34 @@ describe('stale compare-and-set transitions', () => {
     expect(row?.startsAt).toBe('2026-06-16T09:00:00.000Z');
   });
 
-  it('a charge.refunded cancellation that loses a race to a concurrent customer cancel drains the winner’s outbox without overwriting it', async () => {
-    const seeded = booking({ id: 'b-refund-vs-cancel', stripePaymentIntent: 'pi_refund_stale', calendarEventId: 'cal-refund-vs-cancel' });
+  it('a charge.refunded cancellation that loses a race to a concurrent customer cancel drains only the winner’s retryable outbox', async () => {
+    const seeded = booking({ id: 'b-refund-vs-cancel', stripePaymentIntent: 'pi_refund_stale' });
     const repo = fakeRepository([seeded]);
-    await repo.recordMutationSideEffectOperations(seeded.id, ['email:booking.cancelled_by_customer'], '2026-06-14T08:00:00.000Z');
-    const realTransition = repo.transitionToCancelled;
-    repo.transitionToCancelled = async (id, input) => {
-      const current = repo.rows.get(id);
-      if (current) repo.rows.set(id, { ...current, status: 'cancelled', cancelledAt: '2026-06-14T08:00:00.000Z', cancelledBy: 'customer' });
-      return realTransition(id, input);
+    const realRefundTransition = repo.upsertRefundOperationAndTransitionToCancelled;
+    const customerTransition = repo.transitionToCancelled;
+    const getBookingById = repo.getBookingById;
+    let rereads = 0;
+    repo.getBookingById = async (id) => {
+      rereads += 1;
+      return getBookingById(id);
+    };
+    repo.upsertRefundOperationAndTransitionToCancelled = async (refund, id, input) => {
+      await customerTransition(id, {
+        expectedStatusIn: ['confirmed'],
+        expectedStartsAt: seeded.startsAt,
+        cancelledAt: '2026-06-14T08:00:00.000Z',
+        cancelledBy: 'customer',
+        updatedAt: '2026-06-14T08:00:00.000Z',
+        mutationSideEffectKinds: [
+          'email:booking.cancelled_by_customer',
+          'tourflow:booking.cancelled_by_customer',
+        ],
+      });
+      return realRefundTransition(refund, id, input);
     };
     const emails: string[] = [];
-    let deletes = 0;
+    const opsEvents: string[] = [];
+    let emailAttempts = 0;
     const context = createBookkitContext({
       config,
       db: {} as D1Database,
@@ -226,19 +242,37 @@ describe('stale compare-and-set transitions', () => {
           getSession: async () => ({ status: 'open' }),
           refund: async () => ({ refundId: 're_test', amountCents: 0 }),
         },
-        email: { send: async (event) => { emails.push(event); } },
-        calendar: { listEvents: async () => [], createEvent: async () => 'unused', patchEvent: async () => undefined, deleteEvent: async () => { deletes += 1; } },
+        email: {
+          send: async (event) => {
+            emails.push(event);
+            emailAttempts += 1;
+            if (emailAttempts === 1) throw new Error('email unavailable');
+          },
+        },
+        ops: { push: async (event) => { opsEvents.push(event); } },
       }),
     });
+    const request = new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' });
 
-    const response = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
-    expect(response.status).toBe(200);
-    const row = repo.rows.get(seeded.id);
-    expect(row?.status).toBe('cancelled');
-    expect(row?.cancelledBy).toBe('customer');
-    expect(emails).toContain('booking.cancelled_by_customer');
-    expect(emails).not.toContain('booking.cancelled_by_operator');
-    expect(deletes).toBe(0);
+    const first = await handleStripeWebhook(request, context);
+    expect(first.status).toBe(200);
+    expect(rereads).toBe(1);
+    expect(repo.rows.get(seeded.id)).toMatchObject({ status: 'cancelled', cancelledBy: 'customer' });
+    expect(repo.refundOperations.get(seeded.id)).toMatchObject({ choice: 'full', status: 'succeeded' });
+    expect(emails).toEqual(['booking.cancelled_by_customer']);
+    expect(opsEvents).toEqual(['booking.cancelled_by_customer']);
+    expect(repo.sideEffectOperations.get(`${seeded.id}:email:booking.cancelled_by_customer`)).toMatchObject({ status: 'failed', attemptCount: 1 });
+    expect(repo.sideEffectOperations.get(`${seeded.id}:tourflow:booking.cancelled_by_customer`)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
+    expect([...repo.sideEffectOperations.values()].map((operation) => operation.kind).sort()).toEqual([
+      'email:booking.cancelled_by_customer',
+      'tourflow:booking.cancelled_by_customer',
+    ]);
+
+    const second = await handleStripeWebhook(request, context);
+    expect(second.status).toBe(200);
+    expect(emails).toEqual(['booking.cancelled_by_customer', 'booking.cancelled_by_customer']);
+    expect(opsEvents).toEqual(['booking.cancelled_by_customer']);
+    expect(repo.sideEffectOperations.get(`${seeded.id}:email:booking.cancelled_by_customer`)).toMatchObject({ status: 'succeeded', attemptCount: 2 });
   });
 
   it('a payment confirmation that loses a race to a concurrent operator cancel does not resurrect the booking', async () => {

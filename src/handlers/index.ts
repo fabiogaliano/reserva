@@ -532,8 +532,9 @@ export function handleStripeWebhook(request: Request, context: BookkitContext): 
           if (booking.status !== 'cancelled') {
             const updated = await context.repo.upsertRefundOperationAndTransitionToCancelled(refund, booking.id, {
               // no_show and cancelled are terminal: a refund arriving after either must not
-              // resurrect/overwrite them (spec item 4). CAS loss here is an idempotent no-op —
-              // Stripe still gets 200 below, so a retry never causes redelivery storms.
+              // resurrect/overwrite them (spec item 4). CAS loss leaves this webhook's
+              // transition as a no-op; the winner's existing outbox drains below, and Stripe
+              // still gets 200 so a retry never causes redelivery storms.
               expectedStatusIn: ['hold', 'confirmed', 'expired'],
               cancelledAt: timestamp, cancelledBy: 'operator', updatedAt: timestamp,
               mutationSideEffectKinds: cancellationSideEffectKinds(context, booking, 'booking.cancelled_by_operator'),
