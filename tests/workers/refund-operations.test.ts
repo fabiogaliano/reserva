@@ -191,6 +191,57 @@ describe('refund_operations concurrent claim uniqueness on real D1', () => {
     });
   });
 
+  // BK-REFUND-001: once a row is full/succeeded, it is the terminal, authoritative statement of
+  // what Stripe did — stale/failed data reaching reconcileStripeRefundOperation afterwards (a
+  // late-arriving duplicate webhook, a stale operator retry) must never regress it, and repeating
+  // the SAME authoritative reconciliation must be a true no-op against real D1.
+  it('reconcileStripeRefundOperation leaves an existing full/succeeded row unchanged against stale requested/failed data, and repeated identical reconciliations are idempotent', async () => {
+    const id = 'refund-reconcile-non-regressing';
+    await seedConfirmed(id);
+    await repo.reconcileStripeRefundOperation({
+      id: 'op-authoritative', bookingId: id, paymentIntent: `pi_${id}`, choice: 'full', status: 'succeeded',
+      stripeRefundId: 're_authoritative', amountCents: 12000,
+      requestedAt: '2026-07-21T11:00:00.000Z', resolvedAt: '2026-07-21T11:00:01.000Z',
+    });
+
+    // Stale requested data (as if a late-arriving duplicate claim/attempt reached the same row).
+    await repo.reconcileStripeRefundOperation({
+      id: 'op-stale-requested', bookingId: id, paymentIntent: `pi_${id}`, choice: 'full', status: 'requested',
+      stripeRefundId: null, amountCents: null,
+      requestedAt: '2026-07-21T12:00:00.000Z', resolvedAt: null,
+    });
+    let stored = await repo.getRefundOperationByBookingId(id);
+    expect(stored).toMatchObject({
+      id: 'op-authoritative', choice: 'full', status: 'succeeded',
+      stripeRefundId: 're_authoritative', amountCents: 12000,
+    });
+
+    // Stale failed data (as if a since-superseded operator attempt finally landed).
+    await repo.reconcileStripeRefundOperation({
+      id: 'op-stale-failed', bookingId: id, paymentIntent: `pi_${id}`, choice: 'full', status: 'failed',
+      stripeRefundId: null, amountCents: null, error: 'stale failure',
+      requestedAt: '2026-07-21T12:05:00.000Z', resolvedAt: '2026-07-21T12:05:00.000Z',
+    });
+    stored = await repo.getRefundOperationByBookingId(id);
+    expect(stored).toMatchObject({
+      id: 'op-authoritative', choice: 'full', status: 'succeeded',
+      stripeRefundId: 're_authoritative', amountCents: 12000, error: null,
+    });
+
+    // Repeating the identical authoritative reconciliation (e.g. Stripe redelivering the same
+    // charge.refunded event) must be idempotent, not merely non-regressing.
+    await repo.reconcileStripeRefundOperation({
+      id: 'op-authoritative', bookingId: id, paymentIntent: `pi_${id}`, choice: 'full', status: 'succeeded',
+      stripeRefundId: 're_authoritative', amountCents: 12000,
+      requestedAt: '2026-07-21T11:00:00.000Z', resolvedAt: '2026-07-21T13:00:00.000Z',
+    });
+    stored = await repo.getRefundOperationByBookingId(id);
+    expect(stored).toMatchObject({
+      id: 'op-authoritative', choice: 'full', status: 'succeeded',
+      stripeRefundId: 're_authoritative', amountCents: 12000, resolvedAt: '2026-07-21T13:00:00.000Z',
+    });
+  });
+
   it('records an authoritative refund and cancellation in one D1 batch while preserving the refund on CAS loss', async () => {
     const id = 'refund-atomic-cancel';
     await seedConfirmed(id);

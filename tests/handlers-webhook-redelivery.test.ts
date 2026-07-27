@@ -1,7 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createBookkitContext } from '../src/context';
-import { handleStripeWebhook } from '../src/handlers';
+import { handleCustomerCancel, handleStripeWebhook } from '../src/handlers';
 import { booking, config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
@@ -175,6 +175,66 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
     expect(repo.sideEffectOperations.get(`${seeded.id}:${kind}`)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
   });
 
+  // Mirrors the checkout-side calendar_create/email redelivery tests above, but for the
+  // charge.refunded cancellation path: cancellationSideEffectKinds (src/handlers/index.ts) records
+  // a calendar_delete row alongside the transition to cancelled whenever the booking still carries
+  // a calendarEventId, and that row is owed/retryable exactly like calendar_create is.
+  it('a charge.refunded full-refund webhook creates a calendar_delete debt when the delete fails, and Stripe redelivery drains it', async () => {
+    const paymentIntent = 'pi_redelivery_refund_calendar';
+    const seeded = booking({
+      id: 'b-redelivery-refund-calendar',
+      stripePaymentIntent: paymentIntent,
+      calendarEventId: 'cal-redelivery-refund',
+    });
+    const repo = fakeRepository([seeded]);
+    let deleteAttempts = 0;
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      providers: providers({
+        payments: {
+          createCheckout: async () => ({ url: '', sessionId: '' }),
+          parseWebhook: async () => ({
+            id: 'evt_redelivery_refund_calendar',
+            type: 'charge.refunded',
+            paymentIntent,
+            amountCaptured: seeded.priceCents,
+            amountRefunded: seeded.priceCents,
+            refundId: 're_redelivery_refund_calendar',
+          }),
+          getSession: async () => ({ status: 'open' }),
+          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+        },
+        calendar: {
+          listEvents: async () => [],
+          createEvent: async () => 'unused',
+          patchEvent: async () => undefined,
+          deleteEvent: async () => {
+            deleteAttempts += 1;
+            if (deleteAttempts === 1) throw new Error('calendar unavailable');
+          },
+        },
+      }),
+    });
+
+    const first = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    expect(first.status).toBe(200);
+    expect(repo.rows.get(seeded.id)?.status).toBe('cancelled');
+    expect(repo.refundOperations.get(seeded.id)).toMatchObject({ status: 'succeeded', stripeRefundId: 're_redelivery_refund_calendar' });
+    expect(deleteAttempts).toBe(1);
+    expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_delete`)).toMatchObject({ status: 'failed' });
+
+    // Stripe redelivers the same event — a booking-touching request for an already-cancelled
+    // booking — which drains the owed calendar_delete row; this attempt succeeds.
+    const second = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    expect(second.status).toBe(200);
+    expect(deleteAttempts).toBe(2);
+    expect(repo.rows.get(seeded.id)?.calendarEventId).toBeNull();
+    expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_delete`)).toMatchObject({ status: 'succeeded' });
+  });
+
   it('email fails first (calendar already succeeded): redelivery does not re-run calendar, retries only email, and a failing ops sink never causes a non-2xx', async () => {
     const seeded = booking({
       id: 'b-redelivery-email',
@@ -261,5 +321,57 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
     await Promise.all(pending);
     expect(opsPushed).toBeGreaterThan(0);
     expect(warnings.some(([message]) => message === 'bookkit ops sink failed')).toBe(true);
+  });
+
+  // The already-cancelled branch of the charge.refunded handler (src/handlers/index.ts ~550-556)
+  // only calls reconcileStripeRefundOperation then runOwedMutationSideEffects — it never runs a
+  // second transition on the booking row. A standalone redelivery (not incidental to a CAS race,
+  // like the other already-cancelled coverage in tests/handlers-operator.test.ts) must leave the
+  // row byte-identical to how the ordinary cancellation left it, converging only the refund
+  // operation and minting no new side-effect debt.
+  it('two redeliveries of the same charge.refunded webhook against an already-cancelled booking never touch the booking row again', async () => {
+    const paymentIntent = 'pi_redelivery_already_cancelled';
+    const seeded = booking({ id: 'b-redelivery-already-cancelled', stripePaymentIntent: paymentIntent });
+    const repo = fakeRepository([seeded]);
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      providers: providers({
+        payments: {
+          createCheckout: async () => ({ url: '', sessionId: '' }),
+          parseWebhook: async () => ({
+            id: 'evt_redelivery_already_cancelled', type: 'charge.refunded', paymentIntent,
+            amountCaptured: seeded.priceCents, amountRefunded: seeded.priceCents, refundId: 're_redelivery_already_cancelled',
+          }),
+          getSession: async () => ({ status: 'open' }),
+          refund: async () => ({ refundId: 're_should_not_run', amountCents: seeded.priceCents }),
+        },
+      }),
+    });
+
+    const cancelResponse = await handleCustomerCancel(new Request('https://example.test/api/booking/cancel', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: seeded.cancelToken }),
+    }), context);
+    expect(cancelResponse.status).toBe(200);
+    // Snapshot right before the webhook ever arrives — structuredClone (not a reference) so later
+    // in-place repo mutations can never make this "pre-webhook" baseline drift along with the row.
+    const beforeWebhook = structuredClone(repo.rows.get(seeded.id));
+    const sideEffectKeysBefore = [...repo.sideEffectOperations.keys()].sort();
+
+    const first = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    expect(first.status).toBe(200);
+    const second = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    expect(second.status).toBe(200);
+
+    // status, cancelledBy, cancelledAt, updatedAt (and every other field) must deep-equal the
+    // ordinary cancellation's row exactly — no second transition, no re-stamped updatedAt.
+    expect(repo.rows.get(seeded.id)).toEqual(beforeWebhook);
+    expect(repo.refundOperations.get(seeded.id)).toMatchObject({
+      choice: 'full', status: 'succeeded', stripeRefundId: 're_redelivery_already_cancelled', amountCents: seeded.priceCents,
+    });
+    // Neither redelivery mints side-effect debt beyond what the original cancellation created.
+    expect([...repo.sideEffectOperations.keys()].sort()).toEqual(sideEffectKeysBefore);
   });
 });

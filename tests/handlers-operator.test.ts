@@ -272,6 +272,85 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     expect(repo.refundOperations.get(seeded.id)).toMatchObject({ status: 'succeeded' });
   });
 
+  // getBookingByOperatorTokenForRefundRecovery (src/repo.ts) only lets an expired token through
+  // when a refund operation is still 'requested' or 'failed' — a resolved ('succeeded') operation,
+  // or no operation row at all, must fall back to the plain expiry check and get the same generic
+  // 403 an unknown token would.
+  it('rejects an expired operator token on cancel once its refund operation has already succeeded', async () => {
+    const seeded = booking({
+      id: 'b-expired-refund-succeeded',
+      status: 'cancelled',
+      cancelledAt: '2026-06-14T07:00:00.000Z',
+      cancelledBy: 'operator',
+      stripePaymentIntent: 'pi_expired_succeeded',
+    });
+    const repo = fakeRepository([seeded]);
+    await repo.claimRefundOperation({
+      id: 'op-expired-succeeded', bookingId: seeded.id, paymentIntent: seeded.stripePaymentIntent,
+      choice: 'full', requestedAt: '2026-06-14T07:00:00.000Z',
+    });
+    await repo.resolveRefundOperation('op-expired-succeeded', {
+      status: 'succeeded', stripeRefundId: 're_expired_succeeded', amountCents: seeded.priceCents, resolvedAt: '2026-06-14T07:01:00.000Z',
+    });
+    const tokenState = repo.tokenState.get(seeded.id);
+    if (!tokenState) throw new Error('Seeded booking token state is missing');
+    tokenState.tokensExpireAt = '2026-06-14T07:30:00.000Z';
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+
+    const response = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
+    expect(response.status).toBe(403);
+  });
+
+  it('rejects an expired operator token on cancel when there is no refund operation at all', async () => {
+    const seeded = booking({
+      id: 'b-expired-no-refund-op',
+      status: 'cancelled',
+      cancelledAt: '2026-06-14T07:00:00.000Z',
+      cancelledBy: 'operator',
+      stripePaymentIntent: 'pi_expired_no_op',
+    });
+    const repo = fakeRepository([seeded]);
+    const tokenState = repo.tokenState.get(seeded.id);
+    if (!tokenState) throw new Error('Seeded booking token state is missing');
+    tokenState.tokensExpireAt = '2026-06-14T07:30:00.000Z';
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+
+    const response = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
+    expect(response.status).toBe(403);
+  });
+
+  // Only handleOperatorCancel passes refundRecovery=true to operatorBooking (src/handlers/index.ts)
+  // — handleManage, handleOperatorReschedule, and handleOperatorNoShow always use the plain
+  // getBookingByOperatorToken lookup, so an expired token must stay 403 on those routes even while
+  // an unresolved ('requested') refund operation exists that would let handleOperatorCancel through.
+  it('confines the expired-token recovery bypass to the cancel route: manage, reschedule, and no-show stay 403 while a refund operation is still requested', async () => {
+    const seeded = booking({
+      id: 'b-expired-requested-route-scope',
+      status: 'cancelled',
+      cancelledAt: '2026-06-14T07:00:00.000Z',
+      cancelledBy: 'operator',
+      stripePaymentIntent: 'pi_expired_route_scope',
+    });
+    const repo = fakeRepository([seeded]);
+    await repo.claimRefundOperation({
+      id: 'op-expired-route-scope', bookingId: seeded.id, paymentIntent: seeded.stripePaymentIntent,
+      choice: 'full', requestedAt: '2026-06-14T07:00:00.000Z',
+    });
+    const tokenState = repo.tokenState.get(seeded.id);
+    if (!tokenState) throw new Error('Seeded booking token state is missing');
+    tokenState.tokensExpireAt = '2026-06-14T07:30:00.000Z';
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+
+    const manage = await handleManage(new Request(`https://example.test/api/booking/manage?token=${seeded.operatorToken}`), context);
+    expect(manage.status).toBe(403);
+    const reschedule = await handleOperatorReschedule(operatorRequest('reschedule', {
+      operatorToken: seeded.operatorToken, newStart: validNewStart,
+    }), context);
+    expect(reschedule.status).toBe(403);
+    const noShow = await handleOperatorNoShow(operatorRequest('no-show', { operatorToken: seeded.operatorToken }), context);
+    expect(noShow.status).toBe(403);
+  });
+
   it('refund: none cancels without ever calling refund()', async () => {
     const seeded = booking({ id: 'b-op-cancel-refund-none', stripePaymentIntent: 'pi_refund_none' });
     const repo = fakeRepository([seeded]);
@@ -631,6 +710,87 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     expect(response.status).toBe(200);
     expect(refunds).toBe(0);
     expect(repo.refundOperations.get(seeded.id)).toMatchObject({ status: 'succeeded', stripeRefundId: 're_webhook_won', amountCents: seeded.priceCents });
+  });
+
+  // BK-REFUND-001: Stripe is the source of truth for whether money moved — a charge.refunded
+  // webhook arriving after an operator recorded refund='none' (e.g. a dashboard-initiated refund
+  // Bookkit didn't drive) must correct that row rather than leave it stating no refund happened.
+  it('an authoritative charge.refunded webhook corrects an earlier none/succeeded refund row on an already-cancelled booking, and a follow-up operator refund=full request is idempotent', async () => {
+    const paymentIntent = 'pi_webhook_corrects_none';
+    const seeded = booking({ id: 'b-webhook-corrects-none', stripePaymentIntent: paymentIntent });
+    const repo = fakeRepository([seeded]);
+    let refunds = 0;
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock,
+      providers: providers({
+        payments: {
+          createCheckout: async () => ({ url: '', sessionId: '' }),
+          parseWebhook: async () => ({
+            id: 'evt_webhook_corrects_none', type: 'charge.refunded', paymentIntent,
+            amountCaptured: seeded.priceCents, amountRefunded: seeded.priceCents, refundId: 're_webhook_corrects_none',
+          }),
+          getSession: async () => ({ status: 'open' }),
+          refund: async () => { refunds += 1; return { refundId: 're_should_not_run', amountCents: seeded.priceCents }; },
+        },
+      }),
+    });
+
+    const initialCancel = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'none' }), context);
+    expect(initialCancel.status).toBe(200);
+    expect(repo.rows.get(seeded.id)?.status).toBe('cancelled');
+    expect(repo.refundOperations.get(seeded.id)).toMatchObject({ choice: 'none', status: 'succeeded' });
+
+    const webhook = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    expect(webhook.status).toBe(200);
+    expect(repo.refundOperations.get(seeded.id)).toMatchObject({
+      choice: 'full', status: 'succeeded', stripeRefundId: 're_webhook_corrects_none', amountCents: seeded.priceCents,
+    });
+
+    // The correction must not reopen the door to a second Stripe call: the booking is already
+    // cancelled and the (now-corrected) operation row already says 'full'/'succeeded'.
+    const followUp = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
+    expect(followUp.status).toBe(200);
+    await expect(followUp.json()).resolves.toEqual({ ok: true });
+    expect(refunds).toBe(0);
+  });
+
+  // src/handlers/index.ts:507-508 — a partial refund (amountRefunded < amountCaptured) never
+  // cancels the booking or touches the refund-operation row; it only logs. This pins that guard
+  // against silently overwriting an existing (unrelated) operation record too.
+  it('a partial-refund webhook does not rewrite an existing refund operation row or cancel the booking', async () => {
+    const paymentIntent = 'pi_partial_refund_guard';
+    const seeded = booking({ id: 'b-partial-refund-guard', status: 'confirmed', stripePaymentIntent: paymentIntent });
+    const repo = fakeRepository([seeded]);
+    repo.refundOperations.set(seeded.id, {
+      id: 'op-preexisting', bookingId: seeded.id, paymentIntent, choice: 'none', status: 'succeeded',
+      stripeRefundId: null, amountCents: null, requestedAt: '2026-06-13T00:00:00.000Z', resolvedAt: '2026-06-13T00:00:00.000Z', error: null,
+    });
+    const preexisting = repo.refundOperations.get(seeded.id);
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock,
+      providers: providers({
+        payments: {
+          createCheckout: async () => ({ url: '', sessionId: '' }),
+          parseWebhook: async () => ({
+            id: 'evt_partial_refund_guard', type: 'charge.refunded', paymentIntent,
+            amountCaptured: seeded.priceCents, amountRefunded: Math.floor(seeded.priceCents / 2),
+          }),
+          getSession: async () => ({ status: 'open' }),
+          refund: async () => ({ refundId: 're_should_not_run', amountCents: seeded.priceCents }),
+        },
+      }),
+    });
+
+    const response = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    expect(response.status).toBe(200);
+    expect(repo.rows.get(seeded.id)?.status).toBe('confirmed');
+    expect(repo.refundOperations.get(seeded.id)).toEqual(preexisting);
   });
 
   it('a same-choice loser re-reads the operation after the winner records success, ending in one consistent succeeded refund', async () => {

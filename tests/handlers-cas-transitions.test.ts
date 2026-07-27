@@ -197,7 +197,11 @@ describe('stale compare-and-set transitions', () => {
   });
 
   it('a charge.refunded cancellation that loses a race to a concurrent customer cancel drains only the winner’s retryable outbox', async () => {
-    const seeded = booking({ id: 'b-refund-vs-cancel', stripePaymentIntent: 'pi_refund_stale' });
+    // calendarEventId: the winning customer-cancel transition below carries 'calendar_delete' in
+    // its own mutationSideEffectKinds (mirroring cancellationSideEffectKinds in src/handlers/
+    // index.ts), so this also pins that the stale webhook's re-read-and-drain path picks up and
+    // resolves the winner's calendar debt, not just its email/tourflow rows.
+    const seeded = booking({ id: 'b-refund-vs-cancel', stripePaymentIntent: 'pi_refund_stale', calendarEventId: 'cal-refund-vs-cancel' });
     const repo = fakeRepository([seeded]);
     const realRefundTransition = repo.upsertRefundOperationAndTransitionToCancelled;
     const customerTransition = repo.transitionToCancelled;
@@ -217,6 +221,7 @@ describe('stale compare-and-set transitions', () => {
         mutationSideEffectKinds: [
           'email:booking.cancelled_by_customer',
           'tourflow:booking.cancelled_by_customer',
+          'calendar_delete',
         ],
       });
       return realRefundTransition(refund, id, input);
@@ -224,6 +229,7 @@ describe('stale compare-and-set transitions', () => {
     const emails: string[] = [];
     const opsEvents: string[] = [];
     let emailAttempts = 0;
+    let calendarDeletes = 0;
     const context = createBookkitContext({
       config,
       db: {} as D1Database,
@@ -241,6 +247,10 @@ describe('stale compare-and-set transitions', () => {
           }),
           getSession: async () => ({ status: 'open' }),
           refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+        },
+        calendar: {
+          listEvents: async () => [], createEvent: async () => 'unused', patchEvent: async () => undefined,
+          deleteEvent: async () => { calendarDeletes += 1; },
         },
         email: {
           send: async (event) => {
@@ -261,9 +271,13 @@ describe('stale compare-and-set transitions', () => {
     expect(repo.refundOperations.get(seeded.id)).toMatchObject({ choice: 'full', status: 'succeeded' });
     expect(emails).toEqual(['booking.cancelled_by_customer']);
     expect(opsEvents).toEqual(['booking.cancelled_by_customer']);
+    expect(calendarDeletes).toBe(1);
+    expect(repo.rows.get(seeded.id)?.calendarEventId).toBeNull();
     expect(repo.sideEffectOperations.get(`${seeded.id}:email:booking.cancelled_by_customer`)).toMatchObject({ status: 'failed', attemptCount: 1 });
     expect(repo.sideEffectOperations.get(`${seeded.id}:tourflow:booking.cancelled_by_customer`)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
+    expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_delete`)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
     expect([...repo.sideEffectOperations.values()].map((operation) => operation.kind).sort()).toEqual([
+      'calendar_delete',
       'email:booking.cancelled_by_customer',
       'tourflow:booking.cancelled_by_customer',
     ]);
@@ -272,6 +286,7 @@ describe('stale compare-and-set transitions', () => {
     expect(second.status).toBe(200);
     expect(emails).toEqual(['booking.cancelled_by_customer', 'booking.cancelled_by_customer']);
     expect(opsEvents).toEqual(['booking.cancelled_by_customer']);
+    expect(calendarDeletes).toBe(1);
     expect(repo.sideEffectOperations.get(`${seeded.id}:email:booking.cancelled_by_customer`)).toMatchObject({ status: 'succeeded', attemptCount: 2 });
   });
 

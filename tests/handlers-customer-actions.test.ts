@@ -2,7 +2,14 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createBookkitContext } from '../src/context';
 import { DEFAULT_TOKEN_EXPIRY_DAYS } from '../src/core/config';
-import { handleCustomerCancel, handleCustomerReschedule, handleOperatorCancel } from '../src/handlers';
+import {
+  handleAvailability,
+  handleCustomerCancel,
+  handleCustomerReschedule,
+  handleManage,
+  handleOperatorCancel,
+  handleOperatorReschedule,
+} from '../src/handlers';
 import { booking, config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
@@ -133,6 +140,75 @@ describe('POST /cancel (customer, spec §11)', () => {
     expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_delete`)).toMatchObject({ status: 'succeeded' });
   });
 
+  // src/core/occupancy.ts:158-185 dedups a calendar-sourced interval against its booking only
+  // while that booking is still active (hold/confirmed) — a cancelled row is excluded from
+  // listOccupancyBookings entirely, so once cancelled its calendarEventId no longer suppresses
+  // the matching calendar event. That's the real failure mode a transient delete failure exposes:
+  // Stripe/D1 already show the booking as cancelled, but the *calendar* event survives (delete
+  // failed), so it still occupies the slot until a later request drains the calendar_delete debt.
+  it('a stale calendar event survives a failed delete: occupancy still blocks the slot until a later request drains the debt and frees it', async () => {
+    const singleCapacityConfig = { ...config, fleet: { defaultCapacity: 1 } };
+    const seeded = booking({
+      id: 'b-calendar-debt-occupancy', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z',
+      calendarEventId: 'cal-debt',
+    });
+    const repo = fakeRepository([seeded]);
+    let eventDeleted = false;
+    let deleteAttempts = 0;
+    const context = createBookkitContext({
+      config: singleCapacityConfig,
+      db: {} as D1Database,
+      repo,
+      clock,
+      providers: providers({
+        calendar: {
+          listEvents: async () => (eventDeleted ? [] : [{
+            id: 'cal-debt',
+            start: { dateTime: seeded.startsAt },
+            end: { dateTime: seeded.endsAt },
+          }]),
+          createEvent: async () => 'unused',
+          patchEvent: async () => undefined,
+          deleteEvent: async () => {
+            deleteAttempts += 1;
+            if (deleteAttempts === 1) throw new Error('calendar unavailable');
+            eventDeleted = true;
+          },
+        },
+      }),
+    });
+
+    const cancelResponse = await handleCustomerCancel(cancelRequest(seeded.cancelToken), context);
+    expect(cancelResponse.status).toBe(200);
+    expect(repo.rows.get(seeded.id)?.status).toBe('cancelled');
+    expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_delete`)).toMatchObject({ status: 'failed' });
+
+    const availabilityRequest = () => new Request('https://example.test/api/booking/availability?tour=vintage&people=1&from=2026-06-15&to=2026-06-15');
+    const blocked = await handleAvailability(availabilityRequest(), context);
+    expect(blocked.status).toBe(200);
+    const blockedPayload = await blocked.json() as { days: Array<{ slots: Array<{ start: string }> }> };
+    // The slot the stale event occupies (local 10:00, this booking's own former slot) is missing —
+    // capacity 1 is still fully consumed by the undeleted calendar event, not by the (now
+    // cancelled, and thus excluded) booking row itself.
+    expect(blockedPayload.days[0]?.slots).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ start: expect.stringContaining('T10:00:00') }),
+    ]));
+
+    // Any later booking-touching request (here, the operator's manage-page lookup) drains the
+    // owed calendar_delete debt — this attempt succeeds.
+    const manageResponse = await handleManage(new Request(`https://example.test/api/booking/manage?token=${seeded.operatorToken}`), context);
+    expect(manageResponse.status).toBe(200);
+    expect(deleteAttempts).toBe(2);
+    expect(repo.rows.get(seeded.id)?.calendarEventId).toBeNull();
+    expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_delete`)).toMatchObject({ status: 'succeeded' });
+
+    const freed = await handleAvailability(availabilityRequest(), context);
+    const freedPayload = await freed.json() as { days: Array<{ slots: Array<{ start: string }> }> };
+    expect(freedPayload.days[0]?.slots).toEqual(expect.arrayContaining([
+      expect.objectContaining({ start: expect.stringContaining('T10:00:00') }),
+    ]));
+  });
+
   it('rejects cancel on a wrong-state (hold) row with 409 invalid_transition', async () => {
     const seeded = booking({ id: 'b-cancel-wrong-state', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z' });
     const repo = fakeRepository([seeded]);
@@ -142,6 +218,42 @@ describe('POST /cancel (customer, spec §11)', () => {
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toMatchObject({ error: { code: 'invalid_transition' } });
     expect(repo.rows.get(seeded.id)?.status).toBe('hold');
+  });
+});
+
+describe('POST /operator/cancel (spec §11)', () => {
+  it('an operator-initiated cancel creates a calendar_delete debt on a failed delete, and a retry drains it', async () => {
+    const seeded = booking({ id: 'b-operator-cancel-calendar-debt', calendarEventId: 'cal-operator-cancel-debt' });
+    const repo = fakeRepository([seeded]);
+    let attempts = 0;
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock,
+      providers: providers({
+        calendar: {
+          listEvents: async () => [], createEvent: async () => 'unused', patchEvent: async () => undefined,
+          deleteEvent: async () => { attempts += 1; if (attempts === 1) throw new Error('calendar unavailable'); },
+        },
+      }),
+    });
+    const operatorCancelRequest = () => new Request('https://example.test/api/booking/operator/cancel', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ operatorToken: seeded.operatorToken, refund: 'none' }),
+    });
+
+    const response = await handleOperatorCancel(operatorCancelRequest(), context);
+    expect(response.status).toBe(200);
+    expect(repo.rows.get(seeded.id)?.status).toBe('cancelled');
+    expect(attempts).toBe(1);
+    expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_delete`)).toMatchObject({ status: 'failed' });
+
+    const retry = await handleOperatorCancel(operatorCancelRequest(), context);
+    expect(retry.status).toBe(200);
+    expect(attempts).toBe(2);
+    expect(repo.rows.get(seeded.id)?.calendarEventId).toBeNull();
+    expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_delete`)).toMatchObject({ status: 'succeeded' });
   });
 });
 
@@ -181,7 +293,7 @@ describe('POST /reschedule (customer, spec §11)', () => {
     expect(emails).toEqual(['booking.rescheduled']);
   });
 
-  it('retries a failed calendar patch at the same target without a second reschedule notification', async () => {
+  it('retries a failed calendar patch at the same target without a second reschedule notification, and a later genuine move is not suppressed by the no-op guard', async () => {
     const seeded = booking({
       id: 'b-reschedule-patch-retry', startsAt: '2026-06-15T09:00:00.000Z',
       endsAt: '2026-06-15T10:00:00.000Z', calendarEventId: 'cal-retry',
@@ -189,6 +301,14 @@ describe('POST /reschedule (customer, spec §11)', () => {
     const repo = fakeRepository([seeded]);
     let patches = 0;
     const emails: string[] = [];
+    // The no-op guard (rescheduleWithToken: next.startsAt === booking.startsAt) must skip
+    // rescheduleWithCapacity entirely on the same-target retry — only calendarPatch may run again.
+    const realRescheduleWithCapacity = repo.rescheduleWithCapacity;
+    let capacityWrites = 0;
+    repo.rescheduleWithCapacity = async (id, input) => {
+      capacityWrites += 1;
+      return realRescheduleWithCapacity(id, input);
+    };
     const context = createBookkitContext({
       config, db: {} as D1Database, repo, clock,
       providers: providers({
@@ -204,12 +324,70 @@ describe('POST /reschedule (customer, spec §11)', () => {
     expect(first.status).toBe(500);
     expect(repo.rows.get(seeded.id)?.startsAt).toBe(validNewStart);
     expect(repo.sideEffectOperations.size).toBe(1);
+    expect(capacityWrites).toBe(1);
 
     const retry = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, validNewStart), context);
     expect(retry.status).toBe(200);
     expect(patches).toBe(2);
     expect(emails).toEqual(['booking.rescheduled']);
     expect(repo.sideEffectOperations.size).toBe(1);
+    // The no-op retry repaired the calendar patch but made no capacity-changing repository write —
+    // rescheduleWithCapacity was called only for the original (real) move, never for this retry.
+    expect(capacityWrites).toBe(1);
+
+    // A genuine follow-up move (B -> C) must not be swallowed by the no-op guard: it creates a
+    // second reschedule outbox version and dispatches a second notification.
+    const secondMove = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, '2026-06-15T08:30:00.000Z'), context);
+    expect(secondMove.status).toBe(200);
+    expect(repo.rows.get(seeded.id)?.startsAt).toBe('2026-06-15T08:30:00.000Z');
+    expect(capacityWrites).toBe(2);
+    expect(patches).toBe(3);
+    expect(emails).toEqual(['booking.rescheduled', 'booking.rescheduled']);
+    expect(repo.sideEffectOperations.size).toBe(2);
+    expect(repo.sideEffectOperations.get(`${seeded.id}:email:booking.rescheduled:2`)).toMatchObject({ status: 'succeeded' });
+  });
+
+  it('operator path: retries a failed calendar patch at the same target without a second reschedule notification', async () => {
+    const seeded = booking({
+      id: 'b-op-reschedule-patch-retry', startsAt: '2026-06-15T09:00:00.000Z',
+      endsAt: '2026-06-15T10:00:00.000Z', calendarEventId: 'cal-op-retry',
+    });
+    const repo = fakeRepository([seeded]);
+    let patches = 0;
+    const emails: string[] = [];
+    const realRescheduleWithCapacity = repo.rescheduleWithCapacity;
+    let capacityWrites = 0;
+    repo.rescheduleWithCapacity = async (id, input) => {
+      capacityWrites += 1;
+      return realRescheduleWithCapacity(id, input);
+    };
+    const context = createBookkitContext({
+      config, db: {} as D1Database, repo, clock,
+      providers: providers({
+        calendar: {
+          listEvents: async () => [], createEvent: async () => 'unused', deleteEvent: async () => undefined,
+          patchEvent: async () => { patches += 1; if (patches === 1) throw new Error('calendar unavailable'); },
+        },
+        email: { send: async (event) => { emails.push(event); } },
+      }),
+    });
+    const operatorRescheduleRequest = (newStart: string) => new Request('https://example.test/api/booking/operator/reschedule', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ operatorToken: seeded.operatorToken, newStart }),
+    });
+
+    const first = await handleOperatorReschedule(operatorRescheduleRequest(validNewStart), context);
+    expect(first.status).toBe(500);
+    expect(repo.rows.get(seeded.id)?.startsAt).toBe(validNewStart);
+    expect(repo.sideEffectOperations.size).toBe(1);
+    expect(capacityWrites).toBe(1);
+
+    const retry = await handleOperatorReschedule(operatorRescheduleRequest(validNewStart), context);
+    expect(retry.status).toBe(200);
+    expect(patches).toBe(2);
+    expect(emails).toEqual(['booking.rescheduled']);
+    expect(repo.sideEffectOperations.size).toBe(1);
+    expect(capacityWrites).toBe(1);
   });
 
   it('excludes its own occupancy at the route layer: moving within an overlapping window at capacity 1 must not 409 against itself', async () => {
