@@ -80,7 +80,8 @@ would make "at most one hold" the intended behavior after all.
 
 ## 4. Admin CSRF guard: rejecting `Sec-Fetch-Site: same-site`, and the token's key material
 
-**Context.** BK-SEC-001 (audit finding, `docs/tmp/handoff-audit-fixes/09-admin-csrf.md`):
+**Context.** BK-SEC-001 (2026-07-22 audit remediation, finding 09-admin-csrf; the
+handoff document was removed from `docs/tmp/` in commit `64d4702`):
 `handleAdminPost` previously gated only on Cloudflare Access (WHO), with no defense
 against a cross-origin request riding an operator's live Access session. The spec calls
 for two independent layers — Fetch-Metadata/Origin enforcement and a per-session CSRF
