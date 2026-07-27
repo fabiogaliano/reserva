@@ -158,12 +158,25 @@ function nowMs(now: () => Date | number): number {
 // StripeIdempotencyError (409, same key + conflicting params) is also definitive: this provider
 // always resends the identical params object on retry, so a same-key conflict can only mean a
 // different request already used this key — retrying with the same params would 409 again.
+// One definitive error still gets a reconciliation check in refund() before it's rethrown: a
+// StripeInvalidRequestError with code charge_already_refunded, which Stripe returns as a 400 when
+// the refund actually succeeded earlier (e.g. the response was lost, and the idempotency key
+// later aged out of Stripe's ~24h cache) — see the dedicated check at the refund() call site.
 function isDefinitiveStripeError(error: unknown): boolean {
   return error instanceof Stripe.errors.StripeCardError
     || error instanceof Stripe.errors.StripeInvalidRequestError
     || error instanceof Stripe.errors.StripeAuthenticationError
     || error instanceof Stripe.errors.StripePermissionError
     || error instanceof Stripe.errors.StripeIdempotencyError;
+}
+
+// Narrow definitive-error carve-out: `charge_already_refunded` is what Stripe returns when the
+// idempotency key that would have replayed the original success has already been pruned (~24h)
+// and the retry lands as a fresh request against an already-fully-refunded charge. The money
+// moved on the earlier attempt; only reconciliation (exact amount + this request's marker) proves
+// it, so this is the one case worth checking before rethrowing a "definitive" error.
+function isChargeAlreadyRefundedError(error: unknown): boolean {
+  return error instanceof Stripe.errors.StripeInvalidRequestError && error.code === 'charge_already_refunded';
 }
 
 function defaultSuccessUrl(config: ClientConfig, routePaths?: BookkitResolvedRouteConfig['paths']): string {
@@ -353,7 +366,7 @@ export class StripeProvider implements PaymentProvider {
         { idempotencyKey },
       );
     } catch (error) {
-      if (isDefinitiveStripeError(error)) throw error;
+      if (isDefinitiveStripeError(error) && !isChargeAlreadyRefundedError(error)) throw error;
       // A list result is proof of success only when the refund carries this request's marker and
       // its own amount is exact.
       const reconciled = await this.findExistingRefund(paymentIntent, expectedAmountCents, idempotencyKey);

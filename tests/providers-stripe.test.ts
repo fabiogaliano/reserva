@@ -177,6 +177,17 @@ describe('StripeProvider', () => {
     expect(client.refunds.list).not.toHaveBeenCalled();
   });
 
+  // The status check (src/providers/stripe.ts refund(), ~line 376) runs on a *resolved* create()
+  // call, before the amount check and entirely outside the try/catch that drives reconciliation —
+  // so a non-'succeeded' status must reject immediately, without ever consulting refunds.list.
+  it('rejects a directly created refund whose status did not succeed, without reconciling', async () => {
+    const { client } = makeClient();
+    client.refunds.create = vi.fn(async () => stripeRefund('re_pending', 10000, { status: 'pending' }));
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    await expect(provider.refund('pi_1', 10000)).rejects.toThrow('Stripe refund re_pending did not succeed (status pending)');
+    expect(client.refunds.list).not.toHaveBeenCalled();
+  });
+
   it('reconciles an already-refunded error via refunds.list instead of surfacing a false failure', async () => {
     const client = {
       checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
@@ -290,6 +301,76 @@ describe('StripeProvider', () => {
     } as unknown as StripeClient;
     const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     await expect(provider.refund('pi_1', 10000)).rejects.toThrow('Stripe create response was lost');
+  });
+
+  // charge_already_refunded: Stripe's 400 rejection when a refund actually succeeded on an
+  // earlier attempt whose response was lost, and the idempotency key later aged out of Stripe's
+  // ~24h cache, so the retry lands as a fresh create() against an already-refunded charge. Unlike
+  // other StripeInvalidRequestError codes this one still gets a reconciliation pass before
+  // rethrowing — see isChargeAlreadyRefundedError in src/providers/stripe.ts.
+  it('reconciles a charge_already_refunded StripeInvalidRequestError via refunds.list', async () => {
+    const client = {
+      checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
+      refunds: {
+        create: vi.fn(async () => {
+          throw new Stripe.errors.StripeInvalidRequestError({ message: 'Charge ch_1 has already been refunded.', code: 'charge_already_refunded' });
+        }),
+        list: vi.fn(async () => ({ data: [stripeRefund('re_recovered', 10000, { metadata: { bookkit_refund_key: 'bookkit-refund-pi_1' } })] })),
+      },
+      webhooks: { constructEventAsync: vi.fn() },
+    } as unknown as StripeClient;
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    await expect(provider.refund('pi_1', 10000)).resolves.toEqual({ refundId: 're_recovered', amountCents: 10000 });
+    expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 100 });
+  });
+
+  it('rethrows the original charge_already_refunded error when no matching refund is on file', async () => {
+    const client = {
+      checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
+      refunds: {
+        create: vi.fn(async () => {
+          throw new Stripe.errors.StripeInvalidRequestError({ message: 'Charge ch_1 has already been refunded.', code: 'charge_already_refunded' });
+        }),
+        // Wrong amount and no bookkit_refund_key marker — not proof this request's refund succeeded.
+        list: vi.fn(async () => ({ data: [stripeRefund('re_unrelated', 4000)] })),
+      },
+      webhooks: { constructEventAsync: vi.fn() },
+    } as unknown as StripeClient;
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    await expect(provider.refund('pi_1', 10000)).rejects.toThrow('Charge ch_1 has already been refunded.');
+    expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 100 });
+  });
+
+  it('throws a StripeInvalidRequestError with a different code immediately, without reconciliation', async () => {
+    const client = {
+      checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
+      refunds: {
+        create: vi.fn(async () => {
+          throw new Stripe.errors.StripeInvalidRequestError({ message: 'No such payment_intent', code: 'resource_missing' });
+        }),
+        list: vi.fn(),
+      },
+      webhooks: { constructEventAsync: vi.fn() },
+    } as unknown as StripeClient;
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    await expect(provider.refund('pi_1', 10000)).rejects.toThrow('No such payment_intent');
+    expect(client.refunds.list).not.toHaveBeenCalled();
+  });
+
+  it('throws a StripeCardError immediately, without reconciliation', async () => {
+    const client = {
+      checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
+      refunds: {
+        create: vi.fn(async () => {
+          throw new Stripe.errors.StripeCardError({ message: 'Your card was declined.' });
+        }),
+        list: vi.fn(),
+      },
+      webhooks: { constructEventAsync: vi.fn() },
+    } as unknown as StripeClient;
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    await expect(provider.refund('pi_1', 10000)).rejects.toThrow('Your card was declined.');
+    expect(client.refunds.list).not.toHaveBeenCalled();
   });
 
   it('rejects missing webhook signatures with a typed client error', async () => {
