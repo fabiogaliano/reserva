@@ -20,6 +20,8 @@ function manageUrl(token: string): string {
   return `${config.business.url}/booking/manage?token=${encodeURIComponent(token)}`;
 }
 
+export const emailOutbox: Array<{ event: string; reference: string; customerManageUrl: string; operatorManageUrl: string; sentAt: string }> = [];
+
 const providers: BookkitProviders = {
   payments: {
     async createCheckout(booking) {
@@ -84,6 +86,13 @@ const providers: BookkitProviders = {
   },
   email: {
     async send(event, booking) {
+      emailOutbox.push({
+        event,
+        reference: booking.reference,
+        customerManageUrl: manageUrl(booking.cancelToken),
+        operatorManageUrl: manageUrl(booking.operatorToken),
+        sentAt: new Date().toISOString(),
+      });
       console.info('[bookkit demo] email', {
         event,
         reference: booking.reference,

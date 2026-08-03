@@ -1,0 +1,18 @@
+import { test, expect } from '@playwright/test';
+
+test('a garbage manage token shows the denied/recovery page, not raw JSON or a crash', async ({ page }) => {
+  const response = await page.goto('/booking/manage?token=this-token-has-never-existed');
+  expect(response?.status()).toBe(403);
+  await expect(page.locator('h1')).toContainText('Link not valid');
+  // Recoverable, not a dead end: a token entry form to retry with the right link.
+  await expect(page.getByLabel('Booking token')).toBeVisible();
+});
+
+test('an unknown booking-confirmation session_id shows a recoverable not-found page, not a crash', async ({ page }) => {
+  // No booking row was ever created for this session_id — handleStatus (src/handlers/index.ts)
+  // reports `status: 'not_found'` for it (not a 500), and confirmationPage renders that as a
+  // normal 200 page with a "start over" action rather than surfacing raw JSON or throwing.
+  const response = await page.goto('/booking-confirmation?session_id=session-that-was-never-created');
+  expect(response?.status()).toBe(200);
+  await expect(page.locator('h1')).toContainText('Booking not found');
+});

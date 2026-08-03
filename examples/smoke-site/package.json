@@ -5,6 +5,7 @@
     "build": "astro build",
     "dev": "astro dev",
     "db:migrate": "bun ../../scripts/bookkit-migrate.ts --local",
-    "demo": "bun run db:migrate && bun run dev"
+    "demo": "bun run db:migrate && bun run dev",
+    "e2e:server": "BOOKKIT_E2E_PERSIST=.wrangler-e2e bun e2e-dev-server.ts"
   }
 }

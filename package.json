@@ -47,6 +47,7 @@
   "scripts": {
     "test": "vitest run",
     "test:workers": "vitest run --config vitest.workers.config.ts",
+    "test:e2e": "playwright test",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "audit": "bun audit",
@@ -72,6 +73,7 @@
     "@astrojs/cloudflare": "^14.1.4",
     "@cloudflare/vitest-pool-workers": "^0.18.7",
     "@cloudflare/workers-types": "^5.20260721.1",
+    "@playwright/test": "^1.62.1",
     "astro": "^7.1.3",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10",
