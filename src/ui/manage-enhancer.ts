@@ -16,7 +16,10 @@ export const manageEnhancerJs = `(() => {
   let i18n = {};
   try { i18n = JSON.parse(island ? island.textContent : '{}'); } catch {}
 
-  const dateKey = (date) => date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
+  // UTC getters, not local: cally hands isDateDisallowed dates built with Date.UTC, so local
+  // getters would read back the previous day in any timezone behind UTC (same bug as the widget's
+  // dateKey — see BookingWidget.astro).
+  const dateKey = (date) => date.getUTCFullYear() + '-' + String(date.getUTCMonth() + 1).padStart(2, '0') + '-' + String(date.getUTCDate()).padStart(2, '0');
 
   const chevron = (path) => {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
