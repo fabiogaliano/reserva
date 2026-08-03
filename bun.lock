@@ -19,8 +19,8 @@
         "wrangler": "^4.113.0",
       },
       "peerDependencies": {
-        "@astrojs/cloudflare": ">=14.0.0",
-        "astro": ">=7.0.0",
+        "@astrojs/cloudflare": ">=14.0.0 <15.0.0",
+        "astro": ">=7.0.0 <8.0.0",
       },
     },
   },
