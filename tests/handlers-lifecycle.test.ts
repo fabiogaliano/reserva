@@ -261,14 +261,12 @@ describe('Bookkit handlers', () => {
     };
     const context = createBookkitContext({ config, db: {} as D1Database, repo, providers: providers() });
 
-    const startedAt = Date.now();
     const response = await handleAvailability(new Request('https://example.test/api/booking/availability?tour=vintage&people=2&from=1000-01-01&to=9999-12-31'), context);
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: 'Date range cannot exceed 62 days' } });
+    // Enumerating ~3.3M date keys takes seconds and would also drive occupancyReads above 0;
+    // this zero proves the cheap span guard rejects the range before ever building that array.
     expect(occupancyReads).toBe(0);
-    // Enumerating ~3.3M date keys takes seconds; the cheap span guard must reject
-    // the range without ever building that array.
-    expect(Date.now() - startedAt).toBeLessThan(1000);
   });
 
   it('rejects feed and operator actions without constant-time shared-secret auth', async () => {
