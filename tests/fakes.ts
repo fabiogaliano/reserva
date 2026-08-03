@@ -57,6 +57,9 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
   const holdIps = new Map<string, string>();
   const settings = new Map<string, string>();
   const leases = new Map<string, { token: string; until: string }>();
+  // Mirrors day_overrides / capacity_defaults (src/repo.ts:1425-1458): date/from_date -> row.
+  const dayOverrides = new Map<string, { capacity: number; reason: string | null }>();
+  const capacityDefaults = new Map<string, { capacity: number; reason: string | null }>();
   // Seeded rows model pre-migration legacy rows: their hash columns are null and their raw
   // token columns retain plaintext. Rows created by insertHold* use nohash placeholders at rest,
   // so only hydrated reads with a configured key can recover their presented values.
@@ -550,13 +553,32 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       .filter((item) => item.updatedAt > since)
       .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))
       .map(hydrateBooking),
-    getDayOverride: async () => null,
-    listDayOverrides: async () => [],
-    upsertDayOverride: async () => undefined,
-    deleteDayOverride: async () => undefined,
-    listCapacityDefaults: async () => [],
-    upsertCapacityDefault: async () => undefined,
-    deleteCapacityDefault: async () => undefined,
+    // Mirrors src/repo.ts:1425-1428 — exact-date lookup.
+    getDayOverride: async (date) => {
+      const found = dayOverrides.get(date);
+      return found ? { date, ...found } : null;
+    },
+    // Mirrors src/repo.ts:1429-1434 — date >= from AND date <= to, ordered by date.
+    listDayOverrides: async (from, to) => [...dayOverrides.entries()]
+      .filter(([date]) => date >= from && date <= to)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, value]) => ({ date, ...value })),
+    // Mirrors src/repo.ts:1435-1439 — INSERT ... ON CONFLICT(date) DO UPDATE (upsert-by-date).
+    upsertDayOverride: async (date, capacity, reason) => { dayOverrides.set(date, { capacity, reason }); },
+    // Mirrors src/repo.ts:1441-1443.
+    deleteDayOverride: async (date) => { dayOverrides.delete(date); },
+    // Bounded by handleAdminPost's 366-day cap (a year of daily overrides), so a plain db.batch()
+    // (mirrored here as a plain loop) never risks D1's per-batch statement limit.
+    upsertDayOverrides: async (dates, capacity, reason) => { for (const date of dates) dayOverrides.set(date, { capacity, reason }); },
+    deleteDayOverrides: async (dates) => { for (const date of dates) dayOverrides.delete(date); },
+    // Mirrors src/repo.ts:1444-1448 — ordered by from_date.
+    listCapacityDefaults: async () => [...capacityDefaults.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([fromDate, value]) => ({ fromDate, ...value })),
+    // Mirrors src/repo.ts:1450-1454 — INSERT ... ON CONFLICT(from_date) DO UPDATE (upsert-by-from_date).
+    upsertCapacityDefault: async (fromDate, capacity, reason) => { capacityDefaults.set(fromDate, { capacity, reason }); },
+    // Mirrors src/repo.ts:1456-1458.
+    deleteCapacityDefault: async (fromDate) => { capacityDefaults.delete(fromDate); },
     settings,
     listSettings: async () => Object.fromEntries(settings),
     upsertSetting: async (key, value) => { settings.set(key, value); },

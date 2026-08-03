@@ -355,6 +355,11 @@ export interface BookingRepository {
   listDayOverrides(from: string, to: string): Promise<DayCapacityOverride[]>;
   upsertDayOverride(date: string, capacity: number, reason: string | null): Promise<void>;
   deleteDayOverride(date: string): Promise<void>;
+  // Plural, batched siblings of upsertDayOverride/deleteDayOverride: handleAdminPost's bulk day
+  // actions (set/close/clear over a date range) use these instead of looping the singular
+  // methods, so a range submit is one D1 round trip instead of up to 366.
+  upsertDayOverrides(dates: string[], capacity: number, reason: string | null): Promise<void>;
+  deleteDayOverrides(dates: string[]): Promise<void>;
   listCapacityDefaults(): Promise<CapacityDefault[]>;
   upsertCapacityDefault(fromDate: string, capacity: number, reason: string | null): Promise<void>;
   deleteCapacityDefault(fromDate: string): Promise<void>;
@@ -1440,6 +1445,19 @@ export function createBookingRepository(
     },
     async deleteDayOverride(date) {
       await db.prepare('DELETE FROM day_overrides WHERE date = ?').bind(date).run();
+    },
+    // Bounded by handleAdminPost's 366-day cap (a year of daily overrides), so a single
+    // db.batch() call here never risks exceeding D1's per-batch statement limit.
+    async upsertDayOverrides(dates, capacity, reason) {
+      if (dates.length === 0) return;
+      await db.batch(dates.map((date) => db.prepare(
+        `INSERT INTO day_overrides (date, capacity, reason) VALUES (?, ?, ?)
+         ON CONFLICT(date) DO UPDATE SET capacity = excluded.capacity, reason = excluded.reason`,
+      ).bind(date, capacity, reason)));
+    },
+    async deleteDayOverrides(dates) {
+      if (dates.length === 0) return;
+      await db.batch(dates.map((date) => db.prepare('DELETE FROM day_overrides WHERE date = ?').bind(date)));
     },
     async listCapacityDefaults() {
       const result = await db.prepare(
