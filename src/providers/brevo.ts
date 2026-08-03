@@ -112,7 +112,7 @@ function defaultRender(context: BrevoEmailTemplateContext): BrevoEmailContent {
   const values = {
     customerName: escapeHtml(context.booking.customerName ?? ''), reference: escapeHtml(context.booking.reference), people: String(context.booking.people),
     startsAtLocal: escapeHtml(context.startsAtLocal), pickupDetails: escapeHtml(pickupDetails), pickupMapLink, contact: escapeHtml(contact),
-    customerManageUrl: context.customerManageUrl, operatorManageUrl: context.operatorManageUrl,
+    customerManageUrl: escapeHtml(context.customerManageUrl), operatorManageUrl: escapeHtml(context.operatorManageUrl),
   };
   return {
     subject: interpolate(source.subject, values),

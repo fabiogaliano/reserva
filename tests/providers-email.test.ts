@@ -127,4 +127,23 @@ describe('email providers', () => {
     // The rest of the email is unaffected — only the dead link paragraph is gone.
     expect(customerHtml.htmlContent).toContain('Ada Lovelace');
   });
+
+  it('escapes the manage-link URLs like every other interpolated field', async () => {
+    const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
+    const provider = brevoEmail({ apiKey: 'key', fetch: request });
+    const maliciousConfig: typeof config = {
+      ...config,
+      business: { ...config.business, url: 'https://example.test/"><script>' },
+    };
+
+    await provider.send('booking.confirmed', booking(), maliciousConfig);
+
+    expect(request).toHaveBeenCalledTimes(2);
+    const customerHtml = JSON.parse(request.mock.calls[0]![1]!.body as string) as { htmlContent: string };
+    const ownerHtml = JSON.parse(request.mock.calls[1]![1]!.body as string) as { htmlContent: string };
+    expect(customerHtml.htmlContent).not.toContain('"><script>');
+    expect(customerHtml.htmlContent).toContain('&quot;&gt;&lt;script&gt;');
+    expect(ownerHtml.htmlContent).not.toContain('"><script>');
+    expect(ownerHtml.htmlContent).toContain('&quot;&gt;&lt;script&gt;');
+  });
 });
