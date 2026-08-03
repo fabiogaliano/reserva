@@ -20,7 +20,14 @@ export const prerender = false;
 const htmlHeaders = {
   'content-type': 'text/html; charset=utf-8',
   'cache-control': 'no-store',
-  'referrer-policy': 'no-referrer',
+  // `same-origin` still keeps the manage token (carried in the URL query) out of any cross-origin
+  // Referer header — the leak this was originally guarding against. `no-referrer` went further
+  // than needed: per the Fetch spec it also nulls the `Origin` header on this page's own
+  // same-origin form POSTs (cancel/reschedule/no-show, below), which Astro's checkOrigin default
+  // then rejects as cross-site (Origin "null" != url.origin) even though the browser sent them
+  // from this exact page. `same-origin` is not on that null-Origin list, so same-origin POSTs keep
+  // a real Origin header and pass the check.
+  'referrer-policy': 'same-origin',
 };
 
 export async function GET({ request, locals }: APIContext): Promise<Response> {

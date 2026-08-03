@@ -1599,7 +1599,9 @@ export function handleAdminGet(request: Request, context: BookkitContext): Promi
     if (requestUrl.searchParams.get('view') === 'settings') {
       return html(settingsPage(context, await context.repo.listSettings(), requestUrl.searchParams.get('saved') === '1', requestUrl.searchParams.get('section') ?? '', csrfToken), 200, {
         'cache-control': 'no-store',
-        'referrer-policy': 'no-referrer',
+        // See the matching comment on the admin dashboard response below — this page's settings
+        // forms POST back to this same route and hit the identical null-Origin/checkOrigin issue.
+        'referrer-policy': 'same-origin',
       });
     }
     const now = nowIso(context);
@@ -1619,7 +1621,13 @@ export function handleAdminGet(request: Request, context: BookkitContext): Promi
     const saved = url.searchParams.get('saved') ?? '';
     return html(adminPage(context, bookings, overrides, fromDate, toDate, filters, editDate, capacityDefaults, saved, csrfToken), 200, {
       'cache-control': 'no-store',
-      'referrer-policy': 'no-referrer',
+      // `no-referrer` nulls the `Origin` header (per the Fetch spec) on this page's own
+      // same-origin POSTs (the day-override/default-capacity/settings forms below), which trips
+      // Astro's checkOrigin default (Origin "null" != url.origin) — a real cross-origin attempt is
+      // still stopped by adminOriginAllowed (BK-SEC-001 layer 1) regardless of this header.
+      // `same-origin` keeps the same token-leak protection this header exists for while letting
+      // legitimate same-origin form submissions through.
+      'referrer-policy': 'same-origin',
     });
   });
 }

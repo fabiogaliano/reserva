@@ -138,11 +138,14 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
     expect(body).toContain('Manage link unavailable');
   });
 
-  it('sets cache-control: no-store and referrer-policy: no-referrer', async () => {
+  // `same-origin`, not `no-referrer`: the admin forms POST back to this same page, and
+  // `no-referrer` would null the browser's Origin header on that same-origin POST, tripping
+  // Astro's checkOrigin default (see the WHY comment at the response site in src/handlers/index.ts).
+  it('sets cache-control: no-store and referrer-policy: same-origin', async () => {
     const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminGet(adminGetRequest(), context);
     expect(response.headers.get('cache-control')).toBe('no-store');
-    expect(response.headers.get('referrer-policy')).toBe('no-referrer');
+    expect(response.headers.get('referrer-policy')).toBe('same-origin');
   });
 
   // BK-CAP-002: the day calendar must show fleet units consumed, not a raw booking-row count — a
