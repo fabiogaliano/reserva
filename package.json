@@ -2,6 +2,12 @@
   "name": "bookkit",
   "version": "0.1.0",
   "description": "Reusable Astro booking integration for Cloudflare Workers, D1, and Stripe",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fabiogaliano/bookkit.git"
+  },
+  "author": "Fábio Galiano",
   "type": "module",
   "sideEffects": [
     "**/*.css"
@@ -18,7 +24,8 @@
     "examples/smoke-site/README.md",
     "examples/smoke-site/wrangler.jsonc",
     "examples/smoke-site/src",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "bin": {
     "bookkit-migrate": "./scripts/bookkit-migrate.ts"
