@@ -55,6 +55,7 @@ describe('POST /cancel (customer, spec §11)', () => {
     const response = await handleCustomerCancel(cancelRequest(seeded.cancelToken), context);
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true });
+    expect(response.headers.get('cache-control')).toBe('no-store');
     const row = repo.rows.get(seeded.id);
     expect(row?.status).toBe('cancelled');
     expect(row?.cancelledBy).toBe('customer');
@@ -282,6 +283,7 @@ describe('POST /reschedule (customer, spec §11)', () => {
     const response = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, validNewStart), context);
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true });
+    expect(response.headers.get('cache-control')).toBe('no-store');
     const row = repo.rows.get(seeded.id);
     expect(row?.startsAt).toBe(validNewStart);
     expect(row?.endsAt).toBe('2026-06-15T09:00:00.000Z');

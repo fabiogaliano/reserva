@@ -754,7 +754,7 @@ export function handleCustomerCancel(request: Request, context: BookkitContext):
     }
     await dispatchMutation(context, 'booking.cancelled_by_customer', updated);
     return json({ ok: true });
-  });
+  }).then(withSensitiveHeaders);
 }
 
 async function readNewStart(body: Record<string, unknown>): Promise<string> {
@@ -819,7 +819,7 @@ export function handleCustomerReschedule(request: Request, context: BookkitConte
     const booking = await tokenBooking(context, requireString(body.token, 'token'));
     await rescheduleWithToken(context, booking, await readNewStart(body), false);
     return json({ ok: true });
-  });
+  }).then(withSensitiveHeaders);
 }
 
 async function operatorBooking(
@@ -1024,7 +1024,7 @@ export function handleOperatorCancel(request: Request, context: BookkitContext):
     }
 
     return completeClaimedOperatorCancellation(context, booking, operationId, refund);
-  });
+  }).then(withSensitiveHeaders);
 }
 
 export function handleOperatorReschedule(request: Request, context: BookkitContext): Promise<Response> {
@@ -1034,7 +1034,7 @@ export function handleOperatorReschedule(request: Request, context: BookkitConte
     const booking = await operatorBooking(context, request, body);
     await rescheduleWithToken(context, booking, await readNewStart(body), true);
     return json({ ok: true });
-  });
+  }).then(withSensitiveHeaders);
 }
 
 export function handleOperatorNoShow(request: Request, context: BookkitContext): Promise<Response> {
@@ -1057,7 +1057,7 @@ export function handleOperatorNoShow(request: Request, context: BookkitContext):
     } catch (error) {
       throw new HttpError(409, 'invalid_transition', error instanceof Error ? error.message : 'Booking cannot be marked no-show');
     }
-  });
+  }).then(withSensitiveHeaders);
 }
 
 function defaultFeedBooking(booking: Booking): Record<string, unknown> {

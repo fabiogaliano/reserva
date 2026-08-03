@@ -200,6 +200,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
 
     const none = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'none' }), context);
     expect(none.status).toBe(200);
+    expect(none.headers.get('cache-control')).toBe('no-store');
     expect(repo.rows.get(seeded.id)?.status).toBe('cancelled');
     expect(repo.refundOperations.get(seeded.id)).toMatchObject({ choice: 'none', status: 'succeeded' });
     expect(refunds).toBe(0);
@@ -904,6 +905,7 @@ describe('POST /operator/reschedule cutoff asymmetry (spec §11)', () => {
 
     const response = await handleOperatorReschedule(operatorRequest('reschedule', { operatorToken: seeded.operatorToken, newStart: validNewStart }), context);
     expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('no-store');
     const row = repo.rows.get(seeded.id);
     expect(row?.startsAt).toBe(validNewStart);
     expect(row?.tourSlug).toBe(seeded.tourSlug);
@@ -956,6 +958,7 @@ describe('POST /operator/no-show (spec §11)', () => {
 
     const first = await handleOperatorNoShow(operatorRequest('no-show', { operatorToken: seeded.operatorToken }), context);
     expect(first.status).toBe(200);
+    expect(first.headers.get('cache-control')).toBe('no-store');
     expect(repo.rows.get(seeded.id)?.status).toBe('no_show');
     expect(emails).toEqual(['booking.no_show']);
 
