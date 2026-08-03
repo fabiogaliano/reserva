@@ -29,6 +29,28 @@ describe('Google Calendar provider', () => {
     expect(JSON.parse(atob(claims!.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(claims!.length / 4) * 4, '=')))).toMatchObject({ iss: 'sa@example.test', sub: 'owner@example.test', scope: 'https://www.googleapis.com/auth/calendar', aud: 'https://oauth2.googleapis.com/token', iat: 1784635200, exp: 1784638800 });
   });
 
+  it('single-flights concurrent cache-miss token requests into one POST', async () => {
+    let posts = 0;
+    const request = vi.fn<typeof fetch>(async () => {
+      posts += 1;
+      await Promise.resolve(); // yield a microtask so both concurrent callers are mid-flight together
+      return new Response(JSON.stringify({ access_token: 'token-shared', expires_in: 3600 }), { headers: { 'content-type': 'application/json' } });
+    });
+    // Unique cacheKey so this test's in-flight/cache state can never leak into (or be leaked into
+    // by) another test sharing the module-level tokenCache/tokenRequestsInFlight maps.
+    const auth = new GoogleServiceAccountAuth({
+      serviceAccountEmail: 'sa@example.test', privateKey: fakePem, impersonateEmail: 'owner@example.test',
+      fetch: request, crypto: fakeCrypto, now: () => Date.parse('2026-07-21T12:00:00Z'),
+      cacheKey: 'single-flight-test',
+    });
+
+    const [first, second] = await Promise.all([auth.getAccessToken(), auth.getAccessToken()]);
+
+    expect(first).toBe('token-shared');
+    expect(second).toBe('token-shared');
+    expect(posts).toBe(1);
+  });
+
   it('maps timed and all-day Calendar events while preserving Bookkit ownership metadata', () => {
     expect(mapGoogleCalendarEvent({ id: 'event-1', start: { dateTime: '2026-07-21T09:00:00Z' }, end: { dateTime: '2026-07-21T10:00:00Z' }, extendedProperties: { private: { bookkitBookingId: 'booking-1' } } })).toEqual(expect.objectContaining({ id: 'event-1', start: '2026-07-21T09:00:00Z', end: '2026-07-21T10:00:00Z', bookkitBookingId: 'booking-1' }));
     expect(mapGoogleCalendarEvent({ id: 'day-1', start: { date: '2026-07-21' }, end: { date: '2026-07-22' } })).toEqual(expect.objectContaining({ allDay: true, start: '2026-07-21', end: '2026-07-22' }));

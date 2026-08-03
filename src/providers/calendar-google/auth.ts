@@ -36,6 +36,10 @@ interface CachedToken {
 }
 
 const tokenCache = new Map<string, CachedToken>();
+// Coalesces concurrent cache-miss callers onto one in-flight mint: without this, two requests
+// racing on the same cache key each sign a JWT and POST to Google's token endpoint, which is
+// redundant (not incorrect) and needlessly burns Google's per-service-account token-issuance rate.
+const tokenRequestsInFlight = new Map<string, Promise<string>>();
 
 function required(options: GoogleAuthOptions, names: string[], value: string | undefined): string {
   const trimmed = value?.trim();
@@ -193,6 +197,17 @@ export class GoogleServiceAccountAuth {
     const cached = tokenCache.get(this.cacheKey);
     if (cached && now < cached.refreshAt) return cached.accessToken;
 
+    const inFlight = tokenRequestsInFlight.get(this.cacheKey);
+    if (inFlight) return inFlight;
+
+    const request = this.mintAndCacheToken(now).finally(() => {
+      tokenRequestsInFlight.delete(this.cacheKey);
+    });
+    tokenRequestsInFlight.set(this.cacheKey, request);
+    return request;
+  }
+
+  private async mintAndCacheToken(now: number): Promise<string> {
     const issuedAt = Math.floor(now / 1000);
     const header = jsonSegment({ alg: 'RS256', typ: 'JWT' });
     const claims = jsonSegment({
