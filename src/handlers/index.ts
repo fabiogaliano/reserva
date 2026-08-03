@@ -1716,10 +1716,10 @@ export function handleAdminPost(request: Request, context: BookkitContext): Prom
     const reasonValue = form.get('reason');
     const reason = typeof reasonValue === 'string' && reasonValue.trim() ? reasonValue.trim() : null;
     if (action === 'clear') {
-      for (const date of dayDates) await context.repo.deleteDayOverride(date);
+      await context.repo.deleteDayOverrides(dayDates);
     } else if (action === 'set' || action === 'close') {
       const capacity = action === 'close' ? 0 : requireInteger(Number(form.get('capacity')), 'capacity', 0);
-      for (const date of dayDates) await context.repo.upsertDayOverride(date, capacity, reason);
+      await context.repo.upsertDayOverrides(dayDates, capacity, reason);
     } else if (action === 'default-clear') await context.repo.deleteCapacityDefault(firstDate);
     else if (action === 'default-set') {
       const capacity = requireInteger(Number(form.get('capacity')), 'capacity', 0);

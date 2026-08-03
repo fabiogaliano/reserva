@@ -166,23 +166,23 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
 });
 
 describe('POST /admin day overrides (spec §11)', () => {
-  it('action=set calls upsertDayOverride with a trimmed reason and redirects (303) back with a saved confirmation', async () => {
+  it('action=set calls upsertDayOverrides once with a trimmed reason and redirects (303) back with a saved confirmation', async () => {
     const repo = fakeRepository();
-    const calls: Array<[string, number, string | null]> = [];
-    repo.upsertDayOverride = async (date, capacity, reason) => { calls.push([date, capacity, reason]); };
+    const calls: Array<[string[], number, string | null]> = [];
+    repo.upsertDayOverrides = async (dates, capacity, reason) => { calls.push([dates, capacity, reason]); };
     const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
 
     const request = adminPostRequest({ date: '2026-06-20', capacity: '3', reason: '  closed for maintenance  ', action: 'set' });
     const response = await handleAdminPost(request, context);
     expect(response.status).toBe(303);
     expect(response.headers.get('location')).toBe(`${request.url}?saved=day&date=2026-06-20#bk-override`);
-    expect(calls).toEqual([['2026-06-20', 3, 'closed for maintenance']]);
+    expect(calls).toEqual([[['2026-06-20'], 3, 'closed for maintenance']]);
   });
 
-  it('action=close writes capacity 0 to every submitted date (repeated date fields)', async () => {
+  it('action=close writes capacity 0 for every submitted date in a single batched call (repeated date fields)', async () => {
     const repo = fakeRepository();
-    const calls: Array<[string, number, string | null]> = [];
-    repo.upsertDayOverride = async (date, capacity, reason) => { calls.push([date, capacity, reason]); };
+    const calls: Array<[string[], number, string | null]> = [];
+    repo.upsertDayOverrides = async (dates, capacity, reason) => { calls.push([dates, capacity, reason]); };
     const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
 
     const response = await handleAdminPost(adminPostRequest([
@@ -191,21 +191,22 @@ describe('POST /admin day overrides (spec §11)', () => {
     expect(response.status).toBe(303);
     // Deduplicated, sorted, and the redirect pins ?date= to the earliest edited day.
     expect(new URL(response.headers.get('location') ?? '').searchParams.get('date')).toBe('2026-06-20');
-    expect(calls).toEqual([['2026-06-20', 0, 'holiday'], ['2026-06-22', 0, 'holiday']]);
+    // One call carrying the full deduplicated/sorted date set, not one call per date.
+    expect(calls).toEqual([[['2026-06-20', '2026-06-22'], 0, 'holiday']]);
   });
 
-  it('toDate expands date into a contiguous range for set/close/clear', async () => {
+  it('toDate expands date into a contiguous range for set/close/clear, batched into a single plural call', async () => {
     const repo = fakeRepository();
-    const upserts: Array<[string, number]> = [];
-    const deletes: string[] = [];
-    repo.upsertDayOverride = async (date, capacity) => { upserts.push([date, capacity]); };
-    repo.deleteDayOverride = async (date) => { deletes.push(date); };
+    const upserts: Array<[string[], number]> = [];
+    const deletes: string[][] = [];
+    repo.upsertDayOverrides = async (dates, capacity) => { upserts.push([dates, capacity]); };
+    repo.deleteDayOverrides = async (dates) => { deletes.push(dates); };
     const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
 
     await handleAdminPost(adminPostRequest({ date: '2026-06-20', toDate: '2026-06-22', capacity: '1', action: 'set' }), context);
-    expect(upserts).toEqual([['2026-06-20', 1], ['2026-06-21', 1], ['2026-06-22', 1]]);
+    expect(upserts).toEqual([[['2026-06-20', '2026-06-21', '2026-06-22'], 1]]);
     await handleAdminPost(adminPostRequest({ date: '2026-06-20', toDate: '2026-06-21', action: 'clear' }), context);
-    expect(deletes).toEqual(['2026-06-20', '2026-06-21']);
+    expect(deletes).toEqual([['2026-06-20', '2026-06-21']]);
   });
 
   it('rejects toDate before date with 400 validation_failed', async () => {
@@ -217,24 +218,24 @@ describe('POST /admin day overrides (spec §11)', () => {
 
   it('action=set with a blank reason passes null', async () => {
     const repo = fakeRepository();
-    const calls: Array<[string, number, string | null]> = [];
-    repo.upsertDayOverride = async (date, capacity, reason) => { calls.push([date, capacity, reason]); };
+    const calls: Array<[string[], number, string | null]> = [];
+    repo.upsertDayOverrides = async (dates, capacity, reason) => { calls.push([dates, capacity, reason]); };
     const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
 
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', capacity: '0', reason: '   ', action: 'set' }), context);
     expect(response.status).toBe(303);
-    expect(calls).toEqual([['2026-06-20', 0, null]]);
+    expect(calls).toEqual([[['2026-06-20'], 0, null]]);
   });
 
-  it('action=clear calls deleteDayOverride', async () => {
+  it('action=clear calls deleteDayOverrides with the full date array in one call', async () => {
     const repo = fakeRepository();
-    const calls: string[] = [];
-    repo.deleteDayOverride = async (date) => { calls.push(date); };
+    const calls: string[][] = [];
+    repo.deleteDayOverrides = async (dates) => { calls.push(dates); };
     const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
 
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'clear' }), context);
     expect(response.status).toBe(303);
-    expect(calls).toEqual(['2026-06-20']);
+    expect(calls).toEqual([['2026-06-20']]);
   });
 
   it('rejects an unknown action with 400 validation_failed', async () => {
@@ -435,7 +436,7 @@ describe('BK-SEC-001: admin mutation origin + CSRF guard (src/admin-csrf.ts)', (
   it('rejects a cross-origin POST (foreign Origin, Sec-Fetch-Site: cross-site) even with a valid Access session, and does not mutate', async () => {
     const repo = fakeRepository();
     const calls: string[] = [];
-    repo.deleteDayOverride = async (date) => { calls.push(date); };
+    repo.deleteDayOverrides = async (dates) => { calls.push(...dates); };
     const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'clear' }, {
       headers: { origin: 'https://evil.test', 'sec-fetch-site': 'cross-site' },
@@ -461,7 +462,7 @@ describe('BK-SEC-001: admin mutation origin + CSRF guard (src/admin-csrf.ts)', (
   it('accepts a same-origin POST (Sec-Fetch-Site: same-origin, no Origin header needed) carrying a valid token', async () => {
     const repo = fakeRepository();
     const calls: string[] = [];
-    repo.deleteDayOverride = async (date) => { calls.push(date); };
+    repo.deleteDayOverrides = async (dates) => { calls.push(...dates); };
     const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'clear' }, {
       headers: { 'sec-fetch-site': 'same-origin' },
@@ -495,7 +496,7 @@ describe('BK-SEC-001: admin mutation origin + CSRF guard (src/admin-csrf.ts)', (
   it('accepts the exact token embedded in a GET-rendered admin form on a subsequent same-origin POST (render -> submit end to end)', async () => {
     const repo = fakeRepository();
     const calls: string[] = [];
-    repo.deleteDayOverride = async (date) => { calls.push(date); };
+    repo.deleteDayOverrides = async (dates) => { calls.push(...dates); };
     const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
     const getResponse = await handleAdminGet(adminGetRequest(), context);
     const body = await getResponse.text();
@@ -591,7 +592,7 @@ describe('BK-SEC-001: admin CSRF layer 2 without BOOKKIT_CSRF_SECRET (layer 1 al
   it('a same-origin admin POST succeeds with no csrf_token at all when no secret is configured', async () => {
     const repo = fakeRepository();
     const calls: string[] = [];
-    repo.deleteDayOverride = async (date) => { calls.push(date); };
+    repo.deleteDayOverrides = async (dates) => { calls.push(...dates); };
     const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers() });
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'clear' }, {
       csrfToken: null,
@@ -604,7 +605,7 @@ describe('BK-SEC-001: admin CSRF layer 2 without BOOKKIT_CSRF_SECRET (layer 1 al
   it('a cross-origin admin POST is still rejected 403 by the origin guard when no secret is configured', async () => {
     const repo = fakeRepository();
     const calls: string[] = [];
-    repo.deleteDayOverride = async (date) => { calls.push(date); };
+    repo.deleteDayOverrides = async (dates) => { calls.push(...dates); };
     const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers() });
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'clear' }, {
       csrfToken: null,
