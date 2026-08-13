@@ -61,6 +61,10 @@ describe('local smoke runtime', () => {
           people: 2,
           pickupType: 'default',
           locale: 'en',
+          // Plan 017 (design decision 5): the smoke-site's oldTown tour now declares two meeting
+          // points (examples/smoke-site/src/config.ts), so a default-pickup checkout must supply
+          // one — see resolveCheckoutMeetingPoint in src/handlers/index.ts.
+          meetingPointId: 'fountain',
         }),
       }), context);
       expect(checkout.status).toBe(201);

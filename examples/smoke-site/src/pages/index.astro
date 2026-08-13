@@ -2,12 +2,16 @@
 import BookingWidget from '../../../../src/components/BookingWidget.astro';
 import ManageBooking from '../../../../src/components/ManageBooking.astro';
 import AdminDashboard from '../../../../src/components/AdminDashboard.astro';
+import config from '../config';
 
 const title = 'Bookkit local demo';
 // The demo runtime is configured with timezone UTC, so UTC date keys match business dates.
 const from = new Date().toISOString().slice(0, 10);
 const to = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
 const availabilityUrl = `/api/booking/availability?tour=oldTown&people=2&from=${from}&to=${to}`;
+// Plan 017 (design decision 5): the widget only needs {id, label} — the config's raw (unvalidated)
+// meetingPoints array (see STOP condition 2) also carries mapsUrl, which the widget doesn't render.
+const meetingPoints = config.tours.oldTown.meetingPoints?.map(({ id, label }) => ({ id, label })) ?? [];
 ---
 
 <html lang="en">
@@ -26,7 +30,7 @@ const availabilityUrl = `/api/booking/availability?tour=oldTown&people=2&from=${
 
       <section>
         <h2>Create a booking</h2>
-        <BookingWidget tourSlug="oldTown" availabilityFrom={from} availabilityTo={to} />
+        <BookingWidget tourSlug="oldTown" availabilityFrom={from} availabilityTo={to} meetingPoints={meetingPoints} />
         <p>Submitting redirects through the confirmation route. The simulated payment provider reports the session as paid, which exercises confirmation and every provider seam.</p>
       </section>
 

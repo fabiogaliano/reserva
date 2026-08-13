@@ -4,6 +4,11 @@ import { format } from 'date-fns';
 export interface BookingOpts {
   tour: string;
   people: number;
+  // Plan 017 (design decision 5): selects a non-default meeting point when the tour declares 2+
+  // (the widget pre-checks the first one, which is why every other caller omits this and still
+  // books that first point unchanged). No-op when the tour has 0-1 points, since the widget then
+  // renders no such group to select from.
+  meetingPointId?: string;
 }
 
 export async function createBooking(page: Page, opts: BookingOpts) {
@@ -39,6 +44,12 @@ export async function createBooking(page: Page, opts: BookingOpts) {
 
   // 5. Pick pickup
   await page.locator('input[name="pickupType"][value="default"]').check();
+
+  // 5b. Pick a non-default meeting point when asked (see BookingOpts.meetingPointId) — the widget
+  // pre-checks the first declared point, so this is skipped for the common case.
+  if (opts.meetingPointId) {
+    await page.locator(`input[name="meetingPointId"][value="${opts.meetingPointId}"]`).check();
+  }
 
   // 6. Book
   await page.getByRole('button', { name: 'Continue to payment' }).click();
