@@ -125,6 +125,7 @@ export const defaultMessages = {
   'admin.overrideHint': 'Change how many bookings a day can take, or close it.',
   'admin.overrideDefault': 'Reset returns the day to the default of {n}.',
   'admin.overrideTo': 'To date (optional)',
+  'admin.selectHint': 'Click a day to select it. Shift-click for a range, Ctrl/Cmd-click to add scattered days. Keyboard: Tab to a day and press Enter or Space to select it (with Shift or Ctrl/Cmd held, same as clicking), or use the date fields above for a range.',
   'admin.addReason': 'Add a reason (optional)',
   'admin.selectedDays': '{n} days selected',
   'admin.close': 'Close this day',

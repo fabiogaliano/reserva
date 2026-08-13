@@ -459,6 +459,10 @@ export const themeCss = `
   color: var(--bk-text);
   text-decoration: none;
   font-variant-numeric: tabular-nums;
+  /* The enhancer (src/ui/admin-enhancer.ts) removes href once it takes over, which also drops the
+     browser's free pointer cursor on a plain <a> — restore it explicitly so the cell still looks
+     clickable. Harmless for the no-JS path, where href (and its native pointer cursor) is intact. */
+  cursor: pointer;
   transition: border-color 120ms ease, background-color 120ms ease;
 }
 @media (hover: hover) and (pointer: fine) {

@@ -1360,6 +1360,7 @@ function adminPage(
     manageUnavailable: messages['admin.manageUnavailable'],
     prevMonth: messages['admin.prevMonth'],
     nextMonth: messages['admin.nextMonth'],
+    selectHint: messages['admin.selectHint'],
     days: daySummaries,
   }).replace(/</g, '\\u003c')}</script>`;
   // The day panel answers "what does this day actually have" — the bookings on the selected day,
@@ -1387,12 +1388,16 @@ function adminPage(
   const editReason = editOverride?.reason ?? '';
   const csrfField = `<input type="hidden" name="csrf_token" value="${escapeHtml(csrfToken)}">`;
   const overrideForm = `<form method="post" id="bk-override" class="bk-day-form">${csrfField}${adminIsland}`
-    + `<h2 data-bookkit-day-title>${escapeHtml(editDate ? formatDayDate(editDate, locale) : messages['admin.overrideTitle'])}</h2>`
+    // role="status" makes this an accessible live region: once the enhancer (src/ui/
+    // admin-enhancer.ts) starts rewriting this text on selection changes, a screen reader
+    // announces "N days selected" etc. without focus ever needing to move there. Inert without
+    // JS — a static heading whose text only ever changes via a full page reload.
+    + `<h2 data-bookkit-day-title role="status">${escapeHtml(editDate ? formatDayDate(editDate, locale) : messages['admin.overrideTitle'])}</h2>`
     + savedAlert('day')
     + dayDetail
     + `<p class="bk-hint">${escapeHtml(messages['admin.overrideHint'])} ${escapeHtml(formatMessage(messages['admin.overrideDefault'], { n: editDefault }))}</p>`
     + `<label class="bk-field"><span>${escapeHtml(messages['common.date'])}</span><input class="bk-input" name="date" type="date" required value="${escapeHtml(editDate)}"></label>`
-    + `<label class="bk-field" data-bookkit-to><span>${escapeHtml(messages['admin.overrideTo'])}</span><input class="bk-input" name="toDate" type="date"></label>`
+    + `<label class="bk-field"><span>${escapeHtml(messages['admin.overrideTo'])}</span><input class="bk-input" name="toDate" type="date"></label>`
     + `<label class="bk-field"><span>${escapeHtml(messages['admin.capacity'])}</span><input class="bk-input" name="capacity" type="number" min="0" value="${editOverride ? editOverride.capacity : editDate ? editDefault : ''}"></label>`
     + `<details class="bk-disclosure bk-disclosure--bare"${editReason ? ' open' : ''}><summary>${escapeHtml(messages['admin.addReason'])}</summary><div>`
     + `<label class="bk-field"><span>${escapeHtml(messages['admin.reason'])}</span><input class="bk-input" name="reason" value="${escapeHtml(editReason)}"></label>`

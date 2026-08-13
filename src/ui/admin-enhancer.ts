@@ -1,18 +1,28 @@
 // Browser-side progressive enhancement for the admin availability calendar, served (after the
 // manage enhancer) from the assetsJs route. Without it, day cells are links that reload the page
-// with the form prefilled, months render stacked (far ones collapsed), and the To-date field
-// covers contiguous bulk edits. This upgrades that baseline to: a one-month pager with prev/next
-// buttons, instant in-page day selection (click to prefill, shift-click range, ctrl/cmd-click to
-// toggle scattered days), and a day panel listing the selected day's bookings from the JSON
-// island. Multi-day submits travel as repeated hidden date inputs, which the POST handler accepts
-// with or without this script. IIFE so nothing leaks into the concatenated bundle.
+// with the form prefilled, months render stacked (far ones collapsed), and there is no in-page
+// multi-day selection at all — every bulk edit needs the "To date" field. This upgrades that
+// baseline to: a one-month pager with prev/next buttons, instant in-page day selection (click to
+// prefill, shift-click/-Enter range, ctrl/cmd-click/-Enter/-Space to toggle scattered days), and a
+// day panel listing the selected day's bookings from the JSON island.
+//
+// Plan 014 item D: the "To date" field stays visible (not hidden) in enhanced mode — a contiguous
+// selection (pointer or keyboard) syncs it, and typing into either date field updates the enhanced
+// selection right back, so pointer, keyboard, and the native inputs can never drift from each
+// other. A scattered (non-contiguous) selection travels as repeated hidden date fields with toDate
+// explicitly blanked; handleAdminPost (src/handlers/index.ts) unions repeated `date` fields with
+// any toDate expansion, so these two submission shapes must never both be populated at once —
+// applySelection always clears the other shape's fields before writing its own. Day cells gain
+// toggle-button semantics (role="button", aria-pressed) since they're no longer simple navigating
+// links once this script takes over, and the day title becomes a role="status" live region so a
+// screen reader hears the selection count change without focus ever needing to move. IIFE so
+// nothing leaks into the concatenated bundle.
 
 export const adminEnhancerJs = `(() => {
   const form = document.getElementById('bk-override');
   const monthsBox = document.querySelector('.bk-months');
   if (!form || !monthsBox) return;
   const dateInput = form.querySelector('input[name="date"]');
-  const toField = form.querySelector('[data-bookkit-to]');
   const toInput = form.querySelector('input[name="toDate"]');
   const capacityInput = form.querySelector('input[name="capacity"]');
   const reasonDetails = form.querySelector('details');
@@ -63,9 +73,34 @@ export const adminEnhancerJs = `(() => {
     show(active);
   }
 
+  // A visible hint before the calendar: Shift/Ctrl/Cmd-click and the Space toggle only exist once
+  // this script is running, so no-JS markup never mentions them.
+  if (i18n.selectHint) {
+    const hint = document.createElement('p');
+    hint.className = 'bk-hint';
+    hint.setAttribute('data-bookkit-select-hint', '');
+    hint.textContent = i18n.selectHint;
+    monthsBox.parentElement.insertBefore(hint, monthsBox);
+  }
+
   // --- day selection + form prefill + day panel ---
   const cells = new Map();
-  monthsBox.querySelectorAll('.bk-day[data-date]').forEach((cell) => cells.set(cell.dataset.date, cell));
+  monthsBox.querySelectorAll('.bk-day[data-date]').forEach((cell) => {
+    cells.set(cell.dataset.date, cell);
+    // No longer a plain navigating link once this script takes over — removing href (not just
+    // intercepting click) is required, not cosmetic: a browser opens ctrl/cmd-click on an
+    // <a href> as a new background tab at the browser-chrome level, before any page JS ever sees a
+    // click event, so preventDefault() on 'click' cannot stop it and the toggle gesture would
+    // silently never fire. Losing href also loses the anchor's native tab-stop and
+    // Enter-activates-click behavior, so both are restored explicitly (tabIndex, and the keydown
+    // listener below handles Enter and Space alike).
+    cell.removeAttribute('href');
+    cell.tabIndex = 0;
+    cell.setAttribute('role', 'button');
+    // aria-pressed starts from the server-rendered selected class, since the no-JS markup already
+    // reflects the initial (single) selection correctly.
+    cell.setAttribute('aria-pressed', String(cell.classList.contains('bk-day--selected')));
+  });
   let selected = dateInput.value && cells.has(dateInput.value) ? [dateInput.value] : [];
   let anchor = selected[0] || null;
 
@@ -115,27 +150,24 @@ export const adminEnhancerJs = `(() => {
     detail.appendChild(list);
   };
 
-  const sync = () => {
+  // Reflects \`selected\` onto the calendar cells and the day panel (title/detail/capacity
+  // prefill). Shared by every path that can change \`selected\` — pointer clicks, Space, and typing
+  // directly into the date/toDate inputs — so all three stay visually and semantically in sync.
+  // Returns the sorted selection so callers that also need to rewrite the form fields don't
+  // recompute it.
+  const renderCells = () => {
     const sorted = [...selected].sort();
-    form.querySelectorAll('input[data-bookkit-extra-date]').forEach((input) => input.remove());
-    if (sorted.length) dateInput.value = sorted[0];
-    for (const date of sorted.slice(1)) {
-      const hidden = document.createElement('input');
-      hidden.type = 'hidden';
-      hidden.name = 'date';
-      hidden.value = date;
-      hidden.setAttribute('data-bookkit-extra-date', '');
-      form.appendChild(hidden);
-    }
-    if (toInput) toInput.value = '';
     cells.forEach((cell, date) => {
-      cell.classList.toggle('bk-day--selected', sorted.includes(date));
+      const isSelected = sorted.includes(date);
+      cell.classList.toggle('bk-day--selected', isSelected);
+      cell.setAttribute('aria-pressed', String(isSelected));
       if (sorted.length === 1 && date === sorted[0]) cell.setAttribute('aria-current', 'date');
       else cell.removeAttribute('aria-current');
     });
     if (sorted.length === 1) {
       const cell = cells.get(sorted[0]);
       if (title && cell) title.textContent = cell.getAttribute('aria-label') || sorted[0];
+      else if (title) title.textContent = sorted[0];
       if (closeButton) closeButton.textContent = i18n.close || closeLabel;
       renderDetail(sorted[0]);
       if (cell) {
@@ -144,6 +176,8 @@ export const adminEnhancerJs = `(() => {
         if (reasonDetails) reasonDetails.open = !!cell.dataset.reason;
       }
     } else if (sorted.length > 1) {
+      // role="status" on the title (server markup) makes this an accessible live-region
+      // announcement of the selection count, without moving focus.
       if (title) title.textContent = (i18n.selectedDays || '{n} days selected').replace('{n}', sorted.length);
       if (closeButton && i18n.closeMany) closeButton.textContent = i18n.closeMany.replace('{n}', sorted.length);
       renderDetail(null);
@@ -152,27 +186,94 @@ export const adminEnhancerJs = `(() => {
       if (closeButton) closeButton.textContent = i18n.close || closeLabel;
       renderDetail(null);
     }
+    return sorted;
   };
 
-  monthsBox.addEventListener('click', (event) => {
-    const cell = event.target.closest('.bk-day[data-date]');
-    if (!cell) return;
-    event.preventDefault();
-    const date = cell.dataset.date;
-    if (event.shiftKey && anchor) {
+  const isContiguous = (sorted) => {
+    for (let i = 1; i < sorted.length; i += 1) {
+      const prev = Date.parse(sorted[i - 1] + 'T00:00:00Z');
+      const cur = Date.parse(sorted[i] + 'T00:00:00Z');
+      if (cur - prev !== 86400000) return false;
+    }
+    return true;
+  };
+
+  // Rewrites the form's submission shape from \`selected\`: a contiguous run travels as
+  // date+toDate (the same shape the no-JS bulk path already produces), a scattered set travels as
+  // repeated hidden date fields with toDate explicitly blanked so it never falsely implies a
+  // contiguous range covering the gaps. Always clears the other shape's fields first, so a pointer/
+  // keyboard selection can never leave behind a stale field from an earlier selection.
+  const applySelection = () => {
+    const sorted = renderCells();
+    form.querySelectorAll('input[data-bookkit-extra-date]').forEach((input) => input.remove());
+    if (sorted.length === 0) return;
+    dateInput.value = sorted[0];
+    if (sorted.length > 1 && isContiguous(sorted)) {
+      if (toInput) toInput.value = sorted[sorted.length - 1];
+    } else {
+      if (toInput) toInput.value = '';
+      for (const date of sorted.slice(1)) {
+        const hidden = document.createElement('input');
+        hidden.type = 'hidden';
+        hidden.name = 'date';
+        hidden.value = date;
+        hidden.setAttribute('data-bookkit-extra-date', '');
+        form.appendChild(hidden);
+      }
+    }
+  };
+
+  const selectDate = (date, mode) => {
+    if (mode === 'range' && anchor) {
       const range = [anchor, date].sort();
       selected = [...cells.keys()].filter((key) => key >= range[0] && key <= range[1]);
-    } else if (event.metaKey || event.ctrlKey) {
+    } else if (mode === 'toggle') {
       selected = selected.includes(date) ? selected.filter((key) => key !== date) : [...selected, date];
       anchor = date;
     } else {
       selected = [date];
       anchor = date;
     }
-    sync();
+    applySelection();
+  };
+
+  // Shared by both the click and keydown handlers so pointer and keyboard activation always agree
+  // on what a given modifier combination means.
+  const modeFromEvent = (event) => (event.shiftKey ? 'range' : (event.metaKey || event.ctrlKey) ? 'toggle' : 'replace');
+
+  monthsBox.addEventListener('click', (event) => {
+    const cell = event.target.closest('.bk-day[data-date]');
+    if (!cell) return;
+    selectDate(cell.dataset.date, modeFromEvent(event));
   });
 
-  // Multi-select supersedes the contiguous-range field; hiding it keeps one selection model.
-  if (toField) toField.hidden = true;
+  // href is gone (see above), so neither Enter nor Space is wired by the browser for free anymore
+  // — both are handled here, sharing the same modifier-based mode as a click (e.g. Shift+Enter is
+  // a range, same as shift-click).
+  monthsBox.addEventListener('keydown', (event) => {
+    if (event.key !== ' ' && event.key !== 'Spacebar' && event.key !== 'Enter') return;
+    const cell = event.target.closest('.bk-day[data-date]');
+    if (!cell) return;
+    event.preventDefault();
+    selectDate(cell.dataset.date, modeFromEvent(event));
+  });
+
+  // Typing directly into either date field is a first-class selection path, not just a no-JS
+  // fallback: it must update \`selected\` (so cell highlighting/aria-pressed/the live-region title
+  // agree with what's typed) and must never leave a stale hidden extra-date field from an earlier
+  // scattered pointer selection lying around to combine with the freshly typed toDate.
+  const applyTypedRange = () => {
+    form.querySelectorAll('input[data-bookkit-extra-date]').forEach((input) => input.remove());
+    const date = dateInput.value;
+    if (!date) { selected = []; anchor = null; renderCells(); return; }
+    const toValue = toInput ? toInput.value : '';
+    selected = toValue && toValue >= date
+      ? [...cells.keys()].filter((key) => key >= date && key <= toValue)
+      : [date];
+    anchor = date;
+    renderCells();
+  };
+  dateInput.addEventListener('change', applyTypedRange);
+  if (toInput) toInput.addEventListener('change', applyTypedRange);
 })();
 `;
