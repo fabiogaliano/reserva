@@ -12,6 +12,7 @@
   ],
   "vars": {
     "BOOKKIT_TOKEN_ENC_KEY": "local-demo-token-encryption-key",
-    "TOURFLOW_SHARED_SECRET": "local-tourflow-secret"
+    "TOURFLOW_SHARED_SECRET": "local-tourflow-secret",
+    "BOOKKIT_CSRF_SECRET": "local-demo-csrf-secret"
   }
 }

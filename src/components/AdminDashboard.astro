@@ -1,12 +1,21 @@
 ---
 import routeConfig from 'virtual:bookkit/config';
 import { requireEnabledRoutePath } from '../routes-manifest';
+import { createRouteContext } from '../routes/route-context';
+import { accessAllowed } from '../admin-access';
+import { mintAdminCsrfToken } from '../admin-csrf';
 import { defaultMessages, type BookkitMessages } from '../ui/messages';
 import '../ui/components.css';
 
 // Embeddable fragment for setting day-capacity overrides from a consumer's own admin page. The
 // full dashboard (tables, filters, operator actions) lives on the injected /booking/admin route —
 // this fragment links there and only duplicates the quick override form.
+//
+// Plan 009: this component's POST target (the injected admin route) requires Cloudflare Access
+// AND a signed CSRF token (src/admin-csrf.ts) once BOOKKIT_CSRF_SECRET is configured, so it mints
+// its own token at render time from the same Access check the built-in admin page uses —
+// mirroring handleAdminGet in src/handlers/index.ts exactly. That makes this a request-time
+// component: it must be rendered on a server-rendered page behind Cloudflare Access (see README).
 
 interface Props {
   endpoint?: string;
@@ -16,27 +25,43 @@ interface Props {
 const { endpoint, messages: messageOverrides = {} } = Astro.props;
 const action = endpoint === undefined ? requireEnabledRoutePath(routeConfig, 'adminPage') : endpoint;
 const t: BookkitMessages = { ...defaultMessages, ...messageOverrides };
+
+const context = await createRouteContext({ request: Astro.request, locals: Astro.locals });
+const access = await accessAllowed(Astro.request, context);
+// undefined when BOOKKIT_CSRF_SECRET isn't configured (src/admin-csrf.ts mintAdminCsrfToken) — the
+// hidden field below is then omitted entirely and the POST verifier is a deliberate no-op, exactly
+// mirroring the built-in admin page's csrfField (src/handlers/index.ts adminPage).
+const csrfToken = access ? await mintAdminCsrfToken(context, access.sub, context.clock().getTime()) : undefined;
 ---
 
 <section class="bk-embed bk-embed--admin" aria-labelledby="bookkit-admin-title">
   <h2 id="bookkit-admin-title" class="bke-title">{t['admin.overrideTitle']}</h2>
-  <p class="bke-hint">{t['admin.overrideHint']} <a href={action}>{t['admin.title']} →</a></p>
-  <form method="post" action={action}>
-    <label class="bke-field">
-      <span class="bke-label">{t['common.date']}</span>
-      <input class="bke-input" name="date" type="date" required />
-    </label>
-    <label class="bke-field">
-      <span class="bke-label">{t['admin.capacity']}</span>
-      <input class="bke-input" name="capacity" type="number" min="0" />
-    </label>
-    <label class="bke-field">
-      <span class="bke-label">{t['admin.reason']}</span>
-      <input class="bke-input" name="reason" />
-    </label>
-    <div class="bke-actions">
-      <button type="submit" class="bke-submit" name="action" value="set">{t['admin.save']}</button>
-      <button type="submit" class="bke-submit bke-submit--secondary" name="action" value="clear">{t['admin.clear']}</button>
-    </div>
-  </form>
+  {access ? (
+    <>
+      <p class="bke-hint">{t['admin.overrideHint']} <a href={action}>{t['admin.title']} →</a></p>
+      <form method="post" action={action}>
+        {csrfToken !== undefined && <input type="hidden" name="csrf_token" value={csrfToken} />}
+        <label class="bke-field">
+          <span class="bke-label">{t['common.date']}</span>
+          <input class="bke-input" name="date" type="date" required />
+        </label>
+        <label class="bke-field">
+          <span class="bke-label">{t['admin.capacity']}</span>
+          <input class="bke-input" name="capacity" type="number" min="0" />
+        </label>
+        <label class="bke-field">
+          <span class="bke-label">{t['admin.reason']}</span>
+          <input class="bke-input" name="reason" />
+        </label>
+        <div class="bke-actions">
+          <button type="submit" class="bke-submit" name="action" value="set">{t['admin.save']}</button>
+          <button type="submit" class="bke-submit bke-submit--secondary" name="action" value="clear">{t['admin.clear']}</button>
+        </div>
+      </form>
+    </>
+  ) : (
+    // Rendering a form that could only ever 403 on submit is the bug this plan fixes, in another
+    // costume — failing visibly here matches what the POST would do anyway (see plan 009).
+    <p class="bke-hint">{t['admin.accessRequired']}</p>
+  )}
 </section>

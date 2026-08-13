@@ -45,7 +45,7 @@
     "./components/AdminDashboard.astro": "./src/components/AdminDashboard.astro"
   },
   "scripts": {
-    "test": "vitest run",
+    "test": "vitest run && vitest run --config vitest.component.config.ts",
     "test:workers": "vitest run --config vitest.workers.config.ts",
     "test:e2e": "playwright test",
     "test:watch": "vitest",

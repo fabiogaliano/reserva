@@ -57,3 +57,34 @@ test('closing a day override removes it from availability, and clearing the over
   expect(dayRestored?.status).not.toBe('closed');
   expect(dayRestored?.slots.length).toBeGreaterThan(0);
 });
+
+// Plan 009: proves the exported AdminDashboard.astro component (embedded on the smoke site's home
+// page, distinct from the built-in /booking/admin page exercised above) actually works end to end
+// under the recommended production configuration — BOOKKIT_CSRF_SECRET set (see
+// examples/smoke-site/wrangler.jsonc) — instead of its POST always 403ing, which was the bug this
+// plan fixes. A distinct target date (offset 27, vs. 25 above) keeps this independent of the other
+// day-override spec sharing the same database.
+test('the embedded AdminDashboard component mints a working CSRF token and its override form succeeds (component -> handler, CSRF enabled)', async ({ page }) => {
+  const targetDate = format(addDays(new Date(), 27), 'yyyy-MM-dd');
+
+  await page.goto('/');
+  const embeddedForm = page.locator('.bk-embed--admin form');
+  await expect(embeddedForm).toBeVisible();
+  // The component mints its own token at render time (src/components/AdminDashboard.astro); a
+  // stale/missing one would 403 under this deployment's configured secret.
+  await expect(embeddedForm.locator('input[name="csrf_token"]')).toHaveCount(1);
+
+  await embeddedForm.locator('input[name="date"]').fill(targetDate);
+  await embeddedForm.locator('input[name="capacity"]').fill('1');
+
+  const [response] = await Promise.all([
+    page.waitForResponse((res) => res.request().method() === 'POST' && res.url().includes('/booking/admin')),
+    embeddedForm.getByRole('button', { name: 'Save' }).click(),
+  ]);
+  expect(response.status()).toBe(303);
+
+  // The redirect lands on the full built-in admin page, confirming the mutation was accepted
+  // rather than rejected.
+  await expect(page).toHaveURL(new RegExp(`/booking/admin\\?.*date=${targetDate}`));
+  await expect(page.locator('h1')).toContainText('Booking admin', { ignoreCase: true });
+});

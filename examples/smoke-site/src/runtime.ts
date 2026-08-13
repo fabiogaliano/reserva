@@ -11,6 +11,9 @@ interface Env {
   BOOKKIT_DB: D1Database;
   BOOKKIT_TOKEN_ENC_KEY: string;
   TOURFLOW_SHARED_SECRET: string;
+  // Plan 009: configured so the e2e suite exercises the admin CSRF layer (src/admin-csrf.ts) the
+  // way the README recommends for production, instead of its fail-open "no secret configured" path.
+  BOOKKIT_CSRF_SECRET: string;
 }
 
 const calendarEvents = new Map<string, CalEvent>();
@@ -115,6 +118,6 @@ const providers: BookkitProviders = {
 
 export default defineCloudflareBookkitRuntime<Env>(config, {
   providers,
-  secretBindings: ['BOOKKIT_TOKEN_ENC_KEY', 'TOURFLOW_SHARED_SECRET'],
+  secretBindings: ['BOOKKIT_TOKEN_ENC_KEY', 'TOURFLOW_SHARED_SECRET', 'BOOKKIT_CSRF_SECRET'],
   verifyAccess: () => true,
 });

@@ -176,6 +176,10 @@ export const defaultMessages = {
   'admin.off': 'Off',
   'admin.none': 'None',
   'admin.fleetCapacityNote': 'Schedule capacity changes from the booking admin page.',
+  // Shown by the embeddable AdminDashboard component in place of its override form when the
+  // viewing request isn't Cloudflare Access-authenticated (see src/components/AdminDashboard.astro)
+  // — rendering a form that could only ever 403 on submit is worse than saying so up front.
+  'admin.accessRequired': 'Cloudflare Access authorization required to manage this booking.',
   'settingGroup.window': 'Booking window',
   'settingGroup.changes': 'Cancellation & rescheduling',
   'settingGroup.holds': 'Checkout holds & availability',
