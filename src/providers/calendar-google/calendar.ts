@@ -1,5 +1,5 @@
 import type { Booking } from '../../core/booking';
-import type { ClientConfig } from '../../core/config';
+import { meetingPointForBooking, type ClientConfig } from '../../core/config';
 import type { CalendarProvider } from '../../core/events';
 import type { CalEvent } from '../../core/occupancy';
 import { ProviderFailure } from '../../provider-failure';
@@ -45,13 +45,17 @@ function eventToCalEvent(event: GoogleEvent): CalEvent {
 }
 function eventPayload(booking: Booking, config: ClientConfig | undefined, _timezone: string): GoogleEvent {
   const title = `${booking.reference} — ${booking.tourSlug} — ${booking.people} people`;
+  const tour = config?.tours[booking.tourSlug];
+  // Plan 017 (design decision 4): same per-booking resolution as Brevo — a removed meeting point
+  // id falls back to the booking's stored label snapshot with no maps link.
+  const resolvedPoint = tour ? meetingPointForBooking(tour, booking.meetingPointId ?? null, booking.meetingPointLabel ?? null) : null;
   const description = [
     `Booking: ${booking.reference}`,
     `Customer: ${booking.customerName ?? ''}`,
     `Email: ${booking.customerEmail ?? ''}`,
     `Phone: ${booking.customerPhone ?? ''}`,
-    `Pickup: ${booking.pickupAddress ?? (config?.tours[booking.tourSlug]?.meetingPoint.label ?? 'Default meeting point')}`,
-    config?.tours[booking.tourSlug]?.meetingPoint.mapsUrl,
+    `Pickup: ${booking.pickupAddress ?? (resolvedPoint?.label ?? 'Default meeting point')}`,
+    resolvedPoint?.mapsUrl,
   ].filter(Boolean).join('\n');
   const attendee = booking.customerEmail ? { email: booking.customerEmail, ...(booking.customerName ? { displayName: booking.customerName } : {}) } : undefined;
   return { id: booking.id.replaceAll('-', ''), summary: title, description, start: { dateTime: booking.startsAt }, end: { dateTime: booking.endsAt }, ...(attendee ? { attendees: [attendee] } : {}), extendedProperties: { private: { bookkitBookingId: booking.id } } };

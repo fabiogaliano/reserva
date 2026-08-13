@@ -26,6 +26,8 @@ export interface TourflowReservation {
   customerName: string | null; customerEmail: string | null; customerPhone: string | null; startsAt: string; endsAt: string;
   partySize: number; pickupType: Booking['pickupType']; pickupAddress: string | null; priceEurCents: number;
   paymentStatus: 'paid' | 'unpaid'; status: Booking['status']; event: BookingEvent; updatedAt: string;
+  // Plan 017 (design decision 4): additive — existing Tourflow consumers ignore unknown fields.
+  meetingPointId: string | null; meetingPointLabel: string | null;
 }
 export interface TourflowFeed { bookings: TourflowReservation[] }
 export type TourflowBookingMapper = (event: BookingEvent, booking: Booking, config?: ClientConfig, operatorSlug?: string) => TourflowReservation;
@@ -44,6 +46,7 @@ export const mapTourflowBooking: TourflowBookingMapper = (event, booking, _confi
   customerName: booking.customerName, customerEmail: booking.customerEmail, customerPhone: booking.customerPhone, startsAt: booking.startsAt, endsAt: booking.endsAt,
   partySize: booking.people, pickupType: booking.pickupType, pickupAddress: booking.pickupAddress, priceEurCents: booking.priceCents,
   paymentStatus: booking.stripePaymentIntent && booking.status !== 'hold' ? 'paid' : 'unpaid', status: booking.status, event, updatedAt: booking.updatedAt,
+  meetingPointId: booking.meetingPointId ?? null, meetingPointLabel: booking.meetingPointLabel ?? null,
 });
 export function mapTourflowFeed(bookings: readonly Booking[], config: ClientConfig, operatorSlug?: string, mapper: TourflowBookingMapper = mapTourflowBooking): TourflowFeed {
   return { bookings: bookings.map((booking) => mapper(eventForBooking(booking), booking, config, operatorSlug)) };

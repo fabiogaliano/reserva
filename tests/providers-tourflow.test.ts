@@ -10,6 +10,19 @@ describe('Tourflow provider', () => {
     expect(payload).not.toHaveProperty('operatorToken');
   });
 
+  // Plan 017 (design decision 4): additive meetingPointId/meetingPointLabel fields on the
+  // reservation payload, mapped straight off the booking (no config lookup — the id/label
+  // snapshot is what downstream Tourflow consumers see, same as every other booking field here).
+  it('maps a chosen meeting point id and label onto the reservation payload', () => {
+    const payload = mapTourflowBooking('booking.confirmed', booking({ meetingPointId: 'belem', meetingPointLabel: 'Belém Tower' }), config, 'example-city-tours');
+    expect(payload).toEqual(expect.objectContaining({ meetingPointId: 'belem', meetingPointLabel: 'Belém Tower' }));
+  });
+
+  it('maps a booking with no meeting point choice to null fields', () => {
+    const payload = mapTourflowBooking('booking.confirmed', booking(), config, 'example-city-tours');
+    expect(payload).toEqual(expect.objectContaining({ meetingPointId: null, meetingPointLabel: null }));
+  });
+
   it('maps the feed and derives cancellation and no-show events', () => {
     const feed = mapTourflowFeed([booking(), booking({ id: 'booking-2', status: 'cancelled', cancelledBy: 'customer' }), booking({ id: 'booking-3', status: 'no_show' })], config);
     expect(feed.bookings.map((entry) => entry.event)).toEqual(['booking.confirmed', 'booking.cancelled_by_customer', 'booking.no_show']);

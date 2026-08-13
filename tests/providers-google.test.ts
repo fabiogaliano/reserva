@@ -1,8 +1,21 @@
 import { describe, expect, it, vi } from 'vitest';
-import { booking, config } from './fixtures';
+import type { ClientConfig, TourConfig } from '../src/core/config';
+import { booking, config, tour } from './fixtures';
 import { ProviderFailure } from '../src/provider-failure';
 import { clearGoogleTokenCache, GoogleServiceAccountAuth } from '../src/providers/calendar-google/auth';
 import { GoogleCalendarProvider, mapGoogleCalendarEvent } from '../src/providers/calendar-google/calendar';
+
+// Plan 017 (design decision 4): canonical (post-validateConfig-shaped) multi-point tour, built
+// inline — fixtures.ts stays a single-point `meetingPoint` shorthand tour for other suites.
+const { meetingPoint: _meetingPoint, ...tourWithoutShorthand } = tour;
+const multiPointTour: TourConfig = {
+  ...tourWithoutShorthand,
+  meetingPoints: [
+    { id: 'default', label: 'Praça do Comércio', mapsUrl: 'https://maps.google.com/?q=Praca+do+Comercio' },
+    { id: 'belem', label: 'Belém Tower', mapsUrl: 'https://maps.google.com/?q=Belem+Tower' },
+  ],
+};
+const multiPointConfig: ClientConfig = { ...config, tours: { vintage: multiPointTour } };
 
 const fakePem = '-----BEGIN PRIVATE KEY-----\nAQID\n-----END PRIVATE KEY-----';
 const fakeCrypto = {
@@ -77,8 +90,37 @@ describe('Google Calendar provider', () => {
     await provider.deleteEvent('created');
     expect(request.mock.calls[2]?.[1]).toEqual(expect.objectContaining({ method: 'PATCH' }));
     expect(String(request.mock.calls[2]?.[0])).toContain('/created?sendUpdates=all');
-    expect(String(request.mock.calls[2]?.[1]?.body)).toContain(config.tours.vintage!.meetingPoint.mapsUrl);
+    // Plan 017: TourConfig.meetingPoint is now optional shorthand — the fixture tour still uses it
+    // (single-point, unvalidated), so the non-null assertion carries the "this fixture declares it" fact.
+    expect(String(request.mock.calls[2]?.[1]?.body)).toContain(config.tours.vintage!.meetingPoint!.mapsUrl);
     expect(request.mock.calls[3]?.[1]).toEqual(expect.objectContaining({ method: 'DELETE' }));
+  });
+
+  // Plan 017 (design decision 4): the event description's Pickup/maps-URL lines resolve per
+  // booking (chosen meeting point id) instead of always reading the tour's single `meetingPoint`.
+  it('describes the meeting point the booking chose on a multi-point tour', async () => {
+    const auth = { getAccessToken: async () => 'token' } as GoogleServiceAccountAuth;
+    const request = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ id: 'created' }), { headers: { 'content-type': 'application/json' } }));
+    const provider = new GoogleCalendarProvider({ calendarId: 'primary@example.test', auth, fetch: request });
+
+    await provider.createEvent(booking({ meetingPointId: 'belem', meetingPointLabel: 'Belém Tower' }), multiPointConfig);
+
+    const body = String(request.mock.calls[0]?.[1]?.body);
+    expect(body).toContain('Pickup: Belém Tower');
+    expect(body).toContain('https://maps.google.com/?q=Belem+Tower');
+    expect(body).not.toContain('Praça do Comércio');
+  });
+
+  it('falls back to the stored label snapshot with no maps line when the booked meeting point id is no longer declared', async () => {
+    const auth = { getAccessToken: async () => 'token' } as GoogleServiceAccountAuth;
+    const request = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ id: 'created' }), { headers: { 'content-type': 'application/json' } }));
+    const provider = new GoogleCalendarProvider({ calendarId: 'primary@example.test', auth, fetch: request });
+
+    await provider.createEvent(booking({ meetingPointId: 'removed-point', meetingPointLabel: 'Old Fountain Square' }), multiPointConfig);
+
+    const body = String(request.mock.calls[0]?.[1]?.body);
+    expect(body).toContain('Pickup: Old Fountain Square');
+    expect(body).not.toContain('maps.google.com');
   });
 
   it('treats a deterministic event-id conflict as an already-created event', async () => {

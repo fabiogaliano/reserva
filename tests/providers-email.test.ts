@@ -1,8 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { ClientConfig, TourConfig } from '../src/core/config';
 import { BrevoResponseError, brevoEmail, BREVO_TRANSACTIONAL_EMAIL_URL } from '../src/providers/brevo';
 import { calendarInviteOnly } from '../src/providers/noop';
-import { booking, config } from './fixtures';
+import { booking, config, tour } from './fixtures';
 import { resolveRouteConfig } from '../src/routes-manifest';
+
+// Plan 017 (design decision 4): a canonical (post-validateConfig-shaped) multi-point tour, built
+// inline per the plan's "don't edit shared fixture files" rule — fixtures.ts stays a single-point
+// `meetingPoint` shorthand tour so every other suite's byte-identical assertions keep holding.
+const { meetingPoint: _meetingPoint, ...tourWithoutShorthand } = tour;
+const multiPointTour: TourConfig = {
+  ...tourWithoutShorthand,
+  meetingPoints: [
+    { id: 'default', label: 'Praça do Comércio', mapsUrl: 'https://maps.google.com/?q=Praca+do+Comercio' },
+    { id: 'belem', label: 'Belém Tower', mapsUrl: 'https://maps.google.com/?q=Belem+Tower' },
+  ],
+};
+const multiPointConfig: ClientConfig = { ...config, tours: { vintage: multiPointTour } };
 
 describe('email providers', () => {
   it('posts localized customer and owner messages to Brevo', async () => {
@@ -145,6 +159,51 @@ describe('email providers', () => {
     expect(ownerHtml.htmlContent).not.toContain('Open operator actions');
     // The rest of the email is unaffected — only the dead link paragraph is gone.
     expect(customerHtml.htmlContent).toContain('Ada Lovelace');
+  });
+
+  // Plan 017 (design decision 4/7): the label/maps link now resolve per booking (chosen meeting
+  // point id) instead of always reading the tour's single `meetingPoint` — the template variable
+  // names stay {pickupDetails}/{pickupMapLink} (decision 7).
+  it('renders the label and maps link for the meeting point the booking chose on a multi-point tour', async () => {
+    const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
+    const provider = brevoEmail({ apiKey: 'key', fetch: request });
+
+    await provider.sendToRecipient('customer', 'booking.confirmed', booking({
+      meetingPointId: 'belem', meetingPointLabel: 'Belém Tower',
+    }), multiPointConfig);
+
+    const body = JSON.parse(request.mock.calls[0]![1]!.body as string) as { htmlContent: string };
+    expect(body.htmlContent).toContain('Belém Tower');
+    expect(body.htmlContent).toContain('https://maps.google.com/?q=Belem+Tower');
+    expect(body.htmlContent).not.toContain('Praça do Comércio');
+  });
+
+  it('falls back to the stored label snapshot with no maps link when the booked meeting point id is no longer declared', async () => {
+    const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
+    const provider = brevoEmail({ apiKey: 'key', fetch: request });
+
+    await provider.sendToRecipient('customer', 'booking.confirmed', booking({
+      meetingPointId: 'removed-point', meetingPointLabel: 'Old Fountain Square',
+    }), multiPointConfig);
+
+    const body = JSON.parse(request.mock.calls[0]![1]!.body as string) as { htmlContent: string };
+    expect(body.htmlContent).toContain('Old Fountain Square');
+    expect(body.htmlContent).not.toContain('Open map');
+    expect(body.htmlContent).not.toContain('maps.google.com');
+  });
+
+  // Plan 017 done criterion: an existing single-point `meetingPoint` config renders byte-identical
+  // output — no meetingPointId/-Label on the booking resolves to the tour's one declared point,
+  // same as before this plan.
+  it('renders the single declared meeting point unchanged for a single-point tour', async () => {
+    const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
+    const provider = brevoEmail({ apiKey: 'key', fetch: request });
+
+    await provider.sendToRecipient('customer', 'booking.confirmed', booking(), config);
+
+    const body = JSON.parse(request.mock.calls[0]![1]!.body as string) as { htmlContent: string };
+    expect(body.htmlContent).toContain('Pickup: <strong>Praça do Comércio</strong>');
+    expect(body.htmlContent).toContain('<a href="https://maps.google.com/?q=Praca+do+Comercio">Open map</a>');
   });
 
   it('escapes the manage-link URLs like every other interpolated field', async () => {

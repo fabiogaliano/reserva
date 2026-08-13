@@ -1,5 +1,5 @@
 import type { Booking } from '../core/booking';
-import type { ClientConfig } from '../core/config';
+import { meetingPointForBooking, type ClientConfig } from '../core/config';
 import type { EmailBookingEvent, EmailProvider, EmailRecipientRole } from '../core/events';
 import { ProviderFailure } from '../provider-failure';
 import type { BookkitResolvedRouteConfig } from '../routes-manifest';
@@ -102,12 +102,15 @@ function stripUnusableManageLinks(html: string): string {
 function defaultRender(context: BrevoEmailTemplateContext): BrevoEmailContent {
   const source = getTemplate(context.event, context.recipient, context.locale, context.config.locales.default);
   const tour = context.config.tours[context.booking.tourSlug];
-  const defaultPickup = tour?.meetingPoint.label ?? '';
+  // Plan 017 (design decision 4/7): per-booking resolution — a removed meeting point id falls back
+  // to the booking's stored label snapshot with no maps link (meetingPointForBooking) — while the
+  // {pickupDetails}/{pickupMapLink} template variable names themselves stay unchanged.
+  const resolvedPoint = tour ? meetingPointForBooking(tour, context.booking.meetingPointId ?? null, context.booking.meetingPointLabel ?? null) : null;
   const pickupDetails = context.booking.pickupType === 'custom'
     ? context.booking.pickupAddress ?? 'Custom pickup address pending'
-    : defaultPickup;
-  const pickupMapLink = context.booking.pickupType === 'default' && tour?.meetingPoint.mapsUrl
-    ? `<a href="${escapeHtml(tour.meetingPoint.mapsUrl)}">Open map</a>`
+    : resolvedPoint?.label ?? '';
+  const pickupMapLink = context.booking.pickupType === 'default' && resolvedPoint?.mapsUrl
+    ? `<a href="${escapeHtml(resolvedPoint.mapsUrl)}">Open map</a>`
     : '';
   const contact = [context.config.business.contact.phone, context.config.business.contact.whatsapp]
     .filter(Boolean)
