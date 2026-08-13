@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createBookkitContext } from '../src/context';
 import { handleManage } from '../src/handlers';
 import { utcToLocalIso } from '../src/core/time';
-import { booking, config } from './fixtures';
+import { booking, config, tour } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
 const clock = () => new Date('2026-06-14T08:00:00.000Z');
@@ -63,8 +63,46 @@ describe('GET /manage (spec §11)', () => {
       customerEmail: seeded.customerEmail,
       customerPhone: seeded.customerPhone,
       status: seeded.status,
-      meetingPoint: config.tours.vintage?.meetingPoint,
+      // Plan 017 (design decision 3): the validated fixture config has no meetingPoint shorthand
+      // left on it (normalized into meetingPoints by validateConfig) — this booking has no stored
+      // meetingPointId, so bookingSummary resolves it to the tour's single declared point.
+      meetingPoint: { label: tour.meetingPoint!.label, mapsUrl: tour.meetingPoint!.mapsUrl },
     });
+  });
+
+  it('resolves the summary\'s meetingPoint per booking: a chosen second point, and a stored-label fallback for a since-removed id', async () => {
+    const points = [
+      { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
+      { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
+    ];
+    const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = tour;
+    const multiPointConfig = { ...config, tours: { ...config.tours, vintage: { ...vintageWithoutShorthand, meetingPoints: points } } };
+
+    const chosenSecond = booking({
+      id: 'b-manage-meeting-point-chosen', cancelToken: 'cancel-meeting-point-chosen', operatorToken: 'operator-meeting-point-chosen',
+      startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
+      meetingPointId: 'station', meetingPointLabel: 'The Station',
+    });
+    const removedId = booking({
+      id: 'b-manage-meeting-point-removed', cancelToken: 'cancel-meeting-point-removed', operatorToken: 'operator-meeting-point-removed',
+      startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
+      meetingPointId: 'no-longer-declared', meetingPointLabel: 'The Old Dock',
+    });
+    const context = createBookkitContext({
+      config: multiPointConfig,
+      db: {} as D1Database,
+      repo: fakeRepository([chosenSecond, removedId]),
+      clock,
+      providers: providers(),
+    });
+
+    const chosenResponse = await handleManage(manageRequest(chosenSecond.cancelToken), context);
+    const chosenPayload = await chosenResponse.json() as { booking: { meetingPoint: unknown } };
+    expect(chosenPayload.booking.meetingPoint).toEqual({ label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' });
+
+    const removedResponse = await handleManage(manageRequest(removedId.cancelToken), context);
+    const removedPayload = await removedResponse.json() as { booking: { meetingPoint: unknown } };
+    expect(removedPayload.booking.meetingPoint).toEqual({ label: 'The Old Dock', mapsUrl: null });
   });
 
   it('customer token inside the cutoff cannot cancel or reschedule', async () => {

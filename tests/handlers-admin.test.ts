@@ -188,6 +188,53 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
     expect(body).toContain('units 2/2');
     expect(body).not.toMatch(/bk-day-load">1\/2</);
   });
+
+  // Plan 017 (design decision 4): the meeting-point sub-line only renders for a default pickup on
+  // a tour that actually declares more than one point — mirrors the existing pickupAddress sub-
+  // line pattern, and search must match what the row displays.
+  describe('meeting-point sub-line + search (plan 017)', () => {
+    const points = [
+      { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
+      { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
+    ];
+    const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = config.tours.vintage!;
+    const multiPointConfig: ClientConfig = { ...config, tours: { ...config.tours, vintage: { ...vintageWithoutShorthand, meetingPoints: points } } };
+
+    it('renders the resolved meeting-point label as a sub-line for a multi-point tour, and is absent for a single-point tour', async () => {
+      const chosen = booking({
+        id: 'b-admin-meeting-point', reference: 'LVT-2026-400', startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
+        operatorToken: 'op-meeting-point', cancelToken: 'cancel-meeting-point',
+        meetingPointId: 'station', meetingPointLabel: 'The Station',
+      });
+      const multiRepo = fakeRepository([chosen]);
+      const multiContext = createBookkitContext({ config: multiPointConfig, db: {} as D1Database, repo: multiRepo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+      const multiResponse = await handleAdminGet(adminGetRequest(), multiContext);
+      const multiBody = await multiResponse.text();
+      expect(multiBody).toContain('<span class="bk-sub">The Station</span>');
+
+      const singleRepo = fakeRepository([booking({
+        id: 'b-admin-single-point', reference: 'LVT-2026-401', startsAt: '2026-06-21T09:00:00.000Z', endsAt: '2026-06-21T10:00:00.000Z',
+        operatorToken: 'op-single-point', cancelToken: 'cancel-single-point',
+      })]);
+      const singleContext = createBookkitContext({ config, db: {} as D1Database, repo: singleRepo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+      const singleResponse = await handleAdminGet(adminGetRequest(), singleContext);
+      const singleBody = await singleResponse.text();
+      expect(singleBody).not.toContain('bk-sub">The Station');
+    });
+
+    it('finds a booking by its resolved meeting-point label via the search filter', async () => {
+      const chosen = booking({
+        id: 'b-admin-meeting-point-search', reference: 'LVT-2026-402', startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
+        operatorToken: 'op-meeting-point-search', cancelToken: 'cancel-meeting-point-search',
+        meetingPointId: 'station', meetingPointLabel: 'The Station',
+      });
+      const repo = fakeRepository([chosen]);
+      const context = createBookkitContext({ config: multiPointConfig, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+      const response = await handleAdminGet(new Request(`${ADMIN_URL}?q=station`), context);
+      const body = await response.text();
+      expect(body).toContain(chosen.reference);
+    });
+  });
 });
 
 describe('POST /admin day overrides (spec §11)', () => {

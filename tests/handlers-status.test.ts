@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createBookkitContext } from '../src/context';
 import { handleStatus, handleStripeWebhook } from '../src/handlers';
 import { utcToLocalIso } from '../src/core/time';
-import { booking, config } from './fixtures';
+import { booking, config, tour } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
 function expectSensitiveHeaders(response: Response): void {
@@ -61,7 +61,10 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       end: utcToLocalIso(seeded.endsAt, config.business.timezone),
       people: seeded.people,
       priceCents: seeded.priceCents,
-      meetingPoint: config.tours.vintage?.meetingPoint,
+      // Plan 017 (design decision 3): the validated fixture config has no meetingPoint shorthand
+      // left on it (normalized into meetingPoints) — this booking has no stored meetingPointId,
+      // so confirmationSummary resolves it to the tour's single declared point.
+      meetingPoint: { label: tour.meetingPoint!.label, mapsUrl: tour.meetingPoint!.mapsUrl },
       locale: seeded.locale,
     });
     expect(Object.keys(payload.booking).sort()).toEqual([
@@ -78,6 +81,42 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     expect(calendarCreates).toBe(1);
     expect(emails).toBe(1);
     expect(repo.rows.get(seeded.id)?.status).toBe('confirmed');
+  });
+
+  it('resolves the confirmed summary\'s meetingPoint per booking: a chosen second point, and a stored-label fallback for a since-removed id', async () => {
+    const points = [
+      { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
+      { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
+    ];
+    const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = tour;
+    const multiPointConfig = { ...config, tours: { ...config.tours, vintage: { ...vintageWithoutShorthand, meetingPoints: points } } };
+    const clock = () => new Date('2026-06-14T08:00:00.000Z');
+
+    const chosenSecond = booking({
+      id: 'b-status-meeting-point-chosen', status: 'confirmed', stripeSessionId: 'cs_status_meeting_chosen',
+      calendarSynced: true, emailSynced: true, createdAt: '2026-06-14T07:00:00.000Z',
+      meetingPointId: 'station', meetingPointLabel: 'The Station',
+    });
+    const removedId = booking({
+      id: 'b-status-meeting-point-removed', status: 'confirmed', stripeSessionId: 'cs_status_meeting_removed',
+      calendarSynced: true, emailSynced: true, createdAt: '2026-06-14T07:00:00.000Z',
+      meetingPointId: 'no-longer-declared', meetingPointLabel: 'The Old Dock',
+    });
+    const context = createBookkitContext({
+      config: multiPointConfig,
+      db: {} as D1Database,
+      repo: fakeRepository([chosenSecond, removedId]),
+      clock,
+      providers: providers(),
+    });
+
+    const chosenResponse = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_meeting_chosen'), context);
+    const chosenPayload = await chosenResponse.json() as { booking: { meetingPoint: unknown } };
+    expect(chosenPayload.booking.meetingPoint).toEqual({ label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' });
+
+    const removedResponse = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_meeting_removed'), context);
+    const removedPayload = await removedResponse.json() as { booking: { meetingPoint: unknown } };
+    expect(removedPayload.booking.meetingPoint).toEqual({ label: 'The Old Dock', mapsUrl: null });
   });
 
   it('returns 200 with the current state (not 503) when a concurrent confirmation lease is held, without running duplicate side effects', async () => {

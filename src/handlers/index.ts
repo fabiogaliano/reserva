@@ -6,7 +6,7 @@ import {
   rescheduleBooking,
   type Booking,
 } from '../core/booking';
-import { DEFAULT_TOKEN_EXPIRY_DAYS, resolveTour, type PickupType } from '../core/config';
+import { DEFAULT_TOKEN_EXPIRY_DAYS, meetingPointForBooking, resolveMeetingPoint, resolveTour, type MeetingPoint, type PickupType } from '../core/config';
 import { availabilityForDay, capacityForDate, defaultCapacityForDate, occupancyFor, type CalEvent, type CapacityDefault } from '../core/occupancy';
 import { verifyPayment } from '../core/payment-verification';
 import { priceFor } from '../core/pricing';
@@ -333,6 +333,27 @@ function parsePickup(value: unknown): PickupType {
   return value;
 }
 
+// Plan 017 (design decision 2): meetingPointId is optional on the wire but the RESOLVED id is
+// always what gets stored, so downstream rendering (bookingSummary/confirmationSummary, admin,
+// providers) never has to branch on "absent" — only ever on a stored id that's since been
+// removed from config (meetingPointForBooking's fallback). Required only when the tour declares
+// more than one point and the customer picked the default (free) pickup — a custom pickup starts
+// at the customer's own address today, so a meeting point choice there is accepted (still
+// validated against the declared set) but not mandatory; plan 018 makes this per-option.
+function resolveCheckoutMeetingPoint(tour: ReturnType<typeof resolveTour>, pickupType: PickupType, body: Record<string, unknown>): MeetingPoint {
+  const raw = body.meetingPointId;
+  if (raw !== undefined) {
+    const suppliedId = requireString(raw, 'meetingPointId');
+    const point = resolveMeetingPoint(tour, suppliedId);
+    if (point.id !== suppliedId) throw new HttpError(400, 'validation_failed', 'Unknown meetingPointId');
+    return point;
+  }
+  if ((tour.meetingPoints?.length ?? 0) > 1 && pickupType === 'default') {
+    throw new HttpError(400, 'validation_failed', 'meetingPointId is required for a tour with more than one meeting point');
+  }
+  return resolveMeetingPoint(tour);
+}
+
 function assertSlot(config: BookkitContext['config'], tourSlug: string, start: string, now: string): { tour: ReturnType<typeof resolveTour>; startsAt: string; endsAt: string } {
   const tour = resolveTour(config, tourSlug);
   let instant: Date;
@@ -411,6 +432,7 @@ export function handleCheckout(request: Request, context: BookkitContext): Promi
     await context.repo.sweepExpiredHolds(now);
     assertSupportedPartySize(resolveTour(context.config, tourSlug), people);
     const candidate = await checkSlot(context, tourSlug, people, start, now);
+    const meetingPoint = resolveCheckoutMeetingPoint(candidate.tour, pickupType, body);
     let priceCents: number;
     try {
       priceCents = priceFor(candidate.tour, people, pickupType);
@@ -442,6 +464,7 @@ export function handleCheckout(request: Request, context: BookkitContext): Promi
         const tokensExpireAt = new Date(parseUtcInstant(candidate.endsAt).getTime() + tokenExpiryDays * 86_400_000).toISOString();
         const created = await context.repo.insertHoldWithCapacity({
           id: crypto.randomUUID(), reference, tourSlug, people, pickupType,
+          meetingPointId: meetingPoint.id, meetingPointLabel: meetingPoint.label,
           startsAt: candidate.startsAt, endsAt: candidate.endsAt, locale, priceCents,
           holdExpiresAt: new Date(parseUtcInstant(now).getTime() + context.config.booking.holdMinutes * 60_000).toISOString(),
           cancelToken: tokenBytes(), operatorToken: tokenBytes(), createdAt: now, updatedAt: now,
@@ -595,7 +618,10 @@ function bookingSummary(context: BookkitContext, booking: Booking): Record<strin
     locale: booking.locale,
     status: booking.status,
     priceCents: booking.priceCents,
-    meetingPoint: tour.meetingPoint,
+    // Plan 017 (design decision 3): resolved per booking, not read live off the tour — a stored
+    // id no longer declared in config falls back to the booking's own label snapshot instead of
+    // silently pointing the customer at whatever point happens to be first today.
+    meetingPoint: meetingPointForBooking(tour, booking.meetingPointId, booking.meetingPointLabel),
   };
 }
 
@@ -608,7 +634,7 @@ function confirmationSummary(context: BookkitContext, booking: Booking): Record<
     end: utcToLocalIso(booking.endsAt, context.config.business.timezone),
     people: booking.people,
     priceCents: booking.priceCents,
-    meetingPoint: tour.meetingPoint,
+    meetingPoint: meetingPointForBooking(tour, booking.meetingPointId, booking.meetingPointLabel),
     locale: booking.locale,
   };
 }
@@ -1153,11 +1179,24 @@ function adminSidebar(context: BookkitContext, messages: ReturnType<typeof resol
     + link(`${adminPath}?view=settings`, navIcons.settings, messages['admin.settings'], active === 'settings');
 }
 
-function matchesAdminFilters(booking: Booking, filters: AdminFilters): boolean {
+// Plan 017 (design decision 4): resolveTour throws for a tourSlug no longer in the live config
+// (renamed/removed since the booking was made) — degrade to an empty label rather than 500 the
+// whole admin search, the same tolerance the day-calendar unit aggregation below already applies.
+function adminMeetingPointLabel(config: BookkitContext['config'], booking: Booking): string {
+  try {
+    return meetingPointForBooking(resolveTour(config, booking.tourSlug), booking.meetingPointId, booking.meetingPointLabel).label;
+  } catch {
+    return '';
+  }
+}
+
+function matchesAdminFilters(booking: Booking, filters: AdminFilters, config: BookkitContext['config']): boolean {
   if (filters.status && booking.status !== filters.status) return false;
   if (filters.q) {
     const needle = filters.q.toLowerCase();
-    const haystack = [booking.reference, booking.tourSlug, booking.pickupType, booking.pickupAddress ?? '', booking.customerName ?? '', booking.customerEmail ?? ''].join(' ').toLowerCase();
+    // The meeting-point label is only in the haystack, never a rendering decision here — it must
+    // match what the row actually displays (see the pickup-cell sub-line in adminPage below).
+    const haystack = [booking.reference, booking.tourSlug, booking.pickupType, booking.pickupAddress ?? '', adminMeetingPointLabel(config, booking), booking.customerName ?? '', booking.customerEmail ?? ''].join(' ').toLowerCase();
     if (!haystack.includes(needle)) return false;
   }
   return true;
@@ -1191,7 +1230,7 @@ function adminPage(
   const messages = resolveMessages(context.config, locale);
   const timezone = context.config.business.timezone;
   const managePagePath = context.routeConfig.paths.managePage;
-  const filtered = bookings.filter((booking) => matchesAdminFilters(booking, filters));
+  const filtered = bookings.filter((booking) => matchesAdminFilters(booking, filters, context.config));
 
   // Operators scan by when → who → what, so the row leads with date and customer; secondary
   // detail (reference, email, party size, pickup address) stacks as sub-lines instead of
@@ -1207,6 +1246,21 @@ function adminPage(
     const pickupSub = booking.pickupType === 'custom' && booking.pickupAddress
       ? `<span class="bk-sub">${escapeHtml(booking.pickupAddress)}</span>`
       : '';
+    // Plan 017 (design decision 4): only a default (free) pickup ever carries a meeting-point
+    // choice worth surfacing, and only when the tour actually offers more than one — a
+    // single-point tour's sub-line would just repeat what "Meeting point" already implies.
+    let meetingPointSub = '';
+    if (booking.pickupType === 'default') {
+      try {
+        const tour = resolveTour(context.config, booking.tourSlug);
+        if ((tour.meetingPoints?.length ?? 0) > 1) {
+          const point = meetingPointForBooking(tour, booking.meetingPointId, booking.meetingPointLabel);
+          meetingPointSub = `<span class="bk-sub">${escapeHtml(point.label)}</span>`;
+        }
+      } catch {
+        // Unknown/removed tourSlug (see adminMeetingPointLabel above) — skip the sub-line.
+      }
+    }
     const manageHref = manageLinkHref(managePagePath, booking.operatorToken);
     const manageCell = manageHref
       ? `<a href="${escapeHtml(manageHref)}">${escapeHtml(messages['admin.manage'])}</a>`
@@ -1215,7 +1269,7 @@ function adminPage(
       + `<td>${escapeHtml(formatDateTime(utcToLocalIso(booking.startsAt, timezone), locale, timezone))}<span class="bk-sub bk-mono">${escapeHtml(booking.reference)}</span></td>`
       + `<td><strong>${escapeHtml(customerPrimary)}</strong>${customerSub}</td>`
       + `<td>${escapeHtml(booking.tourSlug)}<span class="bk-sub">${escapeHtml(people)} · ${escapeHtml(price)}</span></td>`
-      + `<td>${escapeHtml(pickupLabel)}${pickupSub}</td>`
+      + `<td>${escapeHtml(pickupLabel)}${pickupSub}${meetingPointSub}</td>`
       + `<td>${statusBadge(booking.status, messages)}</td>`
       + `<td>${manageCell}</td>`
       + `</tr>`;

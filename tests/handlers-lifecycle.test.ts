@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createBookkitContext } from '../src/context';
 import type { Booking } from '../src/core/booking';
 import { handleAvailability, handleCheckout, handleFeed, handleOperatorNoShow, handleStripeWebhook } from '../src/handlers';
-import { booking, config } from './fixtures';
+import { booking, config, tour } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
 describe('Bookkit handlers', () => {
@@ -374,5 +374,80 @@ describe('Bookkit handlers', () => {
     const holdResponse = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), holdContext);
     expect(holdResponse.status).toBe(200);
     expect(holdWarnings.some(([message]) => message.includes('possible one-slot oversell'))).toBe(false);
+  });
+});
+
+// Plan 017 (design decision 2): checkout's meetingPointId field — required only for a
+// multi-point tour's default (free) pickup; validated against the declared set whenever supplied
+// (including for a custom pickup); the resolved id is always what gets stored.
+describe('checkout meetingPointId (plan 017 design decision 2)', () => {
+  const points = [
+    { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
+    { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
+  ];
+  const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = tour;
+  const multiPointConfig = { ...config, tours: { ...config.tours, vintage: { ...vintageWithoutShorthand, meetingPoints: points } } };
+
+  function checkoutContext(configOverride = config) {
+    const repo = fakeRepository();
+    const context = createBookkitContext({
+      config: configOverride,
+      db: {} as D1Database,
+      repo,
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      providers: providers(),
+    });
+    return { repo, context };
+  }
+
+  function checkoutRequest(body: Record<string, unknown>): Request {
+    return new Request('https://example.test/api/booking/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ tourSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', people: 2, pickupType: 'default', locale: 'en', ...body }),
+    });
+  }
+
+  it('rejects a 2-point tour\'s default pickup with 400 when meetingPointId is missing', async () => {
+    const { context } = checkoutContext(multiPointConfig);
+    const response = await handleCheckout(checkoutRequest({}), context);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('meetingPointId is required') } });
+  });
+
+  it('rejects an unknown meetingPointId with 400 for both default and custom pickup', async () => {
+    const { context: defaultContext } = checkoutContext(multiPointConfig);
+    const defaultResponse = await handleCheckout(checkoutRequest({ meetingPointId: 'bogus' }), defaultContext);
+    expect(defaultResponse.status).toBe(400);
+    await expect(defaultResponse.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('Unknown meetingPointId') } });
+
+    const { context: customContext } = checkoutContext(multiPointConfig);
+    const customResponse = await handleCheckout(checkoutRequest({ pickupType: 'custom', meetingPointId: 'bogus' }), customContext);
+    expect(customResponse.status).toBe(400);
+    await expect(customResponse.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('Unknown meetingPointId') } });
+  });
+
+  it('stores the single declared point\'s id for a single-point tour when the field is omitted', async () => {
+    const { repo, context } = checkoutContext(config);
+    const response = await handleCheckout(checkoutRequest({}), context);
+    expect(response.status).toBe(201);
+    const { bookingId } = await response.json() as { bookingId: string };
+    expect(repo.rows.get(bookingId)).toMatchObject({ meetingPointId: 'default', meetingPointLabel: tour.meetingPoint!.label });
+  });
+
+  it('does not require meetingPointId for a custom pickup, and stores the resolved first point', async () => {
+    const { repo, context } = checkoutContext(multiPointConfig);
+    const response = await handleCheckout(checkoutRequest({ pickupType: 'custom' }), context);
+    expect(response.status).toBe(201);
+    const { bookingId } = await response.json() as { bookingId: string };
+    expect(repo.rows.get(bookingId)).toMatchObject({ meetingPointId: 'square', meetingPointLabel: 'The Square' });
+  });
+
+  it('stores the chosen second point\'s id and label for a 2-point tour', async () => {
+    const { repo, context } = checkoutContext(multiPointConfig);
+    const response = await handleCheckout(checkoutRequest({ meetingPointId: 'station' }), context);
+    expect(response.status).toBe(201);
+    const { bookingId } = await response.json() as { bookingId: string };
+    expect(repo.rows.get(bookingId)).toMatchObject({ meetingPointId: 'station', meetingPointLabel: 'The Station' });
   });
 });
