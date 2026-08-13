@@ -10,7 +10,7 @@ import {
 import { renderManageErrorPage, renderManagePage, type ManagePageOptions } from '../../components/manage-page';
 import { nowIso } from '../../context';
 import { addDaysToDateKey, localDateKey, localDateTimeToUtcIso, parseUtcInstant } from '../../core/time';
-import { errorResponse, HttpError } from '../../http';
+import { errorResponse, HttpError, requestFormData } from '../../http';
 import { cssAssetHref, jsAssetHref } from '../../ui/asset-hrefs';
 import { resolveMessages } from '../../ui/messages';
 import { createRouteContext } from '../route-context';
@@ -89,7 +89,7 @@ export async function GET({ request, locals }: APIContext): Promise<Response> {
 
 export async function POST({ request, locals }: APIContext): Promise<Response> {
   try {
-    const form = await request.formData();
+    const form = await requestFormData(request);
     const action = String(form.get('action') ?? '');
     const token = String(form.get('token') ?? '');
     const operatorToken = String(form.get('operatorToken') ?? '');

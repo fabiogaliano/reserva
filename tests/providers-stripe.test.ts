@@ -400,6 +400,23 @@ describe('StripeProvider', () => {
     });
     expect(client.webhooks.constructEventAsync).toHaveBeenCalledWith('{"raw":true}', 't=1,v1=x', 'whsec_test', 300, expect.anything());
   });
+
+  // Plan 013 item C (audit finding #10): parseWebhook buffered request.text() unbounded. A body
+  // whose declared Content-Length already exceeds the 1 MB webhook limit must 413 ahead of
+  // signature verification -- not get collapsed into the generic invalid_stripe_signature error
+  // the surrounding try/catch maps everything else to (the STOP condition this item calls out).
+  it('rejects an oversized webhook body with 413 before attempting signature verification', async () => {
+    const { client } = makeClient();
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const oversizedLimit = 1024 * 1024;
+    const request = new Request('https://example.test/webhook', {
+      method: 'POST',
+      headers: { 'stripe-signature': 't=1,v1=x', 'content-length': String(oversizedLimit + 1) },
+      body: 'x',
+    });
+    await expect(provider.parseWebhook(request)).rejects.toMatchObject({ status: 413, code: 'payload_too_large' });
+    expect(client.webhooks.constructEventAsync).not.toHaveBeenCalled();
+  });
 });
 
 // BK-PAY-002: a lost checkout.sessions.create response used to make handleCheckout expire the

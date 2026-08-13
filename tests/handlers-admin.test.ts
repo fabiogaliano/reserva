@@ -54,6 +54,28 @@ function adminPostRequest(fields: Record<string, string> | Array<[string, string
   });
 }
 
+// Plan 013 item C (audit finding #10): handleAdminPost read request.formData() unbounded. This
+// proves the real wiring (not just the requestFormData helper, covered generically in
+// tests/http-body-limits.test.ts) rejects an oversized declared Content-Length with 413 — and
+// does so ahead of/independent from the CSRF check, since the body must be read before csrf_token
+// can even be extracted from the form.
+describe('request body size limit (audit finding #10)', () => {
+  it('rejects an admin POST whose declared Content-Length exceeds the 256 KB form limit with 413', async () => {
+    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const request = new Request(ADMIN_URL, {
+      method: 'POST',
+      headers: {
+        origin: ADMIN_ORIGIN, 'sec-fetch-site': 'same-origin',
+        'content-type': 'application/x-www-form-urlencoded', 'content-length': String(256 * 1024 + 1),
+      },
+      body: 'action=clear&date=2026-06-20',
+    });
+    const response = await handleAdminPost(request, context);
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'payload_too_large' } });
+  });
+});
+
 describe('access control (spec §11: admin requires Cloudflare Access)', () => {
   it('rejects GET and POST when verifyAccess is absent, returns false, or throws', async () => {
     const variants: Array<{ label: string; verifyAccess?: () => boolean | Promise<boolean> }> = [

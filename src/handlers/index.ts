@@ -54,6 +54,7 @@ import {
   HttpError,
   json,
   parseDate,
+  requestFormData,
   requestJson,
   requireInteger,
   requireString,
@@ -1622,7 +1623,7 @@ export function handleAdminPost(request: Request, context: BookkitContext): Prom
     // BK-SEC-001 layer 1: Fetch-Metadata / Origin enforcement. Wired only here (the admin mutation
     // route), never on the public booking API — see src/admin-csrf.ts.
     if (!adminOriginAllowed(request)) throw new HttpError(403, 'forbidden', 'Cross-origin admin requests are not allowed');
-    const form = await request.formData();
+    const form = await requestFormData(request);
     // BK-SEC-001 layer 2: per-session CSRF token, bound to the same Access-authenticated subject
     // the request was just verified against.
     const csrfToken = form.get('csrf_token');

@@ -4,6 +4,7 @@ import type { ClientConfig } from '../core/config';
 import { resolveTour } from '../core/config';
 import type { PaymentProvider, SessionStatus, StripeEventParsed } from '../core/events';
 import { priceFor } from '../core/pricing';
+import { requestText, STRIPE_WEBHOOK_BODY_LIMIT_BYTES } from '../http';
 import type { BookkitResolvedRouteConfig } from '../routes-manifest';
 
 export interface StripeClient {
@@ -343,9 +344,14 @@ export class StripeProvider implements PaymentProvider {
   async parseWebhook(request: Request): Promise<StripeEventParsed> {
     const signature = request.headers.get('stripe-signature');
     if (!signature) throw new StripeWebhookVerificationError();
+    // Read outside the try below: an oversized body must surface as HttpError(413), not get
+    // collapsed into a generic StripeWebhookVerificationError — and the decoded text is passed to
+    // constructEventAsync completely unchanged, since Stripe's signature was computed over these
+    // exact bytes and any re-serialization would break verification.
+    const payload = await requestText(request, STRIPE_WEBHOOK_BODY_LIMIT_BYTES);
     try {
       const event = await this.stripe.webhooks.constructEventAsync(
-        await request.text(), signature, this.webhookSecret, 300, Stripe.createSubtleCryptoProvider(),
+        payload, signature, this.webhookSecret, 300, Stripe.createSubtleCryptoProvider(),
       );
       return stripeEventToParsed(event);
     } catch {
