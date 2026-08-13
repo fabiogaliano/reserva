@@ -8,7 +8,11 @@ const demoTour: TourConfig = {
   durationMin: 60,
   turnaroundMin: 15,
   schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], firstStart: '09:00', lastStart: '17:00', intervalMin: 60 }],
-  pricing: [{ maxPeople: 4, pickup: 'default', priceCents: 5000 }],
+  // Config validation requires a rule for every pickup type at every people-count up to maxPeople.
+  pricing: [
+    { maxPeople: 4, pickup: 'default', priceCents: 5000 },
+    { maxPeople: 4, pickup: 'custom', priceCents: 6000 },
+  ],
   meetingPoint: { label: 'Fixture meeting point', mapsUrl: 'https://example.test/map' },
 };
 

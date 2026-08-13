@@ -61,3 +61,18 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bunx playwright install --with-deps chromium
       - run: bun run test:e2e
+
+  # Plan 010 decision 3: test:pack packs the real tarball and installs it into a throwaway
+  # consumer project outside the repo, so it needs its own job (like smoke) rather than sharing
+  # the fast unit-test loop. It's also folded into the local `verify` aggregate, so this job is
+  # partly redundant with that one in CI -- deliberately so, matching the audit/verify split's
+  # rationale of never letting one slow/red check mask another job's result.
+  pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.23
+      - run: bun install --frozen-lockfile
+      - run: bun run test:pack
