@@ -42,5 +42,27 @@ describe('Tourflow provider', () => {
     expect(caught.status).toBe(502);
     expect(caught.message).toContain('y'.repeat(200));
     expect(caught.message).not.toContain('y'.repeat(201));
+    // Plan 016 (design decision 2): a 5xx is transient (retryable) — read structurally, not by
+    // parsing the message.
+    expect(caught.retryable).toBe(true);
+  });
+
+  it('classifies a 4xx Tourflow rejection as permanent (not retryable)', async () => {
+    const sink = tourflow({
+      webhookUrl: 'https://tourflow.test/api/webhooks/reservations',
+      sharedSecret: 'secret',
+      fetch: async () => new Response('unauthorized', { status: 401 }),
+    });
+    let caught: unknown;
+    try {
+      await sink.push('booking.confirmed', booking());
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(TourflowResponseError);
+    if (!(caught instanceof TourflowResponseError)) throw new Error('Tourflow request unexpectedly succeeded');
+    expect(caught.status).toBe(401);
+    expect(caught.retryable).toBe(false);
   });
 });

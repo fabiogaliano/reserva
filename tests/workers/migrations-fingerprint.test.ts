@@ -2,8 +2,18 @@
 // a consumer migration that happens to reuse one of bookkit's filenames without ever running
 // bookkit's SQL. These tests prove the schema fingerprint added on top of the ledger catches
 // exactly that, against real D1 -- a real, fully migrated schema passes; a forged ledger over a
-// bare schema fails distinctly; and a real schema stopped before 0012 with a colliding "0012"
-// ledger row also fails distinctly (not silently passing on the 0008-0011 columns alone).
+// bare schema fails distinctly; and a real schema stopped before the LATEST side_effect_operations
+// rebuild (0013, plan 016) with a colliding ledger row for it also fails distinctly (not silently
+// passing on 0008-0012 alone).
+//
+// Plan 016: this third scenario used to target a collision on 0012 specifically. It must target
+// the CURRENT latest side_effect_operations rebuild instead, because every later full-table
+// rebuild (0013's ALTER TABLE RENAME -> CREATE TABLE -> INSERT...SELECT, same shape as 0012's own
+// rebuild) unconditionally re-establishes the FULL target `kind` CHECK regardless of whether an
+// earlier rebuild in the chain (like 0012) actually ran for real -- so once 0013 exists, a
+// 0012-specific collision test can no longer fail even with the schema fingerprint working
+// correctly. sideEffectOperationsSchemaPresent (src/runtime-context.ts) now also checks for 0013's
+// 'abandoned' status, keeping this detector accurate for the actual latest rebuild.
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
@@ -48,14 +58,15 @@ describe('checkBookkitMigrationsApplied schema fingerprint against real D1', () 
     await expect(checkBookkitMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
   });
 
-  it('fails distinctly when a real schema stopped before 0012 has a colliding "0012" ledger row', async () => {
+  it('fails distinctly when a real schema stopped before 0013 has a colliding "0013" ledger row', async () => {
     await resetSchema();
-    const before0012 = bindings.TEST_MIGRATIONS.filter((migration) => migration.name !== '0012_calendar_delete_outbox.sql');
-    await applyD1Migrations(db, before0012, 'd1_migrations');
-    // Simulates a consumer's own migration file reusing bookkit's 0012 filename: the ledger row
-    // exists, but bookkit's widened `kind` CHECK (admitting 'calendar_delete') never ran, so a
-    // fingerprint that only checked 0008-0011 columns (already present here) would wrongly pass.
-    await db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').bind('0012_calendar_delete_outbox.sql').run();
+    const before0013 = bindings.TEST_MIGRATIONS.filter((migration) => migration.name !== '0013_side_effect_operations_abandoned.sql');
+    await applyD1Migrations(db, before0013, 'd1_migrations');
+    // Simulates a consumer's own migration file reusing bookkit's 0013 filename: the ledger row
+    // exists, but bookkit's widened `status` CHECK (admitting 'abandoned') never ran, so a
+    // fingerprint that only checked for 'calendar_delete' (already present here, from the real
+    // 0012 that DID run) would wrongly pass.
+    await db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').bind('0013_side_effect_operations_abandoned.sql').run();
 
     await expect(checkBookkitMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
     await expect(checkBookkitMigrationsApplied(db)).rejects.not.toThrow(/is missing/);

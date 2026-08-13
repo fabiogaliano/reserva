@@ -26,7 +26,7 @@ describe('Cloudflare runtime helpers', () => {
           if (query.includes('side_effect_operations')) {
             return {
               results: [
-                { type: 'table', name: 'side_effect_operations', sql: "CHECK (kind IN ('calendar_create', 'calendar_delete', 'email_confirmation', 'oversell'))" },
+                { type: 'table', name: 'side_effect_operations', sql: "CHECK (kind IN ('calendar_create', 'calendar_delete', 'email_confirmation', 'oversell')), status TEXT CHECK (status IN ('pending','in_flight','succeeded','failed','abandoned'))" },
                 { type: 'index', name: 'idx_side_effect_operations_pending', sql: null },
               ],
             };

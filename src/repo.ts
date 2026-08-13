@@ -151,7 +151,11 @@ export type SideEffectOperationKind = ConfirmationSideEffectKind | MutationSideE
 // (resolveConfirmationTourflowOperation below) is the only thing allowed to flip tourflow_synced.
 export const CONFIRMATION_TOURFLOW_KIND = 'tourflow:booking.confirmed' as const satisfies MutationSideEffectOperationKind;
 export type ConfirmationTourflowKind = typeof CONFIRMATION_TOURFLOW_KIND;
-export type SideEffectOperationStatus = 'pending' | 'in_flight' | 'succeeded' | 'failed';
+// Plan 016 (design decision 3/4): 'abandoned' is a terminal status distinct from 'failed' — a
+// permanent provider failure (see src/provider-failure.ts), or a retryable failure on the tenth
+// attempt, resolves here instead of 'failed' so the claim predicates below stop matching it
+// forever. Migration 0013 admits it in the `status` CHECK.
+export type SideEffectOperationStatus = 'pending' | 'in_flight' | 'succeeded' | 'failed' | 'abandoned';
 
 // BK-SIDE-001 (handoff 13) HIGH-2: a claimant that dies between claiming (status -> in_flight)
 // and resolving would otherwise leave the row stuck forever — claiming only matches
@@ -161,6 +165,14 @@ export type SideEffectOperationStatus = 'pending' | 'in_flight' | 'succeeded' | 
 // acquireConfirmationLease/renewConfirmationLease) — both are "how long before we assume the
 // original claimant is dead" judgment calls with no reason to differ.
 export const MUTATION_SIDE_EFFECT_LEASE_MS = 5 * 60_000;
+
+// Plan 016 (design decision 4): "attempt count means executions started, so 'attempt 10' is
+// unambiguous" — both claim predicates below reject a row already at this count (belt-and-braces;
+// resolveSideEffectOperation/resolveMutationSideEffectOperation/resolveConfirmationTourflowOperation
+// already always resolve a retryable failure's 10th attempt as 'abandoned', so a claimable row
+// should never actually reach this count, but the claim itself enforces it too rather than relying
+// solely on the resolve side).
+export const SIDE_EFFECT_MAX_ATTEMPTS = 10;
 
 export interface CancellationTransitionInput {
   expectedStatusIn: BookingStatus[];
@@ -315,7 +327,10 @@ export interface BookingRepository {
     bookingId: string;
     kind: ConfirmationSideEffectKind;
     leaseToken: string;
-    status: 'succeeded' | 'failed';
+    // Plan 016 (design decision 4): 'abandoned' for a permanent failure, or a retryable failure's
+    // 10th attempt — see src/confirmation.ts's classifyAttemptOutcome, the only caller that ever
+    // picks it.
+    status: 'succeeded' | 'failed' | 'abandoned';
     providerResultId?: string | null;
     error?: string | null;
     resolvedAt: string;
@@ -336,7 +351,8 @@ export interface BookingRepository {
   resolveMutationSideEffectOperation(input: {
     bookingId: string;
     kind: MutationSideEffectOperationKind;
-    status: 'succeeded' | 'failed';
+    // Plan 016 (design decision 4): see the identical comment on resolveSideEffectOperation above.
+    status: 'succeeded' | 'failed' | 'abandoned';
     providerResultId?: string | null;
     error?: string | null;
     resolvedAt: string;
@@ -353,7 +369,12 @@ export interface BookingRepository {
   // succeeded-row/false-flag split can never cause either a duplicate send or endless polling.
   resolveConfirmationTourflowOperation(input: {
     bookingId: string;
-    status: 'succeeded' | 'failed';
+    // Plan 016 (design decision 4/6): 'abandoned' never sets tourflow_synced (only 'succeeded'
+    // does, unchanged) — so a permanently-failed Tourflow push leaves the flag false forever,
+    // exactly like a still-pending row, but the abandoned row's own status is what stops
+    // handleStatus/runOwedMutationSideEffects from ever reattempting it (see src/handlers/
+    // index.ts's needsFulfillment and src/confirmation.ts's claim predicates).
+    status: 'succeeded' | 'failed' | 'abandoned';
     error?: string | null;
     resolvedAt: string;
     claimedAt: string;
@@ -1336,15 +1357,18 @@ export function createBookingRepository(
       ).bind(bookingId).all<SideEffectOperationRow>();
       return result.results.map(mapSideEffectOperation);
     },
+    // Plan 016 (design decision 4): 'abandoned' is terminal — excluded from the same status check
+    // that already excludes 'succeeded' — and attempt_count < SIDE_EFFECT_MAX_ATTEMPTS blocks a
+    // claim that would otherwise start an 11th attempt (see the interface doc comment above).
     async claimSideEffectOperation(bookingId, kind, leaseToken, attemptedAt) {
       const result = await db.prepare(
         `UPDATE side_effect_operations
          SET status = 'in_flight', attempt_count = attempt_count + 1, attempted_at = ?, error = NULL, updated_at = ?
-         WHERE booking_id = ? AND kind = ? AND status != 'succeeded'
+         WHERE booking_id = ? AND kind = ? AND status NOT IN ('succeeded', 'abandoned') AND attempt_count < ?
            AND EXISTS (
              SELECT 1 FROM bookings WHERE id = ? AND confirmation_lease_token = ?
            )`,
-      ).bind(attemptedAt, attemptedAt, bookingId, kind, bookingId, leaseToken).run();
+      ).bind(attemptedAt, attemptedAt, bookingId, kind, SIDE_EFFECT_MAX_ATTEMPTS, bookingId, leaseToken).run();
       return result.meta.changes > 0;
     },
     // Plan 012 (design decision 5): calendar_create is always exactly one row, so calendar_synced
@@ -1360,7 +1384,7 @@ export function createBookingRepository(
       const rowUpdate = db.prepare(
         `UPDATE side_effect_operations
          SET status = ?, provider_result_id = ?, error = ?, resolved_at = ?, updated_at = ?
-         WHERE booking_id = ? AND kind = ? AND status != 'succeeded'
+         WHERE booking_id = ? AND kind = ? AND status NOT IN ('succeeded', 'abandoned')
            AND EXISTS (
              SELECT 1 FROM bookings WHERE id = ? AND confirmation_lease_token = ?
            )`,
@@ -1395,14 +1419,18 @@ export function createBookingRepository(
     // methods for why they're ungated and how attempted_at doubles as a lease token. staleBefore
     // is computed from the CALLER's own attemptedAt (not a fresh clock read) so this stays a pure
     // function of its inputs, consistent with every other repo method here.
+    //
+    // Plan 016 (design decision 4): 'abandoned' is already outside the pending/failed/stale-
+    // in_flight set above, so it's never matched here without any change — attempt_count <
+    // SIDE_EFFECT_MAX_ATTEMPTS is the explicit belt-and-braces the interface doc comment describes.
     async claimMutationSideEffectOperation(bookingId, kind, attemptedAt) {
       const staleBefore = new Date(Date.parse(attemptedAt) - MUTATION_SIDE_EFFECT_LEASE_MS).toISOString();
       const result = await db.prepare(
         `UPDATE side_effect_operations
          SET status = 'in_flight', attempt_count = attempt_count + 1, attempted_at = ?, error = NULL, updated_at = ?
-         WHERE booking_id = ? AND kind = ?
+         WHERE booking_id = ? AND kind = ? AND attempt_count < ?
            AND (status IN ('pending', 'failed') OR (status = 'in_flight' AND attempted_at < ?))`,
-      ).bind(attemptedAt, attemptedAt, bookingId, kind, staleBefore).run();
+      ).bind(attemptedAt, attemptedAt, bookingId, kind, SIDE_EFFECT_MAX_ATTEMPTS, staleBefore).run();
       return result.meta.changes > 0;
     },
     async resolveMutationSideEffectOperation(input) {

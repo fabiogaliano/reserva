@@ -16,7 +16,9 @@ const payments = {
 // Duplicated here rather than imported since these are the fake's own PRAGMA/sqlite_master
 // response shapes, not the implementation under test.
 const FINGERPRINT_BOOKINGS_COLUMNS = ['occupancy_units', 'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at', 'reschedule_transition_version'];
-const FINGERPRINT_SIDE_EFFECT_SQL = "CREATE TABLE side_effect_operations (kind TEXT CHECK (kind IN ('calendar_create', 'calendar_delete', 'email_confirmation', 'oversell')))";
+// Plan 016: 'abandoned' is 0013's addition to the `status` CHECK, mirroring 'calendar_delete' for
+// 0012 above — both need to be present for a "fully migrated" fake fixture (fingerprintOk: true).
+const FINGERPRINT_SIDE_EFFECT_SQL = "CREATE TABLE side_effect_operations (kind TEXT CHECK (kind IN ('calendar_create', 'calendar_delete', 'email_confirmation', 'oversell')), status TEXT CHECK (status IN ('pending','in_flight','succeeded','failed','abandoned')))";
 
 // A fake standing in for the D1 surface the check uses: `db.prepare(sql).all()` returning
 // `{ results }`, matching the real D1Database shape closely enough for this logic. It distinguishes
@@ -143,7 +145,7 @@ describe('migration check memoization', () => {
           if (query.includes('side_effect_operations')) {
             return {
               results: [
-                { type: 'table', name: 'side_effect_operations', sql: "CHECK (kind IN ('calendar_create', 'calendar_delete', 'email_confirmation', 'oversell'))" },
+                { type: 'table', name: 'side_effect_operations', sql: "CHECK (kind IN ('calendar_create', 'calendar_delete', 'email_confirmation', 'oversell')), status TEXT CHECK (status IN ('pending','in_flight','succeeded','failed','abandoned'))" },
                 { type: 'index', name: 'idx_side_effect_operations_pending', sql: null },
               ],
             };

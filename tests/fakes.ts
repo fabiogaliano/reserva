@@ -15,6 +15,7 @@ import {
   DuplicatePaymentIntentError,
   HoldLimitExceededError,
   MUTATION_SIDE_EFFECT_LEASE_MS,
+  SIDE_EFFECT_MAX_ATTEMPTS,
   type BookingRepository,
   type ConfirmationEmailKind,
   type MutationSideEffectOperationKind,
@@ -488,10 +489,14 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     recordMutationSideEffectOperations: async (bookingId, kinds, now) => {
       recordMutationKinds(bookingId, kinds, now);
     },
+    // Plan 016 (design decision 4): 'abandoned' is terminal (never reclaimed, mirroring
+    // src/repo.ts's status NOT IN ('succeeded', 'abandoned')), and attempt_count is capped the
+    // same way src/repo.ts's claim SQL binds SIDE_EFFECT_MAX_ATTEMPTS.
     claimSideEffectOperation: async (bookingId, kind, leaseToken, attemptedAt) => {
       const key = sideEffectKey(bookingId, kind);
       const current = sideEffectOperations.get(key);
-      if (!current || current.status === 'succeeded' || leases.get(bookingId)?.token !== leaseToken) return false;
+      if (!current || current.status === 'succeeded' || current.status === 'abandoned'
+        || current.attemptCount >= SIDE_EFFECT_MAX_ATTEMPTS || leases.get(bookingId)?.token !== leaseToken) return false;
       sideEffectOperations.set(key, {
         ...current, status: 'in_flight', attemptCount: current.attemptCount + 1,
         attemptedAt, error: null, updatedAt: attemptedAt,
@@ -507,7 +512,8 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       const key = sideEffectKey(input.bookingId, input.kind);
       const operation = sideEffectOperations.get(key);
       const current = rows.get(input.bookingId);
-      if (!operation || !current || operation.status === 'succeeded' || leases.get(input.bookingId)?.token !== input.leaseToken) return false;
+      if (!operation || !current || operation.status === 'succeeded' || operation.status === 'abandoned'
+        || leases.get(input.bookingId)?.token !== input.leaseToken) return false;
       sideEffectOperations.set(key, {
         ...operation, status: input.status, providerResultId: input.providerResultId ?? null,
         error: input.error ?? null, resolvedAt: input.resolvedAt, updatedAt: input.resolvedAt,
@@ -527,6 +533,9 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       rows.set(input.bookingId, { ...current, emailSynced, updatedAt: input.resolvedAt });
       return true;
     },
+    // Plan 016 (design decision 4): 'abandoned' already falls outside pending/failed/reclaimable-
+    // in_flight above, unchanged — attempt_count >= SIDE_EFFECT_MAX_ATTEMPTS is the explicit
+    // belt-and-braces guard, mirroring src/repo.ts's claim SQL.
     claimMutationSideEffectOperation: async (bookingId, kind, attemptedAt) => {
       const key = sideEffectKey(bookingId, kind);
       const current = sideEffectOperations.get(key);
@@ -534,7 +543,8 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       const reclaimable = current?.status === 'in_flight'
         && current.attemptedAt !== null
         && current.attemptedAt < staleBefore;
-      if (!current || (current.status !== 'pending' && current.status !== 'failed' && !reclaimable)) return false;
+      if (!current || current.attemptCount >= SIDE_EFFECT_MAX_ATTEMPTS
+        || (current.status !== 'pending' && current.status !== 'failed' && !reclaimable)) return false;
       sideEffectOperations.set(key, {
         ...current, status: 'in_flight', attemptCount: current.attemptCount + 1,
         attemptedAt, error: null, updatedAt: attemptedAt,

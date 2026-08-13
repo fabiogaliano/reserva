@@ -1,6 +1,7 @@
 import type { Booking } from '../core/booking';
 import type { ClientConfig } from '../core/config';
 import type { BookingEvent, OpsSink } from '../core/events';
+import { ProviderFailure } from '../provider-failure';
 
 export const TOURFLOW_SOURCE = 'website' as const;
 export const TOURFLOW_AUTHORIZATION_HEADER = 'Authorization';
@@ -9,13 +10,15 @@ export const TOURFLOW_AUTHORIZATION_HEADER = 'Authorization';
 // the realistic payloads) so an Error message — which a naive `String(error)` catch could
 // otherwise dump verbatim into logs — is bounded, and expose `status` so a caller can log it as a
 // structured field instead of parsing the message.
+//
+// Plan 016 (design decision 2): extends the internal ProviderFailure base so the outbox attempt
+// cap (src/confirmation.ts) can classify a Tourflow failure's retryability from `.status` — this
+// class's own name/`.status`/`instanceof` shape is unchanged for existing consumers.
 const MAX_ERROR_BODY_CHARS = 200;
-export class TourflowResponseError extends Error {
-  readonly status: number;
+export class TourflowResponseError extends ProviderFailure {
   constructor(status: number, body: string) {
-    super(`Tourflow webhook request failed (${status}): ${body.slice(0, MAX_ERROR_BODY_CHARS)}`);
+    super({ status, message: `Tourflow webhook request failed (${status}): ${body.slice(0, MAX_ERROR_BODY_CHARS)}` });
     this.name = 'TourflowResponseError';
-    this.status = status;
   }
 }
 export interface TourflowReservation {

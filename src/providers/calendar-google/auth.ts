@@ -1,3 +1,5 @@
+import { ProviderFailure } from '../../provider-failure';
+
 export const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 export const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar';
 export const GOOGLE_JWT_ALGORITHM = 'RSASSA-PKCS1-v1_5';
@@ -157,9 +159,13 @@ function cacheKeyFor(options: GoogleAuthOptions, values: ReturnType<typeof crede
   return options.cacheKey ?? `${tokenUrl}|${scope}|${values.serviceAccountEmail}|${values.impersonateEmail}|${values.serviceAccountPrivateKey}`;
 }
 
+// Plan 016 (design decision 2): a structured ProviderFailure (status in hand, from the response
+// itself) rather than a plain Error whose status only ever lived in the message text — a bad
+// service-account credential (401) must classify as permanent, not retry forever through the
+// outbox attempt cap (src/confirmation.ts).
 async function responseError(response: Response, operation: string): Promise<Error> {
   const body = await response.text();
-  return new Error(`${operation} failed (${response.status})${body ? `: ${body}` : ''}`);
+  return new ProviderFailure({ status: response.status, message: `${operation} failed (${response.status})${body ? `: ${body}` : ''}` });
 }
 
 export function clearGoogleTokenCache(): void {

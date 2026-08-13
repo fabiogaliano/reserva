@@ -1,6 +1,7 @@
 import type { Booking } from '../core/booking';
 import type { ClientConfig } from '../core/config';
 import type { EmailBookingEvent, EmailProvider, EmailRecipientRole } from '../core/events';
+import { ProviderFailure } from '../provider-failure';
 import type { BookkitResolvedRouteConfig } from '../routes-manifest';
 
 export const BREVO_TRANSACTIONAL_EMAIL_URL = 'https://api.brevo.com/v3/smtp/email';
@@ -11,13 +12,15 @@ export type BrevoRecipient = EmailRecipientRole;
 // operator-visible detail rides — cap what ever reaches an Error message so a caller that logs it
 // (or an upstream catch that does `String(error)`) can't leak an unbounded body into application
 // logs, and expose `status` as a plain property so a caller can log it structurally instead.
+//
+// Plan 016 (design decision 2): extends the internal ProviderFailure base so the outbox attempt
+// cap (src/confirmation.ts) can classify a Brevo failure's retryability from `.status` — this
+// class's own name/`.status`/`instanceof` shape is unchanged for existing consumers.
 const MAX_ERROR_BODY_CHARS = 200;
-export class BrevoResponseError extends Error {
-  readonly status: number;
+export class BrevoResponseError extends ProviderFailure {
   constructor(status: number, body: string) {
-    super(`Brevo email request failed (${status}): ${body.slice(0, MAX_ERROR_BODY_CHARS)}`);
+    super({ status, message: `Brevo email request failed (${status}): ${body.slice(0, MAX_ERROR_BODY_CHARS)}` });
     this.name = 'BrevoResponseError';
-    this.status = status;
   }
 }
 

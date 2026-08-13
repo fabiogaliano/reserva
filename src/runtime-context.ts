@@ -162,10 +162,14 @@ function migrationsErrorMessage(missing: readonly string[]): string {
 // happens to reuse one of bookkit's filenames without ever running bookkit's SQL — d1_migrations
 // only records names, never checksums or content. This is cheap, read-only detection (not a fix:
 // a fully namespaced ledger is deferred, see docs/plans/008), spanning the migrations that
-// introduced bookkit's current shape (0008-0012): required `bookings` columns, the
-// `side_effect_operations` table/index, and its `kind` CHECK actually admitting 0012's
-// `calendar_delete` (checked via the stored CREATE TABLE text, not just the table's existence —
-// a schema stopped at 0011 has the same table/index names but a narrower CHECK).
+// introduced bookkit's current shape (0008-0013): required `bookings` columns, the
+// `side_effect_operations` table/index, and its `kind`/`status` CHECKs actually admitting 0012's
+// `calendar_delete` and 0013's `abandoned` (checked via the stored CREATE TABLE text, not just the
+// table's existence — a schema stopped at 0011/0012 has the same table/index names but a narrower
+// CHECK). Plan 016: 0013 is itself a full-table rebuild, so it unconditionally re-establishes the
+// FULL `kind` CHECK (including 'calendar_delete') regardless of whether the real 0012 ever ran —
+// checking 'abandoned' too keeps this detector accurate for a collision on the CURRENT latest
+// rebuild, the same way checking 'calendar_delete' alone did for 0012 before 0013 existed.
 const REQUIRED_BOOKINGS_COLUMNS = [
   'occupancy_units', // 0008
   'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at', // 0009
@@ -184,7 +188,7 @@ async function sideEffectOperationsSchemaPresent(db: MigrationsQueryable): Promi
     .all<{ type: string; name: string; sql: string | null }>();
   const table = result.results.find((row) => row.type === 'table' && row.name === 'side_effect_operations');
   const index = result.results.find((row) => row.type === 'index' && row.name === 'idx_side_effect_operations_pending');
-  return Boolean(index) && Boolean(table?.sql?.includes('calendar_delete'));
+  return Boolean(index) && Boolean(table?.sql?.includes('calendar_delete')) && Boolean(table?.sql?.includes('abandoned'));
 }
 
 async function bookkitSchemaFingerprintPresent(db: MigrationsQueryable): Promise<boolean> {

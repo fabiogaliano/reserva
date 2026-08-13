@@ -103,6 +103,25 @@ describe('email providers', () => {
     expect(caught.status).toBe(503);
     expect(caught.message).toContain('x'.repeat(200));
     expect(caught.message).not.toContain('x'.repeat(201));
+    // Plan 016 (design decision 2): a 5xx is transient (retryable); the outbox attempt cap
+    // (src/confirmation.ts) reads this off any thrown BrevoResponseError without parsing status
+    // out of the message.
+    expect(caught.retryable).toBe(true);
+  });
+
+  it('classifies a 4xx Brevo rejection as permanent (not retryable)', async () => {
+    const provider = brevoEmail({ apiKey: 'key', fetch: async () => new Response('bad api key', { status: 401 }) });
+    let caught: unknown;
+    try {
+      await provider.sendToRecipient('customer', 'booking.confirmed', booking(), config);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BrevoResponseError);
+    if (!(caught instanceof BrevoResponseError)) throw new Error('Brevo request unexpectedly succeeded');
+    expect(caught.status).toBe(401);
+    expect(caught.retryable).toBe(false);
   });
 
   // BK-SEC-002 (patch-11-r1 LOW 1): a `nohash:`-prefixed token (src/repo.ts placeholderToken) is

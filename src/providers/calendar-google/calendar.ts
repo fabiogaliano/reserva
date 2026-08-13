@@ -2,6 +2,7 @@ import type { Booking } from '../../core/booking';
 import type { ClientConfig } from '../../core/config';
 import type { CalendarProvider } from '../../core/events';
 import type { CalEvent } from '../../core/occupancy';
+import { ProviderFailure } from '../../provider-failure';
 import { GoogleServiceAccountAuth, type GoogleAuthOptions } from './auth';
 
 export interface GoogleCalendarAuth {
@@ -86,7 +87,9 @@ export class GoogleCalendarProvider implements CalendarProvider {
     headers.set('accept', 'application/json');
     headers.set('authorization', `Bearer ${await this.auth.getAccessToken()}`);
     const response = await this.request(this.url(path), { ...init, headers });
-    if (!response.ok) throw new Error(`Google Calendar request failed (${response.status})`);
+    // Plan 016 (design decision 2): a structured ProviderFailure (status already in hand) so the
+    // outbox attempt cap (src/confirmation.ts) can classify this without parsing message text.
+    if (!response.ok) throw new ProviderFailure({ status: response.status, message: `Google Calendar request failed (${response.status})` });
     return response;
   }
   async listEvents(fromUtc: string, toUtc: string): Promise<CalEvent[]> {
@@ -107,7 +110,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
         }
         await retryDelay();
       }
-      if (!response?.ok) throw new Error(`Google Calendar request failed (${response?.status ?? 'unknown'})`);
+      if (!response?.ok) throw new ProviderFailure({ status: response?.status, message: `Google Calendar request failed (${response?.status ?? 'unknown'})` });
       pages += 1;
       const body = await response.json() as { items?: GoogleEvent[]; nextPageToken?: string };
       for (const event of body.items ?? []) {
@@ -133,7 +136,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
       body: JSON.stringify(eventPayload(booking, config, config.business.timezone || this.timezone)),
     });
     if (response.status === 409) return eventId;
-    if (!response.ok) throw new Error(`Google Calendar request failed (${response.status})`);
+    if (!response.ok) throw new ProviderFailure({ status: response.status, message: `Google Calendar request failed (${response.status})` });
     const body = await response.json() as GoogleEvent;
     if (!body.id) throw new Error('Google Calendar create response omitted event id');
     return body.id;
@@ -147,7 +150,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
       headers: { accept: 'application/json', authorization: `Bearer ${await this.auth.getAccessToken()}` },
     });
     if (!response.ok && response.status !== 404 && response.status !== 410) {
-      throw new Error(`Google Calendar request failed (${response.status})`);
+      throw new ProviderFailure({ status: response.status, message: `Google Calendar request failed (${response.status})` });
     }
   }
 }

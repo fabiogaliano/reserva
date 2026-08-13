@@ -33,6 +33,7 @@ import {
   confirmBookingFromPayment,
   dispatchMutation,
   dispatchNonCritical,
+  isActionableSideEffectStatus,
   isConfirmationSideEffectOperation,
   mutationSideEffectKinds,
   runOwedMutationSideEffects,
@@ -40,7 +41,7 @@ import {
 import type { BookkitContext } from '../context';
 import { getSecret, nowIso } from '../context';
 import { isManageableToken } from '../providers/brevo';
-import { HoldLimitExceededError, type SettingsBatchOperation } from '../repo';
+import { CONFIRMATION_TOURFLOW_KIND, HoldLimitExceededError, type SettingsBatchOperation } from '../repo';
 import { cssAssetHref, jsAssetHref } from '../ui/asset-hrefs';
 import { formatDateTime, formatDayDate, formatPrice } from '../ui/format';
 import { factList, pageShell, statusBadge, statusToneOf, themeToggle } from '../ui/layout';
@@ -650,16 +651,26 @@ export function handleStatus(request: Request, context: BookkitContext): Promise
           ?? current;
       }
     } else if (current.status === 'confirmed') {
-      const confirmationOperations = (await context.repo.listSideEffectOperations(current.id))
-        .filter(isConfirmationSideEffectOperation);
+      // Unfiltered (not just isConfirmationSideEffectOperation) so the Tourflow row's status is
+      // available below too — that helper deliberately excludes CONFIRMATION_TOURFLOW_KIND (see
+      // its doc comment in src/confirmation.ts).
+      const allOperations = await context.repo.listSideEffectOperations(current.id);
+      const confirmationOperations = allOperations.filter(isConfirmationSideEffectOperation);
+      const tourflowOperation = allOperations.find((operation) => operation.kind === CONFIRMATION_TOURFLOW_KIND);
       // Plan 011 (design decision 5): also runs the confirmation-lease-guarded repair path when an
       // ops provider is configured and this booking still owes a Tourflow confirmation — the only
       // way a legacy booking with no row yet (ops configured after it was originally confirmed)
       // gets one lazily created (ensureConfirmationSideEffectOperations). No provider, or already
       // synced, adds nothing here; runOwedMutationSideEffects below is what actually delivers it.
-      const needsFulfillment = confirmationOperations.some((operation) => operation.status !== 'succeeded')
+      //
+      // Plan 016 (design decision 6): isActionableSideEffectStatus excludes 'abandoned' (not just
+      // 'succeeded') from the first clause, and the third clause also stops once the Tourflow row
+      // is abandoned — otherwise a permanently-failed push would keep tripping needsFulfillment
+      // (and re-entering confirmBookingFromPayment) on every future request forever, even though
+      // the claim predicate itself would just no-op every time.
+      const needsFulfillment = confirmationOperations.some((operation) => isActionableSideEffectStatus(operation.status))
         || (confirmationOperations.length === 0 && (!current.calendarSynced || !current.emailSynced))
-        || (Boolean(context.providers.ops) && !current.tourflowSynced);
+        || (Boolean(context.providers.ops) && !current.tourflowSynced && tourflowOperation?.status !== 'abandoned');
       if (needsFulfillment) {
         try {
           current = await confirmBookingFromPayment(context, current);

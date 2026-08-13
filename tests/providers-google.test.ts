@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { booking, config } from './fixtures';
+import { ProviderFailure } from '../src/provider-failure';
 import { clearGoogleTokenCache, GoogleServiceAccountAuth } from '../src/providers/calendar-google/auth';
 import { GoogleCalendarProvider, mapGoogleCalendarEvent } from '../src/providers/calendar-google/calendar';
 
@@ -87,6 +88,55 @@ describe('Google Calendar provider', () => {
 
     await expect(provider.createEvent(booking({ id: '0a1b2c3d-4e5f-6789-a0b1-c2d3e4f5a6b7' }), config))
       .resolves.toBe('0a1b2c3d4e5f6789a0b1c2d3e4f5a6b7');
+  });
+
+  it('carries a structured status/retryable classification on a failed Calendar request (plan 016)', async () => {
+    const auth = { getAccessToken: async () => 'token' } as GoogleServiceAccountAuth;
+    let caught: unknown;
+    const requestServerError = async (): Promise<Response> => new Response('', { status: 503 });
+    const providerRetryable = new GoogleCalendarProvider({ calendarId: 'primary@example.test', auth, fetch: requestServerError });
+    try {
+      await providerRetryable.deleteEvent('missing-not-404-or-410');
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(ProviderFailure);
+    if (!(caught instanceof ProviderFailure)) throw new Error('Google Calendar request unexpectedly succeeded');
+    expect(caught.status).toBe(503);
+    expect(caught.retryable).toBe(true);
+
+    const requestForbidden = async (): Promise<Response> => new Response('', { status: 403 });
+    const providerPermanent = new GoogleCalendarProvider({ calendarId: 'primary@example.test', auth, fetch: requestForbidden });
+    let caughtPermanent: unknown;
+    try {
+      await providerPermanent.createEvent(booking(), config);
+    } catch (error) {
+      caughtPermanent = error;
+    }
+    expect(caughtPermanent).toBeInstanceOf(ProviderFailure);
+    if (!(caughtPermanent instanceof ProviderFailure)) throw new Error('Google Calendar request unexpectedly succeeded');
+    expect(caughtPermanent.status).toBe(403);
+    expect(caughtPermanent.retryable).toBe(false);
+  });
+
+  it('carries a structured status/retryable classification on a failed Google token request (plan 016)', async () => {
+    clearGoogleTokenCache();
+    const request = vi.fn<typeof fetch>(async () => new Response('invalid_grant', { status: 401 }));
+    const auth = new GoogleServiceAccountAuth({
+      serviceAccountEmail: 'sa@example.test', privateKey: fakePem, impersonateEmail: 'owner@example.test',
+      fetch: request, crypto: fakeCrypto, now: () => Date.parse('2026-07-21T12:00:00Z'), cacheKey: 'plan-016-auth-failure',
+    });
+    let caught: unknown;
+    try {
+      await auth.getAccessToken();
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(ProviderFailure);
+    if (!(caught instanceof ProviderFailure)) throw new Error('Google token request unexpectedly succeeded');
+    expect(caught.status).toBe(401);
+    expect(caught.retryable).toBe(false);
+    expect(caught.message).toContain('invalid_grant');
   });
 
   it('follows Calendar pagination tokens', async () => {
