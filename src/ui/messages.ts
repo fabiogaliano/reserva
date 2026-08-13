@@ -53,6 +53,10 @@ export const defaultMessages = {
   'widget.pickupDefaultHint': 'Meet us at the tour start point',
   'widget.pickupCustom': 'Custom pickup',
   'widget.pickupCustomHint': 'We pick you up at your address',
+  // Plan 017 (design decision 5): legend for the meetingPointId radio group, shown only when a
+  // tour declares 2+ points — labels themselves are config-provided plain strings, like
+  // meetingPoint.label today.
+  'widget.meetingPoint': 'Choose a meeting point',
   'widget.start': 'Start',
   'widget.startPlaceholder': 'Select a start time',
   'widget.submit': 'Continue to payment',

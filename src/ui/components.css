@@ -79,6 +79,11 @@
 .bk-embed a { color: var(--bk-accent); }
 
 :is(.bk-widget, .bk-embed) :is(.bkw-field, .bke-field) { display: block; margin: 0 0 1rem; border: 0; padding: 0; min-inline-size: 0; }
+/* Same trap as .bk-widget[hidden] above and .bkw-error[hidden] below: the unconditional
+   display: block just above otherwise wins the cascade over [hidden] for any bkw-field fieldset
+   that toggles it — the time-slots wrapper, and (Plan 017 design decision 5) the meeting-point
+   group hidden while pickupType is 'custom'. */
+.bk-widget .bkw-field[hidden] { display: none; }
 :is(.bk-widget, .bk-embed) :is(.bkw-label, .bke-label) { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.35rem; }
 
 /* Numbered booking steps (1 party → 2 date → 3 time → 4 pickup), pure CSS counters so hidden
