@@ -1,13 +1,95 @@
 import { describe, expect, it } from 'vitest';
-import { peopleValuesForTour, validateConfig } from '../src/core/config';
+import type { TourConfig } from '../src/core/config';
+import { meetingPointForBooking, peopleValuesForTour, resolveMeetingPoint, validateConfig } from '../src/core/config';
 import { priceFor } from '../src/core/pricing';
 import { config, tour } from './fixtures';
 
 describe('core config and pricing validation', () => {
   it('accepts a valid config and infers people ranges from pricing breakpoints', () => {
-    expect(validateConfig(config)).toEqual(config);
+    // Plan 017 (design decision 1): validateConfig normalizes the meetingPoint shorthand into a
+    // canonical meetingPoints array (and clears the shorthand — see the idempotency test below),
+    // so the validated config is no longer a byte-for-byte copy of the input fixture — the
+    // fixture's shorthand is still what the config declares, though.
+    const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = tour;
+    expect(validateConfig(config)).toEqual({
+      ...config,
+      tours: {
+        ...config.tours,
+        vintage: { ...vintageWithoutShorthand, meetingPoints: [{ id: 'default', ...tour.meetingPoint }] },
+      },
+    });
     expect(peopleValuesForTour(tour)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     expect(priceFor(tour, 5, 'custom')).toBe(20000);
+  });
+
+  it('normalizes the meetingPoint shorthand to a canonical meetingPoints array and clears the shorthand', () => {
+    const validated = validateConfig(config);
+    expect(validated.tours.vintage?.meetingPoints).toEqual([
+      { id: 'default', label: tour.meetingPoint!.label, mapsUrl: tour.meetingPoint!.mapsUrl },
+    ]);
+    expect(validated.tours.vintage?.meetingPoint).toBeUndefined();
+  });
+
+  it('stays idempotent when re-validated (defineBookkitRuntime/defineCloudflareBookkitRuntime validate once at definition and createBookkitContext validates again on every request)', () => {
+    const validated = validateConfig(config);
+    expect(() => validateConfig(validated)).not.toThrow();
+    expect(validateConfig(validated)).toEqual(validated);
+  });
+
+  it('rejects a tour that declares both meetingPoint and meetingPoints', () => {
+    const invalid = {
+      ...config,
+      tours: {
+        ...config.tours,
+        vintage: {
+          ...tour,
+          meetingPoints: [{ id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' }],
+        },
+      },
+    };
+    expect(() => validateConfig(invalid)).toThrow(/declare either meetingPoint or meetingPoints, not both/);
+  });
+
+  it('rejects a tour that declares neither meetingPoint nor meetingPoints', () => {
+    const { meetingPoint: _meetingPoint, ...tourWithoutMeetingPoint } = tour;
+    const invalid = {
+      ...config,
+      tours: { ...config.tours, vintage: tourWithoutMeetingPoint },
+    };
+    expect(() => validateConfig(invalid)).toThrow(/must declare either meetingPoint or meetingPoints/);
+  });
+
+  it('rejects duplicate meeting point ids within a tour', () => {
+    const { meetingPoint: _meetingPoint, ...tourWithoutMeetingPoint } = tour;
+    const invalid = {
+      ...config,
+      tours: {
+        ...config.tours,
+        vintage: {
+          ...tourWithoutMeetingPoint,
+          meetingPoints: [
+            { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
+            { id: 'square', label: 'The Other Square', mapsUrl: 'https://maps.google.com/?q=other' },
+          ],
+        },
+      },
+    };
+    expect(() => validateConfig(invalid)).toThrow(/duplicate meeting point id \(square\)/);
+  });
+
+  it('rejects an empty meeting point id', () => {
+    const { meetingPoint: _meetingPoint, ...tourWithoutMeetingPoint } = tour;
+    const invalid = {
+      ...config,
+      tours: {
+        ...config.tours,
+        vintage: {
+          ...tourWithoutMeetingPoint,
+          meetingPoints: [{ id: '', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' }],
+        },
+      },
+    };
+    expect(() => validateConfig(invalid)).toThrow();
   });
 
   it('canonicalizes out-of-order pricing tiers for each pickup type', () => {
@@ -144,5 +226,76 @@ describe('core config and pricing validation', () => {
       },
     };
     expect(() => validateConfig(wrapped)).not.toThrow();
+  });
+});
+
+describe('resolveMeetingPoint', () => {
+  const points = [
+    { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
+    { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
+  ];
+  const { meetingPoint: _meetingPoint, ...tourBase } = tour;
+  const multiPointTour: TourConfig = { ...tourBase, meetingPoints: points };
+
+  it('returns the point matching the given id', () => {
+    expect(resolveMeetingPoint(multiPointTour, 'station')).toEqual(points[1]);
+  });
+
+  it('falls back to the first declared point for an unknown id', () => {
+    expect(resolveMeetingPoint(multiPointTour, 'unknown')).toEqual(points[0]);
+  });
+
+  it('falls back to the first declared point when no id is given', () => {
+    expect(resolveMeetingPoint(multiPointTour)).toEqual(points[0]);
+  });
+
+  // Plan 017 STOP condition 2: examples/smoke-site imports config directly for the widget,
+  // never through validateConfig — resolveMeetingPoint must still work off the raw shorthand.
+  it('derives the single point from the meetingPoint shorthand on a raw, un-normalized tour', () => {
+    const expected = { id: 'default', ...tour.meetingPoint };
+    expect(resolveMeetingPoint(tour)).toEqual(expected);
+    expect(resolveMeetingPoint(tour, 'anything')).toEqual(expected);
+  });
+});
+
+describe('meetingPointForBooking', () => {
+  const points = [
+    { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
+    { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
+  ];
+  const { meetingPoint: _meetingPoint, ...tourBase } = tour;
+  const multiPointTour: TourConfig = { ...tourBase, meetingPoints: points };
+
+  it('resolves a declared id to its live label and maps link', () => {
+    expect(meetingPointForBooking(multiPointTour, 'station', 'stale stored label')).toEqual({
+      label: 'The Station',
+      mapsUrl: 'https://maps.google.com/?q=station',
+    });
+  });
+
+  // Plan 017 (design decision 3): a stored id no longer declared falls back to the booking's own
+  // label snapshot with no maps link — validateConfig can't cross-check the DB, and an operator
+  // may remove a point that existing bookings still reference.
+  it('falls back to the stored label snapshot, with no maps link, for a since-removed id', () => {
+    expect(meetingPointForBooking(multiPointTour, 'no-longer-declared', 'The Old Dock')).toEqual({
+      label: 'The Old Dock',
+      mapsUrl: null,
+    });
+  });
+
+  it('falls back to the id itself when a removed id has no stored label snapshot', () => {
+    expect(meetingPointForBooking(multiPointTour, 'no-longer-declared', null)).toEqual({
+      label: 'no-longer-declared',
+      mapsUrl: null,
+    });
+  });
+
+  // A NULL id is a pre-0014 row (before the meeting-point columns existed) and keeps today's
+  // first/only-declared-point behavior.
+  it('resolves a null id to the first declared point', () => {
+    expect(meetingPointForBooking(multiPointTour, null, null)).toEqual({
+      label: 'The Square',
+      mapsUrl: 'https://maps.google.com/?q=square',
+    });
   });
 });

@@ -18,16 +18,28 @@ export interface PricingRule {
   priceCents: number;
 }
 
+export interface MeetingPoint {
+  id: string;
+  label: string;
+  mapsUrl: string;
+}
+
 export interface TourConfig {
   durationMin: number;
   turnaroundMin: number;
   schedule: ScheduleRule[];
   pricing: PricingRule[];
   occupancyFor?: (people: number) => number;
-  meetingPoint: {
+  // Plan 017 (design decision 1): exactly one of meetingPoint (single-point shorthand) or
+  // meetingPoints (multi-point) may be declared — validateConfig rejects both/neither and
+  // normalizes whichever is given into the canonical meetingPoints array below (clearing the
+  // shorthand, so it never survives validation), and every internal reader goes through
+  // resolveMeetingPoint instead of branching on which shape a tour used.
+  meetingPoint?: {
     label: string;
     mapsUrl: string;
   };
+  meetingPoints?: MeetingPoint[];
 }
 
 export interface ClientConfig {
@@ -121,7 +133,12 @@ const tourSchema = z.object({
     priceCents: z.number().int().nonnegative(),
   })).min(1),
   occupancyFor: z.custom<(people: number) => number>((value) => typeof value === 'function').optional(),
-  meetingPoint: z.object({ label: z.string().min(1), mapsUrl: z.string().url() }),
+  meetingPoint: z.object({ label: z.string().min(1), mapsUrl: z.string().url() }).optional(),
+  meetingPoints: z.array(z.object({
+    id: z.string().min(1),
+    label: z.string().min(1),
+    mapsUrl: z.string().url(),
+  })).min(1).optional(),
 });
 
 export const clientConfigSchema = z.object({
@@ -254,6 +271,22 @@ function validateTour(tour: TourConfig, tourSlug: string, add: (path: (string | 
       }
     }
   }
+
+  // Plan 017 (design decision 1): exactly one of meetingPoint/meetingPoints — two sources of
+  // truth for where a tour departs from would let them silently disagree.
+  if (tour.meetingPoint && tour.meetingPoints) {
+    add(['tours', tourSlug], 'declare either meetingPoint or meetingPoints, not both');
+  } else if (!tour.meetingPoint && !tour.meetingPoints) {
+    add(['tours', tourSlug], 'must declare either meetingPoint or meetingPoints');
+  } else if (tour.meetingPoints) {
+    const seenIds = new Set<string>();
+    for (const [index, point] of tour.meetingPoints.entries()) {
+      if (seenIds.has(point.id)) {
+        add(['tours', tourSlug, 'meetingPoints', index, 'id'], `duplicate meeting point id (${point.id}); ids must be unique within a tour`);
+      }
+      seenIds.add(point.id);
+    }
+  }
 }
 
 export function validateConfig(input: unknown): ClientConfig {
@@ -299,6 +332,20 @@ export function validateConfig(input: unknown): ClientConfig {
   }
   for (const tour of Object.values(config.tours)) {
     tour.pricing.sort((a, b) => a.maxPeople - b.maxPeople);
+    // Plan 017 (design decision 1): canonicalize the meetingPoint shorthand into meetingPoints —
+    // the same canonicalize-on-validate move used above for pricing order — so every internal
+    // reader only has to handle one shape (via resolveMeetingPoint below). The exactly-one-of
+    // check above already guarantees meetingPoint is set whenever meetingPoints is absent here.
+    // Clearing the shorthand afterwards keeps validateConfig idempotent on its own output: both
+    // defineBookkitRuntime and defineCloudflareBookkitRuntime (runtime-context.ts) validate the
+    // config once at definition time and pass that already-validated config back through
+    // createBookkitContext (context.ts) on every request, which validates it again — without
+    // clearing meetingPoint here, that second pass would see both fields and reject an
+    // already-valid config as declaring both.
+    if (!tour.meetingPoints) {
+      tour.meetingPoints = [{ id: 'default', ...tour.meetingPoint! }];
+      delete tour.meetingPoint;
+    }
   }
   return config;
 }
@@ -312,4 +359,43 @@ export function resolveTour(config: ClientConfig, tourSlug: string): TourConfig 
   const tour = config.tours[tourSlug];
   if (!tour) throw new Error(`Unknown tour: ${tourSlug}`);
   return tour;
+}
+
+// Plan 017 (design decision 1): id match wins; no id or an unknown id falls back to the first
+// declared point. Tolerant of a raw (never-validated) tour — examples/smoke-site imports config
+// directly for the widget (plan 017 STOP condition 2) — by deriving the single point from the
+// meetingPoint shorthand when meetingPoints hasn't been normalized in yet.
+export function resolveMeetingPoint(tour: TourConfig, meetingPointId?: string): MeetingPoint {
+  const points = tour.meetingPoints ?? (tour.meetingPoint ? [{ id: 'default', ...tour.meetingPoint }] : []);
+  if (points.length === 0) {
+    throw new Error('tour declares no meeting points');
+  }
+  if (meetingPointId) {
+    const match = points.find((point) => point.id === meetingPointId);
+    if (match) return match;
+  }
+  return points[0]!;
+}
+
+// Plan 017 (design decision 3): per-booking rendering resolution, shared by the manage/
+// confirmation payloads, brevo, calendar, and the admin table. Unlike resolveMeetingPoint's
+// first-point fallback (checkout-time resolution against currently-declared points), a stored id
+// that is NO LONGER declared falls back to the booking's stored label snapshot with no maps link
+// — validateConfig cannot cross-check the DB, and an operator may remove a point that existing
+// bookings still reference; sending those customers to the first (wrong) point would be worse
+// than a label without a map. A NULL id is a pre-0014 row and keeps today's behavior (first/only
+// declared point).
+export function meetingPointForBooking(
+  tour: TourConfig,
+  meetingPointId: string | null,
+  meetingPointLabel: string | null,
+): { label: string; mapsUrl: string | null } {
+  if (meetingPointId) {
+    const points = tour.meetingPoints ?? (tour.meetingPoint ? [{ id: 'default', ...tour.meetingPoint }] : []);
+    const match = points.find((point) => point.id === meetingPointId);
+    if (match) return { label: match.label, mapsUrl: match.mapsUrl };
+    return { label: meetingPointLabel ?? meetingPointId, mapsUrl: null };
+  }
+  const first = resolveMeetingPoint(tour);
+  return { label: first.label, mapsUrl: first.mapsUrl };
 }
