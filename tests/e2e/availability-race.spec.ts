@@ -1,0 +1,56 @@
+import { test, expect } from '@playwright/test';
+
+// Plan 014 item C (audit finding #13): loadAvailability (BookingWidget.astro) is fired from
+// initial load, every party-size change, retry click, and post-checkout failure, with no
+// AbortController and no generation check — every resolved fetch unconditionally overwrote the
+// calendar/slot UI. An older response settling late (e.g. a slow network hiccup) could overwrite a
+// newer party-size's already-rendered slots, and the user would then hit an avoidable checkout 409
+// against a slot the UI no longer actually reflects.
+//
+// Mocks the availability endpoint with distinguishable fake slots per party size (rather than
+// relying on the fixture's real capacity happening to differ between party sizes) so "which
+// response is currently displayed" is unambiguous.
+test('a stale availability response cannot overwrite a newer party-size selection', async ({ page }) => {
+  const from = new Date().toISOString().slice(0, 10);
+  let releaseStale: () => void = () => {};
+  const staleGate = new Promise<void>((resolve) => { releaseStale = resolve; });
+
+  await page.route('**/api/booking/availability*', async (route) => {
+    const url = new URL(route.request().url());
+    const people = url.searchParams.get('people');
+    // people=2's request is the one this test holds open (the "stale" one); every other party
+    // size gets a distinct, immediately-resolved fake slot so the displayed time unambiguously
+    // reveals which response actually won.
+    const startTime = people === '3' ? '14:00' : '09:00';
+    const body = JSON.stringify({
+      days: [{
+        date: from,
+        status: 'open',
+        slots: [{ start: `${from}T${startTime}:00.000Z`, remaining: 5, remainingBookings: 5 }],
+      }],
+    });
+    if (people === '2') await staleGate;
+    await route.fulfill({ status: 200, contentType: 'application/json', body });
+  });
+
+  await page.goto('/');
+  // Initial load (default people=1, resolves immediately) has settled.
+  await expect(page.locator('.bkw-slot-time').first()).toHaveText('09:00');
+
+  // Switch to 2 (the request this test holds open) and, before it resolves, switch to 3 (resolves
+  // immediately) — the exact race the plan's decision requires both belts (abort + generation) to
+  // survive.
+  await page.getByLabel('How many people?').selectOption('2');
+  await page.getByLabel('How many people?').selectOption('3');
+  await expect(page.locator('.bkw-slot-time').first()).toHaveText('14:00');
+  await expect(page.getByRole('radiogroup').getByRole('radio').first()).toBeEnabled();
+
+  // Only now let the stale people=2 response through. A real fix must not let it undo what
+  // people=3 already rendered — this is the assertion that fails against pre-change code.
+  releaseStale();
+  await page.waitForTimeout(500);
+  await expect(page.locator('.bkw-slot-time').first()).toHaveText('14:00');
+  // A superseded response reaching the finally block must not clear aria-busy out from under
+  // whatever the current (people=3) request state left it as.
+  await expect(page.locator('calendar-date')).not.toHaveAttribute('aria-busy', 'true');
+});
