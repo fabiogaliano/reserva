@@ -170,6 +170,7 @@ const REQUIRED_BOOKINGS_COLUMNS = [
   'occupancy_units', // 0008
   'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at', // 0009
   'reschedule_transition_version', // 0010
+  'meeting_point_id', // 0014
 ] as const;
 
 async function bookingsSchemaPresent(db: MigrationsQueryable): Promise<boolean> {

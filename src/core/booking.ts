@@ -11,6 +11,12 @@ export interface Booking {
   people: number;
   pickupType: 'default' | 'custom';
   pickupAddress: string | null;
+  // Plan 017 (design decision 3): the resolved meeting point chosen at checkout, when the tour
+  // declares more than one. label is a point-in-time snapshot, used only as a fallback when the id
+  // is no longer declared in config (see migrations/0014_meeting_points.sql). Both null for
+  // pre-0014 rows.
+  meetingPointId: string | null;
+  meetingPointLabel: string | null;
   startsAt: string;
   endsAt: string;
   customerName: string | null;

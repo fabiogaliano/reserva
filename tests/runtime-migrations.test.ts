@@ -15,7 +15,8 @@ const payments = {
 // src/runtime-context.ts's REQUIRED_BOOKINGS_COLUMNS and sideEffectOperationsSchemaPresent).
 // Duplicated here rather than imported since these are the fake's own PRAGMA/sqlite_master
 // response shapes, not the implementation under test.
-const FINGERPRINT_BOOKINGS_COLUMNS = ['occupancy_units', 'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at', 'reschedule_transition_version'];
+// Plan 017: meeting_point_id is 0014's addition to REQUIRED_BOOKINGS_COLUMNS.
+const FINGERPRINT_BOOKINGS_COLUMNS = ['occupancy_units', 'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at', 'reschedule_transition_version', 'meeting_point_id'];
 const FINGERPRINT_BOOKINGS_SQL = `CREATE TABLE bookings (
   people INTEGER CHECK (people > 0), pickup_type TEXT CHECK (pickup_type IN ('default','custom')),
   starts_at TEXT, ends_at TEXT CHECK (ends_at > starts_at), price_cents INTEGER CHECK (price_cents >= 0),
@@ -158,7 +159,7 @@ describe('migration check memoization', () => {
           // Schema fingerprint queries (plan 008) always report a fully-migrated schema here --
           // this test is about ledger memoization/retry, not the fingerprint itself.
           if (query.startsWith('PRAGMA table_info(bookings)')) {
-            return { results: ['occupancy_units', 'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at', 'reschedule_transition_version'].map((name) => ({ name })) };
+            return { results: FINGERPRINT_BOOKINGS_COLUMNS.map((name) => ({ name })) };
           }
           if (query.includes("name IN ('bookings', 'idx_bookings_payment_intent')")) {
             return {

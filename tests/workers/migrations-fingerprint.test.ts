@@ -14,6 +14,10 @@
 // 0012-specific collision test can no longer fail even with the schema fingerprint working
 // correctly. sideEffectOperationsSchemaPresent (src/runtime-context.ts) now also checks for 0013's
 // 'abandoned' status, keeping this detector accurate for the actual latest rebuild.
+//
+// Plan 017 (design decision 6): 0014 adds two plain additive `bookings` columns rather than
+// rebuilding a table, so it's covered the same way as 0008-0010's columns (REQUIRED_BOOKINGS_COLUMNS
+// in src/runtime-context.ts), not by sideEffectOperationsSchemaPresent's rebuild-shape checks.
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
@@ -80,6 +84,20 @@ describe('checkBookkitMigrationsApplied schema fingerprint against real D1', () 
 
     // 0012/0013 recreated the latest side-effect shape, but cannot recreate 0011's bookings CHECKs
     // or partial unique payment-intent index.
+    await expect(checkBookkitMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
+    await expect(checkBookkitMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
+  });
+
+  // Plan 017 (design decision 6): a consumer migration reusing the '0014_meeting_points.sql'
+  // filename without ever running bookkit's ALTER TABLE would otherwise satisfy the ledger while
+  // leaving `bookings` without meeting_point_id/meeting_point_label -- REQUIRED_BOOKINGS_COLUMNS
+  // (src/runtime-context.ts) must catch that collision the same way it already does for 0008-0010.
+  it('fails distinctly when a real schema stopped before 0014 has a colliding "0014" ledger row', async () => {
+    await resetSchema();
+    const before0014 = bindings.TEST_MIGRATIONS.filter((migration) => migration.name !== '0014_meeting_points.sql');
+    await applyD1Migrations(db, before0014, 'd1_migrations');
+    await db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').bind('0014_meeting_points.sql').run();
+
     await expect(checkBookkitMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
     await expect(checkBookkitMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
   });

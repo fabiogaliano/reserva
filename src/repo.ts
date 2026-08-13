@@ -23,6 +23,12 @@ export interface BookingInsert {
   tokensExpireAt?: string | null;
   holdIp?: string | null;
   maxActiveHoldsForIp?: number;
+  // Plan 017 (design decision 3): the resolved meeting point at checkout time (see
+  // core/booking.ts Booking.meetingPointId/-Label). Optional/nullable for the same reason as
+  // tokensExpireAt above -- every pre-existing caller (tests, mainly) that doesn't pass these
+  // keeps compiling and simply writes NULL, matching pre-migration behavior.
+  meetingPointId?: string | null;
+  meetingPointLabel?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -483,6 +489,9 @@ interface BookingRow {
   people: number;
   pickup_type: 'default' | 'custom';
   pickup_address: string | null;
+  // Plan 017 (design decision 3): see migrations/0014_meeting_points.sql for what each means.
+  meeting_point_id: string | null;
+  meeting_point_label: string | null;
   starts_at: string;
   ends_at: string;
   customer_name: string | null;
@@ -545,6 +554,8 @@ function mapBooking(row: BookingRow): Booking {
     people: Number(row.people),
     pickupType: row.pickup_type,
     pickupAddress: row.pickup_address,
+    meetingPointId: row.meeting_point_id ?? null,
+    meetingPointLabel: row.meeting_point_label ?? null,
     startsAt: row.starts_at,
     endsAt: row.ends_at,
     customerName: row.customer_name,
@@ -572,7 +583,8 @@ function mapBooking(row: BookingRow): Booking {
   };
 }
 
-const bookingColumns = `id, reference, tour_slug, people, pickup_type, pickup_address, starts_at, ends_at,
+const bookingColumns = `id, reference, tour_slug, people, pickup_type, pickup_address, meeting_point_id,
+  meeting_point_label, starts_at, ends_at,
   customer_name, customer_email, customer_phone, locale, price_cents, status, hold_expires_at,
   stripe_session_id, stripe_payment_intent, calendar_event_id, calendar_synced, email_synced,
   tourflow_synced, reminded_at, review_requested_at, cancel_token, operator_token,
@@ -1019,9 +1031,9 @@ export function createBookingRepository(
           id, reference, tour_slug, people, pickup_type, starts_at, ends_at, locale, price_cents,
           status, hold_expires_at, cancel_token, operator_token, cancel_token_hash,
           operator_token_hash, cancel_token_enc, operator_token_enc, tokens_expire_at, hold_ip,
-          created_at, updated_at
+          meeting_point_id, meeting_point_label, created_at, updated_at
         )
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'hold', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'hold', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         WHERE ? IS NULL OR (
           SELECT COUNT(*) FROM bookings
           WHERE hold_ip = ? AND status = 'hold' AND hold_expires_at >= ?
@@ -1032,7 +1044,8 @@ export function createBookingRepository(
         tokenColumns.cancelTokenPlaceholder, tokenColumns.operatorTokenPlaceholder,
         tokenColumns.cancelTokenHash, tokenColumns.operatorTokenHash,
         tokenColumns.cancelTokenEnc, tokenColumns.operatorTokenEnc, tokenColumns.tokensExpireAt,
-        holdIp, input.createdAt, input.updatedAt,
+        holdIp, input.meetingPointId ?? null, input.meetingPointLabel ?? null,
+        input.createdAt, input.updatedAt,
         holdLimit, holdIp, input.createdAt, holdLimit,
       ).run();
       if (result.meta.changes === 0) throw new HoldLimitExceededError();
@@ -1078,9 +1091,9 @@ export function createBookingRepository(
           id, reference, tour_slug, people, pickup_type, starts_at, ends_at, locale, price_cents,
           status, hold_expires_at, cancel_token, operator_token, cancel_token_hash,
           operator_token_hash, cancel_token_enc, operator_token_enc, tokens_expire_at, hold_ip,
-          occupancy_units, occupancy_ends_at, created_at, updated_at
+          occupancy_units, occupancy_ends_at, meeting_point_id, meeting_point_label, created_at, updated_at
         )
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'hold', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'hold', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         WHERE (? IS NULL OR (
             SELECT COUNT(*) FROM bookings WHERE hold_ip = ? AND status = 'hold' AND hold_expires_at >= ?
           ) < ?)
@@ -1114,6 +1127,7 @@ export function createBookingRepository(
         tokenColumns.cancelTokenHash, tokenColumns.operatorTokenHash,
         tokenColumns.cancelTokenEnc, tokenColumns.operatorTokenEnc, tokenColumns.tokensExpireAt,
         holdIp, input.occupancyUnits, input.occupancyEndsAt,
+        input.meetingPointId ?? null, input.meetingPointLabel ?? null,
         input.createdAt, input.updatedAt,
         holdLimit, holdIp, input.createdAt, holdLimit,
         // NOT EXISTS candidate points: the request's own start, then every active overlapping

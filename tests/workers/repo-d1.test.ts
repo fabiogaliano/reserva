@@ -230,6 +230,61 @@ describe('D1 booking repository', () => {
     await expect(repo.getDayOverride('2026-08-01')).resolves.toBeNull();
   });
 
+  // Plan 017 (design decision 3): migrations/0014_meeting_points.sql's two nullable columns,
+  // against real D1.
+  describe('meeting point columns (migration 0014)', () => {
+    it('round-trips meeting_point_id/meeting_point_label through insertHoldWithCapacity when set', async () => {
+      const created = await repo.insertHoldWithCapacity({
+        id: 'booking-meeting-point-set', reference: 'BKT-2026-MP1', tourSlug: 'vintage', people: 2, pickupType: 'default',
+        startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceCents: 12000,
+        holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'mp-set-cancel', operatorToken: 'mp-set-operator',
+        meetingPointId: 'tuk-tuk-a', meetingPointLabel: 'Praça do Comércio (tuk-tuk A)',
+        occupancyUnits: 1, occupancyEndsAt: '2026-08-01T10:00:00.000Z', localDate: '2026-08-01', fleetDefaultCapacity: 5,
+        createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
+      });
+
+      expect(created).toMatchObject({ meetingPointId: 'tuk-tuk-a', meetingPointLabel: 'Praça do Comércio (tuk-tuk A)' });
+      await expect(repo.getBookingById(created!.id)).resolves.toMatchObject({
+        meetingPointId: 'tuk-tuk-a', meetingPointLabel: 'Praça do Comércio (tuk-tuk A)',
+      });
+    });
+
+    it('leaves meeting_point_id/meeting_point_label NULL through insertHoldWithCapacity when the caller omits them', async () => {
+      const created = await repo.insertHoldWithCapacity({
+        id: 'booking-meeting-point-absent', reference: 'BKT-2026-MP2', tourSlug: 'vintage', people: 2, pickupType: 'default',
+        startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceCents: 12000,
+        holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'mp-absent-cancel', operatorToken: 'mp-absent-operator',
+        occupancyUnits: 1, occupancyEndsAt: '2026-08-01T10:00:00.000Z', localDate: '2026-08-01', fleetDefaultCapacity: 5,
+        createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
+      });
+
+      expect(created).toMatchObject({ meetingPointId: null, meetingPointLabel: null });
+      const row = (await db.prepare(
+        'SELECT meeting_point_id, meeting_point_label FROM bookings WHERE id = ?',
+      ).bind(created!.id).all<{ meeting_point_id: string | null; meeting_point_label: string | null }>()).results[0];
+      expect(row?.meeting_point_id).toBeNull();
+      expect(row?.meeting_point_label).toBeNull();
+    });
+
+    it('maps a pre-0014-shaped row (meeting_point columns NULL, as every column was before this migration) cleanly through mapBooking', async () => {
+      await repo.insertHold({
+        id: 'booking-meeting-point-legacy', reference: 'BKT-2026-MP3', tourSlug: 'vintage', people: 2, pickupType: 'default',
+        startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceCents: 12000,
+        holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'mp-legacy-cancel', operatorToken: 'mp-legacy-operator',
+        createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
+      });
+      // Simulates a row written before migration 0014 ran: explicitly force both columns back to
+      // NULL (insertHold already writes NULL for an omitted input, but this asserts the DB state
+      // itself, not just the insert path's default).
+      await db.prepare('UPDATE bookings SET meeting_point_id = NULL, meeting_point_label = NULL WHERE id = ?')
+        .bind('booking-meeting-point-legacy').run();
+
+      await expect(repo.getBookingById('booking-meeting-point-legacy')).resolves.toMatchObject({
+        meetingPointId: null, meetingPointLabel: null,
+      });
+    });
+  });
+
   // BK-SEC-002: manage-token hashing, expiry, and revocation, against real SQLite (D1).
   describe('token hashing, expiry, and revocation (BK-SEC-002)', () => {
     // A second repository instance bound to the SAME D1 database but with BOOKKIT_TOKEN_ENC_KEY
@@ -647,6 +702,19 @@ describe('mutation side-effect outbox on real D1', () => {
     await db.prepare('DROP TRIGGER fail_mutation_outbox').run();
   });
 
+  // Plan 017 (design decision 3): repo.insertHold now always writes meeting_point_id/-label
+  // (migration 0014), so it cannot seed the FK-parent booking rows below against this test's
+  // deliberately pre-0010 schema. Only these FK-parent rows need to exist at all (nothing here
+  // asserts on their own columns) -- a raw INSERT covering just the columns 0001_init.sql
+  // guarantees NOT NULL, present since before every migration this suite ever slices before,
+  // decouples this historical-schema test from the CURRENT repo.ts column list going forward.
+  async function seedRawBookingForFk(id: string): Promise<void> {
+    await db.prepare(
+      `INSERT INTO bookings (id, reference, tour_slug, people, pickup_type, starts_at, ends_at, locale, price_cents, status, cancel_token, operator_token, created_at, updated_at)
+       VALUES (?, ?, 'vintage', 2, 'default', '2026-08-01T09:00:00.000Z', '2026-08-01T10:00:00.000Z', 'en', 12000, 'hold', ?, ?, '2026-07-21T10:00:00.000Z', '2026-07-21T10:00:00.000Z')`,
+    ).bind(id, `BKT-2026-${id}`, `cancel-${id}`, `operator-${id}`).run();
+  }
+
   it('applies the actual 0010 migration while preserving every legacy outbox row', async () => {
     for (const table of [
       'side_effect_operations', 'refund_operations', 'settings', 'capacity_defaults', 'day_overrides', 'bookings',
@@ -665,7 +733,7 @@ describe('mutation side-effect outbox on real D1', () => {
       for (const [statusIndex, status] of statuses.entries()) {
         const bookingId = `migration-${kindIndex}-${statusIndex}`;
         const stamp = `2026-07-21T10:0${kindIndex}${statusIndex}:00.000Z`;
-        await seedBooking(bookingId);
+        await seedRawBookingForFk(bookingId);
         const row = {
           bookingId, kind, status,
           providerResultId: status === 'succeeded' ? `provider-${kindIndex}-${statusIndex}` : null,

@@ -49,6 +49,8 @@ export function booking(overrides: Partial<Booking> = {}): Booking {
     people: 2,
     pickupType: 'default',
     pickupAddress: null,
+    meetingPointId: null,
+    meetingPointLabel: null,
     startsAt: '2026-06-15T09:00:00.000Z',
     endsAt: '2026-06-15T10:00:00.000Z',
     customerName: 'Ada Lovelace',

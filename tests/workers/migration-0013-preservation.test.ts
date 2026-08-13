@@ -7,7 +7,6 @@
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
-import { createBookingRepository } from '../../src/repo';
 
 interface TestEnv {
   BOOKKIT_DB: D1Database;
@@ -16,15 +15,18 @@ interface TestEnv {
 
 const bindings = env as unknown as TestEnv;
 const db = bindings.BOOKKIT_DB;
-const repo = createBookingRepository(db);
 
+// Plan 017 (design decision 3): repo.insertHold now always writes meeting_point_id/-label
+// (migration 0014), so it can't seed the FK-parent rows below against this test's deliberately
+// pre-0013 schema. Only these FK-parent rows need to exist at all (nothing here asserts on their
+// own columns) -- a raw INSERT covering just the columns 0001_init.sql guarantees NOT NULL,
+// present since before every migration this suite ever slices before, decouples this
+// historical-schema test from the CURRENT repo.ts column list going forward.
 async function seedBooking(id: string): Promise<void> {
-  await repo.insertHold({
-    id, reference: `BKT-2026-${id}`, tourSlug: 'vintage', people: 2, pickupType: 'default',
-    startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceCents: 12000,
-    holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: `cancel-${id}`, operatorToken: `operator-${id}`,
-    createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
-  });
+  await db.prepare(
+    `INSERT INTO bookings (id, reference, tour_slug, people, pickup_type, starts_at, ends_at, locale, price_cents, status, cancel_token, operator_token, created_at, updated_at)
+     VALUES (?, ?, 'vintage', 2, 'default', '2026-08-01T09:00:00.000Z', '2026-08-01T10:00:00.000Z', 'en', 12000, 'hold', ?, ?, '2026-07-21T10:00:00.000Z', '2026-07-21T10:00:00.000Z')`,
+  ).bind(id, `BKT-2026-${id}`, `cancel-${id}`, `operator-${id}`).run();
 }
 
 async function insertRow(row: {

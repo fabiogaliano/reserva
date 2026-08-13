@@ -21,7 +21,7 @@ describe('Cloudflare runtime helpers', () => {
       prepare: (query: string) => ({
         all: async () => {
           if (query.startsWith('PRAGMA table_info(bookings)')) {
-            return { results: ['occupancy_units', 'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at', 'reschedule_transition_version'].map((name) => ({ name })) };
+            return { results: ['occupancy_units', 'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at', 'reschedule_transition_version', 'meeting_point_id'].map((name) => ({ name })) };
           }
           if (query.includes("name IN ('bookings', 'idx_bookings_payment_intent')")) {
             return {
