@@ -162,10 +162,11 @@ function migrationsErrorMessage(missing: readonly string[]): string {
 // happens to reuse one of bookkit's filenames without ever running bookkit's SQL — d1_migrations
 // only records names, never checksums or content. This is cheap, read-only detection (not a fix:
 // a fully namespaced ledger is deferred, see docs/plans/008), spanning the migrations that
-// introduced bookkit's current shape (0008-0013): required `bookings` columns, migration 0011's
-// domain CHECKs and partial unique payment-intent index, plus the `side_effect_operations`
-// table/index and its current `kind`/`status` CHECKs. The 0011 artifacts matter independently:
-// later side-effect table rebuilds can make 0012/0013 look current even when 0011 was skipped.
+// introduced bookkit's current shape (0008-0015): required `bookings` columns, migration 0011's
+// domain CHECKs and partial unique payment-intent index (minus the pickup_type CHECK, removed by
+// 0015 — see bookingsSchemaPresent below), plus the `side_effect_operations` table/index and its
+// current `kind`/`status` CHECKs. The 0011 artifacts matter independently: later side-effect table
+// rebuilds can make 0012/0013 look current even when 0011 was skipped.
 const REQUIRED_BOOKINGS_COLUMNS = [
   'occupancy_units', // 0008
   'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at', // 0009
@@ -188,7 +189,6 @@ async function bookingsSchemaPresent(db: MigrationsQueryable): Promise<boolean> 
   const indexSql = paymentIndex?.sql?.toLowerCase().replace(/\s+/g, '') ?? '';
   const requiredChecks = [
     'check(people>0)',
-    "check(pickup_typein('default','custom'))",
     'check(ends_at>starts_at)',
     'check(price_cents>=0)',
     "check(statusin('hold','confirmed','cancelled','expired','no_show'))",
@@ -198,7 +198,16 @@ async function bookingsSchemaPresent(db: MigrationsQueryable): Promise<boolean> 
     "check(cancelled_byin('customer','operator')orcancelled_byisnull)",
   ];
   const paymentIndexSql = 'createuniqueindexidx_bookings_payment_intentonbookings(stripe_payment_intent)wherestripe_payment_intentisnotnull';
-  return requiredChecks.every((check) => tableSql.includes(check)) && indexSql.includes(paymentIndexSql);
+  // Plan 018 (design decision 5): pickup_type's domain moved from a fixed SQL CHECK to
+  // config-declared option ids (TourConfig.pickupOptions), which the DB can't enumerate — migration
+  // 0015 rebuilds `bookings` with that CHECK removed. So instead of a positive requiredChecks entry,
+  // this is a NEGATIVE assertion: the schema must NOT still carry the old CHECK. A consumer whose
+  // own migration collides with bookkit's '0015_pickup_options.sql' filename (without ever running
+  // its SQL) keeps the pre-0015 CHECK, which then rejects any non-default/custom pickup id a tour
+  // declares — exactly the collision this fingerprint exists to catch, same reasoning as plan 016
+  // needing to detect an un-rebuilt side_effect_operations 'abandoned' status.
+  const hasPickupTypeCheck = tableSql.includes("check(pickup_typein(");
+  return requiredChecks.every((check) => tableSql.includes(check)) && !hasPickupTypeCheck && indexSql.includes(paymentIndexSql);
 }
 
 async function sideEffectOperationsSchemaPresent(db: MigrationsQueryable): Promise<boolean> {

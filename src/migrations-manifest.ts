@@ -17,4 +17,5 @@ export const BOOKKIT_MIGRATIONS = [
   '0012_calendar_delete_outbox.sql',
   '0013_side_effect_operations_abandoned.sql',
   '0014_meeting_points.sql',
+  '0015_pickup_options.sql',
 ] as const;

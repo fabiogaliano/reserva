@@ -106,6 +106,17 @@ describe('bookings CHECK constraints and partial unique index (BK-SCHEMA-001, mi
       id: 'control-valid', reference: 'BKT-CONTROL-VALID', cancel_token: 'ct-control-valid', operator_token: 'ot-control-valid',
     })).resolves.toBeDefined();
   });
+
+  // Plan 018 (design decision 4/5): migration 0015 rebuilds `bookings` with the
+  // CHECK (pickup_type IN ('default','custom')) removed -- the domain now lives in
+  // TourConfig.pickupOptions (config), which the DB can't enumerate. A non-enum pickup id, which
+  // this same INSERT would have rejected before 0015, must now succeed at the SQL level.
+  it('accepts a non-enum pickup_type (migration 0015 removed the CHECK; the domain now lives in config)', async () => {
+    await expect(insertRawBooking({
+      id: 'pickup-non-enum', reference: 'BKT-PICKUP-NON-ENUM', cancel_token: 'ct-pickup-non-enum', operator_token: 'ot-pickup-non-enum',
+      pickup_type: 'custom_both',
+    })).resolves.toBeDefined();
+  });
 });
 
 describe('capacity table CHECK constraints (migration 0011)', () => {

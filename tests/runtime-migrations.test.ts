@@ -16,9 +16,12 @@ const payments = {
 // Duplicated here rather than imported since these are the fake's own PRAGMA/sqlite_master
 // response shapes, not the implementation under test.
 // Plan 017: meeting_point_id is 0014's addition to REQUIRED_BOOKINGS_COLUMNS.
+// Plan 018 (design decision 5): migration 0015 removes the pickup_type CHECK (domain moved to
+// config-declared option ids), so a "fully migrated" fake must NOT carry it -- the column itself
+// stays, unconstrained, matching 0015's rebuilt schema.
 const FINGERPRINT_BOOKINGS_COLUMNS = ['occupancy_units', 'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at', 'reschedule_transition_version', 'meeting_point_id'];
 const FINGERPRINT_BOOKINGS_SQL = `CREATE TABLE bookings (
-  people INTEGER CHECK (people > 0), pickup_type TEXT CHECK (pickup_type IN ('default','custom')),
+  people INTEGER CHECK (people > 0), pickup_type TEXT,
   starts_at TEXT, ends_at TEXT CHECK (ends_at > starts_at), price_cents INTEGER CHECK (price_cents >= 0),
   status TEXT CHECK (status IN ('hold','confirmed','cancelled','expired','no_show')),
   calendar_synced INTEGER CHECK (calendar_synced IN (0,1)), email_synced INTEGER CHECK (email_synced IN (0,1)),

@@ -285,6 +285,24 @@ describe('D1 booking repository', () => {
     });
   });
 
+  // Plan 018 (design decision 4): migration 0015 removed the pickup_type CHECK (domain moved to
+  // config-declared option ids, TourConfig.pickupOptions) -- this is the row the old CHECK
+  // (pickup_type IN ('default','custom')) would have rejected, round-tripped through the real
+  // application write/read paths, not just a raw SQL INSERT (see tests/workers/schema-constraints.test.ts
+  // for the SQL-layer proof).
+  it('inserts and reads back a booking with a non-enum pickup_type id (migration 0015)', async () => {
+    const created = await repo.insertHold({
+      id: 'booking-pickup-non-enum', reference: 'BKT-2026-PICKUPNE', tourSlug: 'vintage', people: 2,
+      pickupType: 'custom_both',
+      startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceCents: 21000,
+      holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'pickup-ne-cancel', operatorToken: 'pickup-ne-operator',
+      createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
+    });
+
+    expect(created).toMatchObject({ pickupType: 'custom_both' });
+    await expect(repo.getBookingById(created.id)).resolves.toMatchObject({ pickupType: 'custom_both' });
+  });
+
   // BK-SEC-002: manage-token hashing, expiry, and revocation, against real SQLite (D1).
   describe('token hashing, expiry, and revocation (BK-SEC-002)', () => {
     // A second repository instance bound to the SAME D1 database but with BOOKKIT_TOKEN_ENC_KEY
