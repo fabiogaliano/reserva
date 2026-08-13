@@ -48,6 +48,7 @@
     "test": "vitest run && vitest run --config vitest.component.config.ts",
     "test:workers": "vitest run --config vitest.workers.config.ts",
     "test:pack": "bun scripts/pack-test.ts",
+    "test:preview": "bun scripts/smoke-preview-test.ts",
     "test:e2e": "playwright test",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",

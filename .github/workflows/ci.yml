@@ -36,7 +36,12 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run verify
 
-  smoke-build:
+  # Plan 015 decision 5: test:preview builds examples/smoke-site (superseding the plain `astro
+  # build` this job ran before) and additionally serves that BUILT output through the pinned
+  # @astrojs/cloudflare adapter's `astro preview` entrypoint, probing it with real requests -- the
+  # `e2e` job below only ever exercises `astro dev` (examples/smoke-site/e2e-dev-server.ts), so a
+  # bug that only manifests in the built worker would otherwise pass every job here.
+  smoke:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -44,8 +49,7 @@ jobs:
         with:
           bun-version: 1.2.23
       - run: bun install --frozen-lockfile
-      - run: bun run build
-        working-directory: examples/smoke-site
+      - run: bun run test:preview
 
   e2e:
     runs-on: ubuntu-latest

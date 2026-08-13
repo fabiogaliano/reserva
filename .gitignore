@@ -16,3 +16,6 @@ playwright-report/
 
 # e2e database
 .wrangler-e2e/
+
+# smoke-preview-test database (plan 015)
+.wrangler-preview-test/

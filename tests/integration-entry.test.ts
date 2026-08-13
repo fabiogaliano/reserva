@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { bookkit, virtualRuntimeId } from '../src/integration';
@@ -48,6 +48,20 @@ describe('Astro integration entry', () => {
       '/booking-confirmation',
     ]));
     for (const route of routes) expect(existsSync(String(route.entrypoint))).toBe(true);
+  });
+
+  // Plan 015 (decision 2): tests/workers/webhook.test.ts proves handleStripeWebhook's own behavior
+  // against a hand-written worker entrypoint, honestly, without pretending that worker IS the
+  // generated Astro route -- this pins the other half, that the generated route's entrypoint really
+  // is the exact one-line handleStripeWebhook delegation src/routes/api/booking/webhooks/stripe.ts
+  // contains (not just that some file exists at that path, which the assertion above already checks).
+  it('pins the generated Stripe webhook route to its one-line handleStripeWebhook delegation', () => {
+    const { routes } = setup();
+    const webhookRoute = routes.find((route) => route.pattern === '/api/booking/webhooks/stripe');
+    if (!webhookRoute) throw new Error('Stripe webhook route was not injected');
+    const source = readFileSync(String(webhookRoute.entrypoint), 'utf8');
+    expect(source).toContain("import { handleStripeWebhook } from '../../../../handlers';");
+    expect(source).toContain('return handleStripeWebhook(request, await createRouteContext({ request, locals }));');
   });
 
   it('resolves the virtual module to the explicit user runtime without serializing config', () => {
