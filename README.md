@@ -90,6 +90,38 @@ The config shape includes business details, fleet capacity, tour schedules and p
 
 Each tour declares exactly one of `meetingPoint` (the single-point shorthand, `{ label, mapsUrl }`) or `meetingPoints` (an array of `{ id, label, mapsUrl }`, minimum one entry, ids unique within the tour) — declaring both, or neither, fails `validateConfig`. Use the array form when a tour has more than one free meeting point at the same price (for example, two pickup spots for the same price); `validateConfig` normalizes the shorthand into a single-entry `meetingPoints` array internally, so every reader only ever deals with one shape. See `examples/smoke-site/src/config.ts` for a tour using the array form.
 
+### `pickupOptions`
+
+Each tour also declares an optional `pickupOptions: Array<{ id, label?, hint?, requiresAddress, usesMeetingPoint }>` (minimum one entry, ids unique within the tour and slug-safe `[a-z0-9_-]+`) — the axis `pricing[].pickup` prices against. This is what `PricingRule.pickup` and `ResolvedPriceTable` actually key on; `pickupOptions` just lets a tour declare more than the two ids every tour was previously stuck with. Absent ⇒ `validateConfig` injects the pair every tour behaved as before this field existed — `[{ id: 'default', requiresAddress: false, usesMeetingPoint: true }, { id: 'custom', requiresAddress: true, usesMeetingPoint: false }]` — so an existing config validates and prices identically. `label`/`hint` are config-provided plain strings, like `meetingPoint.label` above; omitting them on the `default`/`custom` ids falls back to the shipped message-catalog copy (`widget.pickupDefault(Hint)`/`widget.pickupCustom(Hint)`), so an existing widget keeps its translated copy unchanged. `requiresAddress` gates Stripe's custom address field (`custom_fields`, keyed `pickup_address`); `usesMeetingPoint` is what plan 017's meeting-point requirement re-keys off, instead of `pickupType === 'default'` — so an option can require a custom address and still start at a declared meeting point (see the `custom_dropoff` row below).
+
+Declare more than two options when a tour's pricing genuinely is not additive. Maze Riverside 2h prices four pickup combinations outright, because a flat "+20 € custom drop-off, +20 € custom pick-up" surcharge model cannot express the price of choosing both: +20 and +20 sum to +40 over the base price, not the +30 Maze actually charges for `custom_both`. `pricing` already states a price outright per `(pickup, maxPeople)` row — `pickupOptions` only widens how many pickup ids that axis can carry, so each of the four combinations gets its own row instead of forcing a two-tier default/custom split with an unrepresentable third price:
+
+| `pickupOptions` entry | `requiresAddress` | `usesMeetingPoint` | Price (up to 4 people) |
+| --- | --- | --- | --- |
+| `meeting_point` — "Meeting point" | `false` | `true` | 180 € |
+| `custom_dropoff` — "Custom drop-off" | `true` | `true` | 200 € |
+| `custom_pickup` — "Custom pick-up" | `true` | `false` | 200 € |
+| `custom_both` — "Custom pick-up & drop-off" | `true` | `false` | 210 € |
+
+```ts
+pickupOptions: [
+  { id: 'meeting_point', label: 'Meeting point', requiresAddress: false, usesMeetingPoint: true },
+  { id: 'custom_dropoff', label: 'Custom drop-off', requiresAddress: true, usesMeetingPoint: true },
+  { id: 'custom_pickup', label: 'Custom pick-up', requiresAddress: true, usesMeetingPoint: false },
+  { id: 'custom_both', label: 'Custom pick-up & drop-off', requiresAddress: true, usesMeetingPoint: false },
+],
+pricing: [
+  { maxPeople: 4, pickup: 'meeting_point', priceCents: 18000 },
+  { maxPeople: 4, pickup: 'custom_dropoff', priceCents: 20000 },
+  { maxPeople: 4, pickup: 'custom_pickup', priceCents: 20000 },
+  { maxPeople: 4, pickup: 'custom_both', priceCents: 21000 },
+],
+```
+
+`validateTour` requires every `pricing` row's `pickup` to reference a declared `pickupOptions` id (a build-time `validateConfig` failure otherwise), and reports a coverage hole for every declared id missing a breakpoint at any people count up to the tour's highest `maxPeople` — the same validation the old fixed default/custom pair got, just iterated over however many ids a tour actually declares. At checkout, `parsePickup` validates the submitted `pickupType` against the resolved tour's declared ids the same way (400 `validation_failed` naming the valid ids). See `examples/smoke-site/src/config.ts` (`mazeRiverside`) for a complete tour using this, and `examples/smoke-site/src/pages/maze.astro` for the widget wiring.
+
+**Release notes:** `PickupType` (exported from `bookkit/core`) widens from the literal union `'default' | 'custom'` to `string` — an exhaustive `switch` or `satisfies` check over the old two-value union in your own code needs a default case or other adaptation; plain string reads and writes keep compiling unchanged. `TourflowReservation.pickupType` (the Tourflow feed payload shape, `providers/ops-tourflow`) widens the same way, for the same reason — a Tourflow consumer's own pickup-type branching needs the same adaptation.
+
 ## Injected routes
 
 Every route is server-only with `prerender: false`:
@@ -138,7 +170,9 @@ The local demo at `examples/smoke-site` is intentionally unprefixed. It is the z
 
 ## Components, theming, and UI copy
 
-The package includes three embeddable components: `BookingWidget.astro` (the customer funnel: party size, a [cally](https://wicky.nillia.ms/cally/) calendar month grid driven by the availability API, time-slot chips with scarcity hints, pickup cards, an optional `meetingPoints` prop (`Array<{ id, label }>`, from `config.tours[slug].meetingPoints`) that renders a meeting-point radio group only when a tour has 2+ points — 0 or 1 renders nothing, and the group hides/disables itself while a custom pickup is selected — an optional live price row via the `pricing`/`currency` props), `ManageBooking.astro` (token entry form for the manage page), and `AdminDashboard.astro` (quick day-override form that links to the full admin page). The full pages — confirmation, `/booking/manage`, `/booking/admin` — are server-rendered by the injected routes and share the same design language.
+The package includes three embeddable components: `BookingWidget.astro` (the customer funnel: party size, a [cally](https://wicky.nillia.ms/cally/) calendar month grid driven by the availability API, time-slot chips with scarcity hints, pickup cards rendered from an optional `pickupOptions` prop (`Array<{ id, label?, hint?, usesMeetingPoint? }>`, from `config.tours[slug].pickupOptions`) — label/hint fall back to the shipped catalog copy for the `default`/`custom` ids, then to the raw id; a single declared option renders a hidden input instead of a radio group, as it always has — an optional `meetingPoints` prop (`Array<{ id, label }>`, from `config.tours[slug].meetingPoints`) that renders a meeting-point radio group only when a tour has 2+ points — 0 or 1 renders nothing, and the group hides/disables itself per pickup option's `usesMeetingPoint` rather than a hardcoded `pickupType === 'custom'` check — an optional live price row via the `pricing`/`currency` props, its table now keyed by each pickup option's own id), `ManageBooking.astro` (token entry form for the manage page), and `AdminDashboard.astro` (quick day-override form that links to the full admin page). The full pages — confirmation, `/booking/manage`, `/booking/admin` — are server-rendered by the injected routes and share the same design language.
+
+`pickupOptions` supersedes the widget's older `pickupTypes` prop (`Array<'default' | 'custom'>`), which is now `@deprecated` but still supported: when `pickupOptions` is omitted, `pickupTypes` is mapped onto the default id/custom id pair (`DEFAULT_PICKUP_OPTIONS`) and renders byte-identical markup to before `pickupOptions` existed, including omitting the `data-uses-meeting-point` attribute the explicit-options path adds to each radio. Existing embeds that only pass `pickupTypes` (or neither prop) need no changes.
 
 `AdminDashboard.astro` reads the request at render time (it runs the same Cloudflare Access check as the built-in admin page and mints its own CSRF token from it, so its form works once `BOOKKIT_CSRF_SECRET` is configured — see "Admin access and booking tokens"): render it only on a server-rendered page (`export const prerender = false`, or `output: 'server'`) behind Cloudflare Access, not on a static/prerendered one. When Access denies the request it renders a short notice instead of the form, rather than a form whose POST can only 403.
 
