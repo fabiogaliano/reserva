@@ -36,6 +36,15 @@ export default {
         { maxPeople: 4, pickup: 'default', priceCents: 2500 },
         { maxPeople: 4, pickup: 'custom', priceCents: 3500 },
       ],
+      // Single-point shorthand. A tour with more than one free meeting point (for example, two
+      // pickup spots at the same price) declares the array form instead — exactly one of the two
+      // is allowed, never both:
+      //   meetingPoints: [
+      //     { id: 'fountain', label: 'Main square fountain', mapsUrl: 'https://maps.google.com/?q=Main+square' },
+      //     { id: 'station', label: 'Central station', mapsUrl: 'https://maps.google.com/?q=Central+station' },
+      //   ],
+      // The customer's choice travels as `meetingPointId` on the checkout body (see README —
+      // "Injected routes"); see examples/smoke-site/src/config.ts for a tour actually using it.
       meetingPoint: {
         label: 'Main square fountain',
         mapsUrl: 'https://maps.google.com/?q=Main+square',

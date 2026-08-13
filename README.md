@@ -88,12 +88,14 @@ Import each provider from its own narrow subpath: `bookkit/providers/payments-st
 
 The config shape includes business details, fleet capacity, tour schedules and pricing, admin Access identifiers, booking cutoffs and horizon, supported locales, payment methods, and legal URLs. See `examples/client-config.ts` for a complete example.
 
+Each tour declares exactly one of `meetingPoint` (the single-point shorthand, `{ label, mapsUrl }`) or `meetingPoints` (an array of `{ id, label, mapsUrl }`, minimum one entry, ids unique within the tour) — declaring both, or neither, fails `validateConfig`. Use the array form when a tour has more than one free meeting point at the same price (for example, two pickup spots for the same price); `validateConfig` normalizes the shorthand into a single-entry `meetingPoints` array internally, so every reader only ever deals with one shape. See `examples/smoke-site/src/config.ts` for a tour using the array form.
+
 ## Injected routes
 
 Every route is server-only with `prerender: false`:
 
 - `GET /api/booking/availability?tour=&people=&from=&to=`
-- `POST /api/booking/checkout`
+- `POST /api/booking/checkout` — body: `{ tourSlug, start, people, pickupType, locale, meetingPointId? }`. `meetingPointId` is optional on the wire, but the *resolved* id is always what gets stored. It is required (400 `validation_failed`) when the tour declares more than one `meetingPoints` entry and `pickupType` is `'default'`; when supplied it must match a declared id (checked for either `pickupType`). A single-point tour, or a request that omits it where it isn't required, resolves to the tour's first (or only) declared point. `BookingWidget.astro`'s own `meetingPoints` prop (see "Components, theming, and UI copy") sends this automatically once a tour has 2+ points.
 - `POST /api/booking/webhooks/stripe`
 - `GET /api/booking/status?session_id=`
 - `GET /api/booking/manage?token=`
@@ -136,7 +138,7 @@ The local demo at `examples/smoke-site` is intentionally unprefixed. It is the z
 
 ## Components, theming, and UI copy
 
-The package includes three embeddable components: `BookingWidget.astro` (the customer funnel: party size, a [cally](https://wicky.nillia.ms/cally/) calendar month grid driven by the availability API, time-slot chips with scarcity hints, pickup cards, an optional live price row via the `pricing`/`currency` props), `ManageBooking.astro` (token entry form for the manage page), and `AdminDashboard.astro` (quick day-override form that links to the full admin page). The full pages — confirmation, `/booking/manage`, `/booking/admin` — are server-rendered by the injected routes and share the same design language.
+The package includes three embeddable components: `BookingWidget.astro` (the customer funnel: party size, a [cally](https://wicky.nillia.ms/cally/) calendar month grid driven by the availability API, time-slot chips with scarcity hints, pickup cards, an optional `meetingPoints` prop (`Array<{ id, label }>`, from `config.tours[slug].meetingPoints`) that renders a meeting-point radio group only when a tour has 2+ points — 0 or 1 renders nothing, and the group hides/disables itself while a custom pickup is selected — an optional live price row via the `pricing`/`currency` props), `ManageBooking.astro` (token entry form for the manage page), and `AdminDashboard.astro` (quick day-override form that links to the full admin page). The full pages — confirmation, `/booking/manage`, `/booking/admin` — are server-rendered by the injected routes and share the same design language.
 
 `AdminDashboard.astro` reads the request at render time (it runs the same Cloudflare Access check as the built-in admin page and mints its own CSRF token from it, so its form works once `BOOKKIT_CSRF_SECRET` is configured — see "Admin access and booking tokens"): render it only on a server-rendered page (`export const prerender = false`, or `output: 'server'`) behind Cloudflare Access, not on a static/prerendered one. When Access denies the request it renders a short notice instead of the form, rather than a form whose POST can only 403.
 
