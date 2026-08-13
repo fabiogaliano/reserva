@@ -20,14 +20,18 @@ export const prerender = false;
 const htmlHeaders = {
   'content-type': 'text/html; charset=utf-8',
   'cache-control': 'no-store',
-  // `same-origin` still keeps the manage token (carried in the URL query) out of any cross-origin
-  // Referer header — the leak this was originally guarding against. `no-referrer` went further
-  // than needed: per the Fetch spec it also nulls the `Origin` header on this page's own
-  // same-origin form POSTs (cancel/reschedule/no-show, below), which Astro's checkOrigin default
-  // then rejects as cross-site (Origin "null" != url.origin) even though the browser sent them
-  // from this exact page. `same-origin` is not on that null-Origin list, so same-origin POSTs keep
-  // a real Origin header and pass the check.
-  'referrer-policy': 'same-origin',
+  // Hardening sweep (audit finding #3): `same-origin` closed the cross-origin Referer leak plan
+  // 007 was guarding against, but this page also loads same-origin CSS/JS (src/ui/layout.ts), and
+  // `same-origin` sends the FULL referring URL — including this page's `?token=…` query — on every
+  // one of those same-origin subresource requests, into whatever access logging sits in front of
+  // the asset routes. `strict-origin` trims Referer to the origin alone (no path, no token) for
+  // every request, same-origin or not, while still sending a real Referer at all — unlike
+  // `no-referrer`, which per the Fetch spec nulls the `Origin` header too, on this page's own
+  // same-origin form POSTs (cancel/reschedule/no-show, below), tripping Astro's checkOrigin default
+  // (Origin "null" != url.origin) even though the browser sent them from this exact page.
+  // `strict-origin` is not on that null-Origin list, so same-origin POSTs keep a real Origin header
+  // and pass the check, exactly like `same-origin` did — only the Referer *value* changes.
+  'referrer-policy': 'strict-origin',
 };
 
 export async function GET({ request, locals }: APIContext): Promise<Response> {

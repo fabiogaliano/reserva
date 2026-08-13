@@ -21,8 +21,9 @@ test('customer can cancel a booking within the cutoff, a cancellation email land
 
   // The customer is redirected to the manage page, which now rejects their revoked token — this
   // round trip only works because src/routes/booking/manage.ts serves `referrer-policy:
-  // same-origin` (not `no-referrer`): the browser sends a real Origin on this same-origin POST, so
-  // Astro's default checkOrigin lets it through.
+  // strict-origin` (not `no-referrer`): the browser sends a real Origin on this same-origin POST,
+  // so Astro's default checkOrigin lets it through. (See the "does not leak the token" test below
+  // for the Referer-trimming half of that same header choice.)
   await expect(page.locator('h1')).toContainText('Link not valid');
 
   const outbox = await (await page.request.get('/dev/outbox.json')).json();
@@ -37,6 +38,32 @@ test('customer can cancel a booking within the cutoff, a cancellation email land
   expect(revoked.status()).toBe(403);
   expect(revoked.status()).toBe(garbage.status());
   expect(await revoked.json()).toEqual(await garbage.json());
+});
+
+// Plan 013 item A (audit finding #3): the manage page loads same-origin CSS/JS
+// (src/ui/layout.ts), so under the old `Referrer-Policy: same-origin` every asset request carried
+// the full manage page URL -- including the live customer token in its query string -- into
+// `Referer`. `strict-origin` still lets same-origin subresource requests through (unlike
+// `no-referrer`, which nulls Origin on this page's own form POSTs and broke Astro's checkOrigin --
+// see the plan-007 comment on the cancel test above) but trims Referer to the origin alone.
+test('manage page asset requests do not leak the token in their Referer header', async ({ page }) => {
+  const { outboxEntry } = await createBooking(page, { tour: TOUR, people: 2 });
+  const manageUrl = new URL(outboxEntry.customerManageUrl);
+
+  const subresourceReferers: string[] = [];
+  page.on('request', (req) => {
+    if (req.url() === manageUrl.toString()) return; // the manage page's own top-level navigation, not a subresource
+    const referer = req.headers()['referer'];
+    if (referer) subresourceReferers.push(referer);
+  });
+
+  await page.goto(manageUrl.pathname + manageUrl.search);
+  await expect(page.locator('h1')).toBeVisible();
+
+  // Sanity: the manage page really does load same-origin subresources that carry a Referer at all
+  // (the css/script tags in src/ui/layout.ts) -- otherwise the loop below would vacuously pass.
+  expect(subresourceReferers.length).toBeGreaterThan(0);
+  for (const referer of subresourceReferers) expect(referer).not.toContain('token=');
 });
 
 test('customer can reschedule to another available slot, the manage page reflects the new time, and a reschedule email lands in the outbox', async ({ page, request }) => {
