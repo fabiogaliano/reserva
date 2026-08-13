@@ -23,6 +23,14 @@ describe('Tourflow provider', () => {
     expect(payload).toEqual(expect.objectContaining({ meetingPointId: null, meetingPointLabel: null }));
   });
 
+  // Plan 018 (design decision 8): TourflowReservation.pickupType widened to Booking['pickupType']
+  // (plain string) alongside the core type — a tour-declared id that isn't 'default'/'custom' maps
+  // through verbatim, no narrowing or special-casing anywhere in this mapper.
+  it('maps a non-enum tour-declared pickupType through verbatim', () => {
+    const payload = mapTourflowBooking('booking.confirmed', booking({ pickupType: 'custom_dropoff', pickupAddress: 'Hotel Avenida' }), config, 'example-city-tours');
+    expect(payload).toEqual(expect.objectContaining({ pickupType: 'custom_dropoff', pickupAddress: 'Hotel Avenida' }));
+  });
+
   it('maps the feed and derives cancellation and no-show events', () => {
     const feed = mapTourflowFeed([booking(), booking({ id: 'booking-2', status: 'cancelled', cancelledBy: 'customer' }), booking({ id: 'booking-3', status: 'no_show' })], config);
     expect(feed.bookings.map((entry) => entry.event)).toEqual(['booking.confirmed', 'booking.cancelled_by_customer', 'booking.no_show']);

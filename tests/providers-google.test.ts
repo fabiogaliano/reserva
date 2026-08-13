@@ -17,6 +17,23 @@ const multiPointTour: TourConfig = {
 };
 const multiPointConfig: ClientConfig = { ...config, tours: { vintage: multiPointTour } };
 
+// Plan 018 (design decision 8): a declared option with BOTH requiresAddress and usesMeetingPoint
+// (Maze's combined custom pickup+drop-off) — built inline per the same "don't touch fixtures.ts" rule.
+const bothFlagsTour: TourConfig = {
+  ...multiPointTour,
+  pickupOptions: [
+    { id: 'default', requiresAddress: false, usesMeetingPoint: true },
+    { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
+    { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
+  ],
+  pricing: [
+    { maxPeople: 8, pickup: 'default', priceCents: 18000 },
+    { maxPeople: 8, pickup: 'custom_dropoff', priceCents: 21000 },
+    { maxPeople: 8, pickup: 'custom_pickup', priceCents: 20000 },
+  ],
+};
+const bothFlagsConfig: ClientConfig = { ...config, tours: { vintage: bothFlagsTour } };
+
 const fakePem = '-----BEGIN PRIVATE KEY-----\nAQID\n-----END PRIVATE KEY-----';
 const fakeCrypto = {
   subtle: {
@@ -121,6 +138,37 @@ describe('Google Calendar provider', () => {
     const body = String(request.mock.calls[0]?.[1]?.body);
     expect(body).toContain('Pickup: Old Fountain Square');
     expect(body).not.toContain('maps.google.com');
+  });
+
+  // Plan 018 (design decision 8): a non-default declared option that only collects an address
+  // (requiresAddress: true, usesMeetingPoint: false) — the Pickup line is the address, no maps line.
+  it('describes the collected address for a non-default option id with requiresAddress and no maps line', async () => {
+    const auth = { getAccessToken: async () => 'token' } as GoogleServiceAccountAuth;
+    const request = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ id: 'created' }), { headers: { 'content-type': 'application/json' } }));
+    const provider = new GoogleCalendarProvider({ calendarId: 'primary@example.test', auth, fetch: request });
+
+    await provider.createEvent(booking({ pickupType: 'custom_pickup', pickupAddress: 'Hotel Avenida' }), bothFlagsConfig);
+
+    const body = String(request.mock.calls[0]?.[1]?.body);
+    expect(body).toContain('Pickup: Hotel Avenida');
+    expect(body).not.toContain('maps.google.com');
+  });
+
+  // Plan 018 (design decision 8): an option with BOTH flags (Maze's combined custom pickup +
+  // drop-off) shows both — the address on the Pickup line AND the meeting-point maps URL line.
+  it('describes both the collected address and the meeting-point maps URL for an option with both flags', async () => {
+    const auth = { getAccessToken: async () => 'token' } as GoogleServiceAccountAuth;
+    const request = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ id: 'created' }), { headers: { 'content-type': 'application/json' } }));
+    const provider = new GoogleCalendarProvider({ calendarId: 'primary@example.test', auth, fetch: request });
+
+    await provider.createEvent(booking({
+      pickupType: 'custom_dropoff', pickupAddress: 'Hotel Avenida',
+      meetingPointId: 'belem', meetingPointLabel: 'Belém Tower',
+    }), bothFlagsConfig);
+
+    const body = String(request.mock.calls[0]?.[1]?.body);
+    expect(body).toContain('Pickup: Hotel Avenida');
+    expect(body).toContain('https://maps.google.com/?q=Belem+Tower');
   });
 
   it('treats a deterministic event-id conflict as an already-created event', async () => {

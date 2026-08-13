@@ -1,7 +1,7 @@
 import Stripe from 'stripe';
 import type { Booking } from '../core/booking';
 import type { ClientConfig } from '../core/config';
-import { resolveTour } from '../core/config';
+import { pickupOptionFor, resolveTour } from '../core/config';
 import type { PaymentProvider, SessionStatus, StripeEventParsed } from '../core/events';
 import { priceFor } from '../core/pricing';
 import { requestText, STRIPE_WEBHOOK_BODY_LIMIT_BYTES } from '../http';
@@ -309,7 +309,13 @@ export class StripeProvider implements PaymentProvider {
       success_url: successUrl,
       cancel_url: cancelUrl,
     };
-    if (booking.pickupType === 'custom') params.custom_fields = [{
+    // Plan 018 (design decision 7): re-keyed off the tour's declared option instead of the fixed
+    // 'custom' id, so any option a tour marks requiresAddress collects the field, not just the id
+    // literally named 'custom'. An undeclared stored pickupType (the tour's pickupOptions changed
+    // after this booking's hold was created) resolves option to undefined, and `undefined?.` is
+    // falsy — the safe degrade is to skip the field rather than guess, since Stripe would otherwise
+    // collect an address label for an option the operator no longer recognizes.
+    if (pickupOptionFor(tour, booking.pickupType)?.requiresAddress) params.custom_fields = [{
       key: 'pickup_address', label: { type: 'custom', custom: pickupLabel }, type: 'text',
     }];
     if ((this.options.termsOfService ?? 'required') === 'required') {

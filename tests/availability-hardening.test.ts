@@ -208,4 +208,41 @@ describe('calendar availability hardening', () => {
     expect(response.status).toBe(400);
     expect(calls).toBe(0);
   });
+
+  // Plan 018 (design decision 3): the party-size price probe iterates the pickup ids the tour's
+  // pricing rows declare — a Maze-shaped tour has no 'default'/'custom' rows at all, so the old
+  // literal-pair probe would have 400'd every availability request for it.
+  it('serves availability for a tour whose pricing uses only declared non-enum pickup ids', async () => {
+    const context = createBookkitContext({
+      config: {
+        ...config,
+        tours: {
+          ...config.tours,
+          maze: {
+            ...config.tours.vintage!,
+            pricing: [
+              { maxPeople: 4, pickup: 'meeting_point', priceCents: 18000 },
+              { maxPeople: 4, pickup: 'custom_dropoff', priceCents: 20000 },
+              { maxPeople: 4, pickup: 'custom_pickup', priceCents: 20000 },
+              { maxPeople: 4, pickup: 'custom_both', priceCents: 21000 },
+            ],
+            pickupOptions: [
+              { id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true },
+              { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
+              { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
+              { id: 'custom_both', requiresAddress: true, usesMeetingPoint: false },
+            ],
+          },
+        },
+      },
+      db: {} as D1Database,
+      repo: fakeRepository(),
+      cache: memoryCache(),
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      providers: providers(),
+    });
+
+    const response = await handleAvailability(availabilityRequest('maze', 2), context);
+    expect(response.status).toBe(200);
+  });
 });

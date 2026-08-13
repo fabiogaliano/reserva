@@ -3,7 +3,7 @@ import Stripe from 'stripe';
 import { describe, expect, it, vi } from 'vitest';
 import { createBookkitContext } from '../src/context';
 import { handleCheckout } from '../src/handlers';
-import { booking, config } from './fixtures';
+import { booking, config, tour } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 import {
   StripeProvider,
@@ -13,6 +13,29 @@ import {
   type StripeClient,
 } from '../src/providers/stripe';
 import { resolveRouteConfig } from '../src/routes-manifest';
+import type { ClientConfig, TourConfig } from '../src/core/config';
+
+// Plan 018 (design decision 7): a Maze-shaped four-option tour, built inline — fixtures.ts stays
+// the two-option default/custom tour so every other suite's byte-identical assertions keep holding.
+const mazeTour: TourConfig = {
+  ...tour,
+  pickupOptions: [
+    { id: 'default', requiresAddress: false, usesMeetingPoint: true },
+    { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
+    { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
+    { id: 'meet_elsewhere', requiresAddress: false, usesMeetingPoint: true },
+  ],
+  pricing: [
+    { maxPeople: 8, pickup: 'default', priceCents: 18000 },
+    { maxPeople: 8, pickup: 'custom_pickup', priceCents: 20000 },
+    { maxPeople: 8, pickup: 'custom_dropoff', priceCents: 21000 },
+    { maxPeople: 8, pickup: 'meet_elsewhere', priceCents: 18000 },
+    // A leftover pricing row for an id no longer in pickupOptions — models a config change after a
+    // still-open hold's original checkout, exercising the safe-degrade test below.
+    { maxPeople: 8, pickup: 'removed_option', priceCents: 19000 },
+  ],
+};
+const mazeConfig: ClientConfig = { ...config, tours: { vintage: mazeTour } };
 
 function stripeRefund(
   id: string,
@@ -122,6 +145,36 @@ describe('StripeProvider', () => {
     const { client, sessions } = makeClient();
     const provider = new StripeProvider('sk_test', 'whsec_test', { client });
     await provider.createCheckout(booking(), config);
+    expect(sessions.create).toHaveBeenCalledWith(expect.not.objectContaining({ custom_fields: expect.anything() }), expect.anything());
+  });
+
+  // Plan 018 (design decision 7): the custom_fields gate is keyed on the tour's declared
+  // requiresAddress flag, not the literal id 'custom' — any id a tour marks requiresAddress
+  // collects the same 'pickup_address' field, and an id that doesn't never does, even though
+  // neither is named 'default' or 'custom'.
+  it('collects pickup_address for any declared option with requiresAddress, not just the id "custom"', async () => {
+    const { client, sessions } = makeClient();
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    await provider.createCheckout(booking({ pickupType: 'custom_dropoff' }), mazeConfig);
+    expect(sessions.create).toHaveBeenCalledWith(expect.objectContaining({
+      custom_fields: [{ key: 'pickup_address', label: { type: 'custom', custom: 'Pickup address' }, type: 'text' }],
+    }), expect.anything());
+  });
+
+  it('omits pickup_address for a declared non-"default" option with requiresAddress: false', async () => {
+    const { client, sessions } = makeClient();
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    await provider.createCheckout(booking({ pickupType: 'meet_elsewhere' }), mazeConfig);
+    expect(sessions.create).toHaveBeenCalledWith(expect.not.objectContaining({ custom_fields: expect.anything() }), expect.anything());
+  });
+
+  // The safe degrade (stripe.ts): a stored pickupType the tour no longer declares (config changed
+  // after this booking's hold was created) resolves pickupOptionFor to undefined, and
+  // `undefined?.requiresAddress` is falsy — no address field, rather than guessing.
+  it('omits pickup_address for a stored pickupType the tour no longer declares', async () => {
+    const { client, sessions } = makeClient();
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    await provider.createCheckout(booking({ pickupType: 'removed_option' }), mazeConfig);
     expect(sessions.create).toHaveBeenCalledWith(expect.not.objectContaining({ custom_fields: expect.anything() }), expect.anything());
   });
 

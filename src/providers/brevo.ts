@@ -1,5 +1,5 @@
 import type { Booking } from '../core/booking';
-import { meetingPointForBooking, type ClientConfig } from '../core/config';
+import { meetingPointForBooking, pickupOptionFor, type ClientConfig } from '../core/config';
 import type { EmailBookingEvent, EmailProvider, EmailRecipientRole } from '../core/events';
 import { ProviderFailure } from '../provider-failure';
 import type { BookkitResolvedRouteConfig } from '../routes-manifest';
@@ -106,10 +106,18 @@ function defaultRender(context: BrevoEmailTemplateContext): BrevoEmailContent {
   // to the booking's stored label snapshot with no maps link (meetingPointForBooking) — while the
   // {pickupDetails}/{pickupMapLink} template variable names themselves stay unchanged.
   const resolvedPoint = tour ? meetingPointForBooking(tour, context.booking.meetingPointId ?? null, context.booking.meetingPointLabel ?? null) : null;
-  const pickupDetails = context.booking.pickupType === 'custom'
+  // Plan 018 (design decision 8): re-keyed off the tour's declared option instead of the fixed
+  // 'custom'/'default' ids. The two gates are independent, not mutually exclusive, so an option
+  // that declares BOTH flags (Maze's combined pickup+drop-off) renders both: the address on
+  // pickupDetails and the meeting-point maps link on pickupMapLink. Undefined option (no tour, or a
+  // stored pickupType no longer declared) falls back to the exact pre-018 pickupType check.
+  const option = tour ? pickupOptionFor(tour, context.booking.pickupType) : undefined;
+  const requiresAddress = option ? option.requiresAddress : context.booking.pickupType === 'custom';
+  const usesMeetingPoint = option ? option.usesMeetingPoint : context.booking.pickupType === 'default';
+  const pickupDetails = requiresAddress
     ? context.booking.pickupAddress ?? 'Custom pickup address pending'
     : resolvedPoint?.label ?? '';
-  const pickupMapLink = context.booking.pickupType === 'default' && resolvedPoint?.mapsUrl
+  const pickupMapLink = usesMeetingPoint && resolvedPoint?.mapsUrl
     ? `<a href="${escapeHtml(resolvedPoint.mapsUrl)}">Open map</a>`
     : '';
   const contact = [context.config.business.contact.phone, context.config.business.contact.whatsapp]

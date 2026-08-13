@@ -6,7 +6,7 @@ import {
   rescheduleBooking,
   type Booking,
 } from '../core/booking';
-import { DEFAULT_TOKEN_EXPIRY_DAYS, meetingPointForBooking, resolveMeetingPoint, resolveTour, type MeetingPoint, type PickupType } from '../core/config';
+import { DEFAULT_PICKUP_OPTIONS, DEFAULT_TOKEN_EXPIRY_DAYS, meetingPointForBooking, pickupOptionFor, resolveMeetingPoint, resolveTour, type MeetingPoint, type PickupType, type TourConfig } from '../core/config';
 import { availabilityForDay, capacityForDate, defaultCapacityForDate, occupancyFor, type CalEvent, type CapacityDefault } from '../core/occupancy';
 import { verifyPayment } from '../core/payment-verification';
 import { priceFor } from '../core/pricing';
@@ -231,8 +231,12 @@ function availabilityInput(request: Request, context: BookkitContext): Availabil
   const tour = resolveTour(context.config, tourSlug);
   assertSupportedPartySize(tour, people);
   try {
-    priceFor(tour, people, 'default');
-    priceFor(tour, people, 'custom');
+    // Plan 018 (design decision 3): the party size must price under every pickup id the tour's
+    // own pricing rows declare — derived like resolvedPriceTableFor, not the old literal
+    // default/custom pair, which a tour with declared pickupOptions need not use at all.
+    for (const pickup of new Set(tour.pricing.map((row) => row.pickup))) {
+      priceFor(tour, people, pickup);
+    }
   } catch {
     throw new HttpError(400, 'validation_failed', 'No price is configured for this party size');
   }
@@ -328,18 +332,31 @@ export function handleAvailability(request: Request, context: BookkitContext): P
   });
 }
 
-function parsePickup(value: unknown): PickupType {
-  if (value !== 'default' && value !== 'custom') throw new HttpError(400, 'validation_failed', 'pickupType must be default or custom');
-  return value;
+// Plan 018 (design decision 6): validated against the tour's own declared option ids (via
+// pickupOptionFor, which already falls back to DEFAULT_PICKUP_OPTIONS for a tour with none) rather
+// than a fixed 'default'/'custom' enum — a legacy tour still only accepts that same pair, but a
+// tour that declares more gets every id it names. The 400 names the valid ids so a client with a
+// stale option list gets an actionable error instead of a generic "must be default or custom".
+function parsePickup(tour: TourConfig, value: unknown): PickupType {
+  const id = requireString(value, 'pickupType');
+  if (!pickupOptionFor(tour, id)) {
+    const validIds = (tour.pickupOptions ?? DEFAULT_PICKUP_OPTIONS).map((option) => option.id).join(', ');
+    throw new HttpError(400, 'validation_failed', `pickupType must be one of: ${validIds}`);
+  }
+  return id;
 }
 
 // Plan 017 (design decision 2): meetingPointId is optional on the wire but the RESOLVED id is
 // always what gets stored, so downstream rendering (bookingSummary/confirmationSummary, admin,
 // providers) never has to branch on "absent" — only ever on a stored id that's since been
-// removed from config (meetingPointForBooking's fallback). Required only when the tour declares
-// more than one point and the customer picked the default (free) pickup — a custom pickup starts
-// at the customer's own address today, so a meeting point choice there is accepted (still
-// validated against the declared set) but not mandatory; plan 018 makes this per-option.
+// removed from config (meetingPointForBooking's fallback).
+//
+// Plan 018 (design decision 6): required onto the chosen option's usesMeetingPoint rather than
+// `pickupType === 'default'` — Maze's "custom drop-off" option still starts at a meeting point
+// (usesMeetingPoint: true) even though it also collects an address, so it must still require the
+// choice on a multi-point tour; an option with usesMeetingPoint: false accepts-but-doesn't-require
+// a supplied id, exactly like 'custom' did before this plan. `pickupType` here has already been
+// validated by parsePickup against this same tour, so the option is always declared.
 function resolveCheckoutMeetingPoint(tour: ReturnType<typeof resolveTour>, pickupType: PickupType, body: Record<string, unknown>): MeetingPoint {
   const raw = body.meetingPointId;
   if (raw !== undefined) {
@@ -348,7 +365,7 @@ function resolveCheckoutMeetingPoint(tour: ReturnType<typeof resolveTour>, picku
     if (point.id !== suppliedId) throw new HttpError(400, 'validation_failed', 'Unknown meetingPointId');
     return point;
   }
-  if ((tour.meetingPoints?.length ?? 0) > 1 && pickupType === 'default') {
+  if ((tour.meetingPoints?.length ?? 0) > 1 && pickupOptionFor(tour, pickupType)?.usesMeetingPoint) {
     throw new HttpError(400, 'validation_failed', 'meetingPointId is required for a tour with more than one meeting point');
   }
   return resolveMeetingPoint(tour);
@@ -425,12 +442,16 @@ export function handleCheckout(request: Request, context: BookkitContext): Promi
     if (!context.config.tours[tourSlug]) throw new HttpError(400, 'validation_failed', 'Unknown tour');
     const start = requireString(body.start, 'start');
     const people = requireInteger(body.people, 'people');
-    const pickupType = parsePickup(body.pickupType);
+    // Plan 018 (design decision 6): resolveTour is a cheap in-memory lookup (already needed below
+    // for assertSupportedPartySize), so it's pulled forward here rather than duplicated — parsePickup
+    // needs the tour itself to validate pickupType against its declared option ids.
+    const tour = resolveTour(context.config, tourSlug);
+    const pickupType = parsePickup(tour, body.pickupType);
     const locale = requireString(body.locale, 'locale');
     if (!context.config.locales.supported.includes(locale)) throw new HttpError(400, 'validation_failed', 'Unsupported locale');
     const now = nowIso(context);
     await context.repo.sweepExpiredHolds(now);
-    assertSupportedPartySize(resolveTour(context.config, tourSlug), people);
+    assertSupportedPartySize(tour, people);
     const candidate = await checkSlot(context, tourSlug, people, start, now);
     const meetingPoint = resolveCheckoutMeetingPoint(candidate.tour, pickupType, body);
     let priceCents: number;
@@ -1242,25 +1263,35 @@ function adminPage(
       : '';
     const people = formatMessage(booking.people === 1 ? messages['widget.person'] : messages['widget.peopleCount'], { n: booking.people });
     const price = formatPrice(booking.priceCents, locale, context.config.business.currency);
-    const pickupLabel = booking.pickupType === 'custom' ? messages['widget.pickupCustom'] : messages['widget.pickupDefault'];
-    const pickupSub = booking.pickupType === 'custom' && booking.pickupAddress
+    // Plan 018 (design decision 8): resolveTour throws for a renamed/removed tourSlug (see
+    // adminMeetingPointLabel above) — degrade option to undefined rather than 500 the row; every
+    // gate below then falls back to the pre-018 pickupType-keyed check, so a legacy default/custom
+    // booking (or a booking whose tour disappeared) renders exactly as it did before this plan.
+    let rowTour: TourConfig | undefined;
+    try {
+      rowTour = resolveTour(context.config, booking.tourSlug);
+    } catch {
+      rowTour = undefined;
+    }
+    const option = rowTour ? pickupOptionFor(rowTour, booking.pickupType) : undefined;
+    // Fallback chain (decision 8): a declared option's own label, else the message-catalog key for
+    // the 'default'/'custom' ids (unchanged copy for every config that predates this plan), else
+    // the raw id verbatim for a declared-but-uncataloged one.
+    const pickupLabel = option?.label
+      ?? (booking.pickupType === 'default' ? messages['widget.pickupDefault']
+        : booking.pickupType === 'custom' ? messages['widget.pickupCustom']
+        : booking.pickupType);
+    const requiresAddress = option ? option.requiresAddress : booking.pickupType === 'custom';
+    const pickupSub = requiresAddress && booking.pickupAddress
       ? `<span class="bk-sub">${escapeHtml(booking.pickupAddress)}</span>`
       : '';
-    // Plan 017 (design decision 4): only a default (free) pickup ever carries a meeting-point
-    // choice worth surfacing, and only when the tour actually offers more than one — a
-    // single-point tour's sub-line would just repeat what "Meeting point" already implies.
-    let meetingPointSub = '';
-    if (booking.pickupType === 'default') {
-      try {
-        const tour = resolveTour(context.config, booking.tourSlug);
-        if ((tour.meetingPoints?.length ?? 0) > 1) {
-          const point = meetingPointForBooking(tour, booking.meetingPointId, booking.meetingPointLabel);
-          meetingPointSub = `<span class="bk-sub">${escapeHtml(point.label)}</span>`;
-        }
-      } catch {
-        // Unknown/removed tourSlug (see adminMeetingPointLabel above) — skip the sub-line.
-      }
-    }
+    // Plan 017 (design decision 4) / Plan 018 (design decision 8): only an option that starts at a
+    // meeting point ever carries a choice worth surfacing, and only when the tour actually declares
+    // more than one — a single-point tour's sub-line would just repeat what "Meeting point" implies.
+    const usesMeetingPoint = option ? option.usesMeetingPoint : booking.pickupType === 'default';
+    const meetingPointSub = usesMeetingPoint && rowTour && (rowTour.meetingPoints?.length ?? 0) > 1
+      ? `<span class="bk-sub">${escapeHtml(meetingPointForBooking(rowTour, booking.meetingPointId, booking.meetingPointLabel).label)}</span>`
+      : '';
     const manageHref = manageLinkHref(managePagePath, booking.operatorToken);
     const manageCell = manageHref
       ? `<a href="${escapeHtml(manageHref)}">${escapeHtml(messages['admin.manage'])}</a>`

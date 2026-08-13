@@ -18,6 +18,23 @@ const multiPointTour: TourConfig = {
 };
 const multiPointConfig: ClientConfig = { ...config, tours: { vintage: multiPointTour } };
 
+// Plan 018 (design decision 8): a declared option with BOTH requiresAddress and usesMeetingPoint
+// (Maze's combined custom pickup+drop-off) — built inline per the same "don't touch fixtures.ts" rule.
+const bothFlagsTour: TourConfig = {
+  ...multiPointTour,
+  pickupOptions: [
+    { id: 'default', requiresAddress: false, usesMeetingPoint: true },
+    { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
+    { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
+  ],
+  pricing: [
+    { maxPeople: 8, pickup: 'default', priceCents: 18000 },
+    { maxPeople: 8, pickup: 'custom_dropoff', priceCents: 21000 },
+    { maxPeople: 8, pickup: 'custom_pickup', priceCents: 20000 },
+  ],
+};
+const bothFlagsConfig: ClientConfig = { ...config, tours: { vintage: bothFlagsTour } };
+
 describe('email providers', () => {
   it('posts localized customer and owner messages to Brevo', async () => {
     const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
@@ -190,6 +207,38 @@ describe('email providers', () => {
     expect(body.htmlContent).toContain('Old Fountain Square');
     expect(body.htmlContent).not.toContain('Open map');
     expect(body.htmlContent).not.toContain('maps.google.com');
+  });
+
+  // Plan 018 (design decision 8): a non-default declared option that only collects an address
+  // (requiresAddress: true, usesMeetingPoint: false) — pickupDetails is the address, no maps link.
+  it('renders the collected address for a non-default option id with requiresAddress and no maps link', async () => {
+    const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
+    const provider = brevoEmail({ apiKey: 'key', fetch: request });
+
+    await provider.sendToRecipient('customer', 'booking.confirmed', booking({
+      pickupType: 'custom_pickup', pickupAddress: 'Hotel Avenida',
+    }), bothFlagsConfig);
+
+    const body = JSON.parse(request.mock.calls[0]![1]!.body as string) as { htmlContent: string };
+    expect(body.htmlContent).toContain('Pickup: <strong>Hotel Avenida</strong>');
+    expect(body.htmlContent).not.toContain('Open map');
+  });
+
+  // Plan 018 (design decision 8): an option with BOTH flags (Maze's combined custom pickup +
+  // drop-off) renders both — the collected address AND the chosen meeting point's maps link,
+  // since the two gates (requiresAddress, usesMeetingPoint) are independent, not exclusive.
+  it('renders both the address and the meeting-point maps link for an option with both flags', async () => {
+    const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
+    const provider = brevoEmail({ apiKey: 'key', fetch: request });
+
+    await provider.sendToRecipient('customer', 'booking.confirmed', booking({
+      pickupType: 'custom_dropoff', pickupAddress: 'Hotel Avenida',
+      meetingPointId: 'belem', meetingPointLabel: 'Belém Tower',
+    }), bothFlagsConfig);
+
+    const body = JSON.parse(request.mock.calls[0]![1]!.body as string) as { htmlContent: string };
+    expect(body.htmlContent).toContain('Pickup: <strong>Hotel Avenida</strong>');
+    expect(body.htmlContent).toContain('<a href="https://maps.google.com/?q=Belem+Tower">Open map</a>');
   });
 
   // Plan 017 done criterion: an existing single-point `meetingPoint` config renders byte-identical

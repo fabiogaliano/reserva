@@ -2,6 +2,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createBookkitContext } from '../src/context';
 import type { Booking } from '../src/core/booking';
+import type { ClientConfig, TourConfig } from '../src/core/config';
 import { handleAvailability, handleCheckout, handleFeed, handleOperatorNoShow, handleStripeWebhook } from '../src/handlers';
 import { booking, config, tour } from './fixtures';
 import { fakeRepository, providers } from './fakes';
@@ -449,5 +450,111 @@ describe('checkout meetingPointId (plan 017 design decision 2)', () => {
     expect(response.status).toBe(201);
     const { bookingId } = await response.json() as { bookingId: string };
     expect(repo.rows.get(bookingId)).toMatchObject({ meetingPointId: 'station', meetingPointLabel: 'The Station' });
+  });
+});
+
+// Plan 018 (design decision 6): parsePickup validates pickupType against the tour's own declared
+// option ids (via pickupOptionFor) instead of a fixed 'default'/'custom' enum, and the
+// meetingPointId requirement re-keys onto the chosen option's usesMeetingPoint instead of
+// `pickupType === 'default'` — Maze's "custom drop-off" still starts at a meeting point even though
+// it also collects an address.
+describe('checkout pickupType (plan 018 design decision 6)', () => {
+  const points = [
+    { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
+    { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
+  ];
+  const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = tour;
+  // A Maze-shaped four-option tour, built inline — fixtures.ts stays the two-option default/custom
+  // tour so every other suite's byte-identical assertions keep holding.
+  const mazeTour: TourConfig = {
+    ...vintageWithoutShorthand,
+    meetingPoints: points,
+    pickupOptions: [
+      { id: 'default', requiresAddress: false, usesMeetingPoint: true },
+      { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
+      { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
+      { id: 'meet_elsewhere', requiresAddress: false, usesMeetingPoint: true },
+    ],
+    pricing: [
+      { maxPeople: 8, pickup: 'default', priceCents: 18000 },
+      { maxPeople: 8, pickup: 'custom_pickup', priceCents: 20000 },
+      { maxPeople: 8, pickup: 'custom_dropoff', priceCents: 21000 },
+      { maxPeople: 8, pickup: 'meet_elsewhere', priceCents: 19000 },
+    ],
+  };
+  const mazeConfig: ClientConfig = { ...config, tours: { ...config.tours, vintage: mazeTour } };
+
+  function checkoutContext(configOverride: ClientConfig = mazeConfig) {
+    const repo = fakeRepository();
+    const context = createBookkitContext({
+      config: configOverride,
+      db: {} as D1Database,
+      repo,
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      providers: providers(),
+    });
+    return { repo, context };
+  }
+
+  function checkoutRequest(body: Record<string, unknown>): Request {
+    return new Request('https://example.test/api/booking/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ tourSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', people: 2, pickupType: 'default', locale: 'en', ...body }),
+    });
+  }
+
+  it('accepts a declared non-enum pickupType end-to-end, pricing it from the tour\'s own rows', async () => {
+    const { repo, context } = checkoutContext();
+    const response = await handleCheckout(checkoutRequest({ pickupType: 'meet_elsewhere', meetingPointId: 'station' }), context);
+    expect(response.status).toBe(201);
+    const { bookingId } = await response.json() as { bookingId: string };
+    expect(repo.rows.get(bookingId)).toMatchObject({ pickupType: 'meet_elsewhere', priceCents: 19000, meetingPointId: 'station', meetingPointLabel: 'The Station' });
+  });
+
+  it('400s an undeclared pickupType, naming the tour\'s valid ids', async () => {
+    const { context } = checkoutContext();
+    const response = await handleCheckout(checkoutRequest({ pickupType: 'bogus' }), context);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'validation_failed', message: expect.stringContaining('default, custom_pickup, custom_dropoff, meet_elsewhere') },
+    });
+  });
+
+  it('a legacy two-option tour still accepts exactly default/custom byte-identically', async () => {
+    // config.tours.vintage carries no pickupOptions — pickupOptionFor falls back to
+    // DEFAULT_PICKUP_OPTIONS, so this is the same request the pre-018 suite already exercises.
+    const { repo, context } = checkoutContext(config);
+    const response = await handleCheckout(checkoutRequest({ pickupType: 'custom' }), context);
+    expect(response.status).toBe(201);
+    const { bookingId } = await response.json() as { bookingId: string };
+    expect(repo.rows.get(bookingId)).toMatchObject({ pickupType: 'custom', priceCents: 12000 });
+  });
+
+  it('requires meetingPointId for an option with usesMeetingPoint: true even when it also requires an address (Maze\'s custom drop-off)', async () => {
+    const { context } = checkoutContext();
+    const response = await handleCheckout(checkoutRequest({ pickupType: 'custom_dropoff' }), context);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('meetingPointId is required') } });
+  });
+
+  it('does not require meetingPointId for an option with usesMeetingPoint: false (Maze\'s custom pickup), and stores the resolved first point', async () => {
+    const { repo, context } = checkoutContext();
+    const response = await handleCheckout(checkoutRequest({ pickupType: 'custom_pickup' }), context);
+    expect(response.status).toBe(201);
+    const { bookingId } = await response.json() as { bookingId: string };
+    expect(repo.rows.get(bookingId)).toMatchObject({ pickupType: 'custom_pickup', meetingPointId: 'square', meetingPointLabel: 'The Square' });
+  });
+
+  it('still validates a supplied meetingPointId against the declared set for both option shapes', async () => {
+    const { context: dropoffContext } = checkoutContext();
+    const dropoffResponse = await handleCheckout(checkoutRequest({ pickupType: 'custom_dropoff', meetingPointId: 'bogus' }), dropoffContext);
+    expect(dropoffResponse.status).toBe(400);
+    await expect(dropoffResponse.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('Unknown meetingPointId') } });
+
+    const { context: pickupContext } = checkoutContext();
+    const pickupResponse = await handleCheckout(checkoutRequest({ pickupType: 'custom_pickup', meetingPointId: 'bogus' }), pickupContext);
+    expect(pickupResponse.status).toBe(400);
+    await expect(pickupResponse.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('Unknown meetingPointId') } });
   });
 });

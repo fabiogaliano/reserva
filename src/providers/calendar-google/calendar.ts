@@ -1,5 +1,5 @@
 import type { Booking } from '../../core/booking';
-import { meetingPointForBooking, type ClientConfig } from '../../core/config';
+import { meetingPointForBooking, pickupOptionFor, type ClientConfig } from '../../core/config';
 import type { CalendarProvider } from '../../core/events';
 import type { CalEvent } from '../../core/occupancy';
 import { ProviderFailure } from '../../provider-failure';
@@ -49,13 +49,24 @@ function eventPayload(booking: Booking, config: ClientConfig | undefined, _timez
   // Plan 017 (design decision 4): same per-booking resolution as Brevo — a removed meeting point
   // id falls back to the booking's stored label snapshot with no maps link.
   const resolvedPoint = tour ? meetingPointForBooking(tour, booking.meetingPointId ?? null, booking.meetingPointLabel ?? null) : null;
+  // Plan 018 (design decision 8): re-keyed off the tour's declared option instead of an unconditional
+  // "address if present, else the meeting point" — the two lines are independent gates, so an option
+  // declaring BOTH flags (Maze's combined pickup+drop-off) shows the address on the Pickup line AND
+  // the maps URL line. Undefined option (no tour, or a stored pickupType no longer declared) falls
+  // back to the exact pre-018 pickupType check.
+  const option = tour ? pickupOptionFor(tour, booking.pickupType) : undefined;
+  const requiresAddress = option ? option.requiresAddress : booking.pickupType === 'custom';
+  const usesMeetingPoint = option ? option.usesMeetingPoint : booking.pickupType === 'default';
+  const pickupLine = requiresAddress
+    ? booking.pickupAddress ?? (resolvedPoint?.label ?? 'Default meeting point')
+    : resolvedPoint?.label ?? 'Default meeting point';
   const description = [
     `Booking: ${booking.reference}`,
     `Customer: ${booking.customerName ?? ''}`,
     `Email: ${booking.customerEmail ?? ''}`,
     `Phone: ${booking.customerPhone ?? ''}`,
-    `Pickup: ${booking.pickupAddress ?? (resolvedPoint?.label ?? 'Default meeting point')}`,
-    resolvedPoint?.mapsUrl,
+    `Pickup: ${pickupLine}`,
+    ...(usesMeetingPoint ? [resolvedPoint?.mapsUrl] : []),
   ].filter(Boolean).join('\n');
   const attendee = booking.customerEmail ? { email: booking.customerEmail, ...(booking.customerName ? { displayName: booking.customerName } : {}) } : undefined;
   return { id: booking.id.replaceAll('-', ''), summary: title, description, start: { dateTime: booking.startsAt }, end: { dateTime: booking.endsAt }, ...(attendee ? { attendees: [attendee] } : {}), extendedProperties: { private: { bookkitBookingId: booking.id } } };

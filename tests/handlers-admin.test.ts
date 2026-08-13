@@ -2,7 +2,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { ADMIN_CSRF_TOKEN_TTL_MS, mintAdminCsrfToken } from '../src/admin-csrf';
 import { createBookkitContext } from '../src/context';
-import type { ClientConfig } from '../src/core/config';
+import type { ClientConfig, TourConfig } from '../src/core/config';
 import { handleAdminGet, handleAdminPost } from '../src/handlers';
 import { booking, config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
@@ -234,6 +234,81 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
       const body = await response.text();
       expect(body).toContain(chosen.reference);
     });
+  });
+});
+
+// Plan 018 (design decision 8): the pickup-cell label re-keys off the tour's declared option,
+// falling back through option?.label -> the message-catalog key for 'default'/'custom' -> the raw
+// id, and the requiresAddress/usesMeetingPoint sub-line gates re-key the same way the checkout
+// meeting-point requirement does (decision 6).
+describe('pickup option label + sub-lines (plan 018 design decision 8)', () => {
+  const points = [
+    { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
+    { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
+  ];
+  const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = config.tours.vintage!;
+  const mazeTour: TourConfig = {
+    ...vintageWithoutShorthand,
+    meetingPoints: points,
+    pickupOptions: [
+      { id: 'default', requiresAddress: false, usesMeetingPoint: true },
+      { id: 'custom_dropoff', label: 'Custom pickup & drop-off', requiresAddress: true, usesMeetingPoint: true },
+      { id: 'meet_elsewhere', requiresAddress: false, usesMeetingPoint: true },
+    ],
+    pricing: [
+      { maxPeople: 8, pickup: 'default', priceCents: 18000 },
+      { maxPeople: 8, pickup: 'custom_dropoff', priceCents: 21000 },
+      { maxPeople: 8, pickup: 'meet_elsewhere', priceCents: 19000 },
+    ],
+  };
+  const mazeConfig: ClientConfig = { ...config, tours: { ...config.tours, vintage: mazeTour } };
+
+  it('renders a declared option\'s own label', async () => {
+    const seeded = booking({
+      id: 'b-admin-option-label', reference: 'LVT-2026-500', startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
+      operatorToken: 'op-option-label', cancelToken: 'cancel-option-label',
+      pickupType: 'custom_dropoff', pickupAddress: 'Hotel Avenida', meetingPointId: 'station', meetingPointLabel: 'The Station',
+    });
+    const repo = fakeRepository([seeded]);
+    const context = createBookkitContext({ config: mazeConfig, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const response = await handleAdminGet(adminGetRequest(), context);
+    const body = await response.text();
+    expect(body).toContain('Custom pickup &amp; drop-off');
+    // Both flags declared: the address AND the resolved meeting-point sub-line both render.
+    expect(body).toContain('<span class="bk-sub">Hotel Avenida</span>');
+    expect(body).toContain('<span class="bk-sub">The Station</span>');
+  });
+
+  it('falls back to the message-catalog labels for the default/custom ids when a config declares no pickupOptions', async () => {
+    const defaultSeeded = booking({
+      id: 'b-admin-catalog-default', reference: 'LVT-2026-501', startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
+      operatorToken: 'op-catalog-default', cancelToken: 'cancel-catalog-default', pickupType: 'default',
+    });
+    const customSeeded = booking({
+      id: 'b-admin-catalog-custom', reference: 'LVT-2026-502', startsAt: '2026-06-21T09:00:00.000Z', endsAt: '2026-06-21T10:00:00.000Z',
+      operatorToken: 'op-catalog-custom', cancelToken: 'cancel-catalog-custom', pickupType: 'custom', pickupAddress: 'Hotel Avenida',
+    });
+    const repo = fakeRepository([defaultSeeded, customSeeded]);
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const response = await handleAdminGet(adminGetRequest(), context);
+    const body = await response.text();
+    expect(body).toContain('Meeting point');
+    expect(body).toContain('Custom pickup');
+  });
+
+  it('falls back to the raw id for a declared option with no label', async () => {
+    const seeded = booking({
+      id: 'b-admin-raw-id', reference: 'LVT-2026-503', startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
+      operatorToken: 'op-raw-id', cancelToken: 'cancel-raw-id',
+      pickupType: 'meet_elsewhere', meetingPointId: 'square', meetingPointLabel: 'The Square',
+    });
+    const repo = fakeRepository([seeded]);
+    const context = createBookkitContext({ config: mazeConfig, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const response = await handleAdminGet(adminGetRequest(), context);
+    const body = await response.text();
+    expect(body).toContain('>meet_elsewhere<');
+    // usesMeetingPoint: true, requiresAddress: false — meeting-point sub-line, no address sub-line.
+    expect(body).toContain('<span class="bk-sub">The Square</span>');
   });
 });
 
