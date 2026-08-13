@@ -98,6 +98,11 @@ const pickupCopy: Record<'default' | 'custom', { label: string; hint: string }> 
 const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
 ---
 
+{/* Wraps this instance's form together with its fallback so the script (which may run once for
+    several instances on one page — see below) can pair each form with its own fallback rather
+    than a global lookup, and so one broken instance's fallback can never be confused for a
+    sibling's. */}
+<div class="bkw-instance" data-bookkit-instance>
 <form
   class="bk-widget"
   data-bookkit-checkout
@@ -196,8 +201,26 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
   <button type="button" class="bkw-retry" data-bookkit-retry hidden>{t['widget.retry']}</button>
 </form>
 
-{/* The form starts `hidden` and the script un-hides it on init (see the `<script>` block below), so
-    a no-JS visitor never sees a dead form — only this message and, if configured, a contact path. */}
+{/* Visible by default — not `hidden` — because a hidden fallback cannot help when the widget
+    module's request is blocked or its synchronous init throws before the script below ever
+    reaches the point where it hides this and reveals the form (see that script: only a fully
+    successful init does so). A visitor briefly seeing this before a healthy widget finishes
+    initializing is the intended progressive-enhancement baseline, not a bug. */}
+<div class="bkw-fallback" data-bookkit-fallback>
+  <p>{t['widget.noscript']}</p>
+  {(contactEmail || contactPhone) && (
+    <p class="bkw-noscript-contact">
+      {contactEmail && <a href={`mailto:${contactEmail}`}>{contactEmail}</a>}
+      {contactEmail && contactPhone && ' · '}
+      {contactPhone && <a href={`tel:${contactPhone}`}>{contactPhone}</a>}
+    </p>
+  )}
+</div>
+
+{/* Kept alongside .bkw-fallback above (not replaced by it) for genuinely disabled JavaScript —
+    scripting entirely off means the try/catch in the script below never runs at all, so this is
+    the one path that doesn't depend on that script existing or executing correctly. The two
+    overlapping in that narrow case is a harmless duplicate, not a broken or dead form. */}
 <noscript>
   <div class="bkw-noscript">
     <p>{t['widget.noscript']}</p>
@@ -210,6 +233,7 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     )}
   </div>
 </noscript>
+</div>
 
 <script>
   import 'cally';
@@ -392,67 +416,80 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     }
   }
 
-  for (const form of document.querySelectorAll<HTMLFormElement>('[data-bookkit-checkout]')) {
-    // The form starts `hidden` in markup (see BookingWidget.astro) so a no-JS visitor sees the
-    // <noscript> message instead of a dead form; reaching here means this script is running, so
-    // reveal it immediately rather than waiting on the availability fetch below.
-    form.hidden = false;
-    const data = readData(form);
-    form.querySelector<HTMLSelectElement>('select[name="people"]')?.addEventListener('change', () => {
+  for (const instance of document.querySelectorAll<HTMLElement>('[data-bookkit-instance]')) {
+    const form = instance.querySelector<HTMLFormElement>('[data-bookkit-checkout]');
+    const fallback = instance.querySelector<HTMLElement>('[data-bookkit-fallback]');
+    if (!form) continue;
+    try {
+      // readData JSON.parses this instance's data island — a corrupted island throws here, caught
+      // below, before any listener is attached or the form is revealed.
+      const data = readData(form);
+      form.querySelector<HTMLSelectElement>('select[name="people"]')?.addEventListener('change', () => {
+        updatePrice(form, data);
+        void loadAvailability(form, data);
+      });
+      for (const pickup of form.querySelectorAll<HTMLInputElement>('input[name="pickupType"]')) {
+        pickup.addEventListener('change', () => updatePrice(form, data));
+      }
+      form.querySelector<HTMLButtonElement>('[data-bookkit-retry]')?.addEventListener('click', () => {
+        void loadAvailability(form, data);
+      });
       updatePrice(form, data);
       void loadAvailability(form, data);
-    });
-    for (const pickup of form.querySelectorAll<HTMLInputElement>('input[name="pickupType"]')) {
-      pickup.addEventListener('change', () => updatePrice(form, data));
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const formData = new FormData(form);
+        const payload = {
+          tourSlug: String(formData.get('tourSlug') ?? ''),
+          start: String(formData.get('start') ?? ''),
+          people: Number(formData.get('people')),
+          pickupType: String(formData.get('pickupType') ?? ''),
+          locale: String(formData.get('locale') ?? ''),
+        };
+        const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+        const idleLabel = submit?.textContent ?? '';
+        try {
+          // data-endpoint is always rendered by the component (checkoutEndpoint always has a
+          // resolved default), so a missing value here means the markup was hand-edited or the
+          // form is missing its wrapper — either way, falling back to an unprefixed literal would
+          // silently 404 under a routePrefix, so surface the error instead of guessing a URL.
+          const endpoint = form.dataset.endpoint;
+          if (!endpoint) throw new Error('Booking form is missing its endpoint');
+          clearError(form);
+          if (submit) {
+            submit.disabled = true;
+            submit.textContent = data.i18n.submitting ?? idleLabel;
+          }
+          const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          const result = await response.json() as { checkoutUrl?: string; error?: { message?: string } };
+          if (!response.ok || !result.checkoutUrl) throw new Error(result.error?.message ?? data.i18n.errorCheckout);
+          window.location.assign(result.checkoutUrl);
+        } catch (cause) {
+          if (submit) {
+            submit.disabled = false;
+            submit.textContent = idleLabel;
+          }
+          showError(form, data, cause, 'errorCheckout');
+          // A checkout rejection usually means the slot list went stale (e.g. it just filled), so
+          // reload the options rather than leaving the dead slot selectable — keeping the error on
+          // screen, since the reload's own clearError would otherwise wipe it instantly.
+          void loadAvailability(form, data, true);
+        }
+      });
+      // Every synchronous step above succeeded: only now swap the always-visible fallback for the
+      // now-functional form. Doing this earlier (e.g. before readData, as this used to) risks
+      // revealing a form no listener ever got attached to.
+      if (fallback) fallback.hidden = true;
+      form.hidden = false;
+    } catch (cause) {
+      // One broken instance must not stop its siblings from initializing (this is why the loop
+      // above doesn't hoist a single top-level try/catch) — and this instance's fallback, visible
+      // by default in markup, is left exactly as it started rather than revealing a dead form.
+      console.error('[bookkit] widget instance failed to initialize; its fallback stays visible', cause);
     }
-    form.querySelector<HTMLButtonElement>('[data-bookkit-retry]')?.addEventListener('click', () => {
-      void loadAvailability(form, data);
-    });
-    updatePrice(form, data);
-    void loadAvailability(form, data);
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const formData = new FormData(form);
-      const payload = {
-        tourSlug: String(formData.get('tourSlug') ?? ''),
-        start: String(formData.get('start') ?? ''),
-        people: Number(formData.get('people')),
-        pickupType: String(formData.get('pickupType') ?? ''),
-        locale: String(formData.get('locale') ?? ''),
-      };
-      const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
-      const idleLabel = submit?.textContent ?? '';
-      try {
-        // data-endpoint is always rendered by the component (checkoutEndpoint always has a
-        // resolved default), so a missing value here means the markup was hand-edited or the
-        // form is missing its wrapper — either way, falling back to an unprefixed literal would
-        // silently 404 under a routePrefix, so surface the error instead of guessing a URL.
-        const endpoint = form.dataset.endpoint;
-        if (!endpoint) throw new Error('Booking form is missing its endpoint');
-        clearError(form);
-        if (submit) {
-          submit.disabled = true;
-          submit.textContent = data.i18n.submitting ?? idleLabel;
-        }
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        const result = await response.json() as { checkoutUrl?: string; error?: { message?: string } };
-        if (!response.ok || !result.checkoutUrl) throw new Error(result.error?.message ?? data.i18n.errorCheckout);
-        window.location.assign(result.checkoutUrl);
-      } catch (cause) {
-        if (submit) {
-          submit.disabled = false;
-          submit.textContent = idleLabel;
-        }
-        showError(form, data, cause, 'errorCheckout');
-        // A checkout rejection usually means the slot list went stale (e.g. it just filled), so
-        // reload the options rather than leaving the dead slot selectable — keeping the error on
-        // screen, since the reload's own clearError would otherwise wipe it instantly.
-        void loadAvailability(form, data, true);
-      }
-    });
   }
 </script>

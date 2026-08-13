@@ -40,6 +40,12 @@
   -webkit-font-smoothing: antialiased;
   box-shadow: 0 1px 2px rgb(20 21 26 / 0.05), 0 8px 28px rgb(20 21 26 / 0.05);
 }
+/* The unconditional `display: block` above otherwise wins the cascade over the browser's own
+   `[hidden] { display: none }` UA rule (an author rule always beats a UA rule at any specificity),
+   silently defeating the `hidden` attribute BookingWidget.astro's form starts with and the script
+   toggles — the same trap already worked around below for .bkw-error. Scoped to .bk-widget only:
+   .bk-embed (ManageBooking/AdminDashboard) never renders `hidden` on itself. */
+.bk-widget[hidden] { display: none; }
 @media (prefers-color-scheme: dark) {
   .bk-widget,
   .bk-embed {
@@ -289,8 +295,11 @@
 .bk-widget .bkw-retry:focus-visible { outline: none; box-shadow: var(--bk-focus); }
 
 /* Sibling of the (script-revealed) .bk-widget form, not a descendant — it must stay visible when
-   the form is hidden pending JS, so it can't be scoped under a .bk-widget ancestor selector. */
-.bkw-noscript {
+   the form is hidden pending JS, so it can't be scoped under a .bk-widget ancestor selector.
+   .bkw-fallback (the always-visible-by-default sibling the script only hides after a successful
+   init — see BookingWidget.astro's script) shares the same look on purpose: both read as the same
+   "book by contacting us instead" message to a visitor, whichever path rendered it. */
+.bkw-noscript, .bkw-fallback {
   margin: 0 0 1rem;
   padding: 0.75rem;
   border: 1px solid var(--bk-border);
@@ -299,6 +308,6 @@
   color: var(--bk-text);
   font-size: 0.9rem;
 }
-.bkw-noscript p { margin: 0 0 0.35rem; }
-.bkw-noscript p:last-child { margin-bottom: 0; }
+.bkw-noscript p, .bkw-fallback p { margin: 0 0 0.35rem; }
+.bkw-noscript p:last-child, .bkw-fallback p:last-child { margin-bottom: 0; }
 .bkw-noscript-contact a { color: var(--bk-accent); font-weight: 600; }
