@@ -11,10 +11,13 @@ interface Props {
 
 const { token = '', endpoint = routeConfig.paths.managePage, messages: messageOverrides = {} } = Astro.props;
 const t: BookkitMessages = { ...defaultMessages, ...messageOverrides };
+// A full UUID per render so two instances of this component on the same page never share an id —
+// see plan 014 item A.
+const titleId = `bookkit-manage-title-${crypto.randomUUID()}`;
 ---
 
-<section class="bk-embed" aria-labelledby="bookkit-manage-title">
-  <h2 id="bookkit-manage-title" class="bke-title">{t['manage.entryTitle']}</h2>
+<section class="bk-embed" aria-labelledby={titleId}>
+  <h2 id={titleId} class="bke-title">{t['manage.entryTitle']}</h2>
   <p class="bke-hint">{t['manage.entryHint']}</p>
   <form method="get" action={endpoint}>
     <label class="bke-field">

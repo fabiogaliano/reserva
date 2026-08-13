@@ -32,10 +32,13 @@ const access = await accessAllowed(Astro.request, context);
 // hidden field below is then omitted entirely and the POST verifier is a deliberate no-op, exactly
 // mirroring the built-in admin page's csrfField (src/handlers/index.ts adminPage).
 const csrfToken = access ? await mintAdminCsrfToken(context, access.sub, context.clock().getTime()) : undefined;
+// A full UUID per render so two instances of this component on the same page never share an id —
+// see plan 014 item A.
+const titleId = `bookkit-admin-title-${crypto.randomUUID()}`;
 ---
 
-<section class="bk-embed bk-embed--admin" aria-labelledby="bookkit-admin-title">
-  <h2 id="bookkit-admin-title" class="bke-title">{t['admin.overrideTitle']}</h2>
+<section class="bk-embed bk-embed--admin" aria-labelledby={titleId}>
+  <h2 id={titleId} class="bke-title">{t['admin.overrideTitle']}</h2>
   {access ? (
     <>
       <p class="bke-hint">{t['admin.overrideHint']} <a href={action}>{t['admin.title']} →</a></p>
