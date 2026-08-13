@@ -302,9 +302,17 @@ export function handleAvailability(request: Request, context: BookkitContext): P
     const availabilityCache = context.providers.calendar ? undefined : context.cache;
     let cacheKey: Request | undefined;
     if (availabilityCache) {
-      const normalized = new URL(request.url);
-      normalized.searchParams.sort();
-      cacheKey = new Request(normalized.toString(), { method: 'GET' });
+      // Built from exactly the four availabilityInput validates, in fixed order — not the raw
+      // request URL — so a junk query parameter (nonce, cache-buster, tracking param) can't mint a
+      // fresh cache entry that bypasses and bloats the 60s public cache (audit finding #11). Reading
+      // these again (rather than threading them out of AvailabilityInput) is safe: availabilityInput
+      // above already validated them, so this is a lossless re-read of the exact strings that
+      // validated cleanly, not a second, divergent parse.
+      const requestParams = new URL(request.url).searchParams;
+      const keyUrl = new URL(request.url);
+      keyUrl.search = '';
+      for (const name of ['tour', 'people', 'from', 'to']) keyUrl.searchParams.set(name, requestParams.get(name) ?? '');
+      cacheKey = new Request(keyUrl.toString(), { method: 'GET' });
       const hit = await availabilityCache.match(cacheKey);
       if (hit) return hit;
     }
