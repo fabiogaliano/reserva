@@ -1,6 +1,11 @@
 import { z } from 'astro/zod';
 
-export type PickupType = 'default' | 'custom';
+// Plan 018 (design decision 2): widened from the fixed 'default' | 'custom' union to a plain
+// string — the pickup axis is now whatever ids a tour declares in TourConfig.pickupOptions
+// (below), not a hard-coded pair. Kept as a named export (rather than inlining `string`
+// everywhere) so call sites read as "the pickup axis" and so a future narrowing wouldn't need to
+// touch every signature again.
+export type PickupType = string;
 export type PaymentMethod = 'card' | 'mb_way';
 
 export interface ScheduleRule {
@@ -24,6 +29,29 @@ export interface MeetingPoint {
   mapsUrl: string;
 }
 
+// Plan 018 (design decision 1): a tour-declared pickup option — the unit the pricing axis's
+// `pickup` column now points at. `requiresAddress` is what gates Stripe's custom_fields address
+// collection (stripe.ts); `usesMeetingPoint` is what plan 017's meeting-point requirement now
+// re-keys off instead of `pickupType === 'default'`, so an option like Maze's "custom drop-off"
+// can still start at a meeting point. `label`/`hint` are config-provided plain strings, like
+// `meetingPoint.label` — absent on the `default`/`custom` ids falls back to the existing
+// message-catalog keys so current widgets keep their translated copy (handlers/widget lane).
+export interface PickupOption {
+  id: string;
+  label?: string;
+  hint?: string;
+  requiresAddress: boolean;
+  usesMeetingPoint: boolean;
+}
+
+// Plan 018 (design decision 1): the pair every tour behaved as before this plan — injected by
+// validateConfig when a tour declares no pickupOptions, and by pickupOptionFor for raw
+// (never-validated) tours, so both paths agree without either hard-coding the pair twice.
+export const DEFAULT_PICKUP_OPTIONS: PickupOption[] = [
+  { id: 'default', requiresAddress: false, usesMeetingPoint: true },
+  { id: 'custom', requiresAddress: true, usesMeetingPoint: false },
+];
+
 export interface TourConfig {
   durationMin: number;
   turnaroundMin: number;
@@ -40,6 +68,9 @@ export interface TourConfig {
     mapsUrl: string;
   };
   meetingPoints?: MeetingPoint[];
+  // Plan 018 (design decision 1): absent ⇒ validateConfig injects DEFAULT_PICKUP_OPTIONS, so an
+  // existing config without this field validates and behaves identically.
+  pickupOptions?: PickupOption[];
 }
 
 export interface ClientConfig {
@@ -123,13 +154,28 @@ const scheduleSchema = z.object({
   intervalMin: z.number().int().positive(),
 });
 
+// Plan 018 (design decision 1): slug-safe so an id can be used verbatim as a `data-` attribute
+// value, a widget radio input's `value`, and a URL-safe checkout body field without escaping.
+const pickupOptionIdPattern = /^[a-z0-9_-]+$/;
+
+const pickupOptionSchema = z.object({
+  id: z.string().min(1).regex(pickupOptionIdPattern),
+  label: z.string().min(1).optional(),
+  hint: z.string().min(1).optional(),
+  requiresAddress: z.boolean(),
+  usesMeetingPoint: z.boolean(),
+});
+
 const tourSchema = z.object({
   durationMin: z.number().int().positive(),
   turnaroundMin: z.number().int().nonnegative(),
   schedule: z.array(scheduleSchema).min(1),
   pricing: z.array(z.object({
     maxPeople: z.number().int().positive(),
-    pickup: z.enum(['default', 'custom']),
+    // Plan 018 (design decision 2): widened from the fixed enum — validateTour checks each row's
+    // pickup against the tour's own declared option ids (default/custom when none are declared),
+    // since a plain zod enum can no longer express a per-tour id set.
+    pickup: z.string().min(1),
     priceCents: z.number().int().nonnegative(),
   })).min(1),
   occupancyFor: z.custom<(people: number) => number>((value) => typeof value === 'function').optional(),
@@ -139,6 +185,7 @@ const tourSchema = z.object({
     label: z.string().min(1),
     mapsUrl: z.string().url(),
   })).min(1).optional(),
+  pickupOptions: z.array(pickupOptionSchema).min(1).optional(),
 });
 
 export const clientConfigSchema = z.object({
@@ -218,19 +265,45 @@ function isValidMonthDay(value: string): boolean {
 }
 
 function validateTour(tour: TourConfig, tourSlug: string, add: (path: (string | number)[], message: string) => void): void {
-  const pricingBreakpoints: Record<PickupType, Map<number, number>> = {
-    default: new Map(),
-    custom: new Map(),
-  };
+  // Plan 018 (design decision 1): declared pickup option ids are the domain the pricing axis
+  // below validates against — absent pickupOptions behaves exactly like the old fixed pair.
+  const pickupOptions = tour.pickupOptions ?? DEFAULT_PICKUP_OPTIONS;
+  const pickupOptionIds = pickupOptions.map((option) => option.id);
+  const pickupOptionIdSet = new Set(pickupOptionIds);
+  if (tour.pickupOptions) {
+    const seenIds = new Set<string>();
+    for (const [index, option] of tour.pickupOptions.entries()) {
+      if (seenIds.has(option.id)) {
+        add(['tours', tourSlug, 'pickupOptions', index, 'id'], `duplicate pickup option id (${option.id}); ids must be unique within a tour`);
+      }
+      seenIds.add(option.id);
+    }
+  }
+
+  // Plan 018 (design decision 2): the duplicate-breakpoint map is keyed by declared option id
+  // instead of the old two-literal Record, so it scales to however many options a tour declares.
+  const pricingBreakpoints = new Map<string, Map<number, number>>();
   for (const [index, rule] of tour.pricing.entries()) {
-    const previousIndex = pricingBreakpoints[rule.pickup].get(rule.maxPeople);
+    if (!pickupOptionIdSet.has(rule.pickup)) {
+      add(
+        ['tours', tourSlug, 'pricing', index, 'pickup'],
+        `tour ${tourSlug} pricing rule ${index} references undeclared pickup option ${rule.pickup}; valid pickup option ids: ${pickupOptionIds.join(', ')}`,
+      );
+      continue;
+    }
+    let breakpoints = pricingBreakpoints.get(rule.pickup);
+    if (!breakpoints) {
+      breakpoints = new Map();
+      pricingBreakpoints.set(rule.pickup, breakpoints);
+    }
+    const previousIndex = breakpoints.get(rule.maxPeople);
     if (previousIndex !== undefined) {
       add(
         ['tours', tourSlug, 'pricing', index],
         `tour ${tourSlug} pricing rule ${index} (pickup=${rule.pickup}, maxPeople=${rule.maxPeople}) duplicates and shadows rule ${previousIndex}; remove or change one breakpoint`,
       );
     } else {
-      pricingBreakpoints[rule.pickup].set(rule.maxPeople, index);
+      breakpoints.set(rule.maxPeople, index);
     }
   }
 
@@ -251,8 +324,12 @@ function validateTour(tour: TourConfig, tourSlug: string, add: (path: (string | 
 
   const highest = Math.max(...tour.pricing.map((row) => row.maxPeople));
   const peopleValues = Array.from({ length: highest }, (_, index) => index + 1);
+  // Plan 018 (design decision 2): iterates the tour's declared option ids instead of the old
+  // literal ['default', 'custom'] pair, so a per-id coverage hole is reported for every option a
+  // tour actually declares (Maze's four-option table gets a full coverage set per option, not
+  // just two).
   for (const people of peopleValues) {
-    for (const pickup of ['default', 'custom'] as const) {
+    for (const pickup of pickupOptionIds) {
       if (!tour.pricing.some((row) => row.pickup === pickup && people <= row.maxPeople)) {
         add(['tours', tourSlug, 'pricing'], `missing ${pickup} pricing for people=${people}`);
       }
@@ -346,6 +423,16 @@ export function validateConfig(input: unknown): ClientConfig {
       tour.meetingPoints = [{ id: 'default', ...tour.meetingPoint! }];
       delete tour.meetingPoint;
     }
+    // Plan 018 (design decision 1): inject the default option pair the same way meetingPoints'
+    // shorthand is canonicalized above — a fresh copy (not the shared DEFAULT_PICKUP_OPTIONS
+    // array) so nothing downstream can mutate the module-level default. Idempotent by
+    // construction: once pickupOptions is set (either declared or injected here), re-validating
+    // the already-validated config leaves it untouched — the same idempotency constraint plan 017
+    // discovered for meetingPoints (defineBookkitRuntime validates once at definition,
+    // createBookkitContext validates again per request).
+    if (!tour.pickupOptions) {
+      tour.pickupOptions = DEFAULT_PICKUP_OPTIONS.map((option) => ({ ...option }));
+    }
   }
   return config;
 }
@@ -375,6 +462,20 @@ export function resolveMeetingPoint(tour: TourConfig, meetingPointId?: string): 
     if (match) return match;
   }
   return points[0]!;
+}
+
+// Plan 018 (design decision 1): tolerant of a raw (never-validated) tour, the same precedent as
+// resolveMeetingPoint/meetingPointForBooking above (plan 017) — examples/smoke-site imports config
+// directly for the widget, never through validateConfig, and the runtime path validates twice
+// (defineBookkitRuntime at definition, createBookkitContext per request), so this must agree with
+// validateConfig's injected default on an un-normalized tour too. Returns undefined for an id the
+// tour hasn't declared (rather than falling back the way resolveMeetingPoint does) — callers
+// each have a different reaction to an undeclared id: stripe's requiresAddress gate, handlers'
+// checkout id validation (400 on undefined), and the admin/widget label fallback all need to know
+// "not declared" is a real, distinct outcome, not silently redirected to the first option.
+export function pickupOptionFor(tour: TourConfig, id: string): PickupOption | undefined {
+  const options = tour.pickupOptions ?? DEFAULT_PICKUP_OPTIONS;
+  return options.find((option) => option.id === id);
 }
 
 // Plan 017 (design decision 3): per-booking rendering resolution, shared by the manage/

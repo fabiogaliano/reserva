@@ -1,5 +1,6 @@
 import type { D1Database, D1Result } from '@cloudflare/workers-types';
 import type { Booking, BookingStatus, CancellationActor } from './core/booking';
+import type { PickupType } from './core/config';
 import { sha256Base64Url } from './http';
 import type { CapacityDefault, DayCapacityOverride } from './core/occupancy';
 
@@ -8,7 +9,9 @@ export interface BookingInsert {
   reference: string;
   tourSlug: string;
   people: number;
-  pickupType: 'default' | 'custom';
+  // Plan 018 (design decision 2/4): widened from the fixed 'default' | 'custom' union — see
+  // core/booking.ts Booking.pickupType.
+  pickupType: PickupType;
   startsAt: string;
   endsAt: string;
   locale: string;
@@ -487,7 +490,10 @@ interface BookingRow {
   reference: string;
   tour_slug: string;
   people: number;
-  pickup_type: 'default' | 'custom';
+  // Plan 018 (design decision 2/4): widened from the fixed 'default' | 'custom' union — the
+  // domain lives in config now, so mapBooking gains no new predicate for it (see
+  // assertValidBookingRow below, unchanged).
+  pickup_type: PickupType;
   pickup_address: string | null;
   // Plan 017 (design decision 3): see migrations/0014_meeting_points.sql for what each means.
   meeting_point_id: string | null;

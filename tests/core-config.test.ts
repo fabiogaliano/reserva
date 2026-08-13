@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TourConfig } from '../src/core/config';
-import { meetingPointForBooking, peopleValuesForTour, resolveMeetingPoint, validateConfig } from '../src/core/config';
+import { DEFAULT_PICKUP_OPTIONS, meetingPointForBooking, peopleValuesForTour, pickupOptionFor, resolveMeetingPoint, validateConfig } from '../src/core/config';
 import { priceFor } from '../src/core/pricing';
 import { config, tour } from './fixtures';
 
@@ -10,12 +10,18 @@ describe('core config and pricing validation', () => {
     // canonical meetingPoints array (and clears the shorthand — see the idempotency test below),
     // so the validated config is no longer a byte-for-byte copy of the input fixture — the
     // fixture's shorthand is still what the config declares, though.
+    // Plan 018 (design decision 1): validateConfig also injects the default pickupOptions pair
+    // when a tour declares none, same canonicalize-on-validate move.
     const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = tour;
     expect(validateConfig(config)).toEqual({
       ...config,
       tours: {
         ...config.tours,
-        vintage: { ...vintageWithoutShorthand, meetingPoints: [{ id: 'default', ...tour.meetingPoint }] },
+        vintage: {
+          ...vintageWithoutShorthand,
+          meetingPoints: [{ id: 'default', ...tour.meetingPoint }],
+          pickupOptions: DEFAULT_PICKUP_OPTIONS,
+        },
       },
     });
     expect(peopleValuesForTour(tour)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
@@ -34,6 +40,11 @@ describe('core config and pricing validation', () => {
     const validated = validateConfig(config);
     expect(() => validateConfig(validated)).not.toThrow();
     expect(validateConfig(validated)).toEqual(validated);
+    // Plan 018 (design decision 1): pickupOptions injection must be idempotent too — a second
+    // validateConfig pass over the already-normalized config (the same double-validate path
+    // defineBookkitRuntime/createBookkitContext exercise) neither re-injects nor drops it.
+    expect(validated.tours.vintage?.pickupOptions).toEqual(DEFAULT_PICKUP_OPTIONS);
+    expect(validateConfig(validated).tours.vintage?.pickupOptions).toEqual(DEFAULT_PICKUP_OPTIONS);
   });
 
   it('rejects a tour that declares both meetingPoint and meetingPoints', () => {
@@ -147,6 +158,92 @@ describe('core config and pricing validation', () => {
       },
     };
     expect(() => validateConfig(invalid)).toThrow(/missing custom pricing for people=5/);
+  });
+
+  // Plan 018 (design decision 2): the pricing axis is a plain string now, so validateTour is the
+  // only thing that can reject a row pointing at an id the tour never declared.
+  it('rejects a pricing row that references an undeclared pickup option id', () => {
+    const invalid = {
+      ...config,
+      tours: {
+        ...config.tours,
+        vintage: {
+          ...tour,
+          pickupOptions: [{ id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true }],
+          pricing: [
+            { maxPeople: 4, pickup: 'meeting_point', priceCents: 18000 },
+            { maxPeople: 8, pickup: 'meeting_point', priceCents: 20000 },
+            { maxPeople: 4, pickup: 'unknown_option', priceCents: 15000 },
+          ],
+        },
+      },
+    };
+    expect(() => validateConfig(invalid)).toThrow(/references undeclared pickup option unknown_option; valid pickup option ids: meeting_point/);
+  });
+
+  // Plan 018 (design decision 2): the coverage loop iterates declared option ids instead of the
+  // old literal ['default', 'custom'] pair, so a hole is reported per declared id.
+  it('reports a per-id coverage hole for a declared pickup option', () => {
+    const invalid = {
+      ...config,
+      tours: {
+        ...config.tours,
+        vintage: {
+          ...tour,
+          pickupOptions: [
+            { id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true },
+            { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
+          ],
+          pricing: [
+            { maxPeople: 4, pickup: 'meeting_point', priceCents: 18000 },
+            { maxPeople: 8, pickup: 'meeting_point', priceCents: 20000 },
+            { maxPeople: 4, pickup: 'custom_dropoff', priceCents: 20000 },
+          ],
+        },
+      },
+    };
+    expect(() => validateConfig(invalid)).toThrow(/missing custom_dropoff pricing for people=5/);
+  });
+
+  it('rejects duplicate pickup option ids', () => {
+    const invalid = {
+      ...config,
+      tours: {
+        ...config.tours,
+        vintage: {
+          ...tour,
+          pickupOptions: [
+            { id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true },
+            { id: 'meeting_point', requiresAddress: true, usesMeetingPoint: false },
+          ],
+          pricing: [
+            { maxPeople: 4, pickup: 'meeting_point', priceCents: 10000 },
+            { maxPeople: 8, pickup: 'meeting_point', priceCents: 18000 },
+          ],
+        },
+      },
+    };
+    expect(() => validateConfig(invalid)).toThrow(/duplicate pickup option id \(meeting_point\)/);
+  });
+
+  it('rejects a malformed pickup option id (uppercase or whitespace)', () => {
+    for (const id of ['MeetingPoint', 'meeting point']) {
+      const invalid = {
+        ...config,
+        tours: {
+          ...config.tours,
+          vintage: {
+            ...tour,
+            pickupOptions: [{ id, requiresAddress: false, usesMeetingPoint: true }],
+            pricing: [
+              { maxPeople: 4, pickup: id, priceCents: 10000 },
+              { maxPeople: 8, pickup: id, priceCents: 18000 },
+            ],
+          },
+        },
+      };
+      expect(() => validateConfig(invalid)).toThrow();
+    }
   });
 
   it('defaults calendar outage grace to 15 minutes and rejects a shorter-than-freshness window', () => {
@@ -297,5 +394,29 @@ describe('meetingPointForBooking', () => {
       label: 'The Square',
       mapsUrl: 'https://maps.google.com/?q=square',
     });
+  });
+});
+
+describe('pickupOptionFor', () => {
+  it('returns the declared option matching a given id', () => {
+    const validated = validateConfig(config);
+    const vintage = validated.tours.vintage!;
+    expect(pickupOptionFor(vintage, 'custom')).toEqual({ id: 'custom', requiresAddress: true, usesMeetingPoint: false });
+    expect(pickupOptionFor(vintage, 'default')).toEqual({ id: 'default', requiresAddress: false, usesMeetingPoint: true });
+  });
+
+  it('returns undefined for an id the tour has not declared', () => {
+    const validated = validateConfig(config);
+    const vintage = validated.tours.vintage!;
+    expect(pickupOptionFor(vintage, 'unknown')).toBeUndefined();
+  });
+
+  // Plan 018 (design decision 1): tolerant of a raw (never-validated) tour, same precedent as
+  // resolveMeetingPoint (plan 017 STOP condition 2) — examples/smoke-site imports config directly
+  // for the widget, never through validateConfig.
+  it('derives the default pair on a raw tour without pickupOptions', () => {
+    expect(pickupOptionFor(tour, 'default')).toEqual({ id: 'default', requiresAddress: false, usesMeetingPoint: true });
+    expect(pickupOptionFor(tour, 'custom')).toEqual({ id: 'custom', requiresAddress: true, usesMeetingPoint: false });
+    expect(pickupOptionFor(tour, 'unknown')).toBeUndefined();
   });
 });

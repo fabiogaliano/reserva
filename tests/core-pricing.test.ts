@@ -41,8 +41,8 @@ describe('core pricing', () => {
       for (let people = 1; people <= 8; people += 1) {
         expect(priceFor(canonicalTour, people, 'default')).toBe(people <= 4 ? 10000 : 18000);
         expect(priceFor(canonicalTour, people, 'custom')).toBe(people <= 4 ? 12000 : 20000);
-        expect(prices.default[people]).toBe(priceFor(canonicalTour, people, 'default'));
-        expect(prices.custom[people]).toBe(priceFor(canonicalTour, people, 'custom'));
+        expect(prices.default![people]).toBe(priceFor(canonicalTour, people, 'default'));
+        expect(prices.custom![people]).toBe(priceFor(canonicalTour, people, 'custom'));
       }
     }
   });
@@ -87,7 +87,7 @@ describe('core pricing', () => {
 
       for (let people = 1; people <= 8; people += 1) {
         for (const pickup of ['default', 'custom'] as const) {
-          expect(widgetPrices[pickup][people]).toBe(priceFor(canonicalTour, people, pickup));
+          expect(widgetPrices[pickup]![people]).toBe(priceFor(canonicalTour, people, pickup));
         }
       }
     }
@@ -96,5 +96,53 @@ describe('core pricing', () => {
   it('fails at runtime for unsupported values rather than silently choosing a price', () => {
     expect(() => priceFor(tour, 9, 'default')).toThrow(PricingError);
     expect(() => priceFor(tour, 0, 'custom')).toThrow(PricingError);
+  });
+});
+
+// Plan 018 (design decision 2/3): Consumer A' motivating case — four declared pickup options
+// priced outright (180/200/200/210 €), not as a surcharge on top of the meeting-point price.
+// custom_both must resolve to 210 €, not 180 + 20 + 20 = 220 €, proving priceFor's per-(pickup,
+// maxPeople) lookup stays non-additive once the axis is a tour-declared id set instead of a fixed
+// default/custom pair.
+describe('non-additive pickup options (Maze fixture)', () => {
+  const mazePricing: PricingRule[] = [
+    { maxPeople: 4, pickup: 'meeting_point', priceCents: 18000 },
+    { maxPeople: 4, pickup: 'custom_dropoff', priceCents: 20000 },
+    { maxPeople: 4, pickup: 'custom_pickup', priceCents: 20000 },
+    { maxPeople: 4, pickup: 'custom_both', priceCents: 21000 },
+  ];
+  const mazeTour = {
+    ...tour,
+    pickupOptions: [
+      { id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true },
+      { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
+      { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
+      { id: 'custom_both', requiresAddress: true, usesMeetingPoint: false },
+    ],
+    pricing: mazePricing,
+  };
+
+  it('resolves each option to its own stated price, not an additive sum of the others', () => {
+    const validated = validateConfig({
+      ...config,
+      tours: { ...config.tours, vintage: mazeTour },
+    });
+    const canonicalTour = validated.tours.vintage;
+    if (!canonicalTour) throw new Error('expected vintage tour');
+
+    expect(priceFor(canonicalTour, 2, 'meeting_point')).toBe(18000);
+    expect(priceFor(canonicalTour, 2, 'custom_dropoff')).toBe(20000);
+    expect(priceFor(canonicalTour, 2, 'custom_pickup')).toBe(20000);
+    // Not 18000 + 2000 + 2000 = 22000 — the combined option's price is stated outright.
+    expect(priceFor(canonicalTour, 2, 'custom_both')).toBe(21000);
+  });
+
+  it('derives the price table key set from the distinct pickup values declared in the pricing rows', () => {
+    const table = resolvedPriceTableFor({ pricing: mazePricing });
+    expect(Object.keys(table).sort()).toEqual(['custom_both', 'custom_dropoff', 'custom_pickup', 'meeting_point']);
+    expect(table.meeting_point?.[2]).toBe(18000);
+    expect(table.custom_dropoff?.[2]).toBe(20000);
+    expect(table.custom_pickup?.[2]).toBe(20000);
+    expect(table.custom_both?.[2]).toBe(21000);
   });
 });

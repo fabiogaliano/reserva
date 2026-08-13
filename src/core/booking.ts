@@ -1,3 +1,4 @@
+import type { PickupType } from './config';
 import { addMinutes, compareInstants, parseUtcInstant } from './time';
 
 export const bookingStatuses = ['hold', 'confirmed', 'cancelled', 'expired', 'no_show'] as const;
@@ -9,7 +10,9 @@ export interface Booking {
   reference: string;
   tourSlug: string;
   people: number;
-  pickupType: 'default' | 'custom';
+  // Plan 018 (design decision 2/4): widened from the fixed 'default' | 'custom' union — the
+  // pickup domain now lives in TourConfig.pickupOptions (core/config.ts), not the DB or this type.
+  pickupType: PickupType;
   pickupAddress: string | null;
   // Plan 017 (design decision 3): the resolved meeting point chosen at checkout, when the tour
   // declares more than one. label is a point-in-time snapshot, used only as a fallback when the id
