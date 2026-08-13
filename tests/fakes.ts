@@ -496,12 +496,13 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       const key = sideEffectKey(bookingId, kind);
       const current = sideEffectOperations.get(key);
       if (!current || current.status === 'succeeded' || current.status === 'abandoned'
-        || current.attemptCount >= SIDE_EFFECT_MAX_ATTEMPTS || leases.get(bookingId)?.token !== leaseToken) return false;
+        || current.attemptCount >= SIDE_EFFECT_MAX_ATTEMPTS || leases.get(bookingId)?.token !== leaseToken) return null;
+      const attemptNumber = current.attemptCount + 1;
       sideEffectOperations.set(key, {
-        ...current, status: 'in_flight', attemptCount: current.attemptCount + 1,
+        ...current, status: 'in_flight', attemptCount: attemptNumber,
         attemptedAt, error: null, updatedAt: attemptedAt,
       });
-      return true;
+      return attemptNumber;
     },
     // Plan 012 (design decision 5): mirrors src/repo.ts's aggregate resolve — calendar_synced
     // still flips directly off this resolve's own outcome (calendar_create is always exactly one
@@ -544,12 +545,13 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         && current.attemptedAt !== null
         && current.attemptedAt < staleBefore;
       if (!current || current.attemptCount >= SIDE_EFFECT_MAX_ATTEMPTS
-        || (current.status !== 'pending' && current.status !== 'failed' && !reclaimable)) return false;
+        || (current.status !== 'pending' && current.status !== 'failed' && !reclaimable)) return null;
+      const attemptNumber = current.attemptCount + 1;
       sideEffectOperations.set(key, {
-        ...current, status: 'in_flight', attemptCount: current.attemptCount + 1,
+        ...current, status: 'in_flight', attemptCount: attemptNumber,
         attemptedAt, error: null, updatedAt: attemptedAt,
       });
-      return true;
+      return attemptNumber;
     },
     resolveMutationSideEffectOperation: async (input) => {
       const key = sideEffectKey(input.bookingId, input.kind);

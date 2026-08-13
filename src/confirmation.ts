@@ -185,9 +185,8 @@ async function executeOperation(
 ): Promise<void> {
   if (!isActionableSideEffectStatus(operation.status) || operation.kind === 'oversell') return;
   await renewConfirmationLease(context, booking.id, token);
-  if (!await context.repo.claimSideEffectOperation(booking.id, operation.kind, token, nowIso(context))) {
-    throw new ConfirmationInProgressError();
-  }
+  const attemptNumber = await context.repo.claimSideEffectOperation(booking.id, operation.kind, token, nowIso(context));
+  if (attemptNumber === null) throw new ConfirmationInProgressError();
   try {
     await renewConfirmationLease(context, booking.id, token);
     const providerResultId = await runConfirmationOperation(context, booking, operation.kind);
@@ -202,9 +201,7 @@ async function executeOperation(
     });
   } catch (error) {
     if (error instanceof ConfirmationInProgressError) throw error;
-    // operation.attemptCount is the PRE-claim count (this function's own `operation` param, read
-    // before claimSideEffectOperation incremented it) — +1 is the attempt that just ran.
-    const outcome = classifyAttemptOutcome(operation.attemptCount + 1, error);
+    const outcome = classifyAttemptOutcome(attemptNumber, error);
     await resolveOperation(context, {
       bookingId: booking.id,
       kind: operation.kind,
@@ -216,7 +213,7 @@ async function executeOperation(
     if (outcome.status === 'abandoned') {
       logAbandonment(context, {
         bookingId: booking.id, kind: operation.kind, provider: providerNameForConfirmationKind(operation.kind),
-        status: outcome.statusCode, attemptCount: operation.attemptCount + 1, reason: outcome.reason ?? 'permanent_failure',
+        status: outcome.statusCode, attemptCount: attemptNumber, reason: outcome.reason ?? 'permanent_failure',
       });
       // Plan 016 (design decision 5): terminal means deliberately stopped retrying — never throw
       // back to Stripe/`/status`, unlike the still-retryable 'failed' case below.
@@ -288,13 +285,9 @@ async function confirmBookingFromPaymentUnlocked(
 
   await renewConfirmationLease(context, current.id, token);
   await context.repo.ensureConfirmationSideEffectOperations(current.id, token, nowIso(context), tourflowKind, emailKinds);
-  // Unfiltered so the Tourflow row's pre-claim attempt count is available below without a second
-  // listSideEffectOperations round trip — isConfirmationSideEffectOperation deliberately excludes
-  // CONFIRMATION_TOURFLOW_KIND (it's confirmation debt drained separately, see that function's doc
-  // comment), but ensureConfirmationSideEffectOperations above has already created/left the row.
   const allOperations = await context.repo.listSideEffectOperations(current.id);
   const operations = allOperations.filter(isConfirmationSideEffectOperation);
-  shouldDispatchConfirmation ||= operations.some((operation) => operation.status !== 'succeeded');
+  shouldDispatchConfirmation ||= operations.some((operation) => isActionableSideEffectStatus(operation.status));
   for (const operation of operations) await executeOperation(context, current, operation, token);
   current = await context.repo.getBookingById(current.id) ?? current;
   if (shouldDispatchConfirmation) {
@@ -302,8 +295,7 @@ async function confirmBookingFromPaymentUnlocked(
     // Plan 011 (design decision 3): detached first attempt — claim/push/resolve the Tourflow row
     // via waitUntil so this response path never waits on Tourflow; a later booking-touching
     // request (runOwedMutationSideEffects below) retries a failed/stale claim durably.
-    const tourflowOperation = allOperations.find((operation) => operation.kind === CONFIRMATION_TOURFLOW_KIND);
-    scheduleConfirmationTourflowDelivery(context, current, tourflowOperation?.attemptCount ?? 0);
+    scheduleConfirmationTourflowDelivery(context, current);
   }
   return current;
 }
@@ -433,22 +425,19 @@ function confirmationEmailKinds(context: BookkitContext): ConfirmationEmailKind[
 // doesn't exist (never created, or provider added after this booking was already synced), or the
 // booking is already synced (terminal rows are never retried).
 //
-// Plan 016: `preclaimAttemptCount` is the row's attempt_count BEFORE this call's own claim
-// increments it (0 when the row doesn't exist yet — classification is only ever consulted after a
-// successful claim, i.e. once the row does exist) — both callers already have it in hand from a
-// listSideEffectOperations() they'd run anyway, so this never costs an extra read.
-async function runConfirmationTourflowSideEffect(context: BookkitContext, booking: Booking, preclaimAttemptCount: number): Promise<void> {
+async function runConfirmationTourflowSideEffect(context: BookkitContext, booking: Booking): Promise<void> {
   const ops = context.providers.ops;
   if (!ops || booking.tourflowSynced) return;
   const attemptedAt = nowIso(context);
-  if (!await context.repo.claimMutationSideEffectOperation(booking.id, CONFIRMATION_TOURFLOW_KIND, attemptedAt)) return;
+  const attemptNumber = await context.repo.claimMutationSideEffectOperation(booking.id, CONFIRMATION_TOURFLOW_KIND, attemptedAt);
+  if (attemptNumber === null) return;
   try {
     await ops.push('booking.confirmed', booking);
     await context.repo.resolveConfirmationTourflowOperation({
       bookingId: booking.id, status: 'succeeded', claimedAt: attemptedAt, resolvedAt: nowIso(context),
     });
   } catch (error) {
-    const outcome = classifyAttemptOutcome(preclaimAttemptCount + 1, error);
+    const outcome = classifyAttemptOutcome(attemptNumber, error);
     await context.repo.resolveConfirmationTourflowOperation({
       bookingId: booking.id, status: outcome.status, claimedAt: attemptedAt,
       error: outcome.error, resolvedAt: nowIso(context),
@@ -460,7 +449,7 @@ async function runConfirmationTourflowSideEffect(context: BookkitContext, bookin
     if (outcome.status === 'abandoned') {
       logAbandonment(context, {
         bookingId: booking.id, kind: CONFIRMATION_TOURFLOW_KIND, provider: 'tourflow',
-        status: outcome.statusCode, attemptCount: preclaimAttemptCount + 1, reason: outcome.reason ?? 'permanent_failure',
+        status: outcome.statusCode, attemptCount: attemptNumber, reason: outcome.reason ?? 'permanent_failure',
       });
     }
   }
@@ -469,8 +458,8 @@ async function runConfirmationTourflowSideEffect(context: BookkitContext, bookin
 // Plan 011 (design decision 3): the detached first attempt, scheduled right after the row is
 // minted — same waitUntil-or-fire-and-forget shape as dispatchNonCritical/dispatchAnalytics, so
 // the confirming request never waits on an external Tourflow call.
-function scheduleConfirmationTourflowDelivery(context: BookkitContext, booking: Booking, preclaimAttemptCount: number): void {
-  const task = runConfirmationTourflowSideEffect(context, booking, preclaimAttemptCount);
+function scheduleConfirmationTourflowDelivery(context: BookkitContext, booking: Booking): void {
+  const task = runConfirmationTourflowSideEffect(context, booking);
   if (context.waitUntil) context.waitUntil(task);
   else void task;
 }
@@ -598,19 +587,17 @@ async function runMutationSideEffect(
   booking: Booking,
   kind: MutationSideEffectOperationKind,
   attempt: MutationSideEffectAttempt,
-  // Plan 016: the row's pre-claim attempt_count, already in hand from runOwedMutationSideEffects's
-  // own listSideEffectOperations() call — see runConfirmationTourflowSideEffect's identical note.
-  preclaimAttemptCount: number,
 ): Promise<void> {
   const attemptedAt = nowIso(context);
-  if (!await context.repo.claimMutationSideEffectOperation(booking.id, kind, attemptedAt)) return;
+  const attemptNumber = await context.repo.claimMutationSideEffectOperation(booking.id, kind, attemptedAt);
+  if (attemptNumber === null) return;
   try {
     await attempt.run();
     await context.repo.resolveMutationSideEffectOperation({
       bookingId: booking.id, kind, status: 'succeeded', claimedAt: attemptedAt, resolvedAt: nowIso(context),
     });
   } catch (error) {
-    const outcome = classifyAttemptOutcome(preclaimAttemptCount + 1, error);
+    const outcome = classifyAttemptOutcome(attemptNumber, error);
     await context.repo.resolveMutationSideEffectOperation({
       bookingId: booking.id, kind, status: outcome.status, claimedAt: attemptedAt,
       error: outcome.error, resolvedAt: nowIso(context),
@@ -622,7 +609,7 @@ async function runMutationSideEffect(
     if (outcome.status === 'abandoned') {
       logAbandonment(context, {
         bookingId: booking.id, kind, provider: attempt.provider,
-        status: outcome.statusCode, attemptCount: preclaimAttemptCount + 1, reason: outcome.reason ?? 'permanent_failure',
+        status: outcome.statusCode, attemptCount: attemptNumber, reason: outcome.reason ?? 'permanent_failure',
       });
     }
   }
@@ -647,10 +634,9 @@ export async function runOwedMutationSideEffects(context: BookkitContext, bookin
     if (!isActionableSideEffectStatus(operation.status) || !isMutationSideEffectKind(operation.kind)) continue;
     const attempt = attemptForKind(context, booking, operation.kind);
     if (!attempt) continue; // provider no longer configured — leave the row for a later request.
-    await runMutationSideEffect(context, booking, operation.kind, attempt, operation.attemptCount);
+    await runMutationSideEffect(context, booking, operation.kind, attempt);
   }
-  const tourflowOperation = operations.find((operation) => operation.kind === CONFIRMATION_TOURFLOW_KIND);
-  await runConfirmationTourflowSideEffect(context, booking, tourflowOperation?.attemptCount ?? 0);
+  await runConfirmationTourflowSideEffect(context, booking);
 }
 
 export async function dispatchMutation(

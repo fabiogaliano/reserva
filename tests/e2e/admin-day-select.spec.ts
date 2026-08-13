@@ -104,6 +104,23 @@ test('a scattered ctrl/cmd-click selection keeps repeated hidden date fields, bl
   expect(await closedOn(page, gap)).toBe(false);
 });
 
+test('toggling the final selected day off clears every submitted date field', async ({ page }) => {
+  const day = format(addDays(new Date(), 69), 'yyyy-MM-dd');
+
+  await page.goto('/booking/admin');
+  const cell = await revealDay(page, day);
+  await cell.click();
+  await expect(cell).toHaveAttribute('aria-pressed', 'true');
+
+  await cell.click({ modifiers: ['Meta'] });
+  await expect(cell).toHaveAttribute('aria-pressed', 'false');
+
+  const overrideForm = page.locator('#bk-override');
+  await expect(overrideForm.locator('input[name="date"][type="date"]')).toHaveValue('');
+  await expect(overrideForm.locator('input[name="toDate"]')).toHaveValue('');
+  await expect(overrideForm.locator('input[data-bookkit-extra-date]')).toHaveCount(0);
+});
+
 test('keyboard-only: Space toggles a day, and typing a range into the two date inputs produces the same server-side result as pointer selection', async ({ page }) => {
   const soloDay = format(addDays(new Date(), 70), 'yyyy-MM-dd');
   const rangeStart = format(addDays(new Date(), 75), 'yyyy-MM-dd');

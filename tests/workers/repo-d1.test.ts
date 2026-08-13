@@ -567,12 +567,12 @@ describe('mutation side-effect outbox on real D1', () => {
     ).bind('mutation-stale-lease', kind, oldClaimedAt, oldClaimedAt, oldClaimedAt).run();
 
     const reclaimedAt = '2026-07-21T08:06:00.000Z';
-    await expect(repo.claimMutationSideEffectOperation('mutation-stale-lease', kind, reclaimedAt)).resolves.toBe(true);
+    await expect(repo.claimMutationSideEffectOperation('mutation-stale-lease', kind, reclaimedAt)).resolves.toBe(2);
     await expect(repo.resolveMutationSideEffectOperation({
       bookingId: 'mutation-stale-lease', kind, status: 'failed', claimedAt: oldClaimedAt,
       error: 'late original worker', resolvedAt: '2026-07-21T08:06:01.000Z',
     })).resolves.toBe(false);
-    await expect(repo.claimMutationSideEffectOperation('mutation-stale-lease', kind, '2026-07-21T08:07:00.000Z')).resolves.toBe(false);
+    await expect(repo.claimMutationSideEffectOperation('mutation-stale-lease', kind, '2026-07-21T08:07:00.000Z')).resolves.toBeNull();
     await expect(repo.resolveMutationSideEffectOperation({
       bookingId: 'mutation-stale-lease', kind, status: 'succeeded', claimedAt: reclaimedAt,
       resolvedAt: '2026-07-21T08:07:00.000Z',

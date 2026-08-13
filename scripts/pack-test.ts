@@ -62,11 +62,33 @@ interface PackageJsonExports {
   exports: Record<string, string>;
 }
 
-// Generated, not hand-written, so an exports subpath added or removed later is covered here
-// automatically. `.astro` subpaths are excluded: plain tsc doesn't parse `.astro` modules, so those
-// are proven separately by the fixture's own pages + `astro build` (astroBuild, below).
+// This inventory is intentionally independent of package.json: deriving the test only from the
+// live map would let an accidentally deleted public subpath disappear from the test as well.
+const EXPECTED_EXPORT_SUBPATHS = [
+  '.',
+  './core',
+  './providers',
+  './providers/calendar-google',
+  './providers/payments-stripe',
+  './providers/email-brevo',
+  './providers/email-none',
+  './providers/ops-tourflow',
+  './runtime',
+  './components/BookingWidget.astro',
+  './components/ManageBooking.astro',
+  './components/AdminDashboard.astro',
+] as const;
+
 function writeImportAll(consumerDir: string): string[] {
   const packageJson = JSON.parse(readFileSync(resolve(repoRoot, 'package.json'), 'utf8')) as PackageJsonExports;
+  const actualSubpaths = Object.keys(packageJson.exports);
+  const missing = EXPECTED_EXPORT_SUBPATHS.filter((subpath) => !actualSubpaths.includes(subpath));
+  const unexpected = actualSubpaths.filter((subpath) => !EXPECTED_EXPORT_SUBPATHS.includes(subpath as typeof EXPECTED_EXPORT_SUBPATHS[number]));
+  if (missing.length > 0 || unexpected.length > 0) {
+    fail('exports', `public export inventory changed; missing: ${missing.join(', ') || 'none'}; unexpected: ${unexpected.join(', ') || 'none'}`);
+  }
+
+  // `.astro` subpaths are proven by the fixture's pages and astro build; tsc cannot parse them.
   const subpaths = Object.entries(packageJson.exports)
     .filter(([, target]) => !target.endsWith('.astro'))
     .map(([subpath]) => (subpath === '.' ? 'bookkit' : `bookkit${subpath.slice(1)}`));

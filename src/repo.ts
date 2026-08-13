@@ -322,7 +322,9 @@ export interface BookingRepository {
   // implementation comment.
   ensureConfirmationSideEffectOperations(id: string, leaseToken: string, now: string, tourflowKind?: ConfirmationTourflowKind, emailKinds?: ConfirmationEmailKind[]): Promise<void>;
   listSideEffectOperations(bookingId: string): Promise<SideEffectOperationRecord[]>;
-  claimSideEffectOperation(bookingId: string, kind: ConfirmationSideEffectKind, leaseToken: string, attemptedAt: string): Promise<boolean>;
+  // Returns the authoritative attempt number assigned by the atomic claim, or null when the row
+  // was not claimable. Callers must classify failures against this value rather than a prior read.
+  claimSideEffectOperation(bookingId: string, kind: ConfirmationSideEffectKind, leaseToken: string, attemptedAt: string): Promise<number | null>;
   resolveSideEffectOperation(input: {
     bookingId: string;
     kind: ConfirmationSideEffectKind;
@@ -347,7 +349,9 @@ export interface BookingRepository {
   // Claimable from 'pending'/'failed', OR an 'in_flight' row whose attempted_at is older than
   // MUTATION_SIDE_EFFECT_LEASE_MS (a killed claimant's stale claim) — never from 'succeeded' (never
   // re-sent) or a live 'in_flight' (no double-claim by a concurrent retry).
-  claimMutationSideEffectOperation(bookingId: string, kind: MutationSideEffectOperationKind, attemptedAt: string): Promise<boolean>;
+  // Returns the authoritative attempt number assigned by the atomic claim, or null when the row
+  // was not claimable. This closes the list-to-claim race between concurrent drains.
+  claimMutationSideEffectOperation(bookingId: string, kind: MutationSideEffectOperationKind, attemptedAt: string): Promise<number | null>;
   resolveMutationSideEffectOperation(input: {
     bookingId: string;
     kind: MutationSideEffectOperationKind;
@@ -1357,9 +1361,8 @@ export function createBookingRepository(
       ).bind(bookingId).all<SideEffectOperationRow>();
       return result.results.map(mapSideEffectOperation);
     },
-    // Plan 016 (design decision 4): 'abandoned' is terminal — excluded from the same status check
-    // that already excludes 'succeeded' — and attempt_count < SIDE_EFFECT_MAX_ATTEMPTS blocks a
-    // claim that would otherwise start an 11th attempt (see the interface doc comment above).
+    // Returning attempt_count from the UPDATE keeps failure classification tied to the claim that
+    // actually won, even if another drain changed the row after the caller's earlier list read.
     async claimSideEffectOperation(bookingId, kind, leaseToken, attemptedAt) {
       const result = await db.prepare(
         `UPDATE side_effect_operations
@@ -1367,9 +1370,11 @@ export function createBookingRepository(
          WHERE booking_id = ? AND kind = ? AND status NOT IN ('succeeded', 'abandoned') AND attempt_count < ?
            AND EXISTS (
              SELECT 1 FROM bookings WHERE id = ? AND confirmation_lease_token = ?
-           )`,
-      ).bind(attemptedAt, attemptedAt, bookingId, kind, SIDE_EFFECT_MAX_ATTEMPTS, bookingId, leaseToken).run();
-      return result.meta.changes > 0;
+           )
+         RETURNING attempt_count`,
+      ).bind(attemptedAt, attemptedAt, bookingId, kind, SIDE_EFFECT_MAX_ATTEMPTS, bookingId, leaseToken)
+        .all<{ attempt_count: number }>();
+      return result.results[0]?.attempt_count ?? null;
     },
     // Plan 012 (design decision 5): calendar_create is always exactly one row, so calendar_synced
     // still flips directly off this resolve's own outcome, unchanged. email_synced is no longer
@@ -1420,18 +1425,19 @@ export function createBookingRepository(
     // is computed from the CALLER's own attemptedAt (not a fresh clock read) so this stays a pure
     // function of its inputs, consistent with every other repo method here.
     //
-    // Plan 016 (design decision 4): 'abandoned' is already outside the pending/failed/stale-
-    // in_flight set above, so it's never matched here without any change — attempt_count <
-    // SIDE_EFFECT_MAX_ATTEMPTS is the explicit belt-and-braces the interface doc comment describes.
+    // The returned count comes from the winning UPDATE, not the drain's potentially stale list
+    // snapshot, so the tenth execution can never be resolved as an earlier failed attempt.
     async claimMutationSideEffectOperation(bookingId, kind, attemptedAt) {
       const staleBefore = new Date(Date.parse(attemptedAt) - MUTATION_SIDE_EFFECT_LEASE_MS).toISOString();
       const result = await db.prepare(
         `UPDATE side_effect_operations
          SET status = 'in_flight', attempt_count = attempt_count + 1, attempted_at = ?, error = NULL, updated_at = ?
          WHERE booking_id = ? AND kind = ? AND attempt_count < ?
-           AND (status IN ('pending', 'failed') OR (status = 'in_flight' AND attempted_at < ?))`,
-      ).bind(attemptedAt, attemptedAt, bookingId, kind, SIDE_EFFECT_MAX_ATTEMPTS, staleBefore).run();
-      return result.meta.changes > 0;
+           AND (status IN ('pending', 'failed') OR (status = 'in_flight' AND attempted_at < ?))
+         RETURNING attempt_count`,
+      ).bind(attemptedAt, attemptedAt, bookingId, kind, SIDE_EFFECT_MAX_ATTEMPTS, staleBefore)
+        .all<{ attempt_count: number }>();
+      return result.results[0]?.attempt_count ?? null;
     },
     async resolveMutationSideEffectOperation(input) {
       const result = await db.prepare(

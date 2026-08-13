@@ -71,4 +71,16 @@ describe('checkBookkitMigrationsApplied schema fingerprint against real D1', () 
     await expect(checkBookkitMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
     await expect(checkBookkitMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
   });
+
+  it('fails distinctly when 0011 was skipped even though the later side-effect rebuilds were applied', async () => {
+    await resetSchema();
+    const without0011 = bindings.TEST_MIGRATIONS.filter((migration) => migration.name !== '0011_schema_constraints.sql');
+    await applyD1Migrations(db, without0011, 'd1_migrations');
+    await db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').bind('0011_schema_constraints.sql').run();
+
+    // 0012/0013 recreated the latest side-effect shape, but cannot recreate 0011's bookings CHECKs
+    // or partial unique payment-intent index.
+    await expect(checkBookkitMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
+    await expect(checkBookkitMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
+  });
 });

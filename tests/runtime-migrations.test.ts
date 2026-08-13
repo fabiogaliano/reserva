@@ -16,6 +16,15 @@ const payments = {
 // Duplicated here rather than imported since these are the fake's own PRAGMA/sqlite_master
 // response shapes, not the implementation under test.
 const FINGERPRINT_BOOKINGS_COLUMNS = ['occupancy_units', 'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at', 'reschedule_transition_version'];
+const FINGERPRINT_BOOKINGS_SQL = `CREATE TABLE bookings (
+  people INTEGER CHECK (people > 0), pickup_type TEXT CHECK (pickup_type IN ('default','custom')),
+  starts_at TEXT, ends_at TEXT CHECK (ends_at > starts_at), price_cents INTEGER CHECK (price_cents >= 0),
+  status TEXT CHECK (status IN ('hold','confirmed','cancelled','expired','no_show')),
+  calendar_synced INTEGER CHECK (calendar_synced IN (0,1)), email_synced INTEGER CHECK (email_synced IN (0,1)),
+  tourflow_synced INTEGER CHECK (tourflow_synced IN (0,1)),
+  cancelled_by TEXT CHECK (cancelled_by IN ('customer','operator') OR cancelled_by IS NULL)
+)`;
+const FINGERPRINT_PAYMENT_INDEX_SQL = 'CREATE UNIQUE INDEX idx_bookings_payment_intent ON bookings (stripe_payment_intent) WHERE stripe_payment_intent IS NOT NULL';
 // Plan 016: 'abandoned' is 0013's addition to the `status` CHECK, mirroring 'calendar_delete' for
 // 0012 above — both need to be present for a "fully migrated" fake fixture (fingerprintOk: true).
 const FINGERPRINT_SIDE_EFFECT_SQL = "CREATE TABLE side_effect_operations (kind TEXT CHECK (kind IN ('calendar_create', 'calendar_delete', 'email_confirmation', 'oversell')), status TEXT CHECK (status IN ('pending','in_flight','succeeded','failed','abandoned')))";
@@ -38,6 +47,14 @@ function fakeD1(
         options.queries?.push(query);
         if (query.startsWith('PRAGMA table_info(bookings)')) {
           return { results: (fingerprintOk ? FINGERPRINT_BOOKINGS_COLUMNS.map((name) => ({ name })) : []) as T[] };
+        }
+        if (query.includes("name IN ('bookings', 'idx_bookings_payment_intent')")) {
+          return {
+            results: (fingerprintOk ? [
+              { type: 'table', name: 'bookings', sql: FINGERPRINT_BOOKINGS_SQL },
+              { type: 'index', name: 'idx_bookings_payment_intent', sql: FINGERPRINT_PAYMENT_INDEX_SQL },
+            ] : []) as T[],
+          };
         }
         if (query.includes('side_effect_operations')) {
           return {
@@ -77,6 +94,7 @@ describe('checkBookkitMigrationsApplied', () => {
       "SELECT name FROM sqlite_master WHERE type='table' AND name='bookkit_migrations'",
       'SELECT name FROM bookkit_migrations',
       'PRAGMA table_info(bookings)',
+      "SELECT type, name, sql FROM sqlite_master WHERE name IN ('bookings', 'idx_bookings_payment_intent')",
       "SELECT type, name, sql FROM sqlite_master WHERE name IN ('side_effect_operations', 'idx_side_effect_operations_pending')",
     ]);
   });
@@ -141,6 +159,14 @@ describe('migration check memoization', () => {
           // this test is about ledger memoization/retry, not the fingerprint itself.
           if (query.startsWith('PRAGMA table_info(bookings)')) {
             return { results: ['occupancy_units', 'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at', 'reschedule_transition_version'].map((name) => ({ name })) };
+          }
+          if (query.includes("name IN ('bookings', 'idx_bookings_payment_intent')")) {
+            return {
+              results: [
+                { type: 'table', name: 'bookings', sql: FINGERPRINT_BOOKINGS_SQL },
+                { type: 'index', name: 'idx_bookings_payment_intent', sql: FINGERPRINT_PAYMENT_INDEX_SQL },
+              ],
+            };
           }
           if (query.includes('side_effect_operations')) {
             return {

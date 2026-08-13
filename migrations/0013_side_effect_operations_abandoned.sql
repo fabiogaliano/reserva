@@ -3,13 +3,9 @@
 -- tenth attempt against a booking's outbox row, stops being retried forever instead of polling an
 -- unreachable/rejecting provider on every future request.
 --
--- Any pre-existing 'pending'/'failed' row already at or over the new attempt cap (attempt_count >=
--- 10) is converted to 'abandoned' by this migration itself — otherwise it would sit invisible to
--- the new claim predicate (attempt_count < 10 AND status != 'abandoned') yet still get retried
--- forever by the pre-upgrade code, the exact failure mode this migration exists to close.
--- 'in_flight' rows are left untouched regardless of attempt_count: an in-flight claim is either a
--- live attempt in progress or a stale lease the existing reclaim path already handles, and design
--- decision 3 scopes the upgrade conversion to pending/failed rows only.
+-- Any pre-existing nonterminal row already at or over the new attempt cap (attempt_count >= 10)
+-- is converted to 'abandoned' by this migration itself. This includes stale in_flight rows: the
+-- claim predicates reject a row at the cap, so preserving one would strand it permanently.
 ALTER TABLE side_effect_operations RENAME TO side_effect_operations_pre_0013;
 
 CREATE TABLE side_effect_operations (
@@ -35,12 +31,12 @@ INSERT INTO side_effect_operations
   SELECT
     booking_id,
     kind,
-    CASE WHEN status IN ('pending', 'failed') AND attempt_count >= 10 THEN 'abandoned' ELSE status END,
+    CASE WHEN status IN ('pending', 'failed', 'in_flight') AND attempt_count >= 10 THEN 'abandoned' ELSE status END,
     provider_result_id,
     attempt_count,
     attempted_at,
-    CASE WHEN status IN ('pending', 'failed') AND attempt_count >= 10 THEN COALESCE(resolved_at, updated_at) ELSE resolved_at END,
-    CASE WHEN status IN ('pending', 'failed') AND attempt_count >= 10 THEN 'max attempts (10) reached during upgrade to migration 0013' ELSE error END,
+    CASE WHEN status IN ('pending', 'failed', 'in_flight') AND attempt_count >= 10 THEN COALESCE(resolved_at, updated_at) ELSE resolved_at END,
+    CASE WHEN status IN ('pending', 'failed', 'in_flight') AND attempt_count >= 10 THEN 'max attempts (10) reached during upgrade to migration 0013' ELSE error END,
     created_at,
     updated_at
   FROM side_effect_operations_pre_0013;

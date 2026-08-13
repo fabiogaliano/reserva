@@ -1,9 +1,9 @@
 // Plan 016 (audit finding #12, scoped): migrations/0013_side_effect_operations_abandoned.sql
 // rebuilds side_effect_operations the same way 0010/0011/0012 already do (rename -> create ->
 // INSERT...SELECT -> drop — see tests/workers/migration-0012-preservation.test.ts, which this
-// mirrors), plus a one-time upgrade conversion: any pre-existing 'pending'/'failed' row already at
-// or over the new attempt cap becomes 'abandoned' with a bounded max-attempts error, so it's never
-// left invisible to the new claim predicate yet still retried forever by the pre-upgrade code.
+// mirrors), plus a one-time upgrade conversion: any pre-existing nonterminal row already at or
+// over the new attempt cap becomes 'abandoned' with a bounded max-attempts error, so no capped
+// pending, failed, or stale in_flight row is left invisible to the claim predicates.
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
@@ -42,7 +42,7 @@ async function insertRow(row: {
 }
 
 describe('migration 0013 rebuild preserves every legacy outbox row and converts capped rows to abandoned', () => {
-  it('applies the actual 0013 migration, preserving every ordinary row byte-for-byte, converting only pending/failed rows at/over the cap, and leaving index/FK/CHECK intact', async () => {
+  it('applies the actual 0013 migration, preserving every ordinary row byte-for-byte, converting all nonterminal rows at/over the cap, and leaving index/FK/CHECK intact', async () => {
     for (const table of [
       'side_effect_operations', 'refund_operations', 'settings', 'capacity_defaults', 'day_overrides', 'bookings',
       'd1_migrations_0013_test', 'd1_migrations',
@@ -95,8 +95,8 @@ describe('migration 0013 rebuild preserves every legacy outbox row and converts 
       resolvedAt: '2026-07-21T09:30:05.000Z', error: 'Tourflow webhook request failed (503): gateway timeout',
       createdAt: '2026-07-21T05:00:00.000Z', updatedAt: '2026-07-21T09:30:05.000Z',
     };
-    // A stale, still-in_flight row at/over the cap must NOT be converted (design decision 3 scopes
-    // the upgrade conversion to pending/failed only) -- it stays exactly as it was.
+    // A stale in_flight row at/over the cap must also become terminal: neither claim path can
+    // reclaim it without exceeding the cap.
     const cappedInFlight = {
       bookingId: 'migration0013-capped-in-flight', kind: 'email_confirmation', status: 'in_flight',
       providerResultId: null, attemptCount: 11, attemptedAt: '2026-07-21T04:00:00.000Z',
@@ -136,11 +136,14 @@ describe('migration 0013 rebuild preserves every legacy outbox row and converts 
       resolvedAt: cappedFailed.resolvedAt, error: 'max attempts (10) reached during upgrade to migration 0013',
     }]);
 
-    const untouchedInFlight = await db.prepare(
+    const convertedInFlight = await db.prepare(
       `SELECT status, attempt_count AS attemptCount, resolved_at AS resolvedAt, error
        FROM side_effect_operations WHERE booking_id = ?`,
     ).bind(cappedInFlight.bookingId).all<{ status: string; attemptCount: number; resolvedAt: string | null; error: string | null }>();
-    expect(untouchedInFlight.results).toEqual([{ status: 'in_flight', attemptCount: 11, resolvedAt: null, error: null }]);
+    expect(convertedInFlight.results).toEqual([{
+      status: 'abandoned', attemptCount: 11, resolvedAt: cappedInFlight.updatedAt,
+      error: 'max attempts (10) reached during upgrade to migration 0013',
+    }]);
 
     // The rebuild's whole point: 'abandoned' is now a legal status, on the migrated (not freshly
     // created) table.

@@ -206,7 +206,11 @@ export const adminEnhancerJs = `(() => {
   const applySelection = () => {
     const sorted = renderCells();
     form.querySelectorAll('input[data-bookkit-extra-date]').forEach((input) => input.remove());
-    if (sorted.length === 0) return;
+    if (sorted.length === 0) {
+      dateInput.value = '';
+      if (toInput) toInput.value = '';
+      return;
+    }
     dateInput.value = sorted[0];
     if (sorted.length > 1 && isContiguous(sorted)) {
       if (toInput) toInput.value = sorted[sorted.length - 1];

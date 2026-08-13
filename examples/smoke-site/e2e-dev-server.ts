@@ -1,19 +1,10 @@
 #!/usr/bin/env bun
-// Playwright's webServer (see playwright.config.ts) spawns one process, waits for it to become
-// reachable, and kills it on teardown — a model `astro dev` doesn't actually fit. Astro 7's CLI
-// starts (or attaches to) a detached background daemon and then the CLI invocation itself exits
-// almost immediately, even without `--background` (confirmed empirically: `ps` shows the daemon
-// surviving under its own pid after the invoking process is gone). Two consequences without this
-// wrapper:
-//   1. Playwright's readiness race loses to that fast exit ("Process from config.webServer exited
-//      early"), even though the server is genuinely coming up.
-//   2. On teardown, Playwright signals the process it spawned — which is not the daemon holding
-//      the port — so the port stays held. This is what orphaned port 4399 under the previous
-//      e2e-server.ts design too; that script's destructive `.wrangler/state` backup/restore was a
-//      separate bug layered on top of this same root cause.
-// This wrapper keeps a real, signal-observing process alive for Playwright to track, and on
-// SIGTERM/SIGINT runs the CLI's own `astro dev stop` — the one operation documented to actually
-// reach and stop the daemon — before exiting itself.
+// Playwright's webServer (see playwright.config.ts) must own the process tree it tears down. Astro
+// 7 auto-backgrounds its dev server in detected agent environments, detaching the Astro process
+// and its Miniflare workerd child from Playwright. Stopping the detached Astro process does not
+// reliably reap workerd; a survivor keeps the old `.wrangler-e2e` database open and can hit EPIPE
+// after the next run resets that directory. This wrapper sets Astro's background-child marker so
+// the CLI stays in the foreground, then forwards shutdown directly to that owned child.
 //
 // The reset+migrate step runs here, synchronously, before spawning `astro dev` — NOT in
 // Playwright's globalSetup. Empirically confirmed (by bisecting with a minimal Playwright config)
@@ -49,24 +40,38 @@ if (migrateResult.status !== 0) {
 }
 
 const astroBin = fileURLToPath(new URL('../../node_modules/.bin/astro', import.meta.url));
-
-spawn(astroBin, ['dev', '--port', '4399'], { stdio: 'inherit', env: process.env });
+const astro = spawn(astroBin, ['dev', '--port', '4399'], {
+  stdio: 'inherit',
+  env: { ...process.env, ASTRO_DEV_BACKGROUND: '1' },
+});
 
 let stopping = false;
+let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
+
+function exitAfterChild(code: number | null): void {
+  if (forceKillTimer) clearTimeout(forceKillTimer);
+  process.exit(stopping ? 0 : (code ?? 1));
+}
+
+astro.on('error', (error) => {
+  console.error('Failed to start the Astro e2e server:', error);
+  process.exit(1);
+});
+astro.on('exit', exitAfterChild);
+
 function stop(): void {
   if (stopping) return;
   stopping = true;
-  // Synchronous on purpose: Playwright waits for this process to exit before treating teardown as
-  // done, so the daemon must already be stopped (and the port released) by the time it returns.
-  spawnSync(astroBin, ['dev', 'stop'], { stdio: 'inherit' });
-  process.exit(0);
+
+  if (astro.exitCode !== null || astro.signalCode !== null) {
+    process.exit(0);
+  }
+
+  astro.kill('SIGTERM');
+  // Playwright gives this wrapper ten seconds for graceful shutdown. Leave enough margin for a
+  // forced child exit while still ensuring no workerd process survives into the next test run.
+  forceKillTimer = setTimeout(() => astro.kill('SIGKILL'), 8_000);
 }
 
 process.on('SIGTERM', stop);
 process.on('SIGINT', stop);
-
-// Nothing above keeps the event loop alive on its own (the child's "inherit" stdio doesn't hold a
-// reference once it exits, and signal listeners don't count as a pending handle) — without this,
-// the wrapper itself would exit right behind the CLI invocation, reproducing the exact problem it
-// exists to avoid.
-setInterval(() => {}, 1 << 30);
