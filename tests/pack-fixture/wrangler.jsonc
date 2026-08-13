@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "bookkit-pack-fixture",
+  "compatibility_date": "2026-07-21",
+  // No migrations_dir on purpose (plan 010): this proves `bookkit-migrate` derives the packaged
+  // migrations directory from the *installed* package on its own, rather than relying on a
+  // hand-configured relative path like examples/smoke-site's wrangler.jsonc has today.
+  "d1_databases": [
+    {
+      "binding": "BOOKKIT_DB",
+      "database_name": "bookkit-pack-fixture",
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ]
+}
