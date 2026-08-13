@@ -83,8 +83,10 @@ describe('BookingWidget.astro (Plan 017 design decision 5: meeting-point radio g
 
   it('toggles the group on pickupType change and at init, disabling (not just hiding) its inputs so they drop out of FormData', () => {
     expect(widgetSource).toContain('function syncMeetingPoints(form: HTMLFormElement): void {');
-    expect(widgetSource).toContain("wrap.hidden = isCustom;");
-    expect(widgetSource).toContain('input.disabled = isCustom;');
+    // Plan 018 (design decision 9) re-keyed this off data-uses-meeting-point (renamed isCustom ->
+    // hide) — see the dedicated describe block below for that.
+    expect(widgetSource).toContain('wrap.hidden = hide;');
+    expect(widgetSource).toContain('input.disabled = hide;');
     // Wired into the pickupType radios' change listener, not just fired once.
     expect(widgetSource).toMatch(/pickup\.addEventListener\('change', \(\) => \{\s*updatePrice\(form, data\);\s*syncMeetingPoints\(form\);/);
     // And run once at init, so a tour whose first pickupType option is 'custom' starts correctly
@@ -99,5 +101,45 @@ describe('BookingWidget.astro (Plan 017 design decision 5: meeting-point radio g
   it('submit payload includes meetingPointId only when FormData actually carries it, never an empty string', () => {
     expect(widgetSource).toContain("const meetingPointId = formData.get('meetingPointId');");
     expect(widgetSource).toContain('if (meetingPointId !== null) payload.meetingPointId = String(meetingPointId);');
+  });
+});
+
+describe('BookingWidget.astro (Plan 018 design decision 9: tour-declared pickupOptions)', () => {
+  it('declares the pickupOptions prop and keeps pickupTypes as a documented deprecated alias', () => {
+    expect(widgetSource).toMatch(/@deprecated use `pickupOptions` instead\./);
+    expect(widgetSource).toMatch(/pickupTypes\?: Array<'default' \| 'custom'>;/);
+    expect(widgetSource).toMatch(/pickupOptions\?: PickupOptionProp\[\];/);
+  });
+
+  it('maps the deprecated pickupTypes alias onto pickupOptionEntries without a data-uses-meeting-point attribute', () => {
+    expect(widgetSource).toContain('const pickupOptionEntries: PickupRenderOption[] = pickupOptions');
+    expect(widgetSource).toContain('usesMeetingPointAttr: undefined,');
+  });
+
+  it('the declared-options path resolves label/hint fallbacks: declared value, then default/custom catalog, then the raw id (label) or omitted (hint)', () => {
+    expect(widgetSource).toContain("label: option.label ?? (isDefaultOrCustomId(option.id) ? pickupCopy[option.id].label : option.id),");
+    expect(widgetSource).toContain("hint: option.hint ?? (isDefaultOrCustomId(option.id) ? pickupCopy[option.id].hint : null),");
+  });
+
+  it('renders data-uses-meeting-point only on the radio group, carrying an explicit true/false string', () => {
+    expect(widgetSource).toContain('data-uses-meeting-point={option.usesMeetingPointAttr}');
+    expect(widgetSource).toContain("usesMeetingPointAttr: option.usesMeetingPoint ? 'true' : 'false',");
+  });
+
+  it('the single-option render stays a hidden input keyed off pickupOptionEntries, matching the pre-018 pickupTypes-keyed hidden input', () => {
+    expect(widgetSource).toContain('<input type="hidden" name="pickupType" value={pickupOptionEntries[0].id} />');
+  });
+
+  it('client ResolvedPriceTable widens to Record<string, number[]>, and updatePrice keys off the raw selected value', () => {
+    expect(widgetSource).toContain('type ResolvedPriceTable = Record<string, number[]>;');
+    expect(widgetSource).not.toContain("new FormData(form).get('pickupType') === 'custom' ? 'custom' : 'default'");
+    expect(widgetSource).toContain("const pickup = String(formData.get('pickupType') ?? '');");
+    expect(widgetSource).toContain('data.resolvedPrices[pickup]?.[people]');
+  });
+
+  it('syncMeetingPoints re-keys off the checked radio\'s data-uses-meeting-point, falling back to the pickupType === \'custom\' heuristic when absent', () => {
+    expect(widgetSource).toContain("const usesMeetingPoint = selected?.dataset.usesMeetingPoint;");
+    expect(widgetSource).toContain("? new FormData(form).get('pickupType') === 'custom'");
+    expect(widgetSource).toContain("usesMeetingPoint !== 'true';");
   });
 });

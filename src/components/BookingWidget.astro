@@ -11,8 +11,19 @@ interface StartOption {
 
 interface PricingRuleProp {
   maxPeople: number;
-  pickup: 'default' | 'custom';
+  // Plan 018 (design decision 3): widened from the fixed 'default' | 'custom' union — the pickup
+  // axis is whatever ids a tour's own pricing rows declare (see core/pricing.ts ResolvedPriceTable).
+  pickup: string;
   priceCents: number;
+}
+
+// Plan 018 (design decision 9): the widget-prop shape of core/config.ts's PickupOption, minus
+// requiresAddress (Stripe-side collection, not something the widget itself renders or needs).
+interface PickupOptionProp {
+  id: string;
+  label?: string;
+  hint?: string;
+  usesMeetingPoint?: boolean;
 }
 
 interface Props {
@@ -23,7 +34,14 @@ interface Props {
   availabilityTo?: string;
   locale?: string;
   peopleOptions?: number[];
+  // @deprecated use `pickupOptions` instead. Kept as an alias mapped onto the default id/custom id
+  // pair (DEFAULT_PICKUP_OPTIONS in core/config.ts) so existing embeds keep compiling and keep
+  // rendering today's exact markup — see plan 018 (design decision 9).
   pickupTypes?: Array<'default' | 'custom'>;
+  // Plan 018 (design decision 9): tour-declared pickup options, superseding pickupTypes above.
+  // Pass config.tours[slug].pickupOptions mapped to {id, label, hint, usesMeetingPoint}. Absent ⇒
+  // pickupTypes is mapped onto the default pair instead, rendering byte-identical markup.
+  pickupOptions?: PickupOptionProp[];
   // Plan 017 (design decision 5): labels are config-provided plain strings, like
   // meetingPoint.label today — pass config.tours[slug].meetingPoints mapped to {id, label}. 0 or 1
   // entries render nothing new (single-point tours stay byte-identical); 2+ renders a radio group.
@@ -53,6 +71,7 @@ const {
   locale = 'en',
   peopleOptions = [1, 2, 3, 4],
   pickupTypes = ['default', 'custom'],
+  pickupOptions,
   meetingPoints = [],
   startOptions = [],
   pricing,
@@ -96,6 +115,39 @@ const pickupCopy: Record<'default' | 'custom', { label: string; hint: string }> 
   default: { label: t['widget.pickupDefault'], hint: t['widget.pickupDefaultHint'] },
   custom: { label: t['widget.pickupCustom'], hint: t['widget.pickupCustomHint'] },
 };
+
+function isDefaultOrCustomId(id: string): id is 'default' | 'custom' {
+  return id === 'default' || id === 'custom';
+}
+
+interface PickupRenderOption {
+  id: string;
+  label: string;
+  hint: string | null;
+  // undefined on the pickupTypes-alias path, so the attribute below is never emitted there (Astro
+  // drops undefined-valued attributes — see data-availability-endpoint above for the same
+  // pattern). That omission is the byte-identity mechanism plan 018 (design decision 9) requires:
+  // a config with no pickupOptions must render exactly like it did before this prop existed.
+  usesMeetingPointAttr: string | undefined;
+}
+
+// Plan 018 (design decision 9): pickupOptions supersedes the deprecated pickupTypes alias. When
+// absent, pickupTypes is mapped onto the same catalog-backed label/hint pair it always used, with
+// no usesMeetingPointAttr — see the fixture-backed byte-identity test in
+// tests/component/booking-widget-pickup-options.test.ts.
+const pickupOptionEntries: PickupRenderOption[] = pickupOptions
+  ? pickupOptions.map((option) => ({
+      id: option.id,
+      label: option.label ?? (isDefaultOrCustomId(option.id) ? pickupCopy[option.id].label : option.id),
+      hint: option.hint ?? (isDefaultOrCustomId(option.id) ? pickupCopy[option.id].hint : null),
+      usesMeetingPointAttr: option.usesMeetingPoint ? 'true' : 'false',
+    }))
+  : pickupTypes.map((id) => ({
+      id,
+      label: pickupCopy[id].label,
+      hint: pickupCopy[id].hint,
+      usesMeetingPointAttr: undefined,
+    }));
 
 // A full UUID (not a truncated slice or a module-scope counter, which would collide across
 // concurrent renders) so two instances of this component on the same page never share an id —
@@ -168,18 +220,18 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     </label>
   )}
 
-  {pickupTypes.length === 1 ? (
-    <input type="hidden" name="pickupType" value={pickupTypes[0]} />
+  {pickupOptionEntries.length === 1 ? (
+    <input type="hidden" name="pickupType" value={pickupOptionEntries[0].id} />
   ) : (
     <fieldset class="bkw-field">
       <legend class="bkw-label">{t['widget.pickup']}</legend>
       <div class="bkw-pickups">
-        {pickupTypes.map((pickupType, index) => (
+        {pickupOptionEntries.map((option, index) => (
           <label class="bkw-pickup">
-            <input type="radio" name="pickupType" value={pickupType} required checked={index === 0} />
+            <input type="radio" name="pickupType" value={option.id} required checked={index === 0} data-uses-meeting-point={option.usesMeetingPointAttr} />
             <span class="bkw-pickup-body">
-              <span class="bkw-pickup-label">{pickupCopy[pickupType].label}</span>
-              <span class="bkw-pickup-hint">{pickupCopy[pickupType].hint}</span>
+              <span class="bkw-pickup-label">{option.label}</span>
+              {option.hint !== null && <span class="bkw-pickup-hint">{option.hint}</span>}
             </span>
           </label>
         ))}
@@ -273,10 +325,9 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
   interface AvailabilitySlot { start: string; remaining: number; remainingBookings: number }
   interface AvailabilityDay { date: string; status: string; closedReason?: string; slots: AvailabilitySlot[] }
   interface AvailabilityResponse { days?: AvailabilityDay[]; limitedThreshold?: number; error?: { message?: string } }
-  interface ResolvedPriceTable {
-    default: number[];
-    custom: number[];
-  }
+  // Plan 018 (design decision 9): widened from the fixed { default, custom } shape — the key set
+  // is whatever pickup ids the tour's own pricing rows declare (see core/pricing.ts).
+  type ResolvedPriceTable = Record<string, number[]>;
   interface WidgetData {
     locale: string;
     currency: string;
@@ -317,25 +368,41 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
   function updatePrice(form: HTMLFormElement, data: WidgetData): void {
     const target = form.querySelector<HTMLElement>('[data-bookkit-price-value]');
     if (!target || !data.resolvedPrices) return;
-    const people = Number(new FormData(form).get('people'));
-    const pickup = new FormData(form).get('pickupType') === 'custom' ? 'custom' : 'default';
-    const priceCents = data.resolvedPrices[pickup][people];
+    const formData = new FormData(form);
+    const people = Number(formData.get('people'));
+    // Plan 018 (design decision 9): the selected radio's raw value is the table key now — no more
+    // collapsing every non-'custom' id to 'default'. An id with no pricing column (a config bug
+    // elsewhere) behaves like today's missing-price case: optional chaining leaves priceCents
+    // undefined, which blanks the price rather than throwing.
+    const pickup = String(formData.get('pickupType') ?? '');
+    const priceCents = data.resolvedPrices[pickup]?.[people];
     target.textContent = priceCents === undefined
       ? ''
       : new Intl.NumberFormat(data.locale, { style: 'currency', currency: data.currency }).format(priceCents / 100);
   }
 
-  // Plan 017 (design decision 5): hides AND disables the meeting-point group while pickupType is
-  // 'custom' — disabling (not just hiding) is what actually drops its radios from FormData, which
-  // is what the submit handler below relies on to omit meetingPointId rather than send it empty.
-  // No-ops when the group isn't in the markup at all (0-1 declared points).
+  // Plan 017 (design decision 5) / Plan 018 (design decision 9): hides AND disables the
+  // meeting-point group while the selected pickup option doesn't use one — disabling (not just
+  // hiding) is what actually drops its radios from FormData, which is what the submit handler
+  // below relies on to omit meetingPointId rather than send it empty. No-ops when the group isn't
+  // in the markup at all (0-1 declared points).
+  //
+  // Re-keyed off the checked pickupType radio's data-uses-meeting-point ('true'/'false', set only
+  // on the declared-pickupOptions render path — see BookingWidget.astro's frontmatter). Its
+  // absence covers both the deprecated pickupTypes alias and the single-option hidden input, which
+  // fall back to the pre-018 pickupType === 'custom' heuristic unchanged.
   function syncMeetingPoints(form: HTMLFormElement): void {
     const wrap = form.querySelector<HTMLElement>('[data-bookkit-meeting-points]');
     if (!wrap) return;
-    const isCustom = new FormData(form).get('pickupType') === 'custom';
-    wrap.hidden = isCustom;
+    const selected = form.querySelector<HTMLInputElement>('input[name="pickupType"]:checked')
+      ?? form.querySelector<HTMLInputElement>('input[name="pickupType"]');
+    const usesMeetingPoint = selected?.dataset.usesMeetingPoint;
+    const hide = usesMeetingPoint === undefined
+      ? new FormData(form).get('pickupType') === 'custom'
+      : usesMeetingPoint !== 'true';
+    wrap.hidden = hide;
     for (const input of wrap.querySelectorAll<HTMLInputElement>('input[name="meetingPointId"]')) {
-      input.disabled = isCustom;
+      input.disabled = hide;
     }
   }
 
