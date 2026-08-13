@@ -10,11 +10,13 @@ import {
 import { localDateKey, parseUtcInstant } from './core/time';
 import type { BookkitContext } from './context';
 import { nowIso } from './context';
-import type {
-  ConfirmationSideEffectKind,
-  MutationSideEffectOperationKind,
-  SideEffectOperationKind,
-  SideEffectOperationRecord,
+import {
+  CONFIRMATION_TOURFLOW_KIND,
+  type ConfirmationSideEffectKind,
+  type ConfirmationTourflowKind,
+  type MutationSideEffectOperationKind,
+  type SideEffectOperationKind,
+  type SideEffectOperationRecord,
 } from './repo';
 
 export class ConfirmationInProgressError extends Error {
@@ -141,6 +143,7 @@ async function confirmBookingFromPaymentUnlocked(
   let current = booking;
   let shouldDispatchConfirmation = current.status !== 'confirmed';
   let transitionApplied = false;
+  const tourflowKind = confirmationTourflowKind(context);
   if (current.status === 'hold' || current.status === 'expired') {
     let oversold = false;
     if (current.status === 'expired') {
@@ -163,6 +166,7 @@ async function confirmBookingFromPaymentUnlocked(
       leaseToken: token,
       oversold,
       updatedAt: now,
+      ...(tourflowKind ? { tourflowKind } : {}),
     });
     transitionApplied = result !== null;
     current = result ?? await context.repo.getBookingById(current.id) ?? current;
@@ -182,12 +186,18 @@ async function confirmBookingFromPaymentUnlocked(
   }
 
   await renewConfirmationLease(context, current.id, token);
-  await context.repo.ensureConfirmationSideEffectOperations(current.id, token, nowIso(context));
+  await context.repo.ensureConfirmationSideEffectOperations(current.id, token, nowIso(context), tourflowKind);
   const operations = (await context.repo.listSideEffectOperations(current.id)).filter(isConfirmationSideEffectOperation);
   shouldDispatchConfirmation ||= operations.some((operation) => operation.status !== 'succeeded');
   for (const operation of operations) await executeOperation(context, current, operation, token);
   current = await context.repo.getBookingById(current.id) ?? current;
-  if (shouldDispatchConfirmation) dispatchNonCritical(context, 'booking.confirmed', current);
+  if (shouldDispatchConfirmation) {
+    dispatchAnalytics(context, 'booking.confirmed', current);
+    // Plan 011 (design decision 3): detached first attempt — claim/push/resolve the Tourflow row
+    // via waitUntil so this response path never waits on Tourflow; a later booking-touching
+    // request (runOwedMutationSideEffects below) retries a failed/stale claim durably.
+    scheduleConfirmationTourflowDelivery(context, current);
+  }
   return current;
 }
 
@@ -253,18 +263,20 @@ function extractStatus(error: unknown): number | undefined {
   return undefined;
 }
 
+// BK-SIDE-001 (handoff 13): the generic best-effort ops+analytics dispatch, used for events other
+// than booking.confirmed (e.g. payment.dispute_created) — booking.confirmed's Tourflow leg moved
+// to the durable outbox (runConfirmationTourflowSideEffect below; plan 011), with its analytics
+// leg now dispatched separately via dispatchAnalytics, so this function's callers never pass
+// 'booking.confirmed'.
 export function dispatchNonCritical(
   context: BookkitContext,
   event: BookingEvent,
   booking: Booking,
 ): void {
   const task = (async () => {
-    if (context.providers.ops && (event !== 'booking.confirmed' || !booking.tourflowSynced)) {
+    if (context.providers.ops) {
       try {
         await context.providers.ops.push(event, booking);
-        if (event === 'booking.confirmed') {
-          await context.repo.updateBooking(booking.id, { tourflowSynced: true, updatedAt: nowIso(context) });
-        }
       } catch (error) {
         const status = extractStatus(error);
         context.logger.warn?.('bookkit ops sink failed', {
@@ -285,6 +297,52 @@ export function dispatchNonCritical(
       }
     }
   })();
+  if (context.waitUntil) context.waitUntil(task);
+  else void task;
+}
+
+// Plan 011 (design decision 1/5): provider-derived so a confirmation's transition and its
+// Tourflow row only ever get minted when there's somewhere to send them — no ops provider means
+// no row and no fulfillment polling on the default-false tourflow_synced flag.
+function confirmationTourflowKind(context: BookkitContext): ConfirmationTourflowKind | undefined {
+  return context.providers.ops ? CONFIRMATION_TOURFLOW_KIND : undefined;
+}
+
+// Plan 011 (design decision 3/4): claims, pushes, and atomically resolves the confirmation-path
+// Tourflow row using its own row lease (claimMutationSideEffectOperation/
+// resolveConfirmationTourflowOperation) — never the confirmation lease, which the caller may have
+// already released by the time this runs detached. A no-op when there's no ops provider, the row
+// doesn't exist (never created, or provider added after this booking was already synced), or the
+// booking is already synced (terminal rows are never retried).
+async function runConfirmationTourflowSideEffect(context: BookkitContext, booking: Booking): Promise<void> {
+  const ops = context.providers.ops;
+  if (!ops || booking.tourflowSynced) return;
+  const attemptedAt = nowIso(context);
+  if (!await context.repo.claimMutationSideEffectOperation(booking.id, CONFIRMATION_TOURFLOW_KIND, attemptedAt)) return;
+  try {
+    await ops.push('booking.confirmed', booking);
+    await context.repo.resolveConfirmationTourflowOperation({
+      bookingId: booking.id, status: 'succeeded', claimedAt: attemptedAt, resolvedAt: nowIso(context),
+    });
+  } catch (error) {
+    const status = extractStatus(error);
+    await context.repo.resolveConfirmationTourflowOperation({
+      bookingId: booking.id, status: 'failed', claimedAt: attemptedAt,
+      error: (error instanceof Error ? error.message : String(error)).slice(0, 200),
+      resolvedAt: nowIso(context),
+    });
+    context.logger.warn?.('bookkit ops sink failed', {
+      event: 'booking.confirmed', bookingId: booking.id, provider: 'tourflow',
+      ...(status !== undefined ? { status } : {}),
+    });
+  }
+}
+
+// Plan 011 (design decision 3): the detached first attempt, scheduled right after the row is
+// minted — same waitUntil-or-fire-and-forget shape as dispatchNonCritical/dispatchAnalytics, so
+// the confirming request never waits on an external Tourflow call.
+function scheduleConfirmationTourflowDelivery(context: BookkitContext, booking: Booking): void {
+  const task = runConfirmationTourflowSideEffect(context, booking);
   if (context.waitUntil) context.waitUntil(task);
   else void task;
 }
@@ -339,8 +397,11 @@ interface MutationSideEffectAttempt {
   run: () => Promise<void>;
 }
 
+// Plan 011 (design decision 1): CONFIRMATION_TOURFLOW_KIND is confirmation debt, drained only by
+// runConfirmationTourflowSideEffect (called separately below) — excluding it here is what stops
+// the generic mutation loop from also claiming it, so the two drains can never race the same row.
 function isMutationSideEffectKind(kind: SideEffectOperationKind): kind is MutationSideEffectOperationKind {
-  return kind === 'calendar_delete' || kind.startsWith('email:') || kind.startsWith('tourflow:');
+  return kind !== CONFIRMATION_TOURFLOW_KIND && (kind === 'calendar_delete' || kind.startsWith('email:') || kind.startsWith('tourflow:'));
 }
 
 // BK-SIDE-001 (handoff 13) HIGH-1(b): reconstructs a runnable attempt from a durable row's `kind`
@@ -435,6 +496,10 @@ async function runMutationSideEffect(
 // left behind by a dead isolate (crashed between claim and resolve, or between record and attempt)
 // still get delivered on a LATER request even though there is no cron in this project. Does not
 // touch analytics — that's the deliberate best-effort carve-out (dispatchAnalytics), never durable.
+//
+// Plan 011 (design decision 3): also resumes the confirmation-path Tourflow row, if this booking
+// has one owed — every caller here is exactly the "later status/manage/webhook touch" the design
+// calls for. isMutationSideEffectKind's exclusion above keeps the loop from claiming that same row.
 export async function runOwedMutationSideEffects(context: BookkitContext, booking: Booking): Promise<void> {
   const operations = await context.repo.listSideEffectOperations(booking.id);
   for (const operation of operations) {
@@ -443,6 +508,7 @@ export async function runOwedMutationSideEffects(context: BookkitContext, bookin
     if (!attempt) continue; // provider no longer configured — leave the row for a later request.
     await runMutationSideEffect(context, booking, operation.kind, attempt);
   }
+  await runConfirmationTourflowSideEffect(context, booking);
 }
 
 export async function dispatchMutation(

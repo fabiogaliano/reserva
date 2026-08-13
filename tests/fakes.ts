@@ -11,6 +11,7 @@ import {
 } from '../src/core/occupancy';
 import { sha256Base64Url } from '../src/http';
 import {
+  CONFIRMATION_TOURFLOW_KIND,
   DuplicatePaymentIntentError,
   HoldLimitExceededError,
   MUTATION_SIDE_EFFECT_LEASE_MS,
@@ -384,7 +385,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       const current = rows.get(id);
       if (!current || !input.expectedStatusIn.includes(current.status) || leases.get(id)?.token !== input.leaseToken) return null;
       guardDuplicatePaymentIntent(id, input.stripePaymentIntent);
-      const { expectedStatusIn, leaseToken, oversold, updatedAt, ...patch } = input;
+      const { expectedStatusIn, leaseToken, oversold, updatedAt, tourflowKind, ...patch } = input;
       const defined = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
       const updated: Booking = { ...current, ...defined, status: 'confirmed', holdExpiresAt: null, updatedAt };
       rows.set(id, updated);
@@ -400,6 +401,15 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         if (!sideEffectOperations.has(key)) sideEffectOperations.set(key, {
           bookingId: id, kind: 'oversell', status: 'succeeded', providerResultId: 'capacity_exceeded',
           attemptCount: 0, attemptedAt: null, resolvedAt: updatedAt, error: null, createdAt: updatedAt, updatedAt,
+        });
+      }
+      // Plan 011 (design decision 2): mirrors src/repo.ts — the Tourflow row is created in the
+      // same "transaction" (here: the same synchronous call) as the status transition.
+      if (tourflowKind) {
+        const key = sideEffectKey(id, tourflowKind);
+        if (!sideEffectOperations.has(key)) sideEffectOperations.set(key, {
+          bookingId: id, kind: tourflowKind, status: 'pending', providerResultId: null, attemptCount: 0,
+          attemptedAt: null, resolvedAt: null, error: null, createdAt: updatedAt, updatedAt,
         });
       }
       return hydrateBooking(updated);
@@ -421,7 +431,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       rows.set(id, updated);
       return true;
     },
-    ensureConfirmationSideEffectOperations: async (id, leaseToken, now) => {
+    ensureConfirmationSideEffectOperations: async (id, leaseToken, now, tourflowKind) => {
       if (rows.get(id)?.status !== 'confirmed' || leases.get(id)?.token !== leaseToken) return;
       const booking = rows.get(id);
       if (!booking) return;
@@ -432,6 +442,16 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
           bookingId: id, kind, status: synced ? 'succeeded' : 'pending',
           providerResultId: kind === 'calendar_create' ? booking.calendarEventId : null,
           attemptCount: 0, attemptedAt: null, resolvedAt: synced ? now : null, error: null,
+          createdAt: now, updatedAt: now,
+        });
+      }
+      // Plan 011 (design decision 2): legacy-repair path — only when tourflow_synced is still
+      // false, mirroring src/repo.ts's WHERE ... AND tourflow_synced = 0 guard.
+      if (tourflowKind && !booking.tourflowSynced) {
+        const key = sideEffectKey(id, tourflowKind);
+        if (!sideEffectOperations.has(key)) sideEffectOperations.set(key, {
+          bookingId: id, kind: tourflowKind, status: 'pending', providerResultId: null,
+          attemptCount: 0, attemptedAt: null, resolvedAt: null, error: null,
           createdAt: now, updatedAt: now,
         });
       }
@@ -492,6 +512,22 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         ...current, status: input.status, providerResultId: input.providerResultId ?? null,
         error: input.error ?? null, resolvedAt: input.resolvedAt, updatedAt: input.resolvedAt,
       });
+      return true;
+    },
+    // Plan 011 (design decision 4): mirrors src/repo.ts's atomic pair — the row only resolves (and
+    // the flag only flips) when this call actually won the claimedAt-gated race.
+    resolveConfirmationTourflowOperation: async (input) => {
+      const key = sideEffectKey(input.bookingId, CONFIRMATION_TOURFLOW_KIND);
+      const current = sideEffectOperations.get(key);
+      if (!current || current.status !== 'in_flight' || current.attemptedAt !== input.claimedAt) return false;
+      sideEffectOperations.set(key, {
+        ...current, status: input.status, providerResultId: null,
+        error: input.error ?? null, resolvedAt: input.resolvedAt, updatedAt: input.resolvedAt,
+      });
+      if (input.status === 'succeeded') {
+        const booking = rows.get(input.bookingId);
+        if (booking) rows.set(input.bookingId, { ...booking, tourflowSynced: true, updatedAt: input.resolvedAt });
+      }
       return true;
     },
     sideEffectOperations,

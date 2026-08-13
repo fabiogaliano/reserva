@@ -3,7 +3,7 @@ import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { runOwedMutationSideEffects } from '../../src/confirmation';
 import { createBookkitContext } from '../../src/context';
-import { createBookingRepository, HoldLimitExceededError, type SideEffectOperationKind } from '../../src/repo';
+import { CONFIRMATION_TOURFLOW_KIND, createBookingRepository, HoldLimitExceededError, type SideEffectOperationKind } from '../../src/repo';
 import { config } from '../fixtures';
 import { providers } from '../fakes';
 
@@ -138,6 +138,45 @@ describe('D1 booking repository', () => {
     expect((await repo.getBookingById(created.id))?.status).toBe('hold');
     await expect(db.prepare('SELECT * FROM side_effect_operations WHERE booking_id = ?').bind(created.id).all()).resolves.toMatchObject({ results: [] });
     await db.prepare('DROP TRIGGER fail_confirmation_outbox').run();
+  });
+
+  // Plan 011: proves the optional Tourflow row shares confirmWithSideEffectOperations' one D1
+  // batch just like calendar_create/email_confirmation above — a failure inserting ONLY the
+  // Tourflow row (the other two rows would insert cleanly on their own) must still roll back the
+  // whole batch, leaving the booking unconfirmed and no partial rows behind.
+  it('rolls back the confirmation status when creating its Tourflow outbox row fails inside the same batch', async () => {
+    const created = await repo.insertHold({
+      id: 'booking-tourflow-outbox-atomic',
+      reference: 'BKT-2026-TFOUTBOX',
+      tourSlug: 'vintage',
+      people: 2,
+      pickupType: 'default',
+      startsAt: '2026-08-01T09:00:00.000Z',
+      endsAt: '2026-08-01T10:00:00.000Z',
+      locale: 'en',
+      priceCents: 12000,
+      holdExpiresAt: '2026-07-21T10:35:00.000Z',
+      cancelToken: 'cancel-token-tf-outbox',
+      operatorToken: 'operator-token-tf-outbox',
+      createdAt: '2026-07-21T10:00:00.000Z',
+      updatedAt: '2026-07-21T10:00:00.000Z',
+    });
+    await repo.acquireConfirmationLease(created.id, 'lease-tf-outbox', '2026-07-21T10:00:00.000Z', '2026-07-21T10:05:00.000Z');
+    await db.prepare(`CREATE TRIGGER fail_tourflow_outbox
+      BEFORE INSERT ON side_effect_operations WHEN NEW.kind = '${CONFIRMATION_TOURFLOW_KIND}'
+      BEGIN SELECT RAISE(ABORT, 'tourflow outbox insert failed'); END`).run();
+
+    await expect(repo.confirmWithSideEffectOperations(created.id, {
+      expectedStatusIn: ['hold'],
+      leaseToken: 'lease-tf-outbox',
+      oversold: false,
+      updatedAt: '2026-07-21T10:01:00.000Z',
+      tourflowKind: CONFIRMATION_TOURFLOW_KIND,
+    })).rejects.toThrow('tourflow outbox insert failed');
+
+    expect((await repo.getBookingById(created.id))?.status).toBe('hold');
+    await expect(db.prepare('SELECT * FROM side_effect_operations WHERE booking_id = ?').bind(created.id).all()).resolves.toMatchObject({ results: [] });
+    await db.prepare('DROP TRIGGER fail_tourflow_outbox').run();
   });
 
   it('persists capacity overrides and returns only changed feed rows', async () => {

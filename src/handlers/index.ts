@@ -652,8 +652,14 @@ export function handleStatus(request: Request, context: BookkitContext): Promise
     } else if (current.status === 'confirmed') {
       const confirmationOperations = (await context.repo.listSideEffectOperations(current.id))
         .filter(isConfirmationSideEffectOperation);
+      // Plan 011 (design decision 5): also runs the confirmation-lease-guarded repair path when an
+      // ops provider is configured and this booking still owes a Tourflow confirmation — the only
+      // way a legacy booking with no row yet (ops configured after it was originally confirmed)
+      // gets one lazily created (ensureConfirmationSideEffectOperations). No provider, or already
+      // synced, adds nothing here; runOwedMutationSideEffects below is what actually delivers it.
       const needsFulfillment = confirmationOperations.some((operation) => operation.status !== 'succeeded')
-        || (confirmationOperations.length === 0 && (!current.calendarSynced || !current.emailSynced));
+        || (confirmationOperations.length === 0 && (!current.calendarSynced || !current.emailSynced))
+        || (Boolean(context.providers.ops) && !current.tourflowSynced);
       if (needsFulfillment) {
         try {
           current = await confirmBookingFromPayment(context, current);

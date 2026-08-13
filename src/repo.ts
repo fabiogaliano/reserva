@@ -136,6 +136,13 @@ export interface RefundOperationRecord {
 export type ConfirmationSideEffectKind = 'calendar_create' | 'email_confirmation' | 'oversell';
 export type MutationSideEffectOperationKind = 'calendar_delete' | `email:${string}` | `tourflow:${string}`;
 export type SideEffectOperationKind = ConfirmationSideEffectKind | MutationSideEffectOperationKind;
+// Plan 011: the durable booking.confirmed Tourflow row. Shaped like a MutationSideEffectOperationKind
+// (claimed/resolved via the ungated row lease, not the confirmation lease — see src/confirmation.ts)
+// but represents confirmation debt, not mutation debt, so the generic mutation drain explicitly
+// excludes it (src/confirmation.ts isMutationSideEffectKind) and a dedicated resolver
+// (resolveConfirmationTourflowOperation below) is the only thing allowed to flip tourflow_synced.
+export const CONFIRMATION_TOURFLOW_KIND = 'tourflow:booking.confirmed' as const satisfies MutationSideEffectOperationKind;
+export type ConfirmationTourflowKind = typeof CONFIRMATION_TOURFLOW_KIND;
 export type SideEffectOperationStatus = 'pending' | 'in_flight' | 'succeeded' | 'failed';
 
 // BK-SIDE-001 (handoff 13) HIGH-2: a claimant that dies between claiming (status -> in_flight)
@@ -266,6 +273,11 @@ export interface BookingRepository {
     leaseToken: string;
     oversold: boolean;
     updatedAt: string;
+    // Plan 011: passed only when an ops provider is configured (src/confirmation.ts) — a new
+    // booking's status transition and its Tourflow outbox row share this one D1 batch, so a
+    // provider that's never configured mints no row and a booking never gets stuck polling a
+    // default-false tourflow_synced flag it can never resolve.
+    tourflowKind?: ConfirmationTourflowKind;
   }): Promise<Booking | null>;
   applyConfirmedPaymentDetails(id: string, patch: {
     stripePaymentIntent?: string | null;
@@ -274,7 +286,11 @@ export interface BookingRepository {
     customerPhone?: string | null;
     pickupAddress?: string | null;
   }, leaseToken: string, updatedAt: string): Promise<boolean>;
-  ensureConfirmationSideEffectOperations(id: string, leaseToken: string, now: string): Promise<void>;
+  // Plan 011: tourflowKind is the same optional provider-derived kind confirmWithSideEffectOperations
+  // takes — this is the lazy-repair path for a legacy confirmed booking (row missing entirely,
+  // e.g. because ops wasn't configured at original confirmation time), gated on tourflow_synced = 0
+  // so an already-synced booking is never replayed a second row.
+  ensureConfirmationSideEffectOperations(id: string, leaseToken: string, now: string, tourflowKind?: ConfirmationTourflowKind): Promise<void>;
   listSideEffectOperations(bookingId: string): Promise<SideEffectOperationRecord[]>;
   claimSideEffectOperation(bookingId: string, kind: ConfirmationSideEffectKind, leaseToken: string, attemptedAt: string): Promise<boolean>;
   resolveSideEffectOperation(input: {
@@ -310,6 +326,18 @@ export interface BookingRepository {
     // still match — so a slow original claimant that wakes up after a reclaimer already took the
     // row (bumping attempted_at again) fails to match here (0 rows) instead of clobbering the
     // reclaimer's outcome.
+    claimedAt: string;
+  }): Promise<boolean>;
+  // Plan 011 (design decision 4): the confirmation-path Tourflow row's dedicated resolver. Uses
+  // the same claimedAt-gated optimistic concurrency as resolveMutationSideEffectOperation above,
+  // but additionally sets bookings.tourflow_synced = 1 in the SAME batch, and only when this call's
+  // own row update actually won (never on a lost race, and never on a 'failed' outcome) — so a
+  // succeeded-row/false-flag split can never cause either a duplicate send or endless polling.
+  resolveConfirmationTourflowOperation(input: {
+    bookingId: string;
+    status: 'succeeded' | 'failed';
+    error?: string | null;
+    resolvedAt: string;
     claimedAt: string;
   }): Promise<boolean>;
   transitionReschedule(id: string, input: {
@@ -1161,7 +1189,7 @@ export function createBookingRepository(
       return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
     },
     async confirmWithSideEffectOperations(id, input) {
-      const { expectedStatusIn, updatedAt, leaseToken, oversold, ...patch } = input;
+      const { expectedStatusIn, updatedAt, leaseToken, oversold, tourflowKind, ...patch } = input;
       const columnMap: Record<string, string> = {
         stripePaymentIntent: 'stripe_payment_intent', customerName: 'customer_name',
         customerEmail: 'customer_email', customerPhone: 'customer_phone', pickupAddress: 'pickup_address',
@@ -1171,7 +1199,10 @@ export function createBookingRepository(
       if (columns.some((column) => !column)) throw new Error('Unsupported confirmation field');
       const placeholders = expectedStatusIn.map(() => '?').join(', ');
       const setClauses = [`status = 'confirmed'`, 'hold_expires_at = NULL', ...columns.map((column) => `${column} = ?`), 'updated_at = ?'];
-      const operation = (kind: ConfirmationSideEffectKind, status: SideEffectOperationStatus, providerResultId: string | null, resolvedAt: string | null) => db.prepare(
+      // kind is typed as the wider SideEffectOperationKind (not just ConfirmationSideEffectKind)
+      // solely so this one helper can also insert the optional Tourflow row below — the SQL itself
+      // is kind-agnostic.
+      const operation = (kind: SideEffectOperationKind, status: SideEffectOperationStatus, providerResultId: string | null, resolvedAt: string | null) => db.prepare(
         `INSERT INTO side_effect_operations (
            booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
          )
@@ -1182,6 +1213,9 @@ export function createBookingRepository(
          )
          ON CONFLICT(booking_id, kind) DO NOTHING`,
       ).bind(id, kind, status, providerResultId, resolvedAt, updatedAt, updatedAt, id, leaseToken);
+      // Plan 011 (design decision 2): the Tourflow row shares this exact batch, so it can never
+      // exist without the transition it's owed by, nor vice versa.
+      const tourflowOperation = tourflowKind ? operation(tourflowKind, 'pending', null, null) : null;
       const results = await guardDuplicatePaymentIntent(patch.stripePaymentIntent, () =>
         db.batch([
           db.prepare(
@@ -1191,6 +1225,7 @@ export function createBookingRepository(
           operation('calendar_create', 'pending', null, null),
           operation('email_confirmation', 'pending', null, null),
           ...(oversold ? [operation('oversell', 'succeeded', 'capacity_exceeded', updatedAt)] : []),
+          ...(tourflowOperation ? [tourflowOperation] : []),
         ]));
       if ((results[0]?.meta.changes ?? 0) === 0) return null;
       return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
@@ -1211,7 +1246,7 @@ export function createBookingRepository(
         ).bind(...entries.map(([, value]) => value), updatedAt, id, leaseToken).run());
       return result.meta.changes > 0;
     },
-    async ensureConfirmationSideEffectOperations(id, leaseToken, now) {
+    async ensureConfirmationSideEffectOperations(id, leaseToken, now, tourflowKind) {
       const operation = (kind: ConfirmationSideEffectKind, syncedColumn: 'calendar_synced' | 'email_synced') => db.prepare(
         `INSERT INTO side_effect_operations (
            booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
@@ -1224,9 +1259,23 @@ export function createBookingRepository(
          WHERE id = ? AND status = 'confirmed' AND confirmation_lease_token = ?
          ON CONFLICT(booking_id, kind) DO NOTHING`,
       ).bind(id, kind, kind, now, now, now, id, leaseToken);
+      // Plan 011 (design decision 2): a legacy confirmed booking's row, created lazily only when
+      // tourflow_synced is still 0 — an already-synced legacy booking is never replayed a row (no
+      // WHEN branch needed here: the row is always inserted 'pending', unlike calendar/email above,
+      // which can already be synced when this repair path first runs for them).
+      const tourflowOperation = tourflowKind ? db.prepare(
+        `INSERT INTO side_effect_operations (
+           booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
+         )
+         SELECT ?, ?, 'pending', NULL, 0, NULL, NULL, NULL, ?, ?
+         FROM bookings
+         WHERE id = ? AND status = 'confirmed' AND confirmation_lease_token = ? AND tourflow_synced = 0
+         ON CONFLICT(booking_id, kind) DO NOTHING`,
+      ).bind(id, tourflowKind, now, now, id, leaseToken) : null;
       await db.batch([
         operation('calendar_create', 'calendar_synced'),
         operation('email_confirmation', 'email_synced'),
+        ...(tourflowOperation ? [tourflowOperation] : []),
       ]);
     },
     async listSideEffectOperations(bookingId) {
@@ -1291,6 +1340,30 @@ export function createBookingRepository(
         input.bookingId, input.kind, input.claimedAt,
       ).run();
       return result.meta.changes > 0;
+    },
+    // Plan 011 (design decision 4): mirrors resolveMutationSideEffectOperation's claimedAt-gated
+    // row update, then atomically flips tourflow_synced in the same batch — but only when THIS
+    // call's own row update just landed. The second statement checks post-first-statement state
+    // (status = 'succeeded' AND resolved_at = this call's resolvedAt, both only true if the first
+    // UPDATE's WHERE matched) rather than re-deriving success from input.status directly, so a
+    // stale/reclaimed loser's resolve (whose own UPDATE affects 0 rows because a reclaimer's already
+    // moved attempted_at) can never flip the flag on someone else's outcome.
+    async resolveConfirmationTourflowOperation(input) {
+      const result = await db.batch([
+        db.prepare(
+          `UPDATE side_effect_operations
+           SET status = ?, error = ?, resolved_at = ?, updated_at = ?
+           WHERE booking_id = ? AND kind = ? AND status = 'in_flight' AND attempted_at = ?`,
+        ).bind(input.status, input.error ?? null, input.resolvedAt, input.resolvedAt, input.bookingId, CONFIRMATION_TOURFLOW_KIND, input.claimedAt),
+        db.prepare(
+          `UPDATE bookings SET tourflow_synced = 1, updated_at = ?
+           WHERE id = ? AND EXISTS (
+             SELECT 1 FROM side_effect_operations
+             WHERE booking_id = ? AND kind = ? AND status = 'succeeded' AND resolved_at = ?
+           )`,
+        ).bind(input.resolvedAt, input.bookingId, input.bookingId, CONFIRMATION_TOURFLOW_KIND, input.resolvedAt),
+      ]);
+      return (result[0]?.meta.changes ?? 0) > 0;
     },
     async transitionReschedule(id, input) {
       const casPredicate = 'id = ? AND status = ? AND starts_at = ?';
