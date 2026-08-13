@@ -11,7 +11,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
+  # Split from a single `check` job (audit && typecheck && test && test:workers) so a red audit
+  # (a transitive advisory with no fix available yet — see docs/plans/013-hardening-sweep.md item
+  # E) can no longer mask whether the code itself is sound: these run independently, not chained,
+  # so `verify` still reports even when `audit` fails. `bun run check` (both, chained) remains the
+  # strict local pre-push gate; CI deliberately doesn't run it as a single step.
+  audit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,7 +24,17 @@ jobs:
         with:
           bun-version: 1.2.23
       - run: bun install --frozen-lockfile
-      - run: bun run check
+      - run: bun run audit
+
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.23
+      - run: bun install --frozen-lockfile
+      - run: bun run verify
 
   smoke-build:
     runs-on: ubuntu-latest

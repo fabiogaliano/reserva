@@ -51,7 +51,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "audit": "bun audit",
-    "check": "bun run audit && bun run typecheck && bun run test && bun run test:workers"
+    "verify": "bun run typecheck && bun run test && bun run test:workers",
+    "check": "bun run audit && bun run verify"
   },
   "engines": {
     "node": ">=20"
@@ -71,13 +72,13 @@
     "stripe": "^22.3.2"
   },
   "devDependencies": {
-    "@astrojs/cloudflare": "^14.1.4",
-    "@cloudflare/vitest-pool-workers": "^0.18.7",
-    "@cloudflare/workers-types": "^5.20260721.1",
+    "@astrojs/cloudflare": "^14.2.1",
+    "@cloudflare/vitest-pool-workers": "^0.18.8",
+    "@cloudflare/workers-types": "^5.20260813.1",
     "@playwright/test": "^1.62.1",
-    "astro": "^7.1.3",
+    "astro": "^7.2.1",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10",
-    "wrangler": "^4.113.0"
+    "wrangler": "^4.122.0"
   }
 }
