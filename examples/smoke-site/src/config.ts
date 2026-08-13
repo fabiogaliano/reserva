@@ -31,6 +31,37 @@ export default {
         intervalMin: 60,
       }],
     },
+    // Plan 018 (design decisions 1-3, 9): shaped after the actual request this plan generalizes
+    // for — Maze Riverside 2h, priced 180/200/200/210 € (non-additive: +20 for either custom leg,
+    // but +30 for both — see README "Config" for why that rules out a surcharge model). A single
+    // meetingPoint (not meetingPoints) keeps the meeting-point radio group out of this tour's flow
+    // entirely, so this page exercises the pickupOptions axis in isolation from plan 017's group.
+    mazeRiverside: {
+      durationMin: 120,
+      turnaroundMin: 15,
+      schedule: [{
+        days: [0, 1, 2, 3, 4, 5, 6],
+        firstStart: '09:00',
+        lastStart: '17:00',
+        intervalMin: 60,
+      }],
+      meetingPoint: {
+        label: 'Riverside dock',
+        mapsUrl: 'https://maps.google.com/?q=Riverside+dock',
+      },
+      pickupOptions: [
+        { id: 'meeting_point', label: 'Meeting point', requiresAddress: false, usesMeetingPoint: true },
+        { id: 'custom_dropoff', label: 'Custom drop-off', requiresAddress: true, usesMeetingPoint: true },
+        { id: 'custom_pickup', label: 'Custom pick-up', requiresAddress: true, usesMeetingPoint: false },
+        { id: 'custom_both', label: 'Custom pick-up & drop-off', requiresAddress: true, usesMeetingPoint: false },
+      ],
+      pricing: [
+        { maxPeople: 4, pickup: 'meeting_point', priceCents: 18000 },
+        { maxPeople: 4, pickup: 'custom_dropoff', priceCents: 20000 },
+        { maxPeople: 4, pickup: 'custom_pickup', priceCents: 20000 },
+        { maxPeople: 4, pickup: 'custom_both', priceCents: 21000 },
+      ],
+    },
   },
   booking: {
     ...baseConfig.booking,

@@ -1,0 +1,54 @@
+---
+// Plan 018 (design decision 9, step 6): exercises the widget's pickupOptions prop end-to-end
+// against a real four-option, non-additive-priced tour (mazeRiverside in ../config.ts) — the
+// homepage's oldTown tour only ever exercises the two-option pickupTypes alias.
+import BookingWidget from '../../../../src/components/BookingWidget.astro';
+import config from '../config';
+
+const title = 'Bookkit local demo — Maze Riverside';
+const from = new Date().toISOString().slice(0, 10);
+const to = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
+const tour = config.tours.mazeRiverside;
+// The widget only needs {id, label, hint, usesMeetingPoint} — the config's raw pickupOptions also
+// carries requiresAddress, which is Stripe-side (see stripe.ts's custom_fields gate), not
+// something the widget itself renders.
+const pickupOptions = tour.pickupOptions!.map(({ id, label, usesMeetingPoint }) => ({ id, label, usesMeetingPoint }));
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>{title}</title>
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">Cloudflare workerd + local D1</p>
+        <h1>{title}</h1>
+        <p>Four declared pickup options, priced outright per combination (180 / 200 / 200 / 210 €) — see the README's "Config" section for why the prices aren't additive.</p>
+      </header>
+
+      <section>
+        <h2>Create a booking</h2>
+        <BookingWidget
+          tourSlug="mazeRiverside"
+          availabilityFrom={from}
+          availabilityTo={to}
+          pickupOptions={pickupOptions}
+          pricing={tour.pricing}
+        />
+        <p>Submitting redirects through the confirmation route. The simulated payment provider reports the session as paid, which exercises confirmation and every provider seam.</p>
+      </section>
+    </main>
+  </body>
+</html>
+
+<style>
+  :global(*) { box-sizing: border-box; }
+  body { margin: 0; background: #f3f5f7; color: #18212b; font: 16px/1.5 system-ui, sans-serif; }
+  main { width: min(760px, calc(100% - 32px)); margin: 48px auto; display: grid; gap: 24px; }
+  header, section { padding: 24px; border: 1px solid #d7dde3; border-radius: 14px; background: white; box-shadow: 0 8px 24px rgb(24 33 43 / 6%); }
+  h1, h2 { margin-top: 0; }
+  .eyebrow { margin: 0 0 8px; color: #52606d; font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+</style>
