@@ -11,13 +11,17 @@ import { localDateKey, parseUtcInstant } from './core/time';
 import type { BookkitContext } from './context';
 import { nowIso } from './context';
 import {
+  CONFIRMATION_EMAIL_KINDS,
   CONFIRMATION_TOURFLOW_KIND,
+  type ConfirmationEmailKind,
   type ConfirmationSideEffectKind,
   type ConfirmationTourflowKind,
   type MutationSideEffectOperationKind,
   type SideEffectOperationKind,
   type SideEffectOperationRecord,
 } from './repo';
+
+const confirmationEmailKindSet: ReadonlySet<string> = new Set(CONFIRMATION_EMAIL_KINDS);
 
 export class ConfirmationInProgressError extends Error {
   readonly status = 503;
@@ -81,7 +85,33 @@ async function resolveOperation(
 }
 
 export function isConfirmationSideEffectOperation(operation: SideEffectOperationRecord): operation is SideEffectOperationRecord & { kind: ConfirmationSideEffectKind } {
-  return operation.kind === 'calendar_create' || operation.kind === 'email_confirmation' || operation.kind === 'oversell';
+  return operation.kind === 'calendar_create' || operation.kind === 'email_confirmation' || operation.kind === 'oversell' || confirmationEmailKindSet.has(operation.kind);
+}
+
+// Plan 012 (design decision 1/6): which recipient a split confirmation-path email row targets, or
+// undefined for calendar_create/email_confirmation (the unsplit shapes).
+function confirmationEmailRecipient(kind: ConfirmationSideEffectKind): EmailRecipientRole | undefined {
+  return kind === 'email:booking.confirmed:customer' ? 'customer' : kind === 'email:booking.confirmed:owner' ? 'owner' : undefined;
+}
+
+// Plan 012 (design decision 1/6): dispatches to the right provider call for a confirmation-path
+// row — calendar_create unchanged, the legacy combined email_confirmation row still calls send()
+// (both recipients in one call, content unchanged), and a split row calls sendToRecipient for
+// exactly the one recipient its kind encodes, so an owner-recipient failure can never re-trigger
+// the customer's already-delivered send on retry.
+async function runConfirmationOperation(context: BookkitContext, booking: Booking, kind: ConfirmationSideEffectKind): Promise<string | null> {
+  if (kind === 'calendar_create') {
+    return context.providers.calendar ? await context.providers.calendar.createEvent(booking, context.config) : null;
+  }
+  const recipient = confirmationEmailRecipient(kind);
+  if (recipient) {
+    if (context.providers.email?.sendToRecipient) {
+      await context.providers.email.sendToRecipient(recipient, 'booking.confirmed', booking, context.config, context.routeConfig.paths);
+    }
+    return null;
+  }
+  if (context.providers.email) await context.providers.email.send('booking.confirmed', booking, context.config, context.routeConfig.paths);
+  return null;
 }
 
 async function executeOperation(
@@ -97,13 +127,7 @@ async function executeOperation(
   }
   try {
     await renewConfirmationLease(context, booking.id, token);
-    const providerResultId = operation.kind === 'calendar_create'
-      ? context.providers.calendar
-        ? await context.providers.calendar.createEvent(booking, context.config)
-        : null
-      : (context.providers.email
-        ? await context.providers.email.send('booking.confirmed', booking, context.config, context.routeConfig.paths)
-        : null);
+    const providerResultId = await runConfirmationOperation(context, booking, operation.kind);
     await renewConfirmationLease(context, booking.id, token);
     await resolveOperation(context, {
       bookingId: booking.id,
@@ -144,6 +168,7 @@ async function confirmBookingFromPaymentUnlocked(
   let shouldDispatchConfirmation = current.status !== 'confirmed';
   let transitionApplied = false;
   const tourflowKind = confirmationTourflowKind(context);
+  const emailKinds = confirmationEmailKinds(context);
   if (current.status === 'hold' || current.status === 'expired') {
     let oversold = false;
     if (current.status === 'expired') {
@@ -167,6 +192,7 @@ async function confirmBookingFromPaymentUnlocked(
       oversold,
       updatedAt: now,
       ...(tourflowKind ? { tourflowKind } : {}),
+      ...(emailKinds ? { emailKinds } : {}),
     });
     transitionApplied = result !== null;
     current = result ?? await context.repo.getBookingById(current.id) ?? current;
@@ -186,7 +212,7 @@ async function confirmBookingFromPaymentUnlocked(
   }
 
   await renewConfirmationLease(context, current.id, token);
-  await context.repo.ensureConfirmationSideEffectOperations(current.id, token, nowIso(context), tourflowKind);
+  await context.repo.ensureConfirmationSideEffectOperations(current.id, token, nowIso(context), tourflowKind, emailKinds);
   const operations = (await context.repo.listSideEffectOperations(current.id)).filter(isConfirmationSideEffectOperation);
   shouldDispatchConfirmation ||= operations.some((operation) => operation.status !== 'succeeded');
   for (const operation of operations) await executeOperation(context, current, operation, token);
@@ -308,6 +334,17 @@ function confirmationTourflowKind(context: BookkitContext): ConfirmationTourflow
   return context.providers.ops ? CONFIRMATION_TOURFLOW_KIND : undefined;
 }
 
+// Plan 012 (design decision 1): provider-derived, mirroring confirmationTourflowKind above — a
+// confirmation's email rows only ever split into per-recipient debt when the current provider
+// actually implements BOTH recipientsForEvent and sendToRecipient (so each recipient can be
+// retried independently); a provider with only send() keeps the single combined
+// email_confirmation row, unchanged from before this plan.
+function confirmationEmailKinds(context: BookkitContext): ConfirmationEmailKind[] | undefined {
+  const email = context.providers.email;
+  if (!email?.recipientsForEvent || !email.sendToRecipient) return undefined;
+  return email.recipientsForEvent('booking.confirmed').map((recipient) => `email:booking.confirmed:${recipient}` as const);
+}
+
 // Plan 011 (design decision 3/4): claims, pushes, and atomically resolves the confirmation-path
 // Tourflow row using its own row lease (claimMutationSideEffectOperation/
 // resolveConfirmationTourflowOperation) — never the confirmation lease, which the caller may have
@@ -400,8 +437,13 @@ interface MutationSideEffectAttempt {
 // Plan 011 (design decision 1): CONFIRMATION_TOURFLOW_KIND is confirmation debt, drained only by
 // runConfirmationTourflowSideEffect (called separately below) — excluding it here is what stops
 // the generic mutation loop from also claiming it, so the two drains can never race the same row.
+// Plan 012 (design decision 4): the two split confirmation-path email kinds are excluded the same
+// way — they're confirmation debt too, claimed/resolved only through executeOperation's
+// confirmation-lease path (via listSideEffectOperations/isConfirmationSideEffectOperation above),
+// never by this generic mutation drain.
 function isMutationSideEffectKind(kind: SideEffectOperationKind): kind is MutationSideEffectOperationKind {
-  return kind !== CONFIRMATION_TOURFLOW_KIND && (kind === 'calendar_delete' || kind.startsWith('email:') || kind.startsWith('tourflow:'));
+  return kind !== CONFIRMATION_TOURFLOW_KIND && !confirmationEmailKindSet.has(kind)
+    && (kind === 'calendar_delete' || kind.startsWith('email:') || kind.startsWith('tourflow:'));
 }
 
 // BK-SIDE-001 (handoff 13) HIGH-1(b): reconstructs a runnable attempt from a durable row's `kind`

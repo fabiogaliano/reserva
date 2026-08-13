@@ -16,6 +16,7 @@ import {
   HoldLimitExceededError,
   MUTATION_SIDE_EFFECT_LEASE_MS,
   type BookingRepository,
+  type ConfirmationEmailKind,
   type MutationSideEffectOperationKind,
   type RefundOperationRecord,
   type SideEffectOperationRecord,
@@ -385,11 +386,21 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       const current = rows.get(id);
       if (!current || !input.expectedStatusIn.includes(current.status) || leases.get(id)?.token !== input.leaseToken) return null;
       guardDuplicatePaymentIntent(id, input.stripePaymentIntent);
-      const { expectedStatusIn, leaseToken, oversold, updatedAt, tourflowKind, ...patch } = input;
+      const { expectedStatusIn, leaseToken, oversold, updatedAt, tourflowKind, emailKinds, ...patch } = input;
       const defined = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
       const updated: Booking = { ...current, ...defined, status: 'confirmed', holdExpiresAt: null, updatedAt };
       rows.set(id, updated);
-      for (const kind of ['calendar_create', 'email_confirmation'] as const) {
+      const key0 = sideEffectKey(id, 'calendar_create');
+      if (!sideEffectOperations.has(key0)) sideEffectOperations.set(key0, {
+        bookingId: id, kind: 'calendar_create', status: 'pending', providerResultId: null, attemptCount: 0,
+        attemptedAt: null, resolvedAt: null, error: null, createdAt: updatedAt, updatedAt,
+      });
+      // Plan 012 (design decision 1/2): split rows (one per recipient) when the caller resolved a
+      // split-capable provider; otherwise the single legacy combined row, unchanged from before
+      // this plan. This is a brand-new confirmation, so no row of either shape can already exist
+      // (mirrors src/repo.ts's confirmWithSideEffectOperations comment).
+      const emailKindList: readonly (ConfirmationEmailKind | 'email_confirmation')[] = emailKinds && emailKinds.length > 0 ? emailKinds : ['email_confirmation'];
+      for (const kind of emailKindList) {
         const key = sideEffectKey(id, kind);
         if (!sideEffectOperations.has(key)) sideEffectOperations.set(key, {
           bookingId: id, kind, status: 'pending', providerResultId: null, attemptCount: 0,
@@ -431,19 +442,34 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       rows.set(id, updated);
       return true;
     },
-    ensureConfirmationSideEffectOperations: async (id, leaseToken, now, tourflowKind) => {
+    ensureConfirmationSideEffectOperations: async (id, leaseToken, now, tourflowKind, emailKinds) => {
       if (rows.get(id)?.status !== 'confirmed' || leases.get(id)?.token !== leaseToken) return;
       const booking = rows.get(id);
       if (!booking) return;
-      for (const kind of ['calendar_create', 'email_confirmation'] as const) {
-        const key = sideEffectKey(id, kind);
-        const synced = kind === 'calendar_create' ? booking.calendarSynced : booking.emailSynced;
-        if (!sideEffectOperations.has(key)) sideEffectOperations.set(key, {
-          bookingId: id, kind, status: synced ? 'succeeded' : 'pending',
-          providerResultId: kind === 'calendar_create' ? booking.calendarEventId : null,
-          attemptCount: 0, attemptedAt: null, resolvedAt: synced ? now : null, error: null,
-          createdAt: now, updatedAt: now,
-        });
+      const calendarKey = sideEffectKey(id, 'calendar_create');
+      if (!sideEffectOperations.has(calendarKey)) sideEffectOperations.set(calendarKey, {
+        bookingId: id, kind: 'calendar_create', status: booking.calendarSynced ? 'succeeded' : 'pending',
+        providerResultId: booking.calendarEventId,
+        attemptCount: 0, attemptedAt: null, resolvedAt: booking.calendarSynced ? now : null, error: null,
+        createdAt: now, updatedAt: now,
+      });
+      // Plan 012 (design decision 1/2/3): same split-vs-combined choice
+      // confirmWithSideEffectOperations makes for a brand-new confirmation, applied here for
+      // legacy repair. A split row is only ever inserted when no legacy combined
+      // email_confirmation row already exists for this booking — mirrors src/repo.ts's
+      // NOT EXISTS guard (design decision 3).
+      const emailKindList: readonly (ConfirmationEmailKind | 'email_confirmation')[] = emailKinds && emailKinds.length > 0 ? emailKinds : ['email_confirmation'];
+      const combinedRowExists = sideEffectOperations.has(sideEffectKey(id, 'email_confirmation'));
+      const skipSplit = emailKinds && emailKinds.length > 0 && combinedRowExists;
+      if (!skipSplit) {
+        for (const kind of emailKindList) {
+          const key = sideEffectKey(id, kind);
+          if (!sideEffectOperations.has(key)) sideEffectOperations.set(key, {
+            bookingId: id, kind, status: booking.emailSynced ? 'succeeded' : 'pending', providerResultId: null,
+            attemptCount: 0, attemptedAt: null, resolvedAt: booking.emailSynced ? now : null, error: null,
+            createdAt: now, updatedAt: now,
+          });
+        }
       }
       // Plan 011 (design decision 2): legacy-repair path — only when tourflow_synced is still
       // false, mirroring src/repo.ts's WHERE ... AND tourflow_synced = 0 guard.
@@ -472,6 +498,11 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       });
       return true;
     },
+    // Plan 012 (design decision 5): mirrors src/repo.ts's aggregate resolve — calendar_synced
+    // still flips directly off this resolve's own outcome (calendar_create is always exactly one
+    // row), but email_synced is recomputed from the CURRENT (post-write) applicable set: the
+    // legacy combined row when one exists for this booking, otherwise every split row. Becomes
+    // true only when every row in that set is 'succeeded'.
     resolveSideEffectOperation: async (input) => {
       const key = sideEffectKey(input.bookingId, input.kind);
       const operation = sideEffectOperations.get(key);
@@ -481,13 +512,19 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         ...operation, status: input.status, providerResultId: input.providerResultId ?? null,
         error: input.error ?? null, resolvedAt: input.resolvedAt, updatedAt: input.resolvedAt,
       });
-      rows.set(input.bookingId, {
-        ...current,
-        ...(input.kind === 'calendar_create'
-          ? { calendarSynced: input.status === 'succeeded', calendarEventId: input.providerResultId ?? null }
-          : { emailSynced: input.status === 'succeeded' }),
-        updatedAt: input.resolvedAt,
-      });
+      if (input.kind === 'calendar_create') {
+        rows.set(input.bookingId, {
+          ...current, calendarSynced: input.status === 'succeeded', calendarEventId: input.providerResultId ?? null,
+          updatedAt: input.resolvedAt,
+        });
+        return true;
+      }
+      const combined = sideEffectOperations.get(sideEffectKey(input.bookingId, 'email_confirmation'));
+      const applicable = combined
+        ? [combined]
+        : [...sideEffectOperations.values()].filter((row) => row.bookingId === input.bookingId && row.kind.startsWith('email:booking.confirmed:'));
+      const emailSynced = applicable.every((row) => row.status === 'succeeded');
+      rows.set(input.bookingId, { ...current, emailSynced, updatedAt: input.resolvedAt });
       return true;
     },
     claimMutationSideEffectOperation: async (bookingId, kind, attemptedAt) => {

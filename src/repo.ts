@@ -133,8 +133,16 @@ export interface RefundOperationRecord {
 // confirmation path's fixed three literals to calendar deletion and the dynamic
 // 'email:...'/'tourflow:...' strings src/confirmation.ts builds (kept as template-literal patterns, not a
 // bare `string`, so the fixed literals below still get meaningful autocomplete/typo protection).
-export type ConfirmationSideEffectKind = 'calendar_create' | 'email_confirmation' | 'oversell';
 export type MutationSideEffectOperationKind = 'calendar_delete' | `email:${string}` | `tourflow:${string}`;
+// Plan 012 (design decision 1): the two possible per-recipient booking.confirmed email rows,
+// created only when the current provider implements both recipientsForEvent/sendToRecipient (see
+// src/confirmation.ts confirmationEmailKinds). Shaped like a MutationSideEffectOperationKind
+// (email:${string}) for the same reason CONFIRMATION_TOURFLOW_KIND is below -- confirmation debt,
+// claimed/resolved via the confirmation lease (executeOperation), not the mutation drain -- so
+// isMutationSideEffectKind (src/confirmation.ts) excludes both.
+export const CONFIRMATION_EMAIL_KINDS = ['email:booking.confirmed:customer', 'email:booking.confirmed:owner'] as const satisfies readonly MutationSideEffectOperationKind[];
+export type ConfirmationEmailKind = typeof CONFIRMATION_EMAIL_KINDS[number];
+export type ConfirmationSideEffectKind = 'calendar_create' | 'email_confirmation' | 'oversell' | ConfirmationEmailKind;
 export type SideEffectOperationKind = ConfirmationSideEffectKind | MutationSideEffectOperationKind;
 // Plan 011: the durable booking.confirmed Tourflow row. Shaped like a MutationSideEffectOperationKind
 // (claimed/resolved via the ungated row lease, not the confirmation lease — see src/confirmation.ts)
@@ -278,6 +286,11 @@ export interface BookingRepository {
     // provider that's never configured mints no row and a booking never gets stuck polling a
     // default-false tourflow_synced flag it can never resolve.
     tourflowKind?: ConfirmationTourflowKind;
+    // Plan 012 (design decision 1/2): passed only when the current email provider implements both
+    // split methods (src/confirmation.ts confirmationEmailKinds) — a brand-new confirmation then
+    // gets one row per recipient instead of the single combined email_confirmation row, sharing
+    // this same D1 batch so the split shape and the transition it belongs to can never diverge.
+    emailKinds?: ConfirmationEmailKind[];
   }): Promise<Booking | null>;
   applyConfirmedPaymentDetails(id: string, patch: {
     stripePaymentIntent?: string | null;
@@ -290,7 +303,12 @@ export interface BookingRepository {
   // takes — this is the lazy-repair path for a legacy confirmed booking (row missing entirely,
   // e.g. because ops wasn't configured at original confirmation time), gated on tourflow_synced = 0
   // so an already-synced booking is never replayed a second row.
-  ensureConfirmationSideEffectOperations(id: string, leaseToken: string, now: string, tourflowKind?: ConfirmationTourflowKind): Promise<void>;
+  // Plan 012 (design decision 2/3): emailKinds is the same optional provider-derived split shape
+  // confirmWithSideEffectOperations takes. This is also the legacy-repair path for a pre-split-support
+  // confirmed booking that has no email row yet at all; a split row is only ever inserted when no
+  // legacy combined email_confirmation row already exists (design decision 3) — see the
+  // implementation comment.
+  ensureConfirmationSideEffectOperations(id: string, leaseToken: string, now: string, tourflowKind?: ConfirmationTourflowKind, emailKinds?: ConfirmationEmailKind[]): Promise<void>;
   listSideEffectOperations(bookingId: string): Promise<SideEffectOperationRecord[]>;
   claimSideEffectOperation(bookingId: string, kind: ConfirmationSideEffectKind, leaseToken: string, attemptedAt: string): Promise<boolean>;
   resolveSideEffectOperation(input: {
@@ -1189,7 +1207,7 @@ export function createBookingRepository(
       return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
     },
     async confirmWithSideEffectOperations(id, input) {
-      const { expectedStatusIn, updatedAt, leaseToken, oversold, tourflowKind, ...patch } = input;
+      const { expectedStatusIn, updatedAt, leaseToken, oversold, tourflowKind, emailKinds, ...patch } = input;
       const columnMap: Record<string, string> = {
         stripePaymentIntent: 'stripe_payment_intent', customerName: 'customer_name',
         customerEmail: 'customer_email', customerPhone: 'customer_phone', pickupAddress: 'pickup_address',
@@ -1216,6 +1234,16 @@ export function createBookingRepository(
       // Plan 011 (design decision 2): the Tourflow row shares this exact batch, so it can never
       // exist without the transition it's owed by, nor vice versa.
       const tourflowOperation = tourflowKind ? operation(tourflowKind, 'pending', null, null) : null;
+      // Plan 012 (design decision 1/2): split rows (one per recipient, in recipientsForEvent
+      // order) when the caller resolved a split-capable provider; otherwise the single legacy
+      // combined row, unchanged from before this plan. This is a brand-new confirmation (the CAS
+      // above only matches hold/expired), so no row of either shape can already exist here — the
+      // "legacy combined row wins" guard (design decision 3) only applies to the repair path
+      // below (ensureConfirmationSideEffectOperations), which is where a pre-existing row is
+      // actually possible.
+      const emailOperations = emailKinds && emailKinds.length > 0
+        ? emailKinds.map((kind) => operation(kind, 'pending', null, null))
+        : [operation('email_confirmation', 'pending', null, null)];
       const results = await guardDuplicatePaymentIntent(patch.stripePaymentIntent, () =>
         db.batch([
           db.prepare(
@@ -1223,7 +1251,7 @@ export function createBookingRepository(
              WHERE id = ? AND status IN (${placeholders}) AND confirmation_lease_token = ?`,
           ).bind(...entries.map(([, value]) => value), updatedAt, id, ...expectedStatusIn, leaseToken),
           operation('calendar_create', 'pending', null, null),
-          operation('email_confirmation', 'pending', null, null),
+          ...emailOperations,
           ...(oversold ? [operation('oversell', 'succeeded', 'capacity_exceeded', updatedAt)] : []),
           ...(tourflowOperation ? [tourflowOperation] : []),
         ]));
@@ -1246,19 +1274,43 @@ export function createBookingRepository(
         ).bind(...entries.map(([, value]) => value), updatedAt, id, leaseToken).run());
       return result.meta.changes > 0;
     },
-    async ensureConfirmationSideEffectOperations(id, leaseToken, now, tourflowKind) {
-      const operation = (kind: ConfirmationSideEffectKind, syncedColumn: 'calendar_synced' | 'email_synced') => db.prepare(
+    async ensureConfirmationSideEffectOperations(id, leaseToken, now, tourflowKind, emailKinds) {
+      const calendarOperation = db.prepare(
+        `INSERT INTO side_effect_operations (
+           booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
+         )
+         SELECT ?, 'calendar_create',
+           CASE WHEN calendar_synced = 1 THEN 'succeeded' ELSE 'pending' END,
+           CASE WHEN calendar_synced = 1 THEN calendar_event_id ELSE NULL END,
+           0, NULL, CASE WHEN calendar_synced = 1 THEN ? ELSE NULL END, NULL, ?, ?
+         FROM bookings
+         WHERE id = ? AND status = 'confirmed' AND confirmation_lease_token = ?
+         ON CONFLICT(booking_id, kind) DO NOTHING`,
+      ).bind(id, now, now, now, id, leaseToken);
+      // Plan 012 (design decision 1/2/3): same split-vs-combined choice confirmWithSideEffectOperations
+      // makes for a brand-new confirmation, applied here for legacy repair. A split row is only
+      // ever inserted when no legacy combined email_confirmation row already exists for this
+      // booking (the NOT EXISTS guard below) — an upgrade to a split-capable provider must never
+      // create fresh split rows alongside an already-executing (or already-succeeded) combined
+      // row, which would resend a customer message the combined attempt already delivered. The
+      // combined row itself carries no such guard: it is the pre-plan-012 shape, and this repair
+      // path is the only place a split-capable provider can ever fall back to it (a brand-new
+      // confirmation always takes the branch above).
+      const emailKindList: readonly SideEffectOperationKind[] = emailKinds && emailKinds.length > 0 ? emailKinds : ['email_confirmation'];
+      const emailGuard = emailKinds && emailKinds.length > 0
+        ? `AND NOT EXISTS (SELECT 1 FROM side_effect_operations WHERE booking_id = ? AND kind = 'email_confirmation')`
+        : '';
+      const emailOperations = emailKindList.map((kind) => db.prepare(
         `INSERT INTO side_effect_operations (
            booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
          )
          SELECT ?, ?,
-           CASE WHEN ${syncedColumn} = 1 THEN 'succeeded' ELSE 'pending' END,
-           CASE WHEN ? = 'calendar_create' THEN calendar_event_id ELSE NULL END,
-           0, NULL, CASE WHEN ${syncedColumn} = 1 THEN ? ELSE NULL END, NULL, ?, ?
+           CASE WHEN email_synced = 1 THEN 'succeeded' ELSE 'pending' END,
+           NULL, 0, NULL, CASE WHEN email_synced = 1 THEN ? ELSE NULL END, NULL, ?, ?
          FROM bookings
-         WHERE id = ? AND status = 'confirmed' AND confirmation_lease_token = ?
+         WHERE id = ? AND status = 'confirmed' AND confirmation_lease_token = ? ${emailGuard}
          ON CONFLICT(booking_id, kind) DO NOTHING`,
-      ).bind(id, kind, kind, now, now, now, id, leaseToken);
+      ).bind(id, kind, now, now, now, id, leaseToken, ...(emailGuard ? [id] : [])));
       // Plan 011 (design decision 2): a legacy confirmed booking's row, created lazily only when
       // tourflow_synced is still 0 — an already-synced legacy booking is never replayed a row (no
       // WHEN branch needed here: the row is always inserted 'pending', unlike calendar/email above,
@@ -1273,8 +1325,8 @@ export function createBookingRepository(
          ON CONFLICT(booking_id, kind) DO NOTHING`,
       ).bind(id, tourflowKind, now, now, id, leaseToken) : null;
       await db.batch([
-        operation('calendar_create', 'calendar_synced'),
-        operation('email_confirmation', 'email_synced'),
+        calendarOperation,
+        ...emailOperations,
         ...(tourflowOperation ? [tourflowOperation] : []),
       ]);
     },
@@ -1295,25 +1347,48 @@ export function createBookingRepository(
       ).bind(attemptedAt, attemptedAt, bookingId, kind, bookingId, leaseToken).run();
       return result.meta.changes > 0;
     },
+    // Plan 012 (design decision 5): calendar_create is always exactly one row, so calendar_synced
+    // still flips directly off this resolve's own outcome, unchanged. email_synced is no longer
+    // always one row's outcome -- it's recomputed here by re-reading side_effect_operations for
+    // the SAME booking, inside the SAME batch, so it sees rowUpdate's write below (D1's batch()
+    // sequences statements in one transaction). It becomes 1 only when every row in the applicable
+    // set is 'succeeded': the legacy combined row when one exists for this booking, otherwise
+    // every split row. The row rowUpdate just wrote is always itself a member of whichever set
+    // applies to it (it's either 'email_confirmation' or an 'email:booking.confirmed:%' kind), so
+    // the EXISTS/NOT EXISTS pair below can never evaluate against zero candidate rows.
     async resolveSideEffectOperation(input) {
-      const bookingFlag = input.kind === 'calendar_create' ? 'calendar_synced' : 'email_synced';
-      const result = await db.batch([
-        db.prepare(
-          `UPDATE side_effect_operations
-           SET status = ?, provider_result_id = ?, error = ?, resolved_at = ?, updated_at = ?
-           WHERE booking_id = ? AND kind = ? AND status != 'succeeded'
-             AND EXISTS (
-               SELECT 1 FROM bookings WHERE id = ? AND confirmation_lease_token = ?
-             )`,
-        ).bind(
-          input.status, input.providerResultId ?? null, input.error ?? null, input.resolvedAt, input.resolvedAt,
-          input.bookingId, input.kind, input.bookingId, input.leaseToken,
-        ),
-        db.prepare(
-          `UPDATE bookings SET ${bookingFlag} = ?, calendar_event_id = CASE WHEN ? = 'calendar_create' THEN ? ELSE calendar_event_id END, updated_at = ?
-           WHERE id = ? AND confirmation_lease_token = ?`,
-        ).bind(input.status === 'succeeded' ? 1 : 0, input.kind, input.providerResultId ?? null, input.resolvedAt, input.bookingId, input.leaseToken),
-      ]);
+      const rowUpdate = db.prepare(
+        `UPDATE side_effect_operations
+         SET status = ?, provider_result_id = ?, error = ?, resolved_at = ?, updated_at = ?
+         WHERE booking_id = ? AND kind = ? AND status != 'succeeded'
+           AND EXISTS (
+             SELECT 1 FROM bookings WHERE id = ? AND confirmation_lease_token = ?
+           )`,
+      ).bind(
+        input.status, input.providerResultId ?? null, input.error ?? null, input.resolvedAt, input.resolvedAt,
+        input.bookingId, input.kind, input.bookingId, input.leaseToken,
+      );
+      const bookingUpdate = db.prepare(
+        `UPDATE bookings SET
+           calendar_event_id = CASE WHEN ? = 'calendar_create' THEN ? ELSE calendar_event_id END,
+           calendar_synced = CASE WHEN ? = 'calendar_create' THEN ? ELSE calendar_synced END,
+           email_synced = CASE WHEN ? = 'calendar_create' THEN email_synced ELSE (
+             CASE
+               WHEN EXISTS (SELECT 1 FROM side_effect_operations WHERE booking_id = ? AND kind = 'email_confirmation')
+                 THEN NOT EXISTS (SELECT 1 FROM side_effect_operations WHERE booking_id = ? AND kind = 'email_confirmation' AND status != 'succeeded')
+               ELSE NOT EXISTS (SELECT 1 FROM side_effect_operations WHERE booking_id = ? AND kind LIKE 'email:booking.confirmed:%' AND status != 'succeeded')
+             END
+           ) END,
+           updated_at = ?
+         WHERE id = ? AND confirmation_lease_token = ?`,
+      ).bind(
+        input.kind, input.kind === 'calendar_create' ? (input.providerResultId ?? null) : null,
+        input.kind, input.status === 'succeeded' ? 1 : 0,
+        input.kind, input.bookingId, input.bookingId, input.bookingId,
+        input.resolvedAt,
+        input.bookingId, input.leaseToken,
+      );
+      const result = await db.batch([rowUpdate, bookingUpdate]);
       return (result[0]?.meta.changes ?? 0) > 0;
     },
     // BK-SIDE-001 (handoff 13) HIGH-2: see the BookingRepository interface comment above these two

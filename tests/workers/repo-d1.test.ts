@@ -3,7 +3,7 @@ import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { runOwedMutationSideEffects } from '../../src/confirmation';
 import { createBookkitContext } from '../../src/context';
-import { CONFIRMATION_TOURFLOW_KIND, createBookingRepository, HoldLimitExceededError, type SideEffectOperationKind } from '../../src/repo';
+import { CONFIRMATION_EMAIL_KINDS, CONFIRMATION_TOURFLOW_KIND, createBookingRepository, HoldLimitExceededError, type SideEffectOperationKind } from '../../src/repo';
 import { config } from '../fixtures';
 import { providers } from '../fakes';
 
@@ -177,6 +177,45 @@ describe('D1 booking repository', () => {
     expect((await repo.getBookingById(created.id))?.status).toBe('hold');
     await expect(db.prepare('SELECT * FROM side_effect_operations WHERE booking_id = ?').bind(created.id).all()).resolves.toMatchObject({ results: [] });
     await db.prepare('DROP TRIGGER fail_tourflow_outbox').run();
+  });
+
+  // Plan 012: proves the split confirmation-path email rows share confirmWithSideEffectOperations'
+  // one D1 batch too — a failure inserting just the owner recipient's row (the customer row and
+  // calendar_create would insert cleanly on their own) must still roll back the whole batch,
+  // leaving the booking unconfirmed and no partial rows behind.
+  it('rolls back the confirmation status when creating a split email outbox row fails inside the same batch', async () => {
+    const created = await repo.insertHold({
+      id: 'booking-email-split-outbox-atomic',
+      reference: 'BKT-2026-EMAILSPLIT',
+      tourSlug: 'vintage',
+      people: 2,
+      pickupType: 'default',
+      startsAt: '2026-08-01T09:00:00.000Z',
+      endsAt: '2026-08-01T10:00:00.000Z',
+      locale: 'en',
+      priceCents: 12000,
+      holdExpiresAt: '2026-07-21T10:35:00.000Z',
+      cancelToken: 'cancel-token-email-split-outbox',
+      operatorToken: 'operator-token-email-split-outbox',
+      createdAt: '2026-07-21T10:00:00.000Z',
+      updatedAt: '2026-07-21T10:00:00.000Z',
+    });
+    await repo.acquireConfirmationLease(created.id, 'lease-email-split-outbox', '2026-07-21T10:00:00.000Z', '2026-07-21T10:05:00.000Z');
+    await db.prepare(`CREATE TRIGGER fail_email_split_outbox
+      BEFORE INSERT ON side_effect_operations WHEN NEW.kind = 'email:booking.confirmed:owner'
+      BEGIN SELECT RAISE(ABORT, 'email split outbox insert failed'); END`).run();
+
+    await expect(repo.confirmWithSideEffectOperations(created.id, {
+      expectedStatusIn: ['hold'],
+      leaseToken: 'lease-email-split-outbox',
+      oversold: false,
+      updatedAt: '2026-07-21T10:01:00.000Z',
+      emailKinds: [...CONFIRMATION_EMAIL_KINDS],
+    })).rejects.toThrow('email split outbox insert failed');
+
+    expect((await repo.getBookingById(created.id))?.status).toBe('hold');
+    await expect(db.prepare('SELECT * FROM side_effect_operations WHERE booking_id = ?').bind(created.id).all()).resolves.toMatchObject({ results: [] });
+    await db.prepare('DROP TRIGGER fail_email_split_outbox').run();
   });
 
   it('persists capacity overrides and returns only changed feed rows', async () => {
