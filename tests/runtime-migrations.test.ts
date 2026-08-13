@@ -11,19 +11,40 @@ const payments = {
   refund: async () => ({ refundId: 're_test', amountCents: 0 }),
 };
 
+// Plan 008: the real column/table/index names the schema fingerprint checks for (see
+// src/runtime-context.ts's REQUIRED_BOOKINGS_COLUMNS and sideEffectOperationsSchemaPresent).
+// Duplicated here rather than imported since these are the fake's own PRAGMA/sqlite_master
+// response shapes, not the implementation under test.
+const FINGERPRINT_BOOKINGS_COLUMNS = ['occupancy_units', 'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at', 'reschedule_transition_version'];
+const FINGERPRINT_SIDE_EFFECT_SQL = "CREATE TABLE side_effect_operations (kind TEXT CHECK (kind IN ('calendar_create', 'calendar_delete', 'email_confirmation', 'oversell')))";
+
 // A fake standing in for the D1 surface the check uses: `db.prepare(sql).all()` returning
 // `{ results }`, matching the real D1Database shape closely enough for this logic. It distinguishes
-// the sqlite_master table-presence probe from the real `d1_migrations` select by query text, since
-// the check now issues both as separate statements.
+// the ledger's sqlite_master table-presence probe, the schema fingerprint's PRAGMA/sqlite_master
+// queries, and the real `d1_migrations` select by query text, since the check now issues all of
+// them as separate statements. `schemaFingerprint` defaults to a fully-migrated schema so tests
+// that only care about the ledger don't need to know about the fingerprint at all.
 function fakeD1(
   appliedNames: string[],
-  options: { missingTable?: boolean; selectError?: Error; tableName?: string; queries?: string[] } = {},
+  options: { missingTable?: boolean; selectError?: Error; tableName?: string; queries?: string[]; schemaFingerprint?: boolean } = {},
 ): MigrationsQueryable {
   const tableName = options.tableName ?? 'd1_migrations';
+  const fingerprintOk = options.schemaFingerprint ?? true;
   return {
     prepare: (query: string) => ({
       all: async <T>() => {
         options.queries?.push(query);
+        if (query.startsWith('PRAGMA table_info(bookings)')) {
+          return { results: (fingerprintOk ? FINGERPRINT_BOOKINGS_COLUMNS.map((name) => ({ name })) : []) as T[] };
+        }
+        if (query.includes('side_effect_operations')) {
+          return {
+            results: (fingerprintOk ? [
+              { type: 'table', name: 'side_effect_operations', sql: FINGERPRINT_SIDE_EFFECT_SQL },
+              { type: 'index', name: 'idx_side_effect_operations_pending', sql: null },
+            ] : []) as T[],
+          };
+        }
         if (query.includes('sqlite_master')) {
           return { results: (options.missingTable ? [] : [{ name: tableName }]) as T[] };
         }
@@ -44,7 +65,7 @@ describe('checkBookkitMigrationsApplied', () => {
     await expect(checkBookkitMigrationsApplied(fakeD1(applied))).resolves.toBeUndefined();
   });
 
-  it('uses a configured migration table for both the probe and applied-names query', async () => {
+  it('uses a configured migration table for both the probe and applied-names query, then the schema fingerprint', async () => {
     const queries: string[] = [];
     await expect(checkBookkitMigrationsApplied(
       fakeD1([...BOOKKIT_MIGRATIONS], { tableName: 'bookkit_migrations', queries }),
@@ -53,6 +74,8 @@ describe('checkBookkitMigrationsApplied', () => {
     expect(queries).toEqual([
       "SELECT name FROM sqlite_master WHERE type='table' AND name='bookkit_migrations'",
       'SELECT name FROM bookkit_migrations',
+      'PRAGMA table_info(bookings)',
+      "SELECT type, name, sql FROM sqlite_master WHERE name IN ('side_effect_operations', 'idx_side_effect_operations_pending')",
     ]);
   });
 
@@ -66,6 +89,14 @@ describe('checkBookkitMigrationsApplied', () => {
       "SELECT name FROM sqlite_master WHERE type='table' AND name='bookkit_migrations'",
       'SELECT name FROM bookkit_migrations',
     ]);
+  });
+
+  it('fails with a distinct collision error when the ledger is satisfied but the schema fingerprint is missing', async () => {
+    const db = fakeD1([...BOOKKIT_MIGRATIONS], { schemaFingerprint: false });
+    await expect(checkBookkitMigrationsApplied(db)).rejects.toThrow(/migration ledger reports every migration applied, but the schema itself/);
+    await expect(checkBookkitMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
+    // Must not be conflated with the missing-migrations ledger error above.
+    await expect(checkBookkitMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
   });
 
   it('rejects an unsafe configured migration table name', () => {
@@ -104,6 +135,19 @@ describe('migration check memoization', () => {
     const db = {
       prepare: (query: string) => ({
         all: async () => {
+          // Schema fingerprint queries (plan 008) always report a fully-migrated schema here --
+          // this test is about ledger memoization/retry, not the fingerprint itself.
+          if (query.startsWith('PRAGMA table_info(bookings)')) {
+            return { results: ['occupancy_units', 'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at', 'reschedule_transition_version'].map((name) => ({ name })) };
+          }
+          if (query.includes('side_effect_operations')) {
+            return {
+              results: [
+                { type: 'table', name: 'side_effect_operations', sql: "CHECK (kind IN ('calendar_create', 'calendar_delete', 'email_confirmation', 'oversell'))" },
+                { type: 'index', name: 'idx_side_effect_operations_pending', sql: null },
+              ],
+            };
+          }
           if (query.includes('sqlite_master')) return { results: [{ name: 'd1_migrations' }] };
           selectCalls += 1;
           if (selectCalls === 1) throw new Error('D1_ERROR: network connection lost');

@@ -158,6 +158,51 @@ function migrationsErrorMessage(missing: readonly string[]): string {
     + '/ `bunx bookkit-migrate` from the project that owns wrangler.jsonc.';
 }
 
+// Plan 008 (audit finding #6): the filename ledger alone is fooled by a consumer migration that
+// happens to reuse one of bookkit's filenames without ever running bookkit's SQL — d1_migrations
+// only records names, never checksums or content. This is cheap, read-only detection (not a fix:
+// a fully namespaced ledger is deferred, see docs/plans/008), spanning the migrations that
+// introduced bookkit's current shape (0008-0012): required `bookings` columns, the
+// `side_effect_operations` table/index, and its `kind` CHECK actually admitting 0012's
+// `calendar_delete` (checked via the stored CREATE TABLE text, not just the table's existence —
+// a schema stopped at 0011 has the same table/index names but a narrower CHECK).
+const REQUIRED_BOOKINGS_COLUMNS = [
+  'occupancy_units', // 0008
+  'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at', // 0009
+  'reschedule_transition_version', // 0010
+] as const;
+
+async function bookingsColumnsPresent(db: MigrationsQueryable): Promise<boolean> {
+  const result = await db.prepare('PRAGMA table_info(bookings)').all<{ name: string }>();
+  const columns = new Set(result.results.map((row) => row.name));
+  return REQUIRED_BOOKINGS_COLUMNS.every((column) => columns.has(column));
+}
+
+async function sideEffectOperationsSchemaPresent(db: MigrationsQueryable): Promise<boolean> {
+  const result = await db
+    .prepare(`SELECT type, name, sql FROM sqlite_master WHERE name IN ('side_effect_operations', 'idx_side_effect_operations_pending')`)
+    .all<{ type: string; name: string; sql: string | null }>();
+  const table = result.results.find((row) => row.type === 'table' && row.name === 'side_effect_operations');
+  const index = result.results.find((row) => row.type === 'index' && row.name === 'idx_side_effect_operations_pending');
+  return Boolean(index) && Boolean(table?.sql?.includes('calendar_delete'));
+}
+
+async function bookkitSchemaFingerprintPresent(db: MigrationsQueryable): Promise<boolean> {
+  const [bookingsOk, sideEffectOk] = await Promise.all([
+    bookingsColumnsPresent(db),
+    sideEffectOperationsSchemaPresent(db),
+  ]);
+  return bookingsOk && sideEffectOk;
+}
+
+function migrationCollisionErrorMessage(): string {
+  return "Bookkit's D1 migration ledger reports every migration applied, but the schema itself "
+    + 'doesn\'t match bookkit\'s migrations. This usually means one of your own migration files '
+    + 'happens to share a filename with one of bookkit\'s, so its ledger entry satisfied bookkit\'s '
+    + "check without bookkit's SQL ever running. Use a dedicated D1 database for bookkit instead of "
+    + 'sharing one with your own migrations.';
+}
+
 // Runs once per isolate (the caller memoizes this), never per request: a raw D1 SQL error from a
 // missing column/table is the single most confusing failure mode for a new consumer, so this turns
 // it into a named list of missing migrations and the exact command to fix it. Tolerant of extra,
@@ -169,6 +214,7 @@ export async function checkBookkitMigrationsApplied(
   const applied = await appliedMigrationNames(db, requireMigrationsTableName(migrationsTable));
   const missing = BOOKKIT_MIGRATIONS.filter((name) => !applied.has(name));
   if (missing.length > 0) throw new Error(migrationsErrorMessage(missing));
+  if (!(await bookkitSchemaFingerprintPresent(db))) throw new Error(migrationCollisionErrorMessage());
 }
 
 export function defineBookkitRuntime(options: BookkitRuntimeFactoryOptions): BookkitRuntimeDefinition {

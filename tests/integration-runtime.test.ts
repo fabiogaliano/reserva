@@ -14,10 +14,26 @@ const payments = {
 describe('Cloudflare runtime helpers', () => {
   it('reads injected test bindings without exposing env on context', async () => {
     // Needs a `prepare` function so it passes the D1 shape check `defineCloudflareBookkitRuntime` runs at
-    // context-creation time, and `.all()` must resolve bookkit's own migrations so the isolate-time
-    // schema check (also run at context creation) doesn't reject this fake as an unmigrated database.
+    // context-creation time, and `.all()` must resolve bookkit's own migrations (ledger) plus a
+    // matching schema fingerprint (plan 008) so the isolate-time schema check (also run at context
+    // creation) doesn't reject this fake as an unmigrated/colliding database.
     const db = {
-      prepare: () => ({ all: async () => ({ results: BOOKKIT_MIGRATIONS.map((name) => ({ name })) }) }),
+      prepare: (query: string) => ({
+        all: async () => {
+          if (query.startsWith('PRAGMA table_info(bookings)')) {
+            return { results: ['occupancy_units', 'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at', 'reschedule_transition_version'].map((name) => ({ name })) };
+          }
+          if (query.includes('side_effect_operations')) {
+            return {
+              results: [
+                { type: 'table', name: 'side_effect_operations', sql: "CHECK (kind IN ('calendar_create', 'calendar_delete', 'email_confirmation', 'oversell'))" },
+                { type: 'index', name: 'idx_side_effect_operations_pending', sql: null },
+              ],
+            };
+          }
+          return { results: BOOKKIT_MIGRATIONS.map((name) => ({ name })) };
+        },
+      }),
     } as unknown as D1Database;
     const cache = { match: async () => undefined, put: async () => undefined } as never;
     const definition = defineCloudflareBookkitRuntime(config, { providers: { payments } });

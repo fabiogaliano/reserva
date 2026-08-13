@@ -178,8 +178,8 @@ export function bookkit(options: BookkitIntegrationOptions): AstroIntegration {
         // is what actually blocks a stale schema. No child-process wrangler here — auto-applying
         // migrations from the integration would be surprising and wrong against a remote database.
         logger.info(
-          'Bookkit: point wrangler.jsonc\'s d1_databases[].migrations_dir at bookkit\'s migrations/ folder, '
-          + 'then run `bunx bookkit-migrate --local` (wraps `wrangler d1 migrations apply`) before your first request.',
+          'Bookkit: run `bunx bookkit-migrate --local` before your first request to apply bookkit\'s migrations '
+          + '(it points Wrangler at bookkit\'s packaged migrations/ folder itself — no d1_databases[].migrations_dir edit needed).',
         );
       },
       'astro:config:done': ({ config, injectTypes, logger }) => {
