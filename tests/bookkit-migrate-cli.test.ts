@@ -441,6 +441,8 @@ describe('bookkit-migrate applies bookkit packaged migrations against real wrang
     expect(listResult.stdout).toContain('No migrations to apply');
   }
 
+  // 120s budgets match integration-smoke's real-build precedent: these spawn several real
+  // wrangler subprocesses, and the original 20s proved flaky under machine load.
   it('applies every manifest migration from the packaged directory when the consumer config has no migrations_dir', () => {
     const cwd = realFixtureDirectory();
     writeFileSync(resolve(cwd, 'wrangler.jsonc'), `{
@@ -457,7 +459,7 @@ describe('bookkit-migrate applies bookkit packaged migrations against real wrang
     expect(result.stdout).toContain(`applying bookkit's packaged migrations from ${packagedMigrationsDir}`);
     for (const name of BOOKKIT_MIGRATIONS) expect(result.stdout).toContain(name);
     assertNothingPending(cwd, 'fixture-db');
-  }, 20_000);
+  }, 120_000);
 
   it('applies a custom-migrations_table --env database from a TOML config, and reuses persisted state on a second run', () => {
     const cwd = realFixtureDirectory();
@@ -482,5 +484,5 @@ migrations_table = "custom_migrations"
     const second = realRun(cwd, ['--env', 'production', '--local']);
     expect(second.status).toBe(0);
     expect(second.stdout).toContain('No migrations to apply');
-  }, 20_000);
+  }, 120_000);
 });
