@@ -13,14 +13,34 @@
 // tests/handlers-webhook-redelivery.test.ts, tests/confirmation-tourflow-outbox.test.ts, and
 // friends) require an immediate same-tick HTTP-driven retry to recover a failed row. Because both
 // callers claim through the identical claimSideEffectOperation/claimMutationSideEffectOperation
-// methods, a real backoff window there would block the legitimate HTTP retry exactly as long as it
-// blocks this reconciler — so src/confirmation.ts deliberately never writes next_attempt_at for
-// side-effect rows; the reconciler's own five-minute cron cadence is the only rate limit on how
-// often a still-failing side effect is retried. Refund operations don't have this conflict: the
-// HTTP path (src/refund-executor.ts's attemptRefund with no claim) and this reconciler (attemptRefund
-// WITH a claimRefundExecution claim) are structurally separate call sites, so refund backoff is
-// real and gates only the scheduled path.
-import { confirmBookingFromPayment, classifyAttemptOutcome, runOwedMutationSideEffects } from './confirmation';
+// methods, src/confirmation.ts's three resolve call sites deliberately never write next_attempt_at
+// on that shared column — a real backoff window there would block the legitimate HTTP retry exactly
+// as long as it blocks this reconciler.
+//
+// That does NOT mean side-effect operations get no backoff at all: without one, this reconciler's
+// flat five-minute cron cadence burns SIDE_EFFECT_MAX_ATTEMPTS (10) attempts in ~45 minutes, far
+// short of the outage-survival runway design decision 5's 5/10/20/40/60 schedule intends (~4.7
+// hours). Since the schedule can't live on the shared next_attempt_at column, this module computes
+// it at scan time instead, scoped to the scheduled path only: isDueForScheduledRetry below derives
+// the same schedule from a row's own attempt_count/attempted_at (computeNextAttemptAt), and
+// processSideEffectCandidate only calls each drain entry point when it has at least one row
+// actually due — HTTP callers never consult this function, so their immediate retry is untouched.
+// (failure_started_at, the ten-minute delayed-incident threshold's input, was already a correct
+// uninterrupted-failure timestamp independent of this — src/repo.ts's resolveSideEffectOperation
+// COALESCEs it across repeated failures and only clears it on success, regardless of whether
+// next_attempt_at is supplied — so no separate fix was needed there.)
+//
+// Refund operations don't have this conflict at all: the HTTP path (src/refund-executor.ts's
+// attemptRefund with no claim) and this reconciler (attemptRefund WITH a claimRefundExecution
+// claim) are structurally separate call sites, so refund backoff is real on the shared column and
+// gates only the scheduled path.
+import {
+  classifyAttemptOutcome,
+  confirmBookingFromPayment,
+  isActionableSideEffectStatus,
+  isConfirmationSideEffectOperation,
+  runOwedMutationSideEffects,
+} from './confirmation';
 import type { Booking } from './core/booking';
 import type { OperationalAlert } from './core/events';
 import type { BookkitContext } from './context';
@@ -31,18 +51,19 @@ import {
   buildOperationalAlert,
   computeNextAttemptAt,
   isDelayIncidentDue,
+  isMutationEmailOrTourflowKind,
   projectIncident,
   type ExistingIncidentSignal,
   type IncidentProjection,
   type IncidentSourceSignal,
 } from './reconciliation-helpers';
-import type {
-  OperationalIncidentAction,
-  OperationalIncidentRecord,
-  OperationalIncidentSeverity,
-  OperationalIncidentSourceType,
-  RefundOperationRecord,
-  SideEffectOperationRecord,
+import {
+  CONFIRMATION_TOURFLOW_KIND,
+  type OperationalIncidentAction,
+  type OperationalIncidentRecord,
+  type OperationalIncidentSourceType,
+  type RefundOperationRecord,
+  type SideEffectOperationRecord,
 } from './repo';
 
 // Plan 020 (design decision 4): default/hard-capped bounded page sizes for one invocation.
@@ -182,23 +203,55 @@ async function reportUnreportedOversellMarkers(context: BookkitContext, tally: I
   }
 }
 
+// Plan 020 (design decision 5), scheduled-side only — see this file's header comment. A row is due
+// for an ORDINARY scheduled retry when it has never failed (pending/in_flight: the claim itself
+// gates a live in_flight lease) or its 5/10/20/40/60-minute backoff window — computed from the
+// row's own last attempt, not a stored column — has elapsed. A terminal row (succeeded/abandoned)
+// is never due; abandoned rows still get their one incident-projection pass via the candidate list,
+// just not a re-attempt here.
+function isDueForScheduledRetry(operation: SideEffectOperationRecord, nowIsoValue: string): boolean {
+  if (!isActionableSideEffectStatus(operation.status)) return false;
+  if (operation.status !== 'failed') return true;
+  if (!operation.attemptedAt) return true; // defensive: no timestamp to compute a window from
+  return computeNextAttemptAt(new Date(operation.attemptedAt), operation.attemptCount) <= nowIsoValue;
+}
+
 // Re-drains one candidate booking's owed confirmation/mutation side effects through the exact same
-// paths an HTTP request already uses (src/confirmation.ts) — no new claim logic here. A booking
-// that no longer exists (should not happen; ids come from a live FK-backed table) is skipped.
+// paths an HTTP request already uses (src/confirmation.ts) — no new claim logic here, only a
+// booking-level "is anything in this bucket actually due yet" gate in front of each entry point
+// (see isDueForScheduledRetry above). A booking that no longer exists (should not happen; ids come
+// from a live FK-backed table) is skipped. Each of the three kind-buckets below is checked against
+// the SAME already-fetched operations list, matching confirmBookingFromPayment/
+// runOwedMutationSideEffects/runConfirmationTourflowSideEffect's own row-kind partition — a due row
+// in one bucket does not force-drain another still-backed-off bucket's rows for this booking, since
+// each bucket has its own gated entry point.
 async function processSideEffectCandidate(context: BookkitContext, bookingId: string): Promise<void> {
   const booking = await context.repo.getBookingById(bookingId);
   if (!booking) return;
-  if (booking.status === 'confirmed') {
+  const now = nowIso(context);
+  const operations = await context.repo.listSideEffectOperations(bookingId);
+
+  const confirmationDue = operations.some((operation) => isConfirmationSideEffectOperation(operation) && isDueForScheduledRetry(operation, now));
+  if (booking.status === 'confirmed' && confirmationDue) {
     try {
       await confirmBookingFromPayment(context, booking);
     } catch (error) {
       context.logger.warn?.('bookkit reconciliation: confirmation drain failed', { bookingId, error: String(error) });
     }
   }
-  try {
-    await runOwedMutationSideEffects(context, booking);
-  } catch (error) {
-    context.logger.warn?.('bookkit reconciliation: mutation drain failed', { bookingId, error: String(error) });
+
+  // runOwedMutationSideEffects bundles the mutation-kind loop and the confirmation-path Tourflow
+  // row (CONFIRMATION_TOURFLOW_KIND, claimed via claimMutationSideEffectOperation but resolved
+  // through resolveConfirmationTourflowOperation — see src/confirmation.ts) into one call; either
+  // bucket having a due row is enough to invoke it.
+  const mutationDue = operations.some((operation) => operation.kind !== CONFIRMATION_TOURFLOW_KIND && isMutationEmailOrTourflowKind(operation.kind) && isDueForScheduledRetry(operation, now));
+  const tourflowConfirmationDue = operations.some((operation) => operation.kind === CONFIRMATION_TOURFLOW_KIND && isDueForScheduledRetry(operation, now));
+  if (mutationDue || tourflowConfirmationDue) {
+    try {
+      await runOwedMutationSideEffects(context, booking);
+    } catch (error) {
+      context.logger.warn?.('bookkit reconciliation: mutation drain failed', { bookingId, error: String(error) });
+    }
   }
 }
 

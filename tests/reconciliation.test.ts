@@ -7,6 +7,13 @@ import { fakeRepository, providers } from './fakes';
 
 const clock = () => new Date('2026-08-14T10:00:00.000Z');
 
+// A few tests need to simulate a later cron pass (the scheduled-side backoff gate,
+// isDueForScheduledRetry in src/reconciliation.ts, is computed from real elapsed time).
+function advanceableClock(startIso: string): { clock: () => Date; advance: (isoTime: string) => void } {
+  let now = startIso;
+  return { clock: () => new Date(now), advance: (isoTime) => { now = isoTime; } };
+}
+
 function seedSideEffect(repo: ReturnType<typeof fakeRepository>, bookingId: string, kind: string, patch: Partial<{
   status: 'pending' | 'in_flight' | 'succeeded' | 'failed' | 'abandoned';
   attemptCount: number;
@@ -37,24 +44,37 @@ describe('runReconciliation', () => {
     const seeded = booking({ id: 'recon-delayed-incident', status: 'confirmed', calendarSynced: false, emailSynced: true });
     const repo = fakeRepository([seeded]);
     seedSideEffect(repo, seeded.id, 'calendar_create', {
-      status: 'failed', attemptCount: 2, failureStartedAt: '2026-08-14T09:49:00.000Z', nextAttemptAt: null,
+      status: 'failed', attemptCount: 2, failureStartedAt: '2026-08-14T09:49:00.000Z',
+      attemptedAt: '2026-08-14T09:59:00.000Z', nextAttemptAt: null,
     });
     let shouldFail = true;
+    let calendarCalls = 0;
+    const { clock: scanClock, advance } = advanceableClock('2026-08-14T10:00:00.000Z');
     const context = createBookkitContext({
-      config, db: {} as D1Database, repo, clock,
-      providers: providers({ calendar: { listEvents: async () => [], createEvent: async () => { if (shouldFail) throw new Error('calendar still down'); return 'cal_recon'; }, deleteEvent: async () => undefined, patchEvent: async () => undefined } }),
+      config, db: {} as D1Database, repo, clock: scanClock,
+      providers: providers({ calendar: { listEvents: async () => [], createEvent: async () => { calendarCalls += 1; if (shouldFail) throw new Error('calendar still down'); return 'cal_recon'; }, deleteEvent: async () => undefined, patchEvent: async () => undefined } }),
     });
 
-    // First pass: the calendar drain still fails, and the failure has now been uninterrupted for
-    // eleven minutes (09:49 -> 10:00), past the ten-minute threshold — an incident opens.
+    // First pass: incident PROJECTION isn't gated by the retry backoff — failure_started_at
+    // (09:49) is already eleven minutes old at 10:00, past the ten-minute threshold, so an
+    // incident opens even though attempt 2's own 10-minute backoff window (09:59 -> 10:09) means
+    // the scheduled-side retry gate correctly skips a re-attempt this pass (calendarCalls stays 0).
     const first = await runReconciliation(context);
     expect(first.incidentsOpened).toBe(1);
+    expect(calendarCalls).toBe(0);
     const opened = await repo.getIncidentBySource('side_effect', `${seeded.id}:calendar_create`);
     expect(opened).toMatchObject({ status: 'open', severity: 'delayed', action: 'calendar' });
 
-    // Second pass: clear the backoff gate and let the drain succeed — the incident auto-resolves.
-    const stuck = repo.sideEffectOperations.get(`${seeded.id}:calendar_create`);
-    if (stuck) repo.sideEffectOperations.set(`${seeded.id}:calendar_create`, { ...stuck, nextAttemptAt: null });
+    // Second pass: ten minutes later, the row is due — the retry gate now lets the drain attempt
+    // run (and it still fails), 'update'-ing the same open incident rather than opening a new one.
+    advance('2026-08-14T10:10:00.000Z');
+    const retried = await runReconciliation(context);
+    expect(calendarCalls).toBe(1);
+    expect(retried.incidentsUpdated).toBe(1);
+
+    // Third pass: advance past attempt 3's 20-minute backoff window and let the drain succeed —
+    // the incident auto-resolves.
+    advance('2026-08-14T10:31:00.000Z');
     shouldFail = false;
     const second = await runReconciliation(context);
     expect(second.incidentsResolved).toBe(1);

@@ -83,6 +83,48 @@ describe('runReconciliation against real D1', () => {
     await expect(context.repo.getRefundOperationByBookingId(id)).resolves.toMatchObject({ status: 'succeeded', stripeRefundId: 're_recon_d1' });
   });
 
+  // Plan 020 (design decision 5, scheduled-side only — see src/reconciliation.ts's header comment):
+  // proves the scan-time backoff gate (isDueForScheduledRetry) against a real D1-stored
+  // attempt_count/attempted_at, not just the in-memory fake in tests/reconciliation.test.ts.
+  it('skips a still-backed-off failed side-effect row and retries it once its window has elapsed, against real D1', async () => {
+    const id = 'recon-d1-backoff';
+    await seedConfirmed(id);
+    await db.prepare(
+      `INSERT INTO side_effect_operations (booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at, failure_started_at, next_attempt_at)
+       VALUES (?, 'calendar_create', 'failed', NULL, 2, ?, ?, 'calendar unavailable', ?, ?, ?, NULL)`,
+    ).bind(id, '2026-08-14T09:59:00.000Z', '2026-08-14T09:59:00.000Z', '2026-08-14T09:00:00.000Z', '2026-08-14T09:59:00.000Z', '2026-08-14T09:49:00.000Z').run();
+
+    let calendarCalls = 0;
+    let shouldFail = true;
+    let now = '2026-08-14T10:00:00.000Z';
+    const scanClock = () => new Date(now);
+    const context = createBookkitContext({
+      config, db, clock: scanClock,
+      providers: providers({ calendar: { listEvents: async () => [], createEvent: async () => { calendarCalls += 1; if (shouldFail) throw new Error('calendar still down'); return 'cal_recon_d1'; }, deleteEvent: async () => undefined, patchEvent: async () => undefined } }),
+    });
+
+    // Attempt 2's 10-minute backoff window (09:59 -> 10:09) hasn't elapsed at 10:00 — no retry.
+    await runReconciliation(context);
+    expect(calendarCalls).toBe(0);
+
+    // Ten minutes later the row is due — the retry runs (and still fails).
+    now = '2026-08-14T10:10:00.000Z';
+    await runReconciliation(context);
+    expect(calendarCalls).toBe(1);
+    await expect(context.repo.listSideEffectOperations(id)).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'calendar_create', status: 'failed', attemptCount: 3 }),
+    ]));
+
+    // Attempt 3's 20-minute window (10:10 -> 10:30) elapses; this time the retry succeeds.
+    now = '2026-08-14T10:31:00.000Z';
+    shouldFail = false;
+    await runReconciliation(context);
+    expect(calendarCalls).toBe(2);
+    await expect(context.repo.listSideEffectOperations(id)).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'calendar_create', status: 'succeeded' }),
+    ]));
+  });
+
   it('reports an unreported oversell marker as a persisted, real-D1 incident row', async () => {
     const id = 'recon-d1-oversell';
     await seedConfirmed(id);
