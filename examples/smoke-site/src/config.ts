@@ -33,9 +33,12 @@ export default {
     },
     // Plan 018 (design decisions 1-3, 9): shaped after the actual request this plan generalizes
     // for — Maze Riverside 2h, priced 180/200/200/210 € (non-additive: +20 for either custom leg,
-    // but +30 for both — see README "Config" for why that rules out a surcharge model). A single
-    // meetingPoint (not meetingPoints) keeps the meeting-point radio group out of this tour's flow
-    // entirely, so this page exercises the pickupOptions axis in isolation from plan 017's group.
+    // but +30 for both — see README "Config" for why that rules out a surcharge model).
+    //
+    // Plan 019 (design decision 5): two meeting points (not one), so this same fixture also
+    // covers the usesMeetingPoint axis (custom_dropoff picks a second point; custom_pickup/
+    // custom_both hide the group) instead of isolating it to oldTown — the two axes' options are
+    // otherwise never exercised together in a browser test.
     mazeRiverside: {
       durationMin: 120,
       turnaroundMin: 15,
@@ -45,10 +48,10 @@ export default {
         lastStart: '17:00',
         intervalMin: 60,
       }],
-      meetingPoint: {
-        label: 'Riverside dock',
-        mapsUrl: 'https://maps.google.com/?q=Riverside+dock',
-      },
+      meetingPoints: [
+        { id: 'dock', label: 'Riverside dock', mapsUrl: 'https://maps.google.com/?q=Riverside+dock' },
+        { id: 'gate', label: 'Maze north gate', mapsUrl: 'https://maps.google.com/?q=Maze+north+gate' },
+      ],
       pickupOptions: [
         { id: 'meeting_point', label: 'Meeting point', requiresAddress: false, usesMeetingPoint: true },
         { id: 'custom_dropoff', label: 'Custom drop-off', requiresAddress: true, usesMeetingPoint: true },

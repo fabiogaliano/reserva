@@ -2,6 +2,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 import type { CalEvent } from '../../../src/core/occupancy';
 import type { StripeEventParsed } from '../../../src/core/events';
 import { defineCloudflareBookkitRuntime, type BookkitProviders } from '../../../src/runtime';
+import { pickupOptionFor, resolveTour } from '../../../src/core/config';
 import config from './config';
 
 // Hand-declared because this fixture has no real `wrangler types` codegen in CI; it mirrors the
@@ -17,7 +18,12 @@ interface Env {
 }
 
 const calendarEvents = new Map<string, CalEvent>();
-const checkoutSessions = new Map<string, { amountTotal: number; currency: string }>();
+const checkoutSessions = new Map<string, { amountTotal: number; currency: string; pickupAddress: string | null }>();
+
+// Plan 019 (design decision 4): the deterministic address any real Stripe-hosted address
+// collection would produce for this fixture's test customer — kept as one constant so both the
+// e2e suite and this fake session state agree on the exact string.
+export const SMOKE_TEST_PICKUP_ADDRESS = '42 Fixture Lane, Testville';
 
 function manageUrl(token: string): string {
   return `${config.business.url}/booking/manage?token=${encodeURIComponent(token)}`;
@@ -27,9 +33,19 @@ export const emailOutbox: Array<{ event: string; reference: string; customerMana
 
 const providers: BookkitProviders = {
   payments: {
-    async createCheckout(booking) {
+    async createCheckout(booking, checkoutConfig) {
       const sessionId = `local_session_${booking.id}`;
-      checkoutSessions.set(sessionId, { amountTotal: booking.priceCents, currency: config.business.currency });
+      // Plan 019 (design decision 4): derives requiresAddress from the booking's own selected
+      // option (via the tour config), not from pickupType naming — a fake Stripe address
+      // collection step only ever runs for an option the tour itself declares as requiring one,
+      // same as the real custom_fields gate (src/providers/stripe.ts).
+      const tour = resolveTour(checkoutConfig, booking.tourSlug);
+      const requiresAddress = pickupOptionFor(tour, booking.pickupType)?.requiresAddress ?? false;
+      checkoutSessions.set(sessionId, {
+        amountTotal: booking.priceCents,
+        currency: checkoutConfig.business.currency,
+        pickupAddress: requiresAddress ? SMOKE_TEST_PICKUP_ADDRESS : null,
+      });
       return {
         sessionId,
         url: `/booking-confirmation?session_id=${encodeURIComponent(sessionId)}`,
@@ -51,6 +67,7 @@ const providers: BookkitProviders = {
         customerName: 'Local Demo Customer',
         customerEmail: 'customer@example.test',
         customerPhone: '+351 910 000 000',
+        pickupAddress: session.pickupAddress,
       };
     },
     async refund(paymentIntent) {

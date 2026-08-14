@@ -2,6 +2,10 @@
 // Plan 018 (design decision 9, step 6): exercises the widget's pickupOptions prop end-to-end
 // against a real four-option, non-additive-priced tour (mazeRiverside in ../config.ts) — the
 // homepage's oldTown tour only ever exercises the two-option pickupTypes alias.
+//
+// Plan 019 (design decision 5): also passes meetingPoints — mazeRiverside now declares two, so
+// this page is the one browser fixture that exercises both axes together (a declared option's
+// usesMeetingPoint gating a real multi-point group).
 import BookingWidget from '../../../../src/components/BookingWidget.astro';
 import config from '../config';
 
@@ -13,6 +17,8 @@ const tour = config.tours.mazeRiverside;
 // carries requiresAddress, which is Stripe-side (see stripe.ts's custom_fields gate), not
 // something the widget itself renders.
 const pickupOptions = tour.pickupOptions!.map(({ id, label, usesMeetingPoint }) => ({ id, label, usesMeetingPoint }));
+// meetingPoints mapsUrl isn't rendered by the widget (see index.astro's oldTown wiring).
+const meetingPoints = tour.meetingPoints!.map(({ id, label }) => ({ id, label }));
 ---
 
 <html lang="en">
@@ -37,6 +43,7 @@ const pickupOptions = tour.pickupOptions!.map(({ id, label, usesMeetingPoint }) 
           availabilityTo={to}
           pickupOptions={pickupOptions}
           pricing={tour.pricing}
+          meetingPoints={meetingPoints}
         />
         <p>Submitting redirects through the confirmation route. The simulated payment provider reports the session as paid, which exercises confirmation and every provider seam.</p>
       </section>
