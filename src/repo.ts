@@ -261,6 +261,9 @@ export interface SideEffectOperationRecord {
   error: string | null;
   createdAt: string;
   updatedAt: string;
+  // Plan 020 (design decision 5): migration 0016's additive backoff columns.
+  failureStartedAt: string | null;
+  nextAttemptAt: string | null;
 }
 
 export interface BookingUpdate {
@@ -376,7 +379,13 @@ export interface BookingRepository {
   listSideEffectOperations(bookingId: string): Promise<SideEffectOperationRecord[]>;
   // Returns the authoritative attempt number assigned by the atomic claim, or null when the row
   // was not claimable. Callers must classify failures against this value rather than a prior read.
+  // Plan 020 (design decision 5): additionally requires next_attempt_at to be NULL or <= attemptedAt
+  // ("now") — a row still inside its backoff window is not claimable by this ordinary path.
   claimSideEffectOperation(bookingId: string, kind: ConfirmationSideEffectKind, leaseToken: string, attemptedAt: string): Promise<number | null>;
+  // Plan 020 (design decision 5): the admin "Try again" bypass — same lease-ownership gate as
+  // claimSideEffectOperation, but ignores next_attempt_at AND the attempt-count cap (so a terminal
+  // 'abandoned' row can be retried once), while still incrementing the lifetime attempt count.
+  claimSideEffectOperationForRetry(bookingId: string, kind: ConfirmationSideEffectKind, leaseToken: string, attemptedAt: string): Promise<number | null>;
   resolveSideEffectOperation(input: {
     bookingId: string;
     kind: ConfirmationSideEffectKind;
@@ -388,6 +397,11 @@ export interface BookingRepository {
     providerResultId?: string | null;
     error?: string | null;
     resolvedAt: string;
+    // Plan 020 (design decision 5): set only when status is 'failed' — computed by the caller via
+    // src/reconciliation-helpers.ts's computeNextAttemptAt. A 'succeeded'/'abandoned' resolve always
+    // clears both next_attempt_at and failure_started_at (the row is no longer retrying), regardless
+    // of what's passed here.
+    nextAttemptAt?: string | null;
   }): Promise<boolean>;
   // BK-SIDE-001 (handoff 13): mutation-path outbox claim/resolve. Unlike the confirmation-path
   // pair above, these aren't gated by a confirmation lease — cancel/reschedule/no-show already run
@@ -403,7 +417,11 @@ export interface BookingRepository {
   // re-sent) or a live 'in_flight' (no double-claim by a concurrent retry).
   // Returns the authoritative attempt number assigned by the atomic claim, or null when the row
   // was not claimable. This closes the list-to-claim race between concurrent drains.
+  // Plan 020 (design decision 5): additionally requires next_attempt_at to be NULL or <= attemptedAt.
   claimMutationSideEffectOperation(bookingId: string, kind: MutationSideEffectOperationKind, attemptedAt: string): Promise<number | null>;
+  // Plan 020 (design decision 5): the admin "Try again" bypass — same staleness/ownership shape as
+  // claimMutationSideEffectOperation, but ignores next_attempt_at AND the attempt-count cap.
+  claimMutationSideEffectOperationForRetry(bookingId: string, kind: MutationSideEffectOperationKind, attemptedAt: string): Promise<number | null>;
   resolveMutationSideEffectOperation(input: {
     bookingId: string;
     kind: MutationSideEffectOperationKind;
@@ -417,6 +435,8 @@ export interface BookingRepository {
     // row (bumping attempted_at again) fails to match here (0 rows) instead of clobbering the
     // reclaimer's outcome.
     claimedAt: string;
+    // Plan 020 (design decision 5): see the identical field on resolveSideEffectOperation above.
+    nextAttemptAt?: string | null;
   }): Promise<boolean>;
   // Plan 011 (design decision 4): the confirmation-path Tourflow row's dedicated resolver. Uses
   // the same claimedAt-gated optimistic concurrency as resolveMutationSideEffectOperation above,
@@ -434,6 +454,8 @@ export interface BookingRepository {
     error?: string | null;
     resolvedAt: string;
     claimedAt: string;
+    // Plan 020 (design decision 5): see the identical field on resolveSideEffectOperation above.
+    nextAttemptAt?: string | null;
   }): Promise<boolean>;
   transitionReschedule(id: string, input: {
     expectedStatus: BookingStatus;
@@ -510,12 +532,16 @@ export interface BookingRepository {
   // not a plain write: status only ever advances (requested -> succeeded/failed), so a stale
   // attempt (e.g. an operator retry racing the charge.refunded webhook) can never downgrade an
   // already-succeeded row to 'failed' or clear its recorded refund id/amount (BK-REFUND-001).
+  // Plan 020 (design decision 7): 'abandoned' (a permanent/tenth-attempt failure) and
+  // nextAttemptAt/clearing failure_started_at are additive to this same call — see
+  // src/refund-executor.ts, the only caller that ever sets them.
   resolveRefundOperation(id: string, input: {
-    status: 'succeeded' | 'failed';
+    status: 'succeeded' | 'failed' | 'abandoned';
     stripeRefundId?: string | null;
     amountCents?: number | null;
     error?: string | null;
     resolvedAt: string;
+    nextAttemptAt?: string | null;
   }): Promise<void>;
   // Removes this request's still-pending claim after its own CAS cancel loses to a non-cancelled
   // winner (e.g. a reschedule), so it cannot block a later legitimate cancellation. A succeeded
@@ -526,6 +552,86 @@ export interface BookingRepository {
   upsertRefundOperation(input: RefundOperationUpsertInput): Promise<void>;
   // Only a verified charge.refunded webhook may correct an earlier none/succeeded audit row.
   reconcileStripeRefundOperation(input: RefundOperationUpsertInput): Promise<void>;
+
+  // ---- Plan 020: autonomous reconciliation ----------------------------------------------------
+
+  // Plan 020 (design decision 7): the scheduled reconciler's (and the shared refund executor's own)
+  // execution claim — a single atomic UPDATE, mirroring claimMutationSideEffectOperation's "the
+  // row's own attempted_at doubles as the lease/staleness reference" shape (HIGH-2), since a refund
+  // operation is one row per booking, not one per kind. Claimable from 'requested'/'failed' (never
+  // 'succeeded'/'abandoned'), or a stale 'in_flight' row (a killed claimant), gated by
+  // next_attempt_at and the same SIDE_EFFECT_MAX_ATTEMPTS cap side-effect operations use. Returns
+  // the authoritative attempt number, or null when not claimable.
+  claimRefundExecution(id: string, attemptedAt: string): Promise<number | null>;
+  // Plan 020 (design decision 5/13): the admin "Try again" bypass for a refund operation — ignores
+  // next_attempt_at and the attempt-count cap (so an 'abandoned' refund can be retried once), but
+  // still refuses a live (non-stale) 'in_flight' claim and still increments the lifetime count.
+  claimRefundExecutionForRetry(id: string, attemptedAt: string): Promise<number | null>;
+
+  // Plan 020 (design decision 4): bounded global candidate reads for the scheduled reconciler.
+  // Returns booking ids only (not full records) — the reconciler re-drains each booking through the
+  // SAME per-booking claim/execute paths (runOwedConfirmationSideEffects/runOwedMutationSideEffects/
+  // the refund executor) an HTTP request already uses, so no new claim/execution logic is
+  // duplicated here. Ordering/eligibility precision is intentionally simple at this deployment's
+  // scale (20-40 bookings/year): candidates in pending/failed/in_flight status, oldest first by
+  // COALESCE(next_attempt_at, attempted_at, created_at) — the real per-row claim (not this read)
+  // is what actually enforces next_attempt_at/staleness/cap.
+  listSideEffectCandidateBookingIds(limit: number): Promise<string[]>;
+  listRefundCandidateBookingIds(limit: number): Promise<string[]>;
+  // Plan 020 (design decision 3/6): 'oversell' rows are permanent markers (never retried — see
+  // src/repo.ts confirmWithSideEffectOperations), so the candidate set is simply "no incident row
+  // has ever been opened for this marker yet" rather than a claim/backoff query.
+  listUnreportedOversellMarkers(limit: number): Promise<SideEffectOperationRecord[]>;
+
+  // Plan 020 (design decision 8/9): the incident ledger. `upsertOpenIncident` both inserts a
+  // brand-new row and reopens/updates an existing one (INSERT ... ON CONFLICT(source_type,
+  // source_key)) — the caller (src/reconciliation.ts) decides open vs. update vs. skip via
+  // src/reconciliation-helpers.ts's projectIncident and only calls this for 'open'/'update'.
+  // escalate bumps alert_revision (decision 9); a plain update (no escalation) only refreshes
+  // last_detected_at/attempt_count/severity/source_updated_at, leaving alert_revision (and any
+  // resolved/manual state a reopen is superseding) alone until the caller decides otherwise —
+  // reopening a resolved row always clears resolved_at/resolution_kind/resolved_by/resolution_note.
+  upsertOpenIncident(input: {
+    id: string;
+    bookingId: string;
+    sourceType: OperationalIncidentSourceType;
+    sourceKey: string;
+    action: OperationalIncidentAction;
+    severity: OperationalIncidentSeverity;
+    attemptCount: number;
+    sourceUpdatedAt: string;
+    now: string;
+    escalate: boolean;
+  }): Promise<void>;
+  // Any status (open OR resolved) — the caller (src/reconciliation-helpers.ts's projectIncident)
+  // needs a resolved row's own state (resolutionKind/sourceUpdatedAt) to decide whether a manual
+  // resolution should stay resolved (decision 9), not just whether an open one exists.
+  getIncidentBySource(sourceType: OperationalIncidentSourceType, sourceKey: string): Promise<OperationalIncidentRecord | null>;
+  // The one row a manual "I handled this manually" action or an automatic-success scan resolves —
+  // by (source_type, source_key), not id, so the caller never has to look the id up first.
+  resolveIncidentAutomatic(sourceType: OperationalIncidentSourceType, sourceKey: string, resolvedAt: string): Promise<void>;
+  resolveIncidentManual(input: {
+    sourceType: OperationalIncidentSourceType;
+    sourceKey: string;
+    resolvedAt: string;
+    resolvedBy: string;
+    resolutionNote: string;
+  }): Promise<boolean>;
+  // Plan 020 (design decision 14): open cards sort action-required before delayed, then oldest
+  // first.
+  listOpenIncidents(limit: number): Promise<OperationalIncidentRecord[]>;
+  // Plan 020 (design decision 14): "simple 30-day counts and recent resolved history".
+  listRecentResolvedIncidents(since: string, limit: number): Promise<OperationalIncidentRecord[]>;
+  countIncidentsSince(since: string): Promise<{ opened: number; resolved: number }>;
+
+  // Plan 020 (design decision 11): alert delivery's own claim/attempt/backoff, independent of the
+  // incident's own detection state — mirrors claimRefundExecution's single-row-lease shape.
+  // Claimable only when alerted_revision < alert_revision (an undelivered revision exists) and the
+  // claim/backoff windows allow it.
+  listAlertCandidateIds(limit: number): Promise<string[]>;
+  claimIncidentAlert(id: string, token: string, now: string, leaseUntil: string): Promise<OperationalIncidentRecord | null>;
+  resolveIncidentAlertSuccess(id: string, token: string, alertedRevision: number): Promise<void>;
+  resolveIncidentAlertFailure(id: string, token: string, error: string, nextAttemptAt: string): Promise<void>;
 }
 
 interface BookingRow {
@@ -694,6 +800,63 @@ const refundOperationColumns = `id, booking_id, payment_intent, choice, status, 
   amount_cents, requested_at, resolved_at, error, execution_claim_token, execution_claim_until,
   attempt_count, attempted_at, failure_started_at, next_attempt_at`;
 
+interface OperationalIncidentRow {
+  id: string;
+  booking_id: string;
+  source_type: OperationalIncidentSourceType;
+  source_key: string;
+  action: OperationalIncidentAction;
+  status: OperationalIncidentStatus;
+  severity: OperationalIncidentSeverity;
+  attempt_count: number;
+  first_detected_at: string;
+  last_detected_at: string;
+  source_updated_at: string;
+  alert_revision: number;
+  alerted_revision: number;
+  alert_attempt_count: number;
+  alert_claim_token: string | null;
+  alert_claim_until: string | null;
+  alert_next_attempt_at: string | null;
+  alert_error: string | null;
+  resolved_at: string | null;
+  resolution_kind: OperationalIncidentResolutionKind | null;
+  resolved_by: string | null;
+  resolution_note: string | null;
+}
+
+const operationalIncidentColumns = `id, booking_id, source_type, source_key, action, status, severity,
+  attempt_count, first_detected_at, last_detected_at, source_updated_at, alert_revision,
+  alerted_revision, alert_attempt_count, alert_claim_token, alert_claim_until, alert_next_attempt_at,
+  alert_error, resolved_at, resolution_kind, resolved_by, resolution_note`;
+
+function mapOperationalIncident(row: OperationalIncidentRow): OperationalIncidentRecord {
+  return {
+    id: row.id,
+    bookingId: row.booking_id,
+    sourceType: row.source_type,
+    sourceKey: row.source_key,
+    action: row.action,
+    status: row.status,
+    severity: row.severity,
+    attemptCount: Number(row.attempt_count),
+    firstDetectedAt: row.first_detected_at,
+    lastDetectedAt: row.last_detected_at,
+    sourceUpdatedAt: row.source_updated_at,
+    alertRevision: Number(row.alert_revision),
+    alertedRevision: Number(row.alerted_revision),
+    alertAttemptCount: Number(row.alert_attempt_count),
+    alertClaimToken: row.alert_claim_token,
+    alertClaimUntil: row.alert_claim_until,
+    alertNextAttemptAt: row.alert_next_attempt_at,
+    alertError: row.alert_error,
+    resolvedAt: row.resolved_at,
+    resolutionKind: row.resolution_kind,
+    resolvedBy: row.resolved_by,
+    resolutionNote: row.resolution_note,
+  };
+}
+
 interface SideEffectOperationRow {
   booking_id: string;
   kind: SideEffectOperationKind;
@@ -705,10 +868,12 @@ interface SideEffectOperationRow {
   error: string | null;
   created_at: string;
   updated_at: string;
+  failure_started_at: string | null;
+  next_attempt_at: string | null;
 }
 
 const sideEffectOperationColumns = `booking_id, kind, status, provider_result_id, attempt_count,
-  attempted_at, resolved_at, error, created_at, updated_at`;
+  attempted_at, resolved_at, error, created_at, updated_at, failure_started_at, next_attempt_at`;
 
 function mapSideEffectOperation(row: SideEffectOperationRow): SideEffectOperationRecord {
   return {
@@ -722,6 +887,8 @@ function mapSideEffectOperation(row: SideEffectOperationRow): SideEffectOperatio
     error: row.error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    failureStartedAt: row.failure_started_at,
+    nextAttemptAt: row.next_attempt_at,
   };
 }
 
@@ -1450,11 +1617,31 @@ export function createBookingRepository(
         `UPDATE side_effect_operations
          SET status = 'in_flight', attempt_count = attempt_count + 1, attempted_at = ?, error = NULL, updated_at = ?
          WHERE booking_id = ? AND kind = ? AND status NOT IN ('succeeded', 'abandoned') AND attempt_count < ?
+           AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
            AND EXISTS (
              SELECT 1 FROM bookings WHERE id = ? AND confirmation_lease_token = ?
            )
          RETURNING attempt_count`,
-      ).bind(attemptedAt, attemptedAt, bookingId, kind, SIDE_EFFECT_MAX_ATTEMPTS, bookingId, leaseToken)
+      ).bind(attemptedAt, attemptedAt, bookingId, kind, SIDE_EFFECT_MAX_ATTEMPTS, attemptedAt, bookingId, leaseToken)
+        .all<{ attempt_count: number }>();
+      return result.results[0]?.attempt_count ?? null;
+    },
+    // Plan 020 (design decision 5): the admin retry bypass — same lease-ownership predicate, no
+    // next_attempt_at gate, no attempt-count cap (an 'abandoned' row is claimable), but a LIVE
+    // in_flight claim is still refused (status NOT IN ('succeeded') alone would also match 'in_flight' were it
+    // not for the fact this is a single-claimant confirmation-lease-gated table -- see
+    // renewConfirmationLease/acquireConfirmationLease: only the current lease holder can ever reach
+    // this call at all, so an in_flight row here can only be this same request's own earlier claim).
+    async claimSideEffectOperationForRetry(bookingId, kind, leaseToken, attemptedAt) {
+      const result = await db.prepare(
+        `UPDATE side_effect_operations
+         SET status = 'in_flight', attempt_count = attempt_count + 1, attempted_at = ?, error = NULL, updated_at = ?
+         WHERE booking_id = ? AND kind = ? AND status != 'succeeded'
+           AND EXISTS (
+             SELECT 1 FROM bookings WHERE id = ? AND confirmation_lease_token = ?
+           )
+         RETURNING attempt_count`,
+      ).bind(attemptedAt, attemptedAt, bookingId, kind, bookingId, leaseToken)
         .all<{ attempt_count: number }>();
       return result.results[0]?.attempt_count ?? null;
     },
@@ -1470,13 +1657,17 @@ export function createBookingRepository(
     async resolveSideEffectOperation(input) {
       const rowUpdate = db.prepare(
         `UPDATE side_effect_operations
-         SET status = ?, provider_result_id = ?, error = ?, resolved_at = ?, updated_at = ?
+         SET status = ?, provider_result_id = ?, error = ?, resolved_at = ?, updated_at = ?,
+             failure_started_at = CASE WHEN ? = 'failed' THEN COALESCE(failure_started_at, ?) ELSE NULL END,
+             next_attempt_at = CASE WHEN ? = 'failed' THEN ? ELSE NULL END
          WHERE booking_id = ? AND kind = ? AND status NOT IN ('succeeded', 'abandoned')
            AND EXISTS (
              SELECT 1 FROM bookings WHERE id = ? AND confirmation_lease_token = ?
            )`,
       ).bind(
         input.status, input.providerResultId ?? null, input.error ?? null, input.resolvedAt, input.resolvedAt,
+        input.status, input.resolvedAt,
+        input.status, input.nextAttemptAt ?? null,
         input.bookingId, input.kind, input.bookingId, input.leaseToken,
       );
       const bookingUpdate = db.prepare(
@@ -1515,19 +1706,39 @@ export function createBookingRepository(
         `UPDATE side_effect_operations
          SET status = 'in_flight', attempt_count = attempt_count + 1, attempted_at = ?, error = NULL, updated_at = ?
          WHERE booking_id = ? AND kind = ? AND attempt_count < ?
+           AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
            AND (status IN ('pending', 'failed') OR (status = 'in_flight' AND attempted_at < ?))
          RETURNING attempt_count`,
-      ).bind(attemptedAt, attemptedAt, bookingId, kind, SIDE_EFFECT_MAX_ATTEMPTS, staleBefore)
+      ).bind(attemptedAt, attemptedAt, bookingId, kind, SIDE_EFFECT_MAX_ATTEMPTS, attemptedAt, staleBefore)
+        .all<{ attempt_count: number }>();
+      return result.results[0]?.attempt_count ?? null;
+    },
+    // Plan 020 (design decision 5): the admin retry bypass — no next_attempt_at gate, no
+    // attempt-count cap (an 'abandoned' row is claimable), but a LIVE in_flight lease (attempted_at
+    // not yet stale) is still refused, matching every other retry-bypass claim in this file.
+    async claimMutationSideEffectOperationForRetry(bookingId, kind, attemptedAt) {
+      const staleBefore = new Date(Date.parse(attemptedAt) - MUTATION_SIDE_EFFECT_LEASE_MS).toISOString();
+      const result = await db.prepare(
+        `UPDATE side_effect_operations
+         SET status = 'in_flight', attempt_count = attempt_count + 1, attempted_at = ?, error = NULL, updated_at = ?
+         WHERE booking_id = ? AND kind = ?
+           AND (status IN ('pending', 'failed', 'abandoned') OR (status = 'in_flight' AND attempted_at < ?))
+         RETURNING attempt_count`,
+      ).bind(attemptedAt, attemptedAt, bookingId, kind, staleBefore)
         .all<{ attempt_count: number }>();
       return result.results[0]?.attempt_count ?? null;
     },
     async resolveMutationSideEffectOperation(input) {
       const result = await db.prepare(
         `UPDATE side_effect_operations
-         SET status = ?, provider_result_id = ?, error = ?, resolved_at = ?, updated_at = ?
+         SET status = ?, provider_result_id = ?, error = ?, resolved_at = ?, updated_at = ?,
+             failure_started_at = CASE WHEN ? = 'failed' THEN COALESCE(failure_started_at, ?) ELSE NULL END,
+             next_attempt_at = CASE WHEN ? = 'failed' THEN ? ELSE NULL END
          WHERE booking_id = ? AND kind = ? AND status = 'in_flight' AND attempted_at = ?`,
       ).bind(
         input.status, input.providerResultId ?? null, input.error ?? null, input.resolvedAt, input.resolvedAt,
+        input.status, input.resolvedAt,
+        input.status, input.nextAttemptAt ?? null,
         input.bookingId, input.kind, input.claimedAt,
       ).run();
       return result.meta.changes > 0;
@@ -1543,9 +1754,16 @@ export function createBookingRepository(
       const result = await db.batch([
         db.prepare(
           `UPDATE side_effect_operations
-           SET status = ?, error = ?, resolved_at = ?, updated_at = ?
+           SET status = ?, error = ?, resolved_at = ?, updated_at = ?,
+               failure_started_at = CASE WHEN ? = 'failed' THEN COALESCE(failure_started_at, ?) ELSE NULL END,
+               next_attempt_at = CASE WHEN ? = 'failed' THEN ? ELSE NULL END
            WHERE booking_id = ? AND kind = ? AND status = 'in_flight' AND attempted_at = ?`,
-        ).bind(input.status, input.error ?? null, input.resolvedAt, input.resolvedAt, input.bookingId, CONFIRMATION_TOURFLOW_KIND, input.claimedAt),
+        ).bind(
+          input.status, input.error ?? null, input.resolvedAt, input.resolvedAt,
+          input.status, input.resolvedAt,
+          input.status, input.nextAttemptAt ?? null,
+          input.bookingId, CONFIRMATION_TOURFLOW_KIND, input.claimedAt,
+        ),
         db.prepare(
           `UPDATE bookings SET tourflow_synced = 1, updated_at = ?
            WHERE id = ? AND EXISTS (
@@ -1778,11 +1996,22 @@ export function createBookingRepository(
     async resolveRefundOperation(id, input) {
       // WHERE status != 'succeeded' is the CAS guard: once a row has succeeded (recorded either
       // here or by the charge.refunded webhook's upsert), it is terminal — no later resolve call
-      // can regress its status or overwrite its stripe_refund_id/amount_cents.
+      // can regress its status or overwrite its stripe_refund_id/amount_cents. Always clears any
+      // execution lease (harmless no-op if none was held — the 'none'/missing-payment-intent
+      // branches in src/refund-executor.ts resolve without ever claiming one) and, plan 020,
+      // writes the backoff fields exactly like resolveSideEffectOperation above.
       await db.prepare(
-        `UPDATE refund_operations SET status = ?, stripe_refund_id = ?, amount_cents = ?, error = ?, resolved_at = ?
+        `UPDATE refund_operations SET status = ?, stripe_refund_id = ?, amount_cents = ?, error = ?, resolved_at = ?,
+           execution_claim_token = NULL, execution_claim_until = NULL,
+           failure_started_at = CASE WHEN ? = 'failed' THEN COALESCE(failure_started_at, ?) ELSE NULL END,
+           next_attempt_at = CASE WHEN ? = 'failed' THEN ? ELSE NULL END
          WHERE id = ? AND status != 'succeeded'`,
-      ).bind(input.status, input.stripeRefundId ?? null, input.amountCents ?? null, input.error ?? null, input.resolvedAt, id).run();
+      ).bind(
+        input.status, input.stripeRefundId ?? null, input.amountCents ?? null, input.error ?? null, input.resolvedAt,
+        input.status, input.resolvedAt,
+        input.status, input.nextAttemptAt ?? null,
+        id,
+      ).run();
     },
     async deleteRefundOperation(id) {
       await db.prepare("DELETE FROM refund_operations WHERE id = ? AND status = 'requested'").bind(id).run();
@@ -1792,6 +2021,171 @@ export function createBookingRepository(
     },
     async reconcileStripeRefundOperation(input) {
       await stripeRefundReconciliationStmt(input).run();
+    },
+
+    // ---- Plan 020: autonomous reconciliation ----------------------------------------------------
+
+    async claimRefundExecution(id, attemptedAt) {
+      const staleBefore = new Date(Date.parse(attemptedAt) - MUTATION_SIDE_EFFECT_LEASE_MS).toISOString();
+      const result = await db.prepare(
+        `UPDATE refund_operations
+         SET status = 'in_flight', attempt_count = attempt_count + 1, attempted_at = ?, error = NULL
+         WHERE id = ? AND attempt_count < ?
+           AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+           AND (status IN ('requested', 'failed') OR (status = 'in_flight' AND attempted_at < ?))
+         RETURNING attempt_count`,
+      ).bind(attemptedAt, id, SIDE_EFFECT_MAX_ATTEMPTS, attemptedAt, staleBefore).all<{ attempt_count: number }>();
+      return result.results[0]?.attempt_count ?? null;
+    },
+    async claimRefundExecutionForRetry(id, attemptedAt) {
+      const staleBefore = new Date(Date.parse(attemptedAt) - MUTATION_SIDE_EFFECT_LEASE_MS).toISOString();
+      const result = await db.prepare(
+        `UPDATE refund_operations
+         SET status = 'in_flight', attempt_count = attempt_count + 1, attempted_at = ?, error = NULL
+         WHERE id = ?
+           AND (status IN ('requested', 'failed', 'abandoned') OR (status = 'in_flight' AND attempted_at < ?))
+         RETURNING attempt_count`,
+      ).bind(attemptedAt, id, staleBefore).all<{ attempt_count: number }>();
+      return result.results[0]?.attempt_count ?? null;
+    },
+
+    async listSideEffectCandidateBookingIds(limit) {
+      const result = await db.prepare(
+        `SELECT booking_id FROM side_effect_operations
+         WHERE status IN ('pending', 'failed', 'in_flight')
+         GROUP BY booking_id
+         ORDER BY MIN(COALESCE(next_attempt_at, attempted_at, created_at))
+         LIMIT ?`,
+      ).bind(limit).all<{ booking_id: string }>();
+      return result.results.map((row) => row.booking_id);
+    },
+    async listRefundCandidateBookingIds(limit) {
+      const result = await db.prepare(
+        `SELECT booking_id FROM refund_operations
+         WHERE status IN ('requested', 'failed', 'in_flight')
+         ORDER BY COALESCE(next_attempt_at, attempted_at, requested_at)
+         LIMIT ?`,
+      ).bind(limit).all<{ booking_id: string }>();
+      return result.results.map((row) => row.booking_id);
+    },
+    async listUnreportedOversellMarkers(limit) {
+      const result = await db.prepare(
+        `SELECT ${sideEffectOperationColumns} FROM side_effect_operations
+         WHERE kind = 'oversell' AND status = 'succeeded'
+           AND NOT EXISTS (
+             SELECT 1 FROM operational_incidents
+             WHERE source_type = 'oversell' AND source_key = side_effect_operations.booking_id
+           )
+         ORDER BY updated_at
+         LIMIT ?`,
+      ).bind(limit).all<SideEffectOperationRow>();
+      return result.results.map(mapSideEffectOperation);
+    },
+
+    async upsertOpenIncident(input) {
+      await db.prepare(
+        `INSERT INTO operational_incidents (
+           id, booking_id, source_type, source_key, action, status, severity, attempt_count,
+           first_detected_at, last_detected_at, source_updated_at, alert_revision, alerted_revision, alert_attempt_count
+         ) VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, 1, 0, 0)
+         ON CONFLICT(source_type, source_key) DO UPDATE SET
+           status = 'open',
+           severity = excluded.severity,
+           attempt_count = excluded.attempt_count,
+           last_detected_at = excluded.last_detected_at,
+           source_updated_at = excluded.source_updated_at,
+           -- Plan 020 (design decision 9): a reopen (was resolved) or an explicit escalation always
+           -- bumps the alert revision so the technical operator is re-notified; a plain repeated
+           -- detection on an already-open, non-escalated incident does not re-alert.
+           alert_revision = CASE WHEN operational_incidents.status = 'resolved' OR ? THEN operational_incidents.alert_revision + 1 ELSE operational_incidents.alert_revision END,
+           resolved_at = NULL, resolution_kind = NULL, resolved_by = NULL, resolution_note = NULL`,
+      ).bind(
+        input.id, input.bookingId, input.sourceType, input.sourceKey, input.action, input.severity, input.attemptCount,
+        input.now, input.now, input.sourceUpdatedAt,
+        input.escalate ? 1 : 0,
+      ).run();
+    },
+    async getIncidentBySource(sourceType, sourceKey) {
+      const row = await first(db.prepare(
+        `SELECT ${operationalIncidentColumns} FROM operational_incidents WHERE source_type = ? AND source_key = ?`,
+      ).bind(sourceType, sourceKey).all<OperationalIncidentRow>());
+      return row ? mapOperationalIncident(row) : null;
+    },
+    async resolveIncidentAutomatic(sourceType, sourceKey, resolvedAt) {
+      await db.prepare(
+        `UPDATE operational_incidents SET status = 'resolved', resolved_at = ?, resolution_kind = 'automatic', resolved_by = NULL, resolution_note = NULL
+         WHERE source_type = ? AND source_key = ? AND status = 'open'`,
+      ).bind(resolvedAt, sourceType, sourceKey).run();
+    },
+    async resolveIncidentManual(input) {
+      const result = await db.prepare(
+        `UPDATE operational_incidents SET status = 'resolved', resolved_at = ?, resolution_kind = 'manual', resolved_by = ?, resolution_note = ?
+         WHERE source_type = ? AND source_key = ? AND status = 'open'`,
+      ).bind(input.resolvedAt, input.resolvedBy, input.resolutionNote, input.sourceType, input.sourceKey).run();
+      return result.meta.changes > 0;
+    },
+    async listOpenIncidents(limit) {
+      // Plan 020 (design decision 14): action-required before delayed, then oldest first.
+      const result = await db.prepare(
+        `SELECT ${operationalIncidentColumns} FROM operational_incidents
+         WHERE status = 'open'
+         ORDER BY CASE WHEN severity = 'action_required' THEN 0 ELSE 1 END, first_detected_at
+         LIMIT ?`,
+      ).bind(limit).all<OperationalIncidentRow>();
+      return result.results.map(mapOperationalIncident);
+    },
+    async listRecentResolvedIncidents(since, limit) {
+      const result = await db.prepare(
+        `SELECT ${operationalIncidentColumns} FROM operational_incidents
+         WHERE status = 'resolved' AND resolved_at >= ?
+         ORDER BY resolved_at DESC
+         LIMIT ?`,
+      ).bind(since, limit).all<OperationalIncidentRow>();
+      return result.results.map(mapOperationalIncident);
+    },
+    async countIncidentsSince(since) {
+      const [opened, resolved] = await Promise.all([
+        first(db.prepare('SELECT COUNT(*) AS count FROM operational_incidents WHERE first_detected_at >= ?').bind(since).all<{ count: number }>()),
+        first(db.prepare("SELECT COUNT(*) AS count FROM operational_incidents WHERE status = 'resolved' AND resolved_at >= ?").bind(since).all<{ count: number }>()),
+      ]);
+      return { opened: Number(opened?.count ?? 0), resolved: Number(resolved?.count ?? 0) };
+    },
+
+    async listAlertCandidateIds(limit) {
+      const result = await db.prepare(
+        `SELECT id FROM operational_incidents
+         WHERE alerted_revision < alert_revision
+         ORDER BY COALESCE(alert_next_attempt_at, first_detected_at)
+         LIMIT ?`,
+      ).bind(limit).all<{ id: string }>();
+      return result.results.map((row) => row.id);
+    },
+    async claimIncidentAlert(id, token, now, leaseUntil) {
+      const result = await db.prepare(
+        `UPDATE operational_incidents
+         SET alert_claim_token = ?, alert_claim_until = ?, alert_attempt_count = alert_attempt_count + 1
+         WHERE id = ? AND alerted_revision < alert_revision
+           AND (alert_next_attempt_at IS NULL OR alert_next_attempt_at <= ?)
+           AND (alert_claim_until IS NULL OR alert_claim_until < ?)
+         RETURNING ${operationalIncidentColumns}`,
+      ).bind(token, leaseUntil, id, now, now).all<OperationalIncidentRow>();
+      const row = result.results[0];
+      return row ? mapOperationalIncident(row) : null;
+    },
+    async resolveIncidentAlertSuccess(id, token, alertedRevision) {
+      await db.prepare(
+        `UPDATE operational_incidents
+         SET alerted_revision = ?, alert_claim_token = NULL, alert_claim_until = NULL,
+             alert_next_attempt_at = NULL, alert_error = NULL
+         WHERE id = ? AND alert_claim_token = ?`,
+      ).bind(alertedRevision, id, token).run();
+    },
+    async resolveIncidentAlertFailure(id, token, error, nextAttemptAt) {
+      await db.prepare(
+        `UPDATE operational_incidents
+         SET alert_claim_token = NULL, alert_claim_until = NULL, alert_next_attempt_at = ?, alert_error = ?
+         WHERE id = ? AND alert_claim_token = ?`,
+      ).bind(nextAttemptAt, error.slice(0, 200), id, token).run();
     },
   };
 }

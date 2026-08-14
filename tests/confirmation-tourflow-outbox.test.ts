@@ -81,6 +81,7 @@ describe('confirmation-path Tourflow outbox (plan 011)', () => {
     repo.sideEffectOperations.set(`${seeded.id}:${TOURFLOW_CONFIRMED_KIND}`, {
       bookingId: seeded.id, kind: TOURFLOW_CONFIRMED_KIND, status: 'pending', providerResultId: null,
       attemptCount: 0, attemptedAt: null, resolvedAt: null, error: null, createdAt: now, updatedAt: now,
+      failureStartedAt: null, nextAttemptAt: null,
     });
     let pushCalls = 0;
     const context = createBookkitContext({

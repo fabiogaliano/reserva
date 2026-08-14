@@ -123,10 +123,12 @@ describe('confirmation-path per-recipient email outbox (plan 012)', () => {
     repo.sideEffectOperations.set(`${seeded.id}:calendar_create`, {
       bookingId: seeded.id, kind: 'calendar_create', status: 'succeeded', providerResultId: null,
       attemptCount: 1, attemptedAt: createdAt, resolvedAt: createdAt, error: null, createdAt, updatedAt: createdAt,
+      failureStartedAt: null, nextAttemptAt: null,
     });
     repo.sideEffectOperations.set(`${seeded.id}:email_confirmation`, {
       bookingId: seeded.id, kind: 'email_confirmation', status: 'failed', providerResultId: null,
       attemptCount: 1, attemptedAt: createdAt, resolvedAt: createdAt, error: 'legacy failure', createdAt, updatedAt: createdAt,
+      failureStartedAt: null, nextAttemptAt: null,
     });
     let sendCalls = 0;
     let sendToRecipientCalls = 0;

@@ -19,6 +19,7 @@ import {
   type BookingRepository,
   type ConfirmationEmailKind,
   type MutationSideEffectOperationKind,
+  type OperationalIncidentRecord,
   type RefundOperationRecord,
   type SideEffectOperationRecord,
 } from '../src/repo';
@@ -79,6 +80,11 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
   // Keyed by booking_id, mirroring the real table's UNIQUE(booking_id) constraint.
   const refundOperations = new Map<string, RefundOperationRecord>();
   const sideEffectOperations = new Map<string, SideEffectOperationRecord>();
+  // Plan 020: keyed by (source_type, source_key), mirroring the real table's
+  // UNIQUE(source_type, source_key) constraint; the alert-claim methods are addressed by id, so
+  // those look the row up by scanning values (this fake never holds enough rows for that to matter).
+  const operationalIncidents = new Map<string, OperationalIncidentRecord>();
+  const incidentKey = (sourceType: string, sourceKey: string) => `${sourceType}:${sourceKey}`;
   const rescheduleTransitionVersions = new Map(seed.map((item) => [item.id, 0]));
   const sideEffectKey = (bookingId: string, kind: SideEffectOperationRecord['kind']) => `${bookingId}:${kind}`;
   const isMutationSideEffectOperationKind = (kind: string): kind is MutationSideEffectOperationKind => (
@@ -98,6 +104,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       if (!sideEffectOperations.has(key)) sideEffectOperations.set(key, {
         bookingId, kind: candidate, status: 'pending', providerResultId: null, attemptCount: 0,
         attemptedAt: null, resolvedAt: null, error: null, createdAt: now, updatedAt: now,
+        failureStartedAt: null, nextAttemptAt: null,
       });
     }
   };
@@ -395,6 +402,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       if (!sideEffectOperations.has(key0)) sideEffectOperations.set(key0, {
         bookingId: id, kind: 'calendar_create', status: 'pending', providerResultId: null, attemptCount: 0,
         attemptedAt: null, resolvedAt: null, error: null, createdAt: updatedAt, updatedAt,
+        failureStartedAt: null, nextAttemptAt: null,
       });
       // Plan 012 (design decision 1/2): split rows (one per recipient) when the caller resolved a
       // split-capable provider; otherwise the single legacy combined row, unchanged from before
@@ -406,6 +414,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         if (!sideEffectOperations.has(key)) sideEffectOperations.set(key, {
           bookingId: id, kind, status: 'pending', providerResultId: null, attemptCount: 0,
           attemptedAt: null, resolvedAt: null, error: null, createdAt: updatedAt, updatedAt,
+          failureStartedAt: null, nextAttemptAt: null,
         });
       }
       if (oversold) {
@@ -413,6 +422,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         if (!sideEffectOperations.has(key)) sideEffectOperations.set(key, {
           bookingId: id, kind: 'oversell', status: 'succeeded', providerResultId: 'capacity_exceeded',
           attemptCount: 0, attemptedAt: null, resolvedAt: updatedAt, error: null, createdAt: updatedAt, updatedAt,
+          failureStartedAt: null, nextAttemptAt: null,
         });
       }
       // Plan 011 (design decision 2): mirrors src/repo.ts — the Tourflow row is created in the
@@ -422,6 +432,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         if (!sideEffectOperations.has(key)) sideEffectOperations.set(key, {
           bookingId: id, kind: tourflowKind, status: 'pending', providerResultId: null, attemptCount: 0,
           attemptedAt: null, resolvedAt: null, error: null, createdAt: updatedAt, updatedAt,
+          failureStartedAt: null, nextAttemptAt: null,
         });
       }
       return hydrateBooking(updated);
@@ -452,7 +463,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         bookingId: id, kind: 'calendar_create', status: booking.calendarSynced ? 'succeeded' : 'pending',
         providerResultId: booking.calendarEventId,
         attemptCount: 0, attemptedAt: null, resolvedAt: booking.calendarSynced ? now : null, error: null,
-        createdAt: now, updatedAt: now,
+        createdAt: now, updatedAt: now, failureStartedAt: null, nextAttemptAt: null,
       });
       // Plan 012 (design decision 1/2/3): same split-vs-combined choice
       // confirmWithSideEffectOperations makes for a brand-new confirmation, applied here for
@@ -468,7 +479,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
           if (!sideEffectOperations.has(key)) sideEffectOperations.set(key, {
             bookingId: id, kind, status: booking.emailSynced ? 'succeeded' : 'pending', providerResultId: null,
             attemptCount: 0, attemptedAt: null, resolvedAt: booking.emailSynced ? now : null, error: null,
-            createdAt: now, updatedAt: now,
+            createdAt: now, updatedAt: now, failureStartedAt: null, nextAttemptAt: null,
           });
         }
       }
@@ -479,7 +490,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         if (!sideEffectOperations.has(key)) sideEffectOperations.set(key, {
           bookingId: id, kind: tourflowKind, status: 'pending', providerResultId: null,
           attemptCount: 0, attemptedAt: null, resolvedAt: null, error: null,
-          createdAt: now, updatedAt: now,
+          createdAt: now, updatedAt: now, failureStartedAt: null, nextAttemptAt: null,
         });
       }
     },
@@ -492,11 +503,26 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     // Plan 016 (design decision 4): 'abandoned' is terminal (never reclaimed, mirroring
     // src/repo.ts's status NOT IN ('succeeded', 'abandoned')), and attempt_count is capped the
     // same way src/repo.ts's claim SQL binds SIDE_EFFECT_MAX_ATTEMPTS.
+    // Plan 020 (design decision 5): additionally requires next_attempt_at to be null or <= now.
     claimSideEffectOperation: async (bookingId, kind, leaseToken, attemptedAt) => {
       const key = sideEffectKey(bookingId, kind);
       const current = sideEffectOperations.get(key);
       if (!current || current.status === 'succeeded' || current.status === 'abandoned'
-        || current.attemptCount >= SIDE_EFFECT_MAX_ATTEMPTS || leases.get(bookingId)?.token !== leaseToken) return null;
+        || current.attemptCount >= SIDE_EFFECT_MAX_ATTEMPTS || leases.get(bookingId)?.token !== leaseToken
+        || (current.nextAttemptAt !== null && current.nextAttemptAt > attemptedAt)) return null;
+      const attemptNumber = current.attemptCount + 1;
+      sideEffectOperations.set(key, {
+        ...current, status: 'in_flight', attemptCount: attemptNumber,
+        attemptedAt, error: null, updatedAt: attemptedAt,
+      });
+      return attemptNumber;
+    },
+    // Plan 020 (design decision 5): the admin retry bypass — ignores next_attempt_at and the
+    // attempt-count cap, but still requires lease ownership and a non-succeeded row.
+    claimSideEffectOperationForRetry: async (bookingId, kind, leaseToken, attemptedAt) => {
+      const key = sideEffectKey(bookingId, kind);
+      const current = sideEffectOperations.get(key);
+      if (!current || current.status === 'succeeded' || leases.get(bookingId)?.token !== leaseToken) return null;
       const attemptNumber = current.attemptCount + 1;
       sideEffectOperations.set(key, {
         ...current, status: 'in_flight', attemptCount: attemptNumber,
@@ -518,6 +544,8 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       sideEffectOperations.set(key, {
         ...operation, status: input.status, providerResultId: input.providerResultId ?? null,
         error: input.error ?? null, resolvedAt: input.resolvedAt, updatedAt: input.resolvedAt,
+        failureStartedAt: input.status === 'failed' ? (operation.failureStartedAt ?? input.resolvedAt) : null,
+        nextAttemptAt: input.status === 'failed' ? (input.nextAttemptAt ?? null) : null,
       });
       if (input.kind === 'calendar_create') {
         rows.set(input.bookingId, {
@@ -537,6 +565,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     // Plan 016 (design decision 4): 'abandoned' already falls outside pending/failed/reclaimable-
     // in_flight above, unchanged — attempt_count >= SIDE_EFFECT_MAX_ATTEMPTS is the explicit
     // belt-and-braces guard, mirroring src/repo.ts's claim SQL.
+    // Plan 020 (design decision 5): additionally requires next_attempt_at to be null or <= now.
     claimMutationSideEffectOperation: async (bookingId, kind, attemptedAt) => {
       const key = sideEffectKey(bookingId, kind);
       const current = sideEffectOperations.get(key);
@@ -545,7 +574,25 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         && current.attemptedAt !== null
         && current.attemptedAt < staleBefore;
       if (!current || current.attemptCount >= SIDE_EFFECT_MAX_ATTEMPTS
+        || (current.nextAttemptAt !== null && current.nextAttemptAt > attemptedAt)
         || (current.status !== 'pending' && current.status !== 'failed' && !reclaimable)) return null;
+      const attemptNumber = current.attemptCount + 1;
+      sideEffectOperations.set(key, {
+        ...current, status: 'in_flight', attemptCount: attemptNumber,
+        attemptedAt, error: null, updatedAt: attemptedAt,
+      });
+      return attemptNumber;
+    },
+    // Plan 020 (design decision 5): the admin retry bypass — ignores next_attempt_at and the
+    // attempt-count cap, but still refuses a live (non-stale) in_flight lease.
+    claimMutationSideEffectOperationForRetry: async (bookingId, kind, attemptedAt) => {
+      const key = sideEffectKey(bookingId, kind);
+      const current = sideEffectOperations.get(key);
+      const staleBefore = new Date(Date.parse(attemptedAt) - MUTATION_SIDE_EFFECT_LEASE_MS).toISOString();
+      const reclaimable = current?.status === 'in_flight'
+        && current.attemptedAt !== null
+        && current.attemptedAt < staleBefore;
+      if (!current || (current.status !== 'pending' && current.status !== 'failed' && current.status !== 'abandoned' && !reclaimable)) return null;
       const attemptNumber = current.attemptCount + 1;
       sideEffectOperations.set(key, {
         ...current, status: 'in_flight', attemptCount: attemptNumber,
@@ -560,6 +607,8 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       sideEffectOperations.set(key, {
         ...current, status: input.status, providerResultId: input.providerResultId ?? null,
         error: input.error ?? null, resolvedAt: input.resolvedAt, updatedAt: input.resolvedAt,
+        failureStartedAt: input.status === 'failed' ? (current.failureStartedAt ?? input.resolvedAt) : null,
+        nextAttemptAt: input.status === 'failed' ? (input.nextAttemptAt ?? null) : null,
       });
       return true;
     },
@@ -572,6 +621,8 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       sideEffectOperations.set(key, {
         ...current, status: input.status, providerResultId: null,
         error: input.error ?? null, resolvedAt: input.resolvedAt, updatedAt: input.resolvedAt,
+        failureStartedAt: input.status === 'failed' ? (current.failureStartedAt ?? input.resolvedAt) : null,
+        nextAttemptAt: input.status === 'failed' ? (input.nextAttemptAt ?? null) : null,
       });
       if (input.status === 'succeeded') {
         const booking = rows.get(input.bookingId);
@@ -704,6 +755,9 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         amountCents: input.amountCents ?? null,
         error: input.error ?? null,
         resolvedAt: input.resolvedAt,
+        executionClaimToken: null, executionClaimUntil: null,
+        failureStartedAt: input.status === 'failed' ? (current.failureStartedAt ?? input.resolvedAt) : null,
+        nextAttemptAt: input.status === 'failed' ? (input.nextAttemptAt ?? null) : null,
       });
     },
     // Mirrors the requested-status guard in src/repo.ts so a completed Stripe outcome survives
@@ -742,6 +796,176 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         executionClaimToken: current?.executionClaimToken ?? null, executionClaimUntil: current?.executionClaimUntil ?? null,
         attemptCount: current?.attemptCount ?? 0, attemptedAt: current?.attemptedAt ?? null,
         failureStartedAt: current?.failureStartedAt ?? null, nextAttemptAt: current?.nextAttemptAt ?? null,
+      });
+    },
+
+    // ---- Plan 020: autonomous reconciliation ------------------------------------------------
+
+    // Mirrors src/repo.ts's single-row lease: claimable from 'requested'/'failed' (never
+    // 'succeeded'/'abandoned'), or a stale 'in_flight' row, gated by next_attempt_at and the same
+    // attempt-count cap side-effect operations use.
+    claimRefundExecution: async (id, attemptedAt) => {
+      const current = [...refundOperations.values()].find((operation) => operation.id === id);
+      const staleBefore = new Date(Date.parse(attemptedAt) - MUTATION_SIDE_EFFECT_LEASE_MS).toISOString();
+      const reclaimable = current?.status === 'in_flight'
+        && current.attemptedAt !== null
+        && current.attemptedAt < staleBefore;
+      if (!current || current.attemptCount >= SIDE_EFFECT_MAX_ATTEMPTS
+        || (current.nextAttemptAt !== null && current.nextAttemptAt > attemptedAt)
+        || (current.status !== 'requested' && current.status !== 'failed' && !reclaimable)) return null;
+      const attemptNumber = current.attemptCount + 1;
+      refundOperations.set(current.bookingId, {
+        ...current, status: 'in_flight', attemptCount: attemptNumber, attemptedAt, error: null,
+      });
+      return attemptNumber;
+    },
+    // The admin "Try again" bypass: ignores next_attempt_at and the attempt-count cap (so an
+    // 'abandoned' refund can be retried once), but still refuses a live (non-stale) in_flight claim.
+    claimRefundExecutionForRetry: async (id, attemptedAt) => {
+      const current = [...refundOperations.values()].find((operation) => operation.id === id);
+      const staleBefore = new Date(Date.parse(attemptedAt) - MUTATION_SIDE_EFFECT_LEASE_MS).toISOString();
+      const reclaimable = current?.status === 'in_flight'
+        && current.attemptedAt !== null
+        && current.attemptedAt < staleBefore;
+      if (!current || (current.status !== 'requested' && current.status !== 'failed' && current.status !== 'abandoned' && !reclaimable)) return null;
+      const attemptNumber = current.attemptCount + 1;
+      refundOperations.set(current.bookingId, {
+        ...current, status: 'in_flight', attemptCount: attemptNumber, attemptedAt, error: null,
+      });
+      return attemptNumber;
+    },
+
+    // Plan 020 (design decision 4): bounded global candidate reads for the scheduled reconciler —
+    // ordering/eligibility precision is intentionally simple at this deployment's scale; the real
+    // per-row claim (not this read) enforces next_attempt_at/staleness/cap.
+    listSideEffectCandidateBookingIds: async (limit) => {
+      const candidates = [...sideEffectOperations.values()]
+        .filter((row) => row.status === 'pending' || row.status === 'failed' || row.status === 'in_flight');
+      const byBooking = new Map<string, string>();
+      for (const row of candidates) {
+        const sortKey = row.nextAttemptAt ?? row.attemptedAt ?? row.createdAt;
+        const existing = byBooking.get(row.bookingId);
+        if (!existing || sortKey < existing) byBooking.set(row.bookingId, sortKey);
+      }
+      return [...byBooking.entries()].sort((a, b) => a[1].localeCompare(b[1])).slice(0, limit).map(([bookingId]) => bookingId);
+    },
+    listRefundCandidateBookingIds: async (limit) => {
+      const candidates = [...refundOperations.values()]
+        .filter((row) => row.status === 'requested' || row.status === 'failed' || row.status === 'in_flight');
+      return candidates
+        .map((row) => ({ bookingId: row.bookingId, sortKey: row.nextAttemptAt ?? row.attemptedAt ?? row.requestedAt }))
+        .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
+        .slice(0, limit)
+        .map((entry) => entry.bookingId);
+    },
+    // Plan 020 (design decision 3/6): 'oversell' rows are permanent markers, so the candidate set
+    // is simply "no incident row has ever been opened for this marker yet".
+    listUnreportedOversellMarkers: async (limit) => {
+      const markers = [...sideEffectOperations.values()]
+        .filter((row) => row.kind === 'oversell' && row.status === 'succeeded'
+          && !operationalIncidents.has(incidentKey('oversell', row.bookingId)));
+      return markers.sort((a, b) => a.updatedAt.localeCompare(b.updatedAt)).slice(0, limit);
+    },
+
+    upsertOpenIncident: async (input) => {
+      const key = incidentKey(input.sourceType, input.sourceKey);
+      const current = operationalIncidents.get(key);
+      const shouldBumpAlertRevision = !current || current.status === 'resolved' || input.escalate;
+      operationalIncidents.set(key, {
+        id: current?.id ?? input.id,
+        bookingId: input.bookingId,
+        sourceType: input.sourceType,
+        sourceKey: input.sourceKey,
+        action: input.action,
+        status: 'open',
+        severity: input.severity,
+        attemptCount: input.attemptCount,
+        firstDetectedAt: current?.firstDetectedAt ?? input.now,
+        lastDetectedAt: input.now,
+        sourceUpdatedAt: input.sourceUpdatedAt,
+        alertRevision: shouldBumpAlertRevision ? (current?.alertRevision ?? 0) + 1 : (current?.alertRevision ?? 1),
+        alertedRevision: current?.alertedRevision ?? 0,
+        alertAttemptCount: current?.alertAttemptCount ?? 0,
+        alertClaimToken: current?.alertClaimToken ?? null,
+        alertClaimUntil: current?.alertClaimUntil ?? null,
+        alertNextAttemptAt: current?.alertNextAttemptAt ?? null,
+        alertError: current?.alertError ?? null,
+        resolvedAt: null,
+        resolutionKind: null,
+        resolvedBy: null,
+        resolutionNote: null,
+      });
+    },
+    getIncidentBySource: async (sourceType, sourceKey) => operationalIncidents.get(incidentKey(sourceType, sourceKey)) ?? null,
+    resolveIncidentAutomatic: async (sourceType, sourceKey, resolvedAt) => {
+      const key = incidentKey(sourceType, sourceKey);
+      const current = operationalIncidents.get(key);
+      if (!current || current.status !== 'open') return;
+      operationalIncidents.set(key, {
+        ...current, status: 'resolved', resolvedAt, resolutionKind: 'automatic', resolvedBy: null, resolutionNote: null,
+      });
+    },
+    resolveIncidentManual: async (input) => {
+      const key = incidentKey(input.sourceType, input.sourceKey);
+      const current = operationalIncidents.get(key);
+      if (!current || current.status !== 'open') return false;
+      operationalIncidents.set(key, {
+        ...current, status: 'resolved', resolvedAt: input.resolvedAt, resolutionKind: 'manual',
+        resolvedBy: input.resolvedBy, resolutionNote: input.resolutionNote,
+      });
+      return true;
+    },
+    // Plan 020 (design decision 14): open cards sort action-required before delayed, then oldest first.
+    listOpenIncidents: async (limit) => [...operationalIncidents.values()]
+      .filter((incident) => incident.status === 'open')
+      .sort((a, b) => {
+        const rank = (incident: OperationalIncidentRecord) => (incident.severity === 'action_required' ? 0 : 1);
+        const rankDiff = rank(a) - rank(b);
+        return rankDiff !== 0 ? rankDiff : a.firstDetectedAt.localeCompare(b.firstDetectedAt);
+      })
+      .slice(0, limit),
+    listRecentResolvedIncidents: async (since, limit) => [...operationalIncidents.values()]
+      .filter((incident) => incident.status === 'resolved' && incident.resolvedAt !== null && incident.resolvedAt >= since)
+      .sort((a, b) => (b.resolvedAt ?? '').localeCompare(a.resolvedAt ?? ''))
+      .slice(0, limit),
+    countIncidentsSince: async (since) => {
+      const all = [...operationalIncidents.values()];
+      return {
+        opened: all.filter((incident) => incident.firstDetectedAt >= since).length,
+        resolved: all.filter((incident) => incident.status === 'resolved' && incident.resolvedAt !== null && incident.resolvedAt >= since).length,
+      };
+    },
+
+    // Plan 020 (design decision 11): alert delivery's own claim/attempt/backoff, independent of the
+    // incident's own detection state — mirrors claimRefundExecution's single-row-lease shape.
+    listAlertCandidateIds: async (limit) => [...operationalIncidents.values()]
+      .filter((incident) => incident.alertedRevision < incident.alertRevision)
+      .sort((a, b) => (a.alertNextAttemptAt ?? a.firstDetectedAt).localeCompare(b.alertNextAttemptAt ?? b.firstDetectedAt))
+      .slice(0, limit)
+      .map((incident) => incident.id),
+    claimIncidentAlert: async (id, token, now, leaseUntil) => {
+      const current = [...operationalIncidents.values()].find((incident) => incident.id === id);
+      if (!current || current.alertedRevision >= current.alertRevision) return null;
+      if (current.alertNextAttemptAt !== null && current.alertNextAttemptAt > now) return null;
+      if (current.alertClaimUntil !== null && current.alertClaimUntil >= now) return null;
+      const claimed: OperationalIncidentRecord = {
+        ...current, alertClaimToken: token, alertClaimUntil: leaseUntil, alertAttemptCount: current.alertAttemptCount + 1,
+      };
+      operationalIncidents.set(incidentKey(current.sourceType, current.sourceKey), claimed);
+      return claimed;
+    },
+    resolveIncidentAlertSuccess: async (id, token, alertedRevision) => {
+      const current = [...operationalIncidents.values()].find((incident) => incident.id === id);
+      if (!current || current.alertClaimToken !== token) return;
+      operationalIncidents.set(incidentKey(current.sourceType, current.sourceKey), {
+        ...current, alertedRevision, alertClaimToken: null, alertClaimUntil: null, alertNextAttemptAt: null, alertError: null,
+      });
+    },
+    resolveIncidentAlertFailure: async (id, token, error, nextAttemptAt) => {
+      const current = [...operationalIncidents.values()].find((incident) => incident.id === id);
+      if (!current || current.alertClaimToken !== token) return;
+      operationalIncidents.set(incidentKey(current.sourceType, current.sourceKey), {
+        ...current, alertClaimToken: null, alertClaimUntil: null, alertNextAttemptAt: nextAttemptAt, alertError: error.slice(0, 200),
       });
     },
   };

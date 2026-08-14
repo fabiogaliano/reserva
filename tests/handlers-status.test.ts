@@ -468,12 +468,12 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     repo.sideEffectOperations.set(`${seeded.id}:calendar_create`, {
       bookingId: seeded.id, kind: 'calendar_create', status: 'failed', providerResultId: null,
       attemptCount: 1, attemptedAt: seeded.updatedAt, resolvedAt: seeded.updatedAt, error: 'Calendar unavailable',
-      createdAt: seeded.updatedAt, updatedAt: seeded.updatedAt,
+      createdAt: seeded.updatedAt, updatedAt: seeded.updatedAt, failureStartedAt: null, nextAttemptAt: null,
     });
     repo.sideEffectOperations.set(`${seeded.id}:email_confirmation`, {
       bookingId: seeded.id, kind: 'email_confirmation', status: 'succeeded', providerResultId: null,
       attemptCount: 1, attemptedAt: seeded.updatedAt, resolvedAt: seeded.updatedAt, error: null,
-      createdAt: seeded.updatedAt, updatedAt: seeded.updatedAt,
+      createdAt: seeded.updatedAt, updatedAt: seeded.updatedAt, failureStartedAt: null, nextAttemptAt: null,
     });
     const context = createBookkitContext({
       config,
