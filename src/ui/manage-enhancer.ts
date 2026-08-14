@@ -44,7 +44,7 @@ export const manageEnhancerJs = `(() => {
   calendar.className = 'bk-cal';
   calendar.setAttribute('min', ds.from || '');
   calendar.setAttribute('max', ds.to || '');
-  calendar.setAttribute('locale', ds.locale || 'en');
+  calendar.setAttribute('locale', ds.locale || 'pt-PT');
   const prev = chevron('M15 18l-6-6 6-6');
   prev.slot = 'previous';
   const next = chevron('M9 6l6 6-6 6');

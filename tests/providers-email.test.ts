@@ -40,7 +40,8 @@ describe('email providers', () => {
     const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
     const provider = brevoEmail({ apiKey: 'xkeysib-test', fetch: request });
 
-    await provider.send('booking.confirmed', booking({ locale: 'pt-BR', pickupType: 'custom', pickupAddress: 'Hotel Avenida' }), config);
+    const portugueseConfig: ClientConfig = { ...config, locales: { supported: ['en', 'pt-PT'], default: 'en' } };
+    await provider.send('booking.confirmed', booking({ locale: 'pt-PT', pickupType: 'custom', pickupAddress: 'Hotel Avenida' }), portugueseConfig);
 
     expect(request).toHaveBeenCalledTimes(2);
     expect(request).toHaveBeenNthCalledWith(1, BREVO_TRANSACTIONAL_EMAIL_URL, expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ 'api-key': 'xkeysib-test' }) }));

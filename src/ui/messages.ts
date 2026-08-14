@@ -1,9 +1,9 @@
-// Single catalog for every string bookkit renders to a customer or operator. English is the
-// shipped default; consumers translate by supplying `config.ui.messages[locale]` (a partial map
-// merged over these defaults), so page copy follows the client's locale system instead of being
-// hardcoded here.
+// Single key set for every string bookkit renders to a customer or operator. European Portuguese
+// is the product default, English is the fallback, and consumers can supply partial per-locale
+// overrides through `config.ui.messages`.
 
 import type { ClientConfig } from '../core/config';
+import portuguesePortugalCatalog from './locales/pt-PT.json';
 
 export const defaultMessages = {
   // Shared
@@ -119,8 +119,9 @@ export const defaultMessages = {
   'admin.workspace': 'Operations',
   'admin.pageHint': 'A live view of upcoming bookings, daily capacity, and anything that needs attention.',
   'admin.navigation': 'Admin navigation',
-  'admin.navOverview': 'Overview',
-  'admin.navBookings': 'Bookings',
+  'admin.onThisPage': 'On this page',
+  'admin.navOverview': 'Dashboard',
+  'admin.navBookings': 'Upcoming bookings',
   'admin.navDays': 'Availability',
   'admin.days': 'Availability by day',
   'admin.daysHint': 'Each day shows fleet units used/capacity. Select a day to adjust or close it.',
@@ -262,15 +263,38 @@ export const defaultMessages = {
 export type BookkitMessageKey = keyof typeof defaultMessages;
 export type BookkitMessages = Record<BookkitMessageKey, string>;
 
-// Falls back through region → base language → defaults, so 'pt-BR' picks up a client's 'pt'
-// catalog without requiring every regional variant to be spelled out.
+export const defaultLocale = 'pt-PT';
+
+const portuguesePortugalMessages: BookkitMessages = portuguesePortugalCatalog;
+const bundledCatalogs: Record<string, BookkitMessages> = {
+  'pt-pt': portuguesePortugalMessages,
+};
+
+function localeCandidates(locale: string): string[] {
+  const normalized = locale.replace('_', '-').toLowerCase();
+  const base = normalized.split('-')[0] ?? normalized;
+  return base && base !== normalized ? [base, normalized] : [normalized];
+}
+
+function catalogFor(catalogs: Record<string, Record<string, string>>, locale: string): Record<string, string> | undefined {
+  const exact = catalogs[locale];
+  if (exact) return exact;
+  return Object.entries(catalogs).find(([candidate]) => candidate.toLowerCase() === locale)?.[1];
+}
+
+// Regional catalogs layer over their base language, and deployment overrides layer over bundled
+// copy so a business can customize wording without maintaining a complete catalog.
 export function resolveMessages(config: ClientConfig | undefined, locale: string | undefined): BookkitMessages {
-  const catalogs = config?.ui?.messages;
   const merged: Record<string, string> = { ...defaultMessages };
-  if (catalogs && locale) {
-    const base = locale.split('-')[0];
-    for (const candidate of base && base !== locale ? [base, locale] : [locale]) {
-      const overrides = candidate ? catalogs[candidate] : undefined;
+  const candidates = localeCandidates(locale ?? defaultLocale);
+  for (const candidate of candidates) {
+    const bundled = bundledCatalogs[candidate];
+    if (bundled) Object.assign(merged, bundled);
+  }
+  const catalogs = config?.ui?.messages;
+  if (catalogs) {
+    for (const candidate of candidates) {
+      const overrides = catalogFor(catalogs, candidate);
       if (overrides) Object.assign(merged, overrides);
     }
   }

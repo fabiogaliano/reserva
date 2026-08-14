@@ -65,8 +65,8 @@ export default {
     maxHoldsPerIp: 4,
   },
   locales: {
-    supported: ['en', 'pt'],
-    default: 'en',
+    supported: ['pt-PT', 'en'],
+    default: 'pt-PT',
   },
   payments: {
     methods: ['card', 'mb_way'],

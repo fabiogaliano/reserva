@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 // @ts-expect-error -- resolved by vitest.component.config.ts's Astro Vite pipeline, not by tsc.
 import BookingWidget from '../../src/components/BookingWidget.astro';
 
-const baseProps = { tourSlug: 'oldTown', availabilityFrom: '2026-01-01', availabilityTo: '2026-01-02' };
+const baseProps = { tourSlug: 'oldTown', availabilityFrom: '2026-01-01', availabilityTo: '2026-01-02', locale: 'en' };
 const fixturesDir = resolve(import.meta.dirname, '__fixtures__');
 
 // dateLabelId is a fresh crypto.randomUUID() every render (Plan 014 item A), and AstroContainer's

@@ -82,6 +82,8 @@ describe('admin incidents (plan 020 design decisions 12-14)', () => {
     const html = await response.text();
     expect(html).toContain('Calendar booking not created');
     expect(html).toContain(seeded.reference);
+    expect(html).toContain('href="#bk-incidents" data-bookkit-section-link');
+    expect(html).toContain('<span class="bk-section-nav-count">1</span>');
     expect(html).not.toContain('abandoned');
   });
 

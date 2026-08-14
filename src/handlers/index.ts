@@ -1180,26 +1180,30 @@ interface AdminFilters {
 }
 
 const navIcons = {
-  overview: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
-  bookings: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>',
-  days: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></svg>',
+  dashboard: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
   settings: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
-  incidents: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/></svg>',
 };
 
-// The app-shell navigation shared by the admin and settings pages. Anchors deep-link into the
-// admin page's sections; everything stays plain links, no script. openIncidentCount is undefined
-// on the settings page (it doesn't load incidents) — the badge is simply omitted there.
-function adminSidebar(context: BookkitContext, messages: ReturnType<typeof resolveMessages>, active: 'admin' | 'settings', openIncidentCount?: number): string {
+// The dark shell contains only destinations that replace the page; in-page section links live
+// beside the dashboard content so their scrolling behavior is not mistaken for page navigation.
+function adminSidebar(context: BookkitContext, messages: ReturnType<typeof resolveMessages>, active: 'admin' | 'settings'): string {
   const adminPath = escapeHtml(context.routeConfig.paths.adminPage);
-  const link = (href: string, icon: string, label: string, isActive: boolean, badge?: number): string =>
-    `<a href="${href}"${isActive ? ' class="bk-active" aria-current="page"' : ''}>${icon} ${escapeHtml(label)}${badge ? ` <span class="bk-badge bk-badge--warn">${badge}</span>` : ''}</a>`;
-  const links = link(adminPath, navIcons.overview, messages['admin.navOverview'], active === 'admin')
-    + link(`${adminPath}#bk-bookings`, navIcons.bookings, messages['admin.navBookings'], false)
-    + link(`${adminPath}#bk-days`, navIcons.days, messages['admin.navDays'], false)
-    + (openIncidentCount ? link(`${adminPath}#bk-incidents`, navIcons.incidents, messages['admin.navIncidents'], false, openIncidentCount) : '')
+  const link = (href: string, icon: string, label: string, isActive: boolean): string =>
+    `<a href="${href}"${isActive ? ' class="bk-active" aria-current="page"' : ''}>${icon} ${escapeHtml(label)}</a>`;
+  const links = link(adminPath, navIcons.dashboard, messages['admin.navOverview'], active === 'admin')
     + link(`${adminPath}?view=settings`, navIcons.settings, messages['admin.settings'], active === 'settings');
   return `<p class="bk-sidebar-brand">${escapeHtml(context.config.business.name)}</p><div class="bk-sidebar-links">${links}</div>`;
+}
+
+function adminSectionNav(messages: ReturnType<typeof resolveMessages>, hasIncidents: boolean, openIncidentCount: number): string {
+  const link = (id: string, label: string, count?: number): string =>
+    `<a href="#${id}" data-bookkit-section-link>${escapeHtml(label)}${count ? ` <span class="bk-section-nav-count">${count}</span>` : ''}</a>`;
+  const links = (hasIncidents ? link('bk-incidents', messages['admin.navIncidents'], openIncidentCount) : '')
+    + link('bk-bookings', messages['admin.navBookings'])
+    + link('bk-days', messages['admin.navDays']);
+  return `<nav class="bk-section-nav" aria-label="${escapeHtml(messages['admin.onThisPage'])}" data-bookkit-section-nav>`
+    + `<p class="bk-section-nav-title">${escapeHtml(messages['admin.onThisPage'])}</p>`
+    + `<div class="bk-section-nav-links">${links}</div></nav>`;
 }
 
 // Plan 017 (design decision 4) / Plan 018 (design decision 8): the meeting-point label the
@@ -1651,18 +1655,19 @@ function adminPage(
   const metric = (label: string, value: number, tone = ''): string => `<div class="bk-stat${tone}"><dt>${escapeHtml(label)}</dt><dd>${value}</dd></div>`;
   const stats = `<dl class="bk-admin-stats">${metric(messages['admin.metricUpcoming'], bookings.length)}${metric(messages['admin.metricConfirmed'], confirmedCount)}${metric(messages['admin.metricHolds'], holdCount)}${metric(messages['admin.metricAttention'], openIncidentCount, openIncidentCount ? ' bk-stat--attention' : '')}</dl>`;
   const adminHeader = `<header class="bk-admin-header"><div><p class="bk-eyebrow">${escapeHtml(messages['admin.workspace'])}</p><h1>${escapeHtml(messages['admin.title'])}</h1><p class="bk-lead">${escapeHtml(messages['admin.pageHint'])}</p></div></header>`;
+  const sectionNav = adminSectionNav(messages, Boolean(incidentsHtml), openIncidentCount);
 
   return pageShell({
     lang: locale,
     title: `${messages['admin.title']} — ${context.config.business.name}`,
     cssHref: cssAssetHref(context.routeConfig.paths.assetsCss),
     scriptHref: jsAssetHref(context.routeConfig.paths.assetsJs),
-    sidebar: adminSidebar(context, messages, 'admin', openIncidentCount),
+    sidebar: adminSidebar(context, messages, 'admin'),
     sidebarLabel: messages['admin.navigation'],
     skipLabel: messages['common.skipContent'],
     theme: context.viewerTheme,
     themeToggle: themeToggle(messages, context.viewerTheme),
-    body: `${adminHeader}${stats}<div class="bk-admin-stack">${incidentsHtml}${bookingsSection}${daysSection}</div>`,
+    body: `${adminHeader}${stats}<div class="bk-admin-body">${sectionNav}<div class="bk-admin-stack">${incidentsHtml}${bookingsSection}${daysSection}</div></div>`,
   });
 }
 

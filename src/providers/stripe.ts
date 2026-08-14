@@ -1,7 +1,7 @@
 import Stripe from 'stripe';
 import type { Booking } from '../core/booking';
 import type { ClientConfig } from '../core/config';
-import { pickupOptionFor, resolveTour } from '../core/config';
+import { pickupOptionFor, resolveTour, stripeLocaleFor } from '../core/config';
 import type { PaymentProvider, SessionStatus, StripeEventParsed } from '../core/events';
 import { priceFor } from '../core/pricing';
 import { requestText, STRIPE_WEBHOOK_BODY_LIMIT_BYTES } from '../http';
@@ -301,7 +301,7 @@ export class StripeProvider implements PaymentProvider {
         product_data: { name, ...(description ? { description } : {}) },
       } }],
       expires_at: Math.floor(nowMs(this.now) / 1000) + expiresInMinutes * 60,
-      locale: booking.locale as Stripe.Checkout.SessionCreateParams.Locale,
+      locale: stripeLocaleFor(booking.locale) as Stripe.Checkout.SessionCreateParams.Locale,
       payment_method_types: stripePaymentMethodTypes(config.payments.methods),
       phone_number_collection: { enabled: true },
       metadata: { bookingId: booking.id },

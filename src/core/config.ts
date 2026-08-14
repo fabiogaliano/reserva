@@ -123,8 +123,8 @@ export interface ClientConfig {
     termsUrl: string;
   };
   ui?: {
-    // Per-locale overrides for bookkit's rendered copy, merged over the English defaults in
-    // src/ui/messages.ts. Keys are locale tags ('pt', 'fr', …); values are partial message maps.
+    // Per-locale overrides for Bookkit's rendered copy, merged over its bundled catalog and
+    // English fallback. Keys are locale tags ('pt-PT', 'fr', …); values are partial message maps.
     messages?: Record<string, Record<string, string>>;
   };
 }
@@ -135,6 +135,11 @@ export const stripeSupportedLocales = new Set([
   'lv', 'ms', 'mt', 'nb', 'nl', 'pl', 'pt', 'pt-BR', 'ro', 'ru', 'sk', 'sl',
   'sv', 'th', 'tr', 'uk', 'vi', 'zh', 'zh-HK', 'zh-TW',
 ]);
+
+// Stripe names European Portuguese `pt`, while the rest of Bookkit uses the precise BCP 47 tag.
+export function stripeLocaleFor(locale: string): string {
+  return locale.toLowerCase() === 'pt-pt' ? 'pt' : locale;
+}
 
 // BK-SEC-002: default for booking.tokenExpiryDays when a deployment doesn't set one — long
 // enough to cover post-tour reschedules/refund disputes/review-request follow-ups without ever
@@ -391,7 +396,7 @@ export function validateConfig(input: unknown): ClientConfig {
     add(['locales', 'default'], 'must be included in locales.supported');
   }
   for (const [index, locale] of config.locales.supported.entries()) {
-    if (!stripeSupportedLocales.has(locale)) {
+    if (!stripeSupportedLocales.has(stripeLocaleFor(locale))) {
       add(['locales', 'supported', index], `locale ${locale} is not supported by Stripe Checkout`);
     }
   }

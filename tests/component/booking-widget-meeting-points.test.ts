@@ -8,7 +8,8 @@ import { describe, expect, it } from 'vitest';
 // @ts-expect-error -- resolved by vitest.component.config.ts's Astro Vite pipeline, not by tsc.
 import BookingWidget from '../../src/components/BookingWidget.astro';
 
-const baseProps = { tourSlug: 'oldTown', availabilityFrom: '2026-01-01', availabilityTo: '2026-01-02' };
+const propsWithoutLocale = { tourSlug: 'oldTown', availabilityFrom: '2026-01-01', availabilityTo: '2026-01-02' };
+const baseProps = { ...propsWithoutLocale, locale: 'en' };
 
 async function render(props: Record<string, unknown>): Promise<string> {
   const container = await AstroContainer.create();
@@ -23,6 +24,12 @@ function stripInstanceId(html: string): string {
 }
 
 describe('BookingWidget.astro meetingPoints prop (Plan 017 design decision 5)', () => {
+  it('renders European Portuguese when no locale is supplied', async () => {
+    const html = await render(propsWithoutLocale);
+    expect(html).toContain('aria-label="Reservar este tour"');
+    expect(html).toContain('name="locale" value="pt-PT"');
+  });
+
   it('with no meetingPoints prop, renders no meeting-point markup at all', async () => {
     const html = await render(baseProps);
     expect(html).not.toContain('data-bookkit-meeting-points');

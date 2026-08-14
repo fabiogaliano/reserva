@@ -122,6 +122,22 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
     expect(repo.rows.get(futureExpiredHold.id)?.status).toBe('expired');
   });
 
+  it('separates page destinations from the dashboard’s in-page section menu', async () => {
+    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+
+    const response = await handleAdminGet(adminGetRequest(), context);
+    const body = await response.text();
+
+    expect(body).toContain('data-bookkit-section-nav');
+    expect(body).toContain('<p class="bk-section-nav-title">On this page</p>');
+    expect(body).toContain('href="#bk-bookings" data-bookkit-section-link');
+    expect(body).toContain('href="#bk-days" data-bookkit-section-link');
+    expect(body).not.toContain('/booking/admin#bk-bookings');
+    expect(body).not.toContain('/booking/admin#bk-days');
+    expect(body).toContain('href="/booking/admin" class="bk-active" aria-current="page"');
+    expect(body).toContain('href="/booking/admin?view=settings"');
+  });
+
   it('manage links carry each row\'s operator token (URL-encoded) and never leak a cancel_token', async () => {
     const first = booking({ id: 'b-admin-links-1', reference: 'LVT-2026-200', startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z', operatorToken: 'operator+token/one', cancelToken: 'cancel-token-one-secret' });
     const second = booking({ id: 'b-admin-links-2', reference: 'LVT-2026-201', startsAt: '2026-06-21T09:00:00.000Z', endsAt: '2026-06-21T10:00:00.000Z', operatorToken: 'operator-token-two', cancelToken: 'cancel-token-two-secret' });

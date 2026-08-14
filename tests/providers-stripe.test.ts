@@ -116,6 +116,18 @@ describe('StripeProvider', () => {
     }), { idempotencyKey: 'bookkit-checkout-booking-1' });
   });
 
+  it('maps the pt-PT application locale to Stripe’s European Portuguese locale', async () => {
+    const { client, sessions } = makeClient();
+    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+
+    await provider.createCheckout(booking({ locale: 'pt-PT' }), config);
+
+    expect(sessions.create).toHaveBeenCalledWith(
+      expect.objectContaining({ locale: 'pt' }),
+      expect.any(Object),
+    );
+  });
+
   // BK-CONFIG-001: expiresInMinutes = max(30, holdMinutes - 5), so holdMinutes at its validateConfig
   // upper bound (1440) must still leave expires_at strictly below Stripe's 24h-from-creation cap —
   // the 5-minute margin is the whole point of capping holdMinutes at 1440 rather than 1445.

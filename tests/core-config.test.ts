@@ -261,7 +261,8 @@ describe('core config and pricing validation', () => {
     expect(() => validateConfig({ ...config, booking: { ...config.booking, holdMinutes: 1440 } })).not.toThrow();
   });
 
-  it('rejects a locale outside Stripe Checkout support', () => {
+  it('accepts pt-PT through Stripe’s pt locale and rejects unsupported locales', () => {
+    expect(() => validateConfig({ ...config, locales: { supported: ['pt-PT'], default: 'pt-PT' } })).not.toThrow();
     expect(() => validateConfig({ ...config, locales: { supported: ['en', 'xx'], default: 'en' } })).toThrow(/not supported by Stripe/);
   });
 

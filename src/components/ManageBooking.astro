@@ -1,16 +1,17 @@
 ---
 import routeConfig from 'virtual:bookkit/config';
-import { defaultMessages, type BookkitMessages } from '../ui/messages';
+import { defaultLocale, resolveMessages, type BookkitMessages } from '../ui/messages';
 import '../ui/components.css';
 
 interface Props {
   token?: string;
   endpoint?: string;
+  locale?: string;
   messages?: Partial<BookkitMessages>;
 }
 
-const { token = '', endpoint = routeConfig.paths.managePage, messages: messageOverrides = {} } = Astro.props;
-const t: BookkitMessages = { ...defaultMessages, ...messageOverrides };
+const { token = '', endpoint = routeConfig.paths.managePage, locale = defaultLocale, messages: messageOverrides = {} } = Astro.props;
+const t: BookkitMessages = { ...resolveMessages(undefined, locale), ...messageOverrides };
 // A full UUID per render so two instances of this component on the same page never share an id —
 // see plan 014 item A.
 const titleId = `bookkit-manage-title-${crypto.randomUUID()}`;

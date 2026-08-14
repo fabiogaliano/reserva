@@ -54,8 +54,7 @@ const english: TemplateSet = {
   'booking.reminder': { customer: { subject: 'Reminder for your booking — {reference}', htmlContent: '<p>This is a reminder for your booking on <strong>{startsAtLocal}</strong>.</p><p><a href="{customerManageUrl}">View booking details</a></p>' }, owner: { subject: 'Booking reminder — {reference}', htmlContent: '<p>Reminder: booking <strong>{reference}</strong> starts at <strong>{startsAtLocal}</strong>.</p>' } },
   'booking.review_request': { customer: { subject: 'How was your tour? — {reference}', htmlContent: '<p>We hope you enjoyed your tour. We would love to hear your feedback.</p>' }, owner: { subject: 'Review request — {reference}', htmlContent: '<p>Booking <strong>{reference}</strong> is ready for a review request.</p>' } },
 };
-const portuguese: TemplateSet = {
-  ...english,
+const portuguesePortugal: TemplateSet = {
   'booking.confirmed': {
     customer: { subject: 'Reserva confirmada — {reference}', htmlContent: '<p>Olá {customerName},</p><p>A sua reserva <strong>{reference}</strong> está confirmada para <strong>{startsAtLocal}</strong>.</p><p>Recolha: <strong>{pickupDetails}</strong>.</p><p>{pickupMapLink}</p><p>Contacto: {contact}</p><p><a href="{customerManageUrl}">Gerir a sua reserva</a></p>' },
     owner: { subject: 'Nova reserva — {reference}', htmlContent: '<p>Foi confirmada uma nova reserva.</p><p><strong>{reference}</strong> · {customerName} · {people} pessoas · {startsAtLocal}</p><p><a href="{operatorManageUrl}">Abrir ações do operador</a></p>' },
@@ -64,8 +63,28 @@ const portuguese: TemplateSet = {
     customer: { subject: 'Reserva cancelada — {reference}', htmlContent: '<p>Olá {customerName},</p><p>A sua reserva <strong>{reference}</strong> foi cancelada.</p>' },
     owner: { subject: 'Cancelamento pelo cliente — {reference}', htmlContent: '<p>O cliente cancelou a reserva <strong>{reference}</strong>.</p><p><a href="{operatorManageUrl}">Abrir ações do operador</a></p>' },
   },
+  'booking.cancelled_by_operator': {
+    customer: { subject: 'Reserva cancelada pelo operador — {reference}', htmlContent: '<p>A sua reserva <strong>{reference}</strong> foi cancelada pelo operador.</p>' },
+    owner: { subject: 'Reserva cancelada — {reference}', htmlContent: '<p>A reserva <strong>{reference}</strong> foi cancelada pelo operador.</p>' },
+  },
+  'booking.rescheduled': {
+    customer: { subject: 'Reserva alterada — {reference}', htmlContent: '<p>A sua reserva <strong>{reference}</strong> está agora marcada para <strong>{startsAtLocal}</strong>.</p><p><a href="{customerManageUrl}">Gerir a sua reserva</a></p>' },
+    owner: { subject: 'Reserva alterada — {reference}', htmlContent: '<p>A reserva <strong>{reference}</strong> está agora marcada para <strong>{startsAtLocal}</strong>.</p>' },
+  },
+  'booking.no_show': {
+    customer: { subject: 'Atualização da reserva — {reference}', htmlContent: '<p>A reserva <strong>{reference}</strong> foi marcada como não comparecimento.</p>' },
+    owner: { subject: 'Não comparecimento — {reference}', htmlContent: '<p>A reserva <strong>{reference}</strong> foi marcada como não comparecimento.</p>' },
+  },
+  'booking.reminder': {
+    customer: { subject: 'Lembrete da sua reserva — {reference}', htmlContent: '<p>Este é um lembrete da sua reserva para <strong>{startsAtLocal}</strong>.</p><p><a href="{customerManageUrl}">Ver detalhes da reserva</a></p>' },
+    owner: { subject: 'Lembrete de reserva — {reference}', htmlContent: '<p>Lembrete: a reserva <strong>{reference}</strong> começa em <strong>{startsAtLocal}</strong>.</p>' },
+  },
+  'booking.review_request': {
+    customer: { subject: 'Como correu o seu tour? — {reference}', htmlContent: '<p>Esperamos que tenha gostado do tour. Gostaríamos muito de receber a sua opinião.</p>' },
+    owner: { subject: 'Pedido de avaliação — {reference}', htmlContent: '<p>A reserva <strong>{reference}</strong> está pronta para um pedido de avaliação.</p>' },
+  },
 };
-const templates: Record<string, TemplateSet> = { en: english, pt: portuguese, 'pt-BR': portuguese };
+const templates: Record<string, TemplateSet> = { en: english, pt: portuguesePortugal, 'pt-PT': portuguesePortugal };
 
 function candidates(locale: string, fallback: string): string[] {
   const values: Array<string | undefined> = [locale, locale.split('-')[0], fallback, fallback.split('-')[0], 'en'];

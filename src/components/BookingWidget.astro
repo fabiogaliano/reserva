@@ -1,7 +1,7 @@
 ---
 import routeConfig from 'virtual:bookkit/config';
 import { resolvedPriceTableFor } from '../core/pricing';
-import { defaultMessages, formatMessage, type BookkitMessages } from '../ui/messages';
+import { defaultLocale, formatMessage, resolveMessages, type BookkitMessages } from '../ui/messages';
 import '../ui/components.css';
 
 interface StartOption {
@@ -56,7 +56,7 @@ interface Props {
   // config.business.contact.email / .phone. Either, both, or neither may be supplied.
   contactEmail?: string;
   contactPhone?: string;
-  // Partial overrides merged over the shipped English catalog — feed the page's locale copy here.
+  // Partial overrides merged over the catalog selected by `locale`.
   messages?: Partial<BookkitMessages>;
   showTitle?: boolean;
 }
@@ -67,7 +67,7 @@ const {
   availabilityEndpoint = routeConfig.paths.availability,
   availabilityFrom,
   availabilityTo,
-  locale = 'en',
+  locale = defaultLocale,
   peopleOptions = [1, 2, 3, 4],
   pickupTypes = ['default', 'custom'],
   pickupOptions,
@@ -82,7 +82,7 @@ const {
   showTitle = true,
 } = Astro.props;
 
-const t: BookkitMessages = { ...defaultMessages, ...messageOverrides };
+const t: BookkitMessages = { ...resolveMessages(undefined, locale), ...messageOverrides };
 const usesAvailability = availabilityFrom !== undefined && availabilityTo !== undefined;
 const peopleLabel = (n: number): string => formatMessage(n === 1 ? t['widget.person'] : t['widget.peopleCount'], { n });
 const resolvedPrices = pricing ? resolvedPriceTableFor({ pricing }) : null;

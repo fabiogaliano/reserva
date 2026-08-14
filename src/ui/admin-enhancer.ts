@@ -1,10 +1,10 @@
-// Browser-side progressive enhancement for the admin availability calendar, served (after the
-// manage enhancer) from the assetsJs route. Without it, day cells are links that reload the page
-// with the form prefilled, months render stacked (far ones collapsed), and there is no in-page
-// multi-day selection at all — every bulk edit needs the "To date" field. This upgrades that
-// baseline to: a one-month pager with prev/next buttons, instant in-page day selection (click to
-// prefill, shift-click/-Enter range, ctrl/cmd-click/-Enter/-Space to toggle scattered days), and a
-// day panel listing the selected day's bookings from the JSON island.
+// Browser-side progressive enhancement for the admin section menu and availability calendar,
+// served (after the manage enhancer) from the assetsJs route. Without it, section links still use
+// native anchors and day cells are links that reload the page with the form prefilled, months
+// render stacked (far ones collapsed), and there is no in-page multi-day selection at all — every
+// bulk edit needs the "To date" field. Enhancement adds current-section tracking and
+// reduced-motion-aware scrolling, plus a one-month pager, instant in-page day selection, and a day
+// panel listing the selected day's bookings from the JSON island.
 //
 // Plan 014 item D: the "To date" field stays visible (not hidden) in enhanced mode — a contiguous
 // selection (pointer or keyboard) syncs it, and typing into either date field updates the enhanced
@@ -19,6 +19,49 @@
 // nothing leaks into the concatenated bundle.
 
 export const adminEnhancerJs = `(() => {
+  const sectionNav = document.querySelector('[data-bookkit-section-nav]');
+  if (sectionNav) {
+    const links = [...sectionNav.querySelectorAll('[data-bookkit-section-link]')];
+    const entries = links.map((link) => {
+      const href = link.getAttribute('href') || '';
+      return { link, section: href.startsWith('#') ? document.getElementById(href.slice(1)) : null };
+    }).filter((entry) => entry.section);
+    const setCurrent = (current) => {
+      for (const entry of entries) {
+        if (entry === current) entry.link.setAttribute('aria-current', 'location');
+        else entry.link.removeAttribute('aria-current');
+      }
+    };
+    let frame = 0;
+    const updateCurrent = () => {
+      frame = 0;
+      if (!entries.length) return;
+      const marker = Math.min(220, window.innerHeight * 0.3);
+      let current = entries[0];
+      for (const entry of entries) {
+        if (entry.section.getBoundingClientRect().top <= marker) current = entry;
+      }
+      if (window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2) current = entries[entries.length - 1];
+      setCurrent(current);
+    };
+    const queueUpdate = () => {
+      if (!frame) frame = window.requestAnimationFrame(updateCurrent);
+    };
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    for (const entry of entries) {
+      entry.link.addEventListener('click', (event) => {
+        event.preventDefault();
+        history.pushState(null, '', entry.link.hash);
+        setCurrent(entry);
+        entry.section.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+      });
+    }
+    window.addEventListener('scroll', queueUpdate, { passive: true });
+    window.addEventListener('resize', queueUpdate);
+    window.addEventListener('hashchange', queueUpdate);
+    updateCurrent();
+  }
+
   const form = document.getElementById('bk-override');
   const monthsBox = document.querySelector('.bk-months');
   if (!form || !monthsBox) return;

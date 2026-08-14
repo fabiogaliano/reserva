@@ -4,7 +4,7 @@ import { requireEnabledRoutePath } from '../routes-manifest';
 import { createRouteContext } from '../routes/route-context';
 import { accessAllowed } from '../admin-access';
 import { mintAdminCsrfToken } from '../admin-csrf';
-import { defaultMessages, type BookkitMessages } from '../ui/messages';
+import { resolveMessages, type BookkitMessages } from '../ui/messages';
 import '../ui/components.css';
 
 // Embeddable fragment for setting day-capacity overrides from a consumer's own admin page. The
@@ -19,14 +19,17 @@ import '../ui/components.css';
 
 interface Props {
   endpoint?: string;
+  locale?: string;
   messages?: Partial<BookkitMessages>;
 }
 
-const { endpoint, messages: messageOverrides = {} } = Astro.props;
+const { endpoint, locale, messages: messageOverrides = {} } = Astro.props;
 const action = endpoint === undefined ? requireEnabledRoutePath(routeConfig, 'adminPage') : endpoint;
-const t: BookkitMessages = { ...defaultMessages, ...messageOverrides };
-
 const context = await createRouteContext({ request: Astro.request, locals: Astro.locals });
+const t: BookkitMessages = {
+  ...resolveMessages(context.config, locale ?? context.config.locales.default),
+  ...messageOverrides,
+};
 const access = await accessAllowed(Astro.request, context);
 // undefined when BOOKKIT_CSRF_SECRET isn't configured (src/admin-csrf.ts mintAdminCsrfToken) — the
 // hidden field below is then omitted entirely and the POST verifier is a deliberate no-op, exactly

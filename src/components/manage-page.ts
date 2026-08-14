@@ -1,7 +1,7 @@
 import { escapeHtml } from '../http';
 import { formatDateTime, formatPrice } from '../ui/format';
 import { factList, pageShell, statusBadge, themeToggle } from '../ui/layout';
-import { defaultMessages, formatMessage, type BookkitMessages } from '../ui/messages';
+import { defaultLocale, formatMessage, resolveMessages, type BookkitMessages } from '../ui/messages';
 import type { ThemePreference } from '../ui/theme';
 
 export interface ManagePageOptions {
@@ -53,8 +53,8 @@ interface ManageBookingPayload {
 // Defaults keep the original two-argument call shape working (tests and any consumer calling this
 // directly); the manage route passes the resolved options so copy, locale, and styling apply.
 export function renderManagePage(payload: Record<string, unknown>, managePagePath: string, options: ManagePageOptions = {}): string {
-  const messages = options.messages ?? (defaultMessages as BookkitMessages);
-  const locale = options.locale ?? 'en';
+  const locale = options.locale ?? defaultLocale;
+  const messages = options.messages ?? resolveMessages(undefined, locale);
   const booking: ManageBookingPayload = payload.booking && typeof payload.booking === 'object' ? payload.booking : {};
   const role = payload.role === 'operator' ? 'operator' : 'customer';
   const canCancel = payload.canCancel === true;
@@ -213,7 +213,8 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
 // Rendered when the token is missing/invalid: a styled explanation plus a token entry form, so a
 // customer with a mangled link can still recover without seeing raw JSON.
 export function renderManageErrorPage(managePagePath: string, options: ManagePageOptions = {}): string {
-  const messages = options.messages ?? (defaultMessages as BookkitMessages);
+  const locale = options.locale ?? defaultLocale;
+  const messages = options.messages ?? resolveMessages(undefined, locale);
   const brand = options.businessName ? `<p class="bk-brand">${escapeHtml(options.businessName)}</p>` : '';
   const header = brand
     + `<h1>${escapeHtml(messages['manage.invalidTitle'])}</h1>`
@@ -223,7 +224,7 @@ export function renderManageErrorPage(managePagePath: string, options: ManagePag
     + `<label class="bk-field"><span>${escapeHtml(messages['manage.entryToken'])}</span><input class="bk-input" name="token" autocomplete="off" required></label>`
     + `<button type="submit" class="bk-btn">${escapeHtml(messages['manage.entryOpen'])}</button></form></section>`;
   return pageShell({
-    lang: options.locale ?? 'en',
+    lang: locale,
     title: `${messages['manage.invalidTitle']}${options.businessName ? ` — ${options.businessName}` : ''}`,
     cssHref: options.cssHref ?? '',
     header,

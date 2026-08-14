@@ -51,9 +51,8 @@ describe('BookingWidget.astro (BK-UI-001: no-JS degradation)', () => {
     expect(widgetSource).toMatch(/disabled=\{usesAvailability\}[^<]*>\{usesAvailability \? t\['widget\.loadingSlots'\] : t\['widget\.submit'\]\}/);
   });
 
-  it('ships the new widget.noscript i18n key in the shipped English catalog', () => {
-    // messages.ts ships a single catalog (English defaults); consumers layer their own locales at
-    // runtime via config.ui.messages, so "every shipped locale" here is this one file's catalog.
+  it('ships the new widget.noscript i18n key in the English fallback catalog', () => {
+    // Catalog parity for bundled translations is covered in ui-messages.test.ts.
     // `'widget.noscript' in defaultMessages` (not toHaveProperty, which treats the dot as a nested
     // path) checks the literal flat key this catalog actually uses.
     expect('widget.noscript' in defaultMessages).toBe(true);

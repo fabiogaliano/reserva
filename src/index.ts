@@ -14,8 +14,8 @@ export type {
 } from './runtime-context';
 export type { ClientConfig } from './core/config';
 // The UI copy seam: consumers type their `config.ui.messages` catalogs (and widget `messages`
-// props) against these, and can read the shipped English defaults as the reference key set.
-export { defaultMessages, formatMessage, resolveMessages } from './ui/messages';
+// props) against these, and can read the English fallback as the reference key set.
+export { defaultLocale, defaultMessages, formatMessage, resolveMessages } from './ui/messages';
 export type { BookkitMessageKey, BookkitMessages } from './ui/messages';
 // Exposed so `virtual:bookkit/config`'s injected type declaration (integration.ts's
 // virtualConfigTypes) can reference the exact resolved-route-config shape via `bookkit`'s existing

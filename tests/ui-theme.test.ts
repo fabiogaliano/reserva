@@ -2,6 +2,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createBookkitContext } from '../src/context';
 import { handleAdminGet } from '../src/handlers';
+import { adminEnhancerJs } from '../src/ui/admin-enhancer';
 import { pageShell, themeToggle } from '../src/ui/layout';
 import { defaultMessages, type BookkitMessages } from '../src/ui/messages';
 import { readThemePreference, themeCss, themeCookieName } from '../src/ui/theme';
@@ -50,6 +51,20 @@ describe('themeCss (OS default + forced overrides)', () => {
   it('ships the toggle styling, including the [hidden] guard for the pre-enhancement button', () => {
     expect(themeCss).toContain('.bk-theme-toggle {');
     expect(themeCss).toContain('.bk-theme-toggle[hidden] { display: none; }');
+  });
+
+  it('places the dashboard section menu in a sticky right rail on wide screens', () => {
+    expect(themeCss).toContain('.bk-admin-body { grid-template-columns: minmax(0, 1fr) 11rem;');
+    expect(themeCss).toContain('.bk-section-nav {\n    position: sticky;');
+    expect(themeCss).toContain('.bk-section-nav a[aria-current="location"]');
+  });
+});
+
+describe('admin section navigation enhancement', () => {
+  it('tracks the visible section and respects reduced-motion preferences when scrolling', () => {
+    expect(adminEnhancerJs).toContain("setAttribute('aria-current', 'location')");
+    expect(adminEnhancerJs).toContain("matchMedia('(prefers-reduced-motion: reduce)')");
+    expect(adminEnhancerJs).toContain("scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth'");
   });
 });
 
