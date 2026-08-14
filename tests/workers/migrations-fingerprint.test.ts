@@ -52,7 +52,7 @@ const db = bindings.BOOKKIT_DB;
 // Every table any of the 12 real migrations creates, so each test can tear the schema back to
 // nothing before rebuilding exactly the state its scenario needs -- self-contained regardless of
 // whether the pool isolates storage per test.
-const BOOKKIT_TABLES = ['side_effect_operations', 'refund_operations', 'settings', 'capacity_defaults', 'day_overrides', 'bookings'];
+const BOOKKIT_TABLES = ['operational_incidents', 'side_effect_operations', 'refund_operations', 'settings', 'capacity_defaults', 'day_overrides', 'bookings'];
 
 async function resetSchema() {
   for (const table of BOOKKIT_TABLES) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
@@ -143,6 +143,21 @@ describe('checkBookkitMigrationsApplied schema fingerprint against real D1', () 
     const before0015 = bindings.TEST_MIGRATIONS.filter((migration) => migration.name !== '0015_pickup_options.sql');
     await applyD1Migrations(db, before0015, 'd1_migrations');
     await db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').bind('0015_pickup_options.sql').run();
+
+    await expect(checkBookkitMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
+    await expect(checkBookkitMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
+  });
+
+  // Plan 020 (design decision 7): a consumer migration reusing the '0016_...sql' filename without
+  // ever running bookkit's refund_operations rebuild / operational_incidents CREATE would satisfy
+  // the ledger while the widened status CHECK, execution-lease columns, and the incident table are
+  // all still absent — refundOperationsSchemaPresent/operationalIncidentsSchemaPresent must catch
+  // this the same way every other rebuild-collision scenario above is caught.
+  it('fails distinctly when a real schema stopped before 0016 has a colliding "0016" ledger row', async () => {
+    await resetSchema();
+    const before0016 = bindings.TEST_MIGRATIONS.filter((migration) => migration.name !== '0016_operational_reconciliation.sql');
+    await applyD1Migrations(db, before0016, 'd1_migrations');
+    await db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').bind('0016_operational_reconciliation.sql').run();
 
     await expect(checkBookkitMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
     await expect(checkBookkitMigrationsApplied(db)).rejects.not.toThrow(/is missing/);

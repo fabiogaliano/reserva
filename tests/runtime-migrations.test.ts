@@ -32,6 +32,13 @@ const FINGERPRINT_PAYMENT_INDEX_SQL = 'CREATE UNIQUE INDEX idx_bookings_payment_
 // Plan 016: 'abandoned' is 0013's addition to the `status` CHECK, mirroring 'calendar_delete' for
 // 0012 above — both need to be present for a "fully migrated" fake fixture (fingerprintOk: true).
 const FINGERPRINT_SIDE_EFFECT_SQL = "CREATE TABLE side_effect_operations (kind TEXT CHECK (kind IN ('calendar_create', 'calendar_delete', 'email_confirmation', 'oversell')), status TEXT CHECK (status IN ('pending','in_flight','succeeded','failed','abandoned')))";
+// Plan 020 (design decision 5): failure_started_at/next_attempt_at are 0016's additive columns on
+// side_effect_operations.
+const FINGERPRINT_SIDE_EFFECT_COLUMNS = ['failure_started_at', 'next_attempt_at'];
+// Plan 020 (design decision 7): 0016's byte-preserving refund_operations rebuild widens `status`
+// and appends the execution-lease/backoff columns.
+const FINGERPRINT_REFUND_SQL = "CREATE TABLE refund_operations (status TEXT CHECK (status IN ('requested','in_flight','succeeded','failed','abandoned')))";
+const FINGERPRINT_REFUND_COLUMNS = ['execution_claim_token', 'execution_claim_until', 'attempt_count', 'attempted_at', 'failure_started_at', 'next_attempt_at'];
 
 // A fake standing in for the D1 surface the check uses: `db.prepare(sql).all()` returning
 // `{ results }`, matching the real D1Database shape closely enough for this logic. It distinguishes
@@ -52,6 +59,12 @@ function fakeD1(
         if (query.startsWith('PRAGMA table_info(bookings)')) {
           return { results: (fingerprintOk ? FINGERPRINT_BOOKINGS_COLUMNS.map((name) => ({ name })) : []) as T[] };
         }
+        if (query.startsWith('PRAGMA table_info(side_effect_operations)')) {
+          return { results: (fingerprintOk ? FINGERPRINT_SIDE_EFFECT_COLUMNS.map((name) => ({ name })) : []) as T[] };
+        }
+        if (query.startsWith('PRAGMA table_info(refund_operations)')) {
+          return { results: (fingerprintOk ? FINGERPRINT_REFUND_COLUMNS.map((name) => ({ name })) : []) as T[] };
+        }
         if (query.includes("name IN ('bookings', 'idx_bookings_payment_intent')")) {
           return {
             results: (fingerprintOk ? [
@@ -60,11 +73,30 @@ function fakeD1(
             ] : []) as T[],
           };
         }
-        if (query.includes('side_effect_operations')) {
+        if (query.includes('idx_side_effect_operations_reconciliation')) {
           return {
             results: (fingerprintOk ? [
               { type: 'table', name: 'side_effect_operations', sql: FINGERPRINT_SIDE_EFFECT_SQL },
               { type: 'index', name: 'idx_side_effect_operations_pending', sql: null },
+              { type: 'index', name: 'idx_side_effect_operations_reconciliation', sql: null },
+            ] : []) as T[],
+          };
+        }
+        if (query.includes('idx_refund_operations_reconciliation')) {
+          return {
+            results: (fingerprintOk ? [
+              { type: 'table', name: 'refund_operations', sql: FINGERPRINT_REFUND_SQL },
+              { type: 'index', name: 'idx_refund_operations_status', sql: null },
+              { type: 'index', name: 'idx_refund_operations_reconciliation', sql: null },
+            ] : []) as T[],
+          };
+        }
+        if (query.includes('operational_incidents')) {
+          return {
+            results: (fingerprintOk ? [
+              { type: 'table', name: 'operational_incidents' },
+              { type: 'index', name: 'idx_operational_incidents_open' },
+              { type: 'index', name: 'idx_operational_incidents_alert' },
             ] : []) as T[],
           };
         }
@@ -99,7 +131,11 @@ describe('checkBookkitMigrationsApplied', () => {
       'SELECT name FROM bookkit_migrations',
       'PRAGMA table_info(bookings)',
       "SELECT type, name, sql FROM sqlite_master WHERE name IN ('bookings', 'idx_bookings_payment_intent')",
-      "SELECT type, name, sql FROM sqlite_master WHERE name IN ('side_effect_operations', 'idx_side_effect_operations_pending')",
+      "SELECT type, name, sql FROM sqlite_master WHERE name IN ('side_effect_operations', 'idx_side_effect_operations_pending', 'idx_side_effect_operations_reconciliation')",
+      'PRAGMA table_info(side_effect_operations)',
+      "SELECT type, name, sql FROM sqlite_master WHERE name IN ('refund_operations', 'idx_refund_operations_status', 'idx_refund_operations_reconciliation')",
+      'PRAGMA table_info(refund_operations)',
+      "SELECT type, name FROM sqlite_master WHERE name IN ('operational_incidents', 'idx_operational_incidents_open', 'idx_operational_incidents_alert')",
     ]);
   });
 
@@ -164,6 +200,12 @@ describe('migration check memoization', () => {
           if (query.startsWith('PRAGMA table_info(bookings)')) {
             return { results: FINGERPRINT_BOOKINGS_COLUMNS.map((name) => ({ name })) };
           }
+          if (query.startsWith('PRAGMA table_info(side_effect_operations)')) {
+            return { results: FINGERPRINT_SIDE_EFFECT_COLUMNS.map((name) => ({ name })) };
+          }
+          if (query.startsWith('PRAGMA table_info(refund_operations)')) {
+            return { results: FINGERPRINT_REFUND_COLUMNS.map((name) => ({ name })) };
+          }
           if (query.includes("name IN ('bookings', 'idx_bookings_payment_intent')")) {
             return {
               results: [
@@ -172,11 +214,30 @@ describe('migration check memoization', () => {
               ],
             };
           }
-          if (query.includes('side_effect_operations')) {
+          if (query.includes('idx_side_effect_operations_reconciliation')) {
             return {
               results: [
                 { type: 'table', name: 'side_effect_operations', sql: "CHECK (kind IN ('calendar_create', 'calendar_delete', 'email_confirmation', 'oversell')), status TEXT CHECK (status IN ('pending','in_flight','succeeded','failed','abandoned'))" },
                 { type: 'index', name: 'idx_side_effect_operations_pending', sql: null },
+                { type: 'index', name: 'idx_side_effect_operations_reconciliation', sql: null },
+              ],
+            };
+          }
+          if (query.includes('idx_refund_operations_reconciliation')) {
+            return {
+              results: [
+                { type: 'table', name: 'refund_operations', sql: FINGERPRINT_REFUND_SQL },
+                { type: 'index', name: 'idx_refund_operations_status', sql: null },
+                { type: 'index', name: 'idx_refund_operations_reconciliation', sql: null },
+              ],
+            };
+          }
+          if (query.includes('operational_incidents')) {
+            return {
+              results: [
+                { type: 'table', name: 'operational_incidents' },
+                { type: 'index', name: 'idx_operational_incidents_open' },
+                { type: 'index', name: 'idx_operational_incidents_alert' },
               ],
             };
           }

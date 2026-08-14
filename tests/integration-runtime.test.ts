@@ -44,11 +44,39 @@ describe('Cloudflare runtime helpers', () => {
               ],
             };
           }
-          if (query.includes('side_effect_operations')) {
+          if (query.startsWith('PRAGMA table_info(side_effect_operations)')) {
+            return { results: ['failure_started_at', 'next_attempt_at'].map((name) => ({ name })) };
+          }
+          if (query.startsWith('PRAGMA table_info(refund_operations)')) {
+            return {
+              results: ['execution_claim_token', 'execution_claim_until', 'attempt_count', 'attempted_at', 'failure_started_at', 'next_attempt_at']
+                .map((name) => ({ name })),
+            };
+          }
+          if (query.includes('idx_side_effect_operations_reconciliation')) {
             return {
               results: [
                 { type: 'table', name: 'side_effect_operations', sql: "CHECK (kind IN ('calendar_create', 'calendar_delete', 'email_confirmation', 'oversell')), status TEXT CHECK (status IN ('pending','in_flight','succeeded','failed','abandoned'))" },
                 { type: 'index', name: 'idx_side_effect_operations_pending', sql: null },
+                { type: 'index', name: 'idx_side_effect_operations_reconciliation', sql: null },
+              ],
+            };
+          }
+          if (query.includes('idx_refund_operations_reconciliation')) {
+            return {
+              results: [
+                { type: 'table', name: 'refund_operations', sql: "CHECK (status IN ('requested','in_flight','succeeded','failed','abandoned'))" },
+                { type: 'index', name: 'idx_refund_operations_status', sql: null },
+                { type: 'index', name: 'idx_refund_operations_reconciliation', sql: null },
+              ],
+            };
+          }
+          if (query.includes('operational_incidents')) {
+            return {
+              results: [
+                { type: 'table', name: 'operational_incidents' },
+                { type: 'index', name: 'idx_operational_incidents_open' },
+                { type: 'index', name: 'idx_operational_incidents_alert' },
               ],
             };
           }

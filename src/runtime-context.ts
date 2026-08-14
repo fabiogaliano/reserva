@@ -211,20 +211,61 @@ async function bookingsSchemaPresent(db: MigrationsQueryable): Promise<boolean> 
 }
 
 async function sideEffectOperationsSchemaPresent(db: MigrationsQueryable): Promise<boolean> {
-  const result = await db
-    .prepare(`SELECT type, name, sql FROM sqlite_master WHERE name IN ('side_effect_operations', 'idx_side_effect_operations_pending')`)
-    .all<{ type: string; name: string; sql: string | null }>();
+  const [result, columnsResult] = await Promise.all([
+    db.prepare(`SELECT type, name, sql FROM sqlite_master WHERE name IN ('side_effect_operations', 'idx_side_effect_operations_pending', 'idx_side_effect_operations_reconciliation')`)
+      .all<{ type: string; name: string; sql: string | null }>(),
+    db.prepare('PRAGMA table_info(side_effect_operations)').all<{ name: string }>(),
+  ]);
   const table = result.results.find((row) => row.type === 'table' && row.name === 'side_effect_operations');
   const index = result.results.find((row) => row.type === 'index' && row.name === 'idx_side_effect_operations_pending');
-  return Boolean(index) && Boolean(table?.sql?.includes('calendar_delete')) && Boolean(table?.sql?.includes('abandoned'));
+  // Plan 020 (design decision 5): the reconciliation index and the two nullable backoff columns it
+  // supports are additive-only, but a consumer migration colliding with '0016_...sql' without ever
+  // running bookkit's ALTER TABLE would still satisfy the ledger while leaving both absent — same
+  // collision class REQUIRED_BOOKINGS_COLUMNS already guards for `bookings`.
+  const reconciliationIndex = result.results.find((row) => row.type === 'index' && row.name === 'idx_side_effect_operations_reconciliation');
+  const columns = new Set(columnsResult.results.map((row) => row.name));
+  return Boolean(index) && Boolean(reconciliationIndex) && Boolean(table?.sql?.includes('calendar_delete')) && Boolean(table?.sql?.includes('abandoned'))
+    && columns.has('failure_started_at') && columns.has('next_attempt_at');
+}
+
+// Plan 020 (design decision 7): refund_operations never had a fingerprint check before this plan
+// (only the filename ledger guarded it) — migration 0016 is the first rebuild of this table, so it
+// needs the same "does the schema actually match, not just the ledger" guard every other rebuilt
+// table already has.
+async function refundOperationsSchemaPresent(db: MigrationsQueryable): Promise<boolean> {
+  const [result, columnsResult] = await Promise.all([
+    db.prepare(`SELECT type, name, sql FROM sqlite_master WHERE name IN ('refund_operations', 'idx_refund_operations_status', 'idx_refund_operations_reconciliation')`)
+      .all<{ type: string; name: string; sql: string | null }>(),
+    db.prepare('PRAGMA table_info(refund_operations)').all<{ name: string }>(),
+  ]);
+  const table = result.results.find((row) => row.type === 'table' && row.name === 'refund_operations');
+  const statusIndex = result.results.find((row) => row.type === 'index' && row.name === 'idx_refund_operations_status');
+  const reconciliationIndex = result.results.find((row) => row.type === 'index' && row.name === 'idx_refund_operations_reconciliation');
+  const columns = new Set(columnsResult.results.map((row) => row.name));
+  const tableSql = table?.sql?.toLowerCase().replace(/\s+/g, '') ?? '';
+  return Boolean(statusIndex) && Boolean(reconciliationIndex)
+    && tableSql.includes("statusin('requested','in_flight','succeeded','failed','abandoned')")
+    && columns.has('execution_claim_token') && columns.has('execution_claim_until')
+    && columns.has('attempt_count') && columns.has('attempted_at')
+    && columns.has('failure_started_at') && columns.has('next_attempt_at');
+}
+
+async function operationalIncidentsSchemaPresent(db: MigrationsQueryable): Promise<boolean> {
+  const result = await db
+    .prepare(`SELECT type, name FROM sqlite_master WHERE name IN ('operational_incidents', 'idx_operational_incidents_open', 'idx_operational_incidents_alert')`)
+    .all<{ type: string; name: string }>();
+  return ['operational_incidents', 'idx_operational_incidents_open', 'idx_operational_incidents_alert']
+    .every((name) => result.results.some((row) => row.name === name));
 }
 
 async function bookkitSchemaFingerprintPresent(db: MigrationsQueryable): Promise<boolean> {
-  const [bookingsOk, sideEffectOk] = await Promise.all([
+  const [bookingsOk, sideEffectOk, refundOk, incidentsOk] = await Promise.all([
     bookingsSchemaPresent(db),
     sideEffectOperationsSchemaPresent(db),
+    refundOperationsSchemaPresent(db),
+    operationalIncidentsSchemaPresent(db),
   ]);
-  return bookingsOk && sideEffectOk;
+  return bookingsOk && sideEffectOk && refundOk && incidentsOk;
 }
 
 function migrationCollisionErrorMessage(): string {
