@@ -659,6 +659,13 @@ function bookingSummary(context: BookkitContext, booking: Booking): Record<strin
 
 function confirmationSummary(context: BookkitContext, booking: Booking): Record<string, unknown> {
   const tour = resolveTour(context.config, booking.tourSlug);
+  // Plan 019 (design decision 2): gate the meeting point on the selected option's
+  // usesMeetingPoint, the same read-model filter bookingSummary already applies (plan 018
+  // decision 8) — otherwise custom_both (requiresAddress, no meeting point) would still tell the
+  // customer to meet at a dock their option never uses. A stored id no longer declared in config
+  // has no option to check, so it preserves the pre-018 behavior and includes the meeting point.
+  const option = pickupOptionFor(tour, booking.pickupType);
+  const includeMeetingPoint = option ? option.usesMeetingPoint : true;
   return {
     reference: booking.reference,
     tourSlug: booking.tourSlug,
@@ -666,7 +673,7 @@ function confirmationSummary(context: BookkitContext, booking: Booking): Record<
     end: utcToLocalIso(booking.endsAt, context.config.business.timezone),
     people: booking.people,
     priceCents: booking.priceCents,
-    meetingPoint: meetingPointForBooking(tour, booking.meetingPointId, booking.meetingPointLabel),
+    ...(includeMeetingPoint ? { meetingPoint: meetingPointForBooking(tour, booking.meetingPointId, booking.meetingPointLabel) } : {}),
     locale: booking.locale,
   };
 }

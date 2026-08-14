@@ -119,6 +119,77 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     expect(removedPayload.booking.meetingPoint).toEqual({ label: 'The Old Dock', mapsUrl: null });
   });
 
+  describe('confirmation summary meeting-point filtering (plan 019 design decision 2)', () => {
+    const points = [
+      { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
+      { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
+    ];
+    const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = tour;
+    const mazeConfig = {
+      ...config,
+      tours: {
+        ...config.tours,
+        vintage: {
+          ...vintageWithoutShorthand,
+          meetingPoints: points,
+          pickupOptions: [
+            { id: 'default', requiresAddress: false, usesMeetingPoint: true },
+            { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
+            { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
+          ],
+          pricing: [
+            { maxPeople: 8, pickup: 'default', priceCents: 18000 },
+            { maxPeople: 8, pickup: 'custom_pickup', priceCents: 20000 },
+            { maxPeople: 8, pickup: 'custom_dropoff', priceCents: 21000 },
+          ],
+        },
+      },
+    };
+    const clock = () => new Date('2026-06-14T08:00:00.000Z');
+
+    function mazeContext(seed: ReturnType<typeof booking>[]) {
+      return createBookkitContext({ config: mazeConfig, db: {} as D1Database, repo: fakeRepository(seed), clock, providers: providers() });
+    }
+
+    it('omits meetingPoint for a declared usesMeetingPoint: false option (custom_pickup)', async () => {
+      const seeded = booking({
+        id: 'b-status-pickup-false', status: 'confirmed', stripeSessionId: 'cs_status_pickup_false',
+        calendarSynced: true, emailSynced: true, createdAt: '2026-06-14T07:00:00.000Z',
+        pickupType: 'custom_pickup', pickupAddress: 'Hotel Mundial, Lisbon',
+        meetingPointId: 'square', meetingPointLabel: 'The Square',
+      });
+      const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_pickup_false'), mazeContext([seeded]));
+      const payload = await response.json() as { booking: Record<string, unknown> };
+      expect(payload.booking).not.toHaveProperty('meetingPoint');
+      expect(payload.booking).not.toHaveProperty('pickupAddress');
+      expect(Object.keys(payload.booking).sort()).toEqual(['end', 'locale', 'people', 'priceCents', 'reference', 'start', 'tourSlug']);
+    });
+
+    it('includes the chosen point for a declared usesMeetingPoint: true option (custom_dropoff)', async () => {
+      const seeded = booking({
+        id: 'b-status-pickup-true', status: 'confirmed', stripeSessionId: 'cs_status_pickup_true',
+        calendarSynced: true, emailSynced: true, createdAt: '2026-06-14T07:00:00.000Z',
+        pickupType: 'custom_dropoff', pickupAddress: 'Hotel Mundial, Lisbon',
+        meetingPointId: 'station', meetingPointLabel: 'The Station',
+      });
+      const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_pickup_true'), mazeContext([seeded]));
+      const payload = await response.json() as { booking: { meetingPoint: unknown } };
+      expect(payload.booking.meetingPoint).toEqual({ label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' });
+    });
+
+    it('includes the meeting point for a stored id no longer declared (pre-018 fallback)', async () => {
+      const seeded = booking({
+        id: 'b-status-pickup-undeclared', status: 'confirmed', stripeSessionId: 'cs_status_pickup_undeclared',
+        calendarSynced: true, emailSynced: true, createdAt: '2026-06-14T07:00:00.000Z',
+        pickupType: 'no_longer_declared', pickupAddress: null,
+        meetingPointId: 'square', meetingPointLabel: 'The Square',
+      });
+      const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_pickup_undeclared'), mazeContext([seeded]));
+      const payload = await response.json() as { booking: { meetingPoint: unknown } };
+      expect(payload.booking.meetingPoint).toEqual({ label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' });
+    });
+  });
+
   it('returns 200 with the current state (not 503) when a concurrent confirmation lease is held, without running duplicate side effects', async () => {
     const seeded = booking({
       id: 'b-status-leased',

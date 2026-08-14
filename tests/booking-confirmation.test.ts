@@ -36,6 +36,42 @@ describe('booking confirmation page', () => {
     vi.doUnmock('virtual:bookkit/config');
   });
 
+  it('omits the meeting-point fact and calendar location when the payload has no meetingPoint (plan 019 decision 2)', async () => {
+    vi.doMock('virtual:bookkit/runtime', () => ({ default: {} }));
+    vi.doMock('virtual:bookkit/config', () => ({ default: resolveRouteConfig() }));
+    const { confirmationPage } = await import('../src/routes/booking-confirmation');
+
+    const html = confirmationPage(
+      { config, routeConfig: resolveRouteConfig() },
+      {
+        status: 'confirmed',
+        booking: {
+          reference: 'LVT-2026-002',
+          tourSlug: 'vintage',
+          start: '2026-06-15T09:00:00.000+01:00',
+          end: '2026-06-15T10:00:00.000+01:00',
+          people: 2,
+          priceCents: 21000,
+          // No meetingPoint: confirmationSummary omits it for a custom_both-shaped option
+          // (requiresAddress, usesMeetingPoint: false).
+          locale: 'en',
+        },
+      },
+      'https://example.test/booking-confirmation?session_id=cs_confirmed_both',
+      null,
+    );
+
+    expect(html).toContain('LVT-2026-002');
+    expect(html).toContain('€210.00');
+    expect(html).not.toContain('Praça do Comércio');
+    expect(html).not.toContain('Meeting point');
+    const decodedHtml = html.replace(/&amp;/g, '&');
+    expect(decodedHtml).not.toContain(encodeURIComponent('Praça do Comércio'));
+
+    vi.doUnmock('virtual:bookkit/runtime');
+    vi.doUnmock('virtual:bookkit/config');
+  });
+
   it('renders a status-only confirmed page without a blank ticket', async () => {
     vi.doMock('virtual:bookkit/runtime', () => ({ default: {} }));
     vi.doMock('virtual:bookkit/config', () => ({ default: resolveRouteConfig() }));
