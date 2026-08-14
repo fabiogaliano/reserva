@@ -1,0 +1,134 @@
+import type { D1Database } from '@cloudflare/workers-types';
+import { describe, expect, it } from 'vitest';
+import { createBookkitContext } from '../src/context';
+import { retrySideEffectOperation } from '../src/confirmation';
+import { CONFIRMATION_TOURFLOW_KIND } from '../src/repo';
+import { booking, config } from './fixtures';
+import { fakeRepository, providers } from './fakes';
+
+const clock = () => new Date('2026-08-14T10:00:00.000Z');
+
+function seedSideEffect(repo: ReturnType<typeof fakeRepository>, bookingId: string, kind: string, patch: Partial<{
+  status: 'pending' | 'in_flight' | 'succeeded' | 'failed' | 'abandoned';
+  attemptCount: number;
+}>): void {
+  repo.sideEffectOperations.set(`${bookingId}:${kind}`, {
+    bookingId, kind: kind as never, status: patch.status ?? 'failed', providerResultId: null,
+    attemptCount: patch.attemptCount ?? 10, attemptedAt: '2026-08-14T09:00:00.000Z', resolvedAt: null,
+    error: 'provider down', createdAt: '2026-08-14T08:00:00.000Z', updatedAt: '2026-08-14T09:00:00.000Z',
+    failureStartedAt: '2026-08-14T08:30:00.000Z', nextAttemptAt: null,
+  });
+}
+
+// Plan 020 (design decision 13): the admin "Try again" action's underlying dispatcher. These tests
+// exercise src/confirmation.ts's retrySideEffectOperation directly (the admin handler itself is
+// wired in step 6's HTTP layer) — proving each kind bucket's claim -> run -> resolve/dispatch path
+// and the STOP-condition-driven 'not_retryable' outcome for 'oversell'.
+describe('retrySideEffectOperation', () => {
+  it('refuses to retry an oversell marker (STOP condition: no safe one-shot retry for a permanent marker)', async () => {
+    const seeded = booking({ id: 'retry-oversell', status: 'confirmed' });
+    const repo = fakeRepository([seeded]);
+    seedSideEffect(repo, seeded.id, 'oversell', { status: 'succeeded' });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+
+    await expect(retrySideEffectOperation(context, seeded, 'oversell')).resolves.toBe('not_retryable');
+  });
+
+  it('retries an abandoned calendar_create row past the attempt cap and succeeds', async () => {
+    const seeded = booking({ id: 'retry-calendar-success', status: 'confirmed', calendarSynced: false });
+    const repo = fakeRepository([seeded]);
+    seedSideEffect(repo, seeded.id, 'calendar_create', { status: 'abandoned', attemptCount: 10 });
+    let calendarCalls = 0;
+    const context = createBookkitContext({
+      config, db: {} as D1Database, repo, clock,
+      providers: providers({ calendar: { listEvents: async () => [], createEvent: async () => { calendarCalls += 1; return 'cal_retry'; }, deleteEvent: async () => undefined, patchEvent: async () => undefined } }),
+    });
+
+    await expect(retrySideEffectOperation(context, seeded, 'calendar_create')).resolves.toBe('succeeded');
+    expect(calendarCalls).toBe(1);
+    expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_create`)).toMatchObject({ status: 'succeeded', attemptCount: 11 });
+    expect(repo.rows.get(seeded.id)?.calendarSynced).toBe(true);
+  });
+
+  it('retries an abandoned calendar_create row and records another failure when the provider is still down', async () => {
+    const seeded = booking({ id: 'retry-calendar-fail', status: 'confirmed', calendarSynced: false });
+    const repo = fakeRepository([seeded]);
+    seedSideEffect(repo, seeded.id, 'calendar_create', { status: 'abandoned', attemptCount: 10 });
+    const context = createBookkitContext({
+      config, db: {} as D1Database, repo, clock,
+      providers: providers({ calendar: { listEvents: async () => [], createEvent: async () => { throw new Error('calendar still down'); }, deleteEvent: async () => undefined, patchEvent: async () => undefined } }),
+    });
+
+    await expect(retrySideEffectOperation(context, seeded, 'calendar_create')).resolves.toBe('failed');
+    expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_create`)?.error).toContain('calendar still down');
+  });
+
+  it('reports lease_unavailable when a confirmation drain is already in progress for this booking', async () => {
+    const seeded = booking({ id: 'retry-lease-busy', status: 'confirmed' });
+    const repo = fakeRepository([seeded]);
+    seedSideEffect(repo, seeded.id, 'calendar_create', { status: 'failed' });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    await repo.acquireConfirmationLease(seeded.id, 'someone-elses-token', clock().toISOString(), new Date(clock().getTime() + 5 * 60_000).toISOString());
+
+    await expect(retrySideEffectOperation(context, seeded, 'calendar_create')).resolves.toBe('lease_unavailable');
+  });
+
+  it('reports nothing_to_retry when the row has already succeeded', async () => {
+    const seeded = booking({ id: 'retry-already-succeeded', status: 'confirmed' });
+    const repo = fakeRepository([seeded]);
+    seedSideEffect(repo, seeded.id, 'calendar_create', { status: 'succeeded' });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+
+    await expect(retrySideEffectOperation(context, seeded, 'calendar_create')).resolves.toBe('nothing_to_retry');
+  });
+
+  it('retries an abandoned mutation-kind row (calendar_delete) and succeeds', async () => {
+    const seeded = booking({ id: 'retry-mutation-success', status: 'cancelled', calendarEventId: 'cal_1' });
+    const repo = fakeRepository([seeded]);
+    seedSideEffect(repo, seeded.id, 'calendar_delete', { status: 'abandoned', attemptCount: 10 });
+    let deletes = 0;
+    const context = createBookkitContext({
+      config, db: {} as D1Database, repo, clock,
+      providers: providers({ calendar: { listEvents: async () => [], createEvent: async () => 'cal_x', deleteEvent: async () => { deletes += 1; }, patchEvent: async () => undefined } }),
+    });
+
+    await expect(retrySideEffectOperation(context, seeded, 'calendar_delete')).resolves.toBe('succeeded');
+    expect(deletes).toBe(1);
+    expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_delete`)?.status).toBe('succeeded');
+  });
+
+  it('reports not_retryable and clears the claim when a mutation kind\'s provider is no longer configured', async () => {
+    const seeded = booking({ id: 'retry-mutation-no-provider', status: 'cancelled', calendarEventId: 'cal_1' });
+    const repo = fakeRepository([seeded]);
+    seedSideEffect(repo, seeded.id, 'calendar_delete', { status: 'abandoned', attemptCount: 10 });
+    const { calendar: _unused, ...noCalendar } = providers();
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: noCalendar });
+
+    await expect(retrySideEffectOperation(context, seeded, 'calendar_delete')).resolves.toBe('not_retryable');
+    expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_delete`)).toMatchObject({ status: 'failed', error: 'Provider not configured' });
+  });
+
+  it('retries the confirmation-path Tourflow row and succeeds', async () => {
+    const seeded = booking({ id: 'retry-tourflow-success', status: 'confirmed', tourflowSynced: false });
+    const repo = fakeRepository([seeded]);
+    seedSideEffect(repo, seeded.id, CONFIRMATION_TOURFLOW_KIND, { status: 'abandoned', attemptCount: 10 });
+    let pushes = 0;
+    const context = createBookkitContext({
+      config, db: {} as D1Database, repo, clock,
+      providers: providers({ ops: { push: async () => { pushes += 1; } } }),
+    });
+
+    await expect(retrySideEffectOperation(context, seeded, CONFIRMATION_TOURFLOW_KIND)).resolves.toBe('succeeded');
+    expect(pushes).toBe(1);
+    expect(repo.rows.get(seeded.id)?.tourflowSynced).toBe(true);
+  });
+
+  it('reports not_retryable for the confirmation Tourflow row when no ops provider is configured', async () => {
+    const seeded = booking({ id: 'retry-tourflow-no-provider', status: 'confirmed', tourflowSynced: false });
+    const repo = fakeRepository([seeded]);
+    seedSideEffect(repo, seeded.id, CONFIRMATION_TOURFLOW_KIND, { status: 'abandoned', attemptCount: 10 });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+
+    await expect(retrySideEffectOperation(context, seeded, CONFIRMATION_TOURFLOW_KIND)).resolves.toBe('not_retryable');
+  });
+});

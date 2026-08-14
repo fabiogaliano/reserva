@@ -654,6 +654,119 @@ export async function runOwedMutationSideEffects(context: BookkitContext, bookin
   await runConfirmationTourflowSideEffect(context, booking);
 }
 
+// Plan 020 (design decision 13): the admin "Try again" action's result — 'nothing_to_retry' covers
+// every reason a claim didn't happen (already succeeded, the row doesn't exist, a concurrent
+// claimant already holds it, or the provider is no longer configured) without conflating them with
+// 'not_retryable', which is reserved for a kind this function refuses to ever retry (STOP
+// condition: "a safe one-shot retry cannot be implemented for an operation type... do not label an
+// unsafe action safe" — 'oversell' is a permanent marker, not a retryable operation at all;
+// decision 13: "Oversell cards expose manual handling only").
+export type SideEffectRetryOutcome = 'succeeded' | 'failed' | 'nothing_to_retry' | 'lease_unavailable' | 'not_retryable';
+
+// Plan 020 (design decision 13): the admin "Try again" action's one-shot leased retry. Deliberately
+// reuses this file's own claim -> run -> resolve/dispatch logic (runConfirmationOperation for
+// confirmation-kind rows, attemptForKind for mutation-kind rows and the confirmation-path Tourflow
+// row) rather than a second, hand-rolled provider-dispatch table — the exact same provider call an
+// ordinary drain would have made, just claimed through the *ForRetry variant (ignores
+// backoff/cap, still refuses a live lease) instead of the ordinary claim.
+export async function retrySideEffectOperation(
+  context: BookkitContext,
+  booking: Booking,
+  kind: SideEffectOperationKind,
+): Promise<SideEffectRetryOutcome> {
+  if (kind === 'oversell') return 'not_retryable';
+  if (isConfirmationSideEffectOperation({ kind } as SideEffectOperationRecord)) {
+    return retryConfirmationSideEffectOperation(context, booking, kind as ConfirmationSideEffectKind);
+  }
+  if (kind === CONFIRMATION_TOURFLOW_KIND) return retryConfirmationTourflowOperation(context, booking);
+  if (isMutationSideEffectKind(kind)) return retryMutationSideEffectOperation(context, booking, kind);
+  return 'not_retryable';
+}
+
+async function retryConfirmationSideEffectOperation(
+  context: BookkitContext,
+  booking: Booking,
+  kind: ConfirmationSideEffectKind,
+): Promise<SideEffectRetryOutcome> {
+  const startedAt = context.clock();
+  const token = crypto.randomUUID();
+  const acquired = await context.repo.acquireConfirmationLease(booking.id, token, startedAt.toISOString(), new Date(startedAt.getTime() + 5 * 60_000).toISOString());
+  if (!acquired) return 'lease_unavailable';
+  try {
+    const attemptNumber = await context.repo.claimSideEffectOperationForRetry(booking.id, kind, token, nowIso(context));
+    if (attemptNumber === null) return 'nothing_to_retry';
+    try {
+      const providerResultId = await runConfirmationOperation(context, booking, kind);
+      const resolved = await context.repo.resolveSideEffectOperation({
+        bookingId: booking.id, kind, leaseToken: token, status: 'succeeded',
+        ...(providerResultId ? { providerResultId } : {}), resolvedAt: nowIso(context),
+      });
+      return resolved ? 'succeeded' : 'nothing_to_retry';
+    } catch (error) {
+      const outcome = classifyAttemptOutcome(attemptNumber, error);
+      const resolved = await context.repo.resolveSideEffectOperation({
+        bookingId: booking.id, kind, leaseToken: token, status: outcome.status, error: outcome.error, resolvedAt: nowIso(context),
+      });
+      return resolved ? 'failed' : 'nothing_to_retry';
+    }
+  } finally {
+    await context.repo.releaseConfirmationLease(booking.id, token);
+  }
+}
+
+async function retryConfirmationTourflowOperation(context: BookkitContext, booking: Booking): Promise<SideEffectRetryOutcome> {
+  const ops = context.providers.ops;
+  if (!ops) return 'not_retryable';
+  const attemptedAt = nowIso(context);
+  const attemptNumber = await context.repo.claimMutationSideEffectOperationForRetry(booking.id, CONFIRMATION_TOURFLOW_KIND, attemptedAt);
+  if (attemptNumber === null) return 'nothing_to_retry';
+  try {
+    await ops.push('booking.confirmed', booking);
+    const resolved = await context.repo.resolveConfirmationTourflowOperation({
+      bookingId: booking.id, status: 'succeeded', claimedAt: attemptedAt, resolvedAt: nowIso(context),
+    });
+    return resolved ? 'succeeded' : 'nothing_to_retry';
+  } catch (error) {
+    const outcome = classifyAttemptOutcome(attemptNumber, error);
+    const resolved = await context.repo.resolveConfirmationTourflowOperation({
+      bookingId: booking.id, status: outcome.status, claimedAt: attemptedAt, error: outcome.error, resolvedAt: nowIso(context),
+    });
+    return resolved ? 'failed' : 'nothing_to_retry';
+  }
+}
+
+async function retryMutationSideEffectOperation(
+  context: BookkitContext,
+  booking: Booking,
+  kind: MutationSideEffectOperationKind,
+): Promise<SideEffectRetryOutcome> {
+  const attemptedAt = nowIso(context);
+  const attemptNumber = await context.repo.claimMutationSideEffectOperationForRetry(booking.id, kind, attemptedAt);
+  if (attemptNumber === null) return 'nothing_to_retry';
+  const attempt = attemptForKind(context, booking, kind);
+  if (!attempt) {
+    // Provider no longer configured — leave the row 'failed' (actionable again, exactly like an
+    // ordinary drain's provider-missing skip) rather than silently holding the claim forever.
+    await context.repo.resolveMutationSideEffectOperation({
+      bookingId: booking.id, kind, status: 'failed', claimedAt: attemptedAt, error: 'Provider not configured', resolvedAt: nowIso(context),
+    });
+    return 'not_retryable';
+  }
+  try {
+    await attempt.run();
+    const resolved = await context.repo.resolveMutationSideEffectOperation({
+      bookingId: booking.id, kind, status: 'succeeded', claimedAt: attemptedAt, resolvedAt: nowIso(context),
+    });
+    return resolved ? 'succeeded' : 'nothing_to_retry';
+  } catch (error) {
+    const outcome = classifyAttemptOutcome(attemptNumber, error);
+    const resolved = await context.repo.resolveMutationSideEffectOperation({
+      bookingId: booking.id, kind, status: outcome.status, claimedAt: attemptedAt, error: outcome.error, resolvedAt: nowIso(context),
+    });
+    return resolved ? 'failed' : 'nothing_to_retry';
+  }
+}
+
 export async function dispatchMutation(
   context: BookkitContext,
   event: EmailBookingEvent,
