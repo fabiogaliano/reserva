@@ -1,0 +1,31 @@
+{
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  // Plan 020 (step 7): a separate, minimal Worker whose only job is the scheduled reconciliation
+  // sweep — see scheduled.ts's header comment for why this lives outside the Astro site's own
+  // build/deploy instead of wrapping @astrojs/cloudflare's generated entrypoint. It shares the same
+  // BOOKKIT_DB database (same database_name/id as ../wrangler.jsonc) so both Workers read/write one
+  // D1 instance; it does not need the site's ASSETS/SESSION/IMAGES bindings because it never serves
+  // HTTP routes.
+  "name": "bookkit-smoke-scheduled",
+  "compatibility_date": "2026-07-21",
+  "main": "scheduled.ts",
+  "d1_databases": [
+    {
+      "binding": "BOOKKIT_DB",
+      "database_name": "bookkit-smoke",
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "vars": {
+    "BOOKKIT_TOKEN_ENC_KEY": "local-demo-token-encryption-key",
+    "TOURFLOW_SHARED_SECRET": "local-tourflow-secret",
+    "BOOKKIT_CSRF_SECRET": "local-demo-csrf-secret"
+  },
+  "triggers": {
+    // Every 5 minutes: matches this plan's 5/10/20/40/60-minute backoff schedule closely enough
+    // that a retryable failure gets its first re-attempt on roughly the same cadence it was
+    // computed for (design decision 5). A production deployment can tune this per its own outage
+    // tolerance — nothing in src/reconciliation.ts assumes this exact cadence.
+    "crons": ["*/5 * * * *"]
+  }
+}
