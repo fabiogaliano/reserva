@@ -45,12 +45,18 @@ function parseLocalDateTime(value: string): LocalDateTimeParts {
 
 export function localDateTimeToUtc(value: string, timezone: string): Date {
   const parts = parseLocalDateTime(value);
-  const date = new TZDate(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, 0, 0, timezone);
-  if (Number.isNaN(date.getTime())) throw new RangeError(`Invalid local date-time: ${value}`);
-  const instant = new Date(date.getTime());
-  if (utcToLocalDateTime(instant, timezone) !== value) {
-    throw new RangeError(`Local date-time does not exist in ${timezone}: ${value}`);
+  const wallTimeAsUtc = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute);
+  const offsets = new Set<number>();
+  for (let hours = -48; hours <= 48; hours += 12) {
+    const offset = new TZDate(wallTimeAsUtc + hours * 60 * 60_000, timezone).getTimezoneOffset();
+    if (Number.isFinite(offset)) offsets.add(offset);
   }
+  const matchingInstants = [...offsets]
+    .map((offset) => new Date(wallTimeAsUtc + offset * 60_000))
+    .filter((instant) => utcToLocalDateTime(instant, timezone) === value)
+    .sort((left, right) => left.getTime() - right.getTime());
+  const instant = matchingInstants[0];
+  if (!instant) throw new RangeError(`Local date-time does not exist in ${timezone}: ${value}`);
   return instant;
 }
 
