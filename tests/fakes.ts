@@ -685,6 +685,8 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         id: input.id, bookingId: input.bookingId, paymentIntent: input.paymentIntent,
         choice: input.choice, status: 'requested', stripeRefundId: null, amountCents: null,
         requestedAt: input.requestedAt, resolvedAt: null, error: null,
+        executionClaimToken: null, executionClaimUntil: null, attemptCount: 0, attemptedAt: null,
+        failureStartedAt: null, nextAttemptAt: null,
       });
       return true;
     },
@@ -721,6 +723,9 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         choice: input.choice, status: input.status, stripeRefundId: input.stripeRefundId,
         amountCents: input.amountCents, requestedAt: current?.requestedAt ?? input.requestedAt,
         resolvedAt: input.resolvedAt, error: input.error ?? null,
+        executionClaimToken: current?.executionClaimToken ?? null, executionClaimUntil: current?.executionClaimUntil ?? null,
+        attemptCount: current?.attemptCount ?? 0, attemptedAt: current?.attemptedAt ?? null,
+        failureStartedAt: current?.failureStartedAt ?? null, nextAttemptAt: current?.nextAttemptAt ?? null,
       });
     },
     reconcileStripeRefundOperation: async (input) => {
@@ -734,6 +739,9 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         choice: input.choice, status: input.status, stripeRefundId: input.stripeRefundId,
         amountCents: input.amountCents, requestedAt: current?.requestedAt ?? input.requestedAt,
         resolvedAt: input.resolvedAt, error: input.error ?? null,
+        executionClaimToken: current?.executionClaimToken ?? null, executionClaimUntil: current?.executionClaimUntil ?? null,
+        attemptCount: current?.attemptCount ?? 0, attemptedAt: current?.attemptedAt ?? null,
+        failureStartedAt: current?.failureStartedAt ?? null, nextAttemptAt: current?.nextAttemptAt ?? null,
       });
     },
   };

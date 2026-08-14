@@ -5,6 +5,7 @@ import type {
   AnalyticsSink,
   CalendarProvider,
   EmailProvider,
+  OperationalAlertSink,
   OpsSink,
   PaymentProvider,
 } from './core/events';
@@ -24,6 +25,10 @@ export interface BookkitProviders {
   email?: EmailProvider;
   ops?: OpsSink;
   analytics?: AnalyticsSink;
+  // Plan 020 (design decision 10): optional — a deployment with no alert sink configured simply
+  // never has an alert to send (the reconciler still opens/tracks incidents; only delivery is
+  // skipped), same tolerance every other optional provider here already gets.
+  alerts?: OperationalAlertSink;
 }
 
 export type SecretLookup = (name: string) => string | undefined | Promise<string | undefined>;

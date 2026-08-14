@@ -121,7 +121,10 @@ export interface CapacityGuardInput {
 // in-memory refundedPayments Set. One row per booking (UNIQUE booking_id — see migrations/
 // 0006_refund_operations.sql) so exactly one request can claim a booking's refund decision.
 export type RefundChoice = 'full' | 'none';
-export type RefundOperationStatus = 'requested' | 'succeeded' | 'failed';
+// Plan 020 (design decision 7): 'in_flight' (the execution claim is held, Stripe may be in
+// progress) and 'abandoned' (a permanent/tenth-retry failure, terminal like side_effect_operations'
+// 'abandoned') are migration 0016's additions — see that migration's byte-preserving rebuild.
+export type RefundOperationStatus = 'requested' | 'in_flight' | 'succeeded' | 'failed' | 'abandoned';
 
 export interface RefundOperationRecord {
   id: string;
@@ -134,6 +137,47 @@ export interface RefundOperationRecord {
   requestedAt: string;
   resolvedAt: string | null;
   error: string | null;
+  // Plan 020 (design decision 7): the scheduled reconciler's execution claim — mirrors the
+  // confirmation-lease pattern (src/confirmation.ts). Both null when no execution claim is held.
+  executionClaimToken: string | null;
+  executionClaimUntil: string | null;
+  attemptCount: number;
+  attemptedAt: string | null;
+  failureStartedAt: string | null;
+  nextAttemptAt: string | null;
+}
+
+// Plan 020 (design decision 8): the operational-incident domain, matching migration 0016's
+// operational_incidents CHECKs exactly.
+export type OperationalIncidentSourceType = 'side_effect' | 'refund' | 'oversell';
+export type OperationalIncidentAction = 'confirmation_email' | 'customer_notification' | 'calendar' | 'operations_sync' | 'refund' | 'oversell';
+export type OperationalIncidentStatus = 'open' | 'resolved';
+export type OperationalIncidentSeverity = 'delayed' | 'action_required';
+export type OperationalIncidentResolutionKind = 'automatic' | 'manual';
+
+export interface OperationalIncidentRecord {
+  id: string;
+  bookingId: string;
+  sourceType: OperationalIncidentSourceType;
+  sourceKey: string;
+  action: OperationalIncidentAction;
+  status: OperationalIncidentStatus;
+  severity: OperationalIncidentSeverity;
+  attemptCount: number;
+  firstDetectedAt: string;
+  lastDetectedAt: string;
+  sourceUpdatedAt: string;
+  alertRevision: number;
+  alertedRevision: number;
+  alertAttemptCount: number;
+  alertClaimToken: string | null;
+  alertClaimUntil: string | null;
+  alertNextAttemptAt: string | null;
+  alertError: string | null;
+  resolvedAt: string | null;
+  resolutionKind: OperationalIncidentResolutionKind | null;
+  resolvedBy: string | null;
+  resolutionNote: string | null;
 }
 
 // BK-SIDE-001 (handoff 13): the mutation-path outbox (record/claim/resolveMutationSideEffectOperation
@@ -617,6 +661,12 @@ interface RefundOperationRow {
   requested_at: string;
   resolved_at: string | null;
   error: string | null;
+  execution_claim_token: string | null;
+  execution_claim_until: string | null;
+  attempt_count: number;
+  attempted_at: string | null;
+  failure_started_at: string | null;
+  next_attempt_at: string | null;
 }
 
 function mapRefundOperation(row: RefundOperationRow): RefundOperationRecord {
@@ -631,11 +681,18 @@ function mapRefundOperation(row: RefundOperationRow): RefundOperationRecord {
     requestedAt: row.requested_at,
     resolvedAt: row.resolved_at,
     error: row.error,
+    executionClaimToken: row.execution_claim_token,
+    executionClaimUntil: row.execution_claim_until,
+    attemptCount: Number(row.attempt_count),
+    attemptedAt: row.attempted_at,
+    failureStartedAt: row.failure_started_at,
+    nextAttemptAt: row.next_attempt_at,
   };
 }
 
 const refundOperationColumns = `id, booking_id, payment_intent, choice, status, stripe_refund_id,
-  amount_cents, requested_at, resolved_at, error`;
+  amount_cents, requested_at, resolved_at, error, execution_claim_token, execution_claim_until,
+  attempt_count, attempted_at, failure_started_at, next_attempt_at`;
 
 interface SideEffectOperationRow {
   booking_id: string;

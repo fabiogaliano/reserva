@@ -131,6 +131,29 @@ export const noopAnalyticsSink: AnalyticsSink = {
   track: async () => undefined,
 };
 
+// Plan 020 (design decision 10): the independent alert channel to the central technical operator.
+// Deliberately narrow — exactly these seven fields, reference/operation metadata only. Excludes
+// booking/customer ids, names, contact details, addresses, raw provider bodies, session ids, and
+// manage tokens (see docs/plans/020's privacy constraint). `action`/`severity` mirror the
+// operational-incident domain (src/repo.ts OperationalIncidentAction/-Severity) so the alert and
+// the admin card the operator opens from `adminUrl` always describe the same thing.
+export interface OperationalAlert {
+  incidentId: string;
+  reference: string;
+  action: 'confirmation_email' | 'customer_notification' | 'calendar' | 'operations_sync' | 'refund' | 'oversell';
+  severity: 'delayed' | 'action_required';
+  attemptCount: number;
+  firstDetectedAt: string;
+  adminUrl: string;
+}
+
+// Plan 020 (design decision 11): durable delivery (claim/attempt/backoff) is the reconciler's job,
+// not this sink's — send() is a single best-effort attempt; a thrown error just means "not
+// delivered this attempt", picked up again by the next eligible alert-claim pass.
+export interface OperationalAlertSink {
+  send(alert: OperationalAlert): Promise<void>;
+}
+
 export const bookingEvents: readonly BookingEvent[] = [
   'booking.confirmed',
   'booking.cancelled_by_customer',

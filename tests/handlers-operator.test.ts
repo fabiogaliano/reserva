@@ -556,6 +556,8 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     const pendingOperation: RefundOperationRecord = {
       id: 'op-fresh-repo-pending', bookingId: seeded.id, paymentIntent: seeded.stripePaymentIntent, choice: 'full',
       status: 'requested', stripeRefundId: null, amountCents: null, requestedAt: '2026-06-14T07:00:00.000Z', resolvedAt: null, error: null,
+      executionClaimToken: null, executionClaimUntil: null, attemptCount: 0, attemptedAt: null,
+      failureStartedAt: null, nextAttemptAt: null,
     };
     // A brand-new repo instance — no object here is shared with whatever originally produced
     // this state — seeded to look exactly like a fresh D1 read from a different isolate would: a
@@ -768,6 +770,8 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     repo.refundOperations.set(seeded.id, {
       id: 'op-preexisting', bookingId: seeded.id, paymentIntent, choice: 'none', status: 'succeeded',
       stripeRefundId: null, amountCents: null, requestedAt: '2026-06-13T00:00:00.000Z', resolvedAt: '2026-06-13T00:00:00.000Z', error: null,
+      executionClaimToken: null, executionClaimUntil: null, attemptCount: 0, attemptedAt: null,
+      failureStartedAt: null, nextAttemptAt: null,
     });
     const preexisting = repo.refundOperations.get(seeded.id);
     const context = createBookkitContext({
