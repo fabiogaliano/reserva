@@ -4,6 +4,7 @@ import { requireEnabledRoutePath } from '../routes-manifest';
 import { createRouteContext } from '../routes/route-context';
 import { accessAllowed } from '../admin-access';
 import { mintAdminCsrfToken } from '../admin-csrf';
+import { adminLocaleFor } from '../core/config';
 import { resolveMessages, type BookkitMessages } from '../ui/messages';
 import '../ui/components.css';
 
@@ -27,7 +28,7 @@ const { endpoint, locale, messages: messageOverrides = {} } = Astro.props;
 const action = endpoint === undefined ? requireEnabledRoutePath(routeConfig, 'adminPage') : endpoint;
 const context = await createRouteContext({ request: Astro.request, locals: Astro.locals });
 const t: BookkitMessages = {
-  ...resolveMessages(context.config, locale ?? context.config.locales.default),
+  ...resolveMessages(context.config, locale ?? adminLocaleFor(context.config)),
   ...messageOverrides,
 };
 const access = await accessAllowed(Astro.request, context);

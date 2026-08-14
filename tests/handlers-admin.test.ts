@@ -138,6 +138,29 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
     expect(body).toContain('href="/booking/admin?view=settings"');
   });
 
+  it('uses an operator locale without changing the customer default', async () => {
+    const localizedConfig: ClientConfig = {
+      ...config,
+      admin: { ...config.admin, locale: 'pt-PT' },
+      locales: { supported: ['en'], default: 'en' },
+    };
+    const localizedBooking = booking({ startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z' });
+    const context = createBookkitContext({ config: localizedConfig, db: {} as D1Database, repo: fakeRepository([localizedBooking]), clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+
+    const dashboard = await handleAdminGet(adminGetRequest(), context);
+    const dashboardBody = await dashboard.text();
+    expect(dashboardBody).toContain('<html lang="pt-PT">');
+    expect(dashboardBody).toContain('<title>Administração de reservas — Example City Tours</title>');
+    expect(dashboardBody).toContain('<p class="bk-section-nav-title">Nesta página</p>');
+    expect(dashboardBody).toContain('data-label="Cliente"');
+
+    const settings = await handleAdminGet(new Request(`${ADMIN_URL}?view=settings`), context);
+    const settingsBody = await settings.text();
+    expect(settingsBody).toContain('<html lang="pt-PT">');
+    expect(settingsBody).toContain('<title>Definições — Example City Tours</title>');
+    expect(localizedConfig.locales.default).toBe('en');
+  });
+
   it('manage links carry each row\'s operator token (URL-encoded) and never leak a cancel_token', async () => {
     const first = booking({ id: 'b-admin-links-1', reference: 'LVT-2026-200', startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z', operatorToken: 'operator+token/one', cancelToken: 'cancel-token-one-secret' });
     const second = booking({ id: 'b-admin-links-2', reference: 'LVT-2026-201', startsAt: '2026-06-21T09:00:00.000Z', endsAt: '2026-06-21T10:00:00.000Z', operatorToken: 'operator-token-two', cancelToken: 'cancel-token-two-secret' });

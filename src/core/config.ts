@@ -91,6 +91,8 @@ export interface ClientConfig {
   admin: {
     accessTeamDomain: string;
     accessAud: string;
+    // Operator copy can differ from the locale used for customer pages, emails, and checkout.
+    locale?: string;
   };
   tours: Record<string, TourConfig>;
   booking: {
@@ -139,6 +141,10 @@ export const stripeSupportedLocales = new Set([
 // Stripe names European Portuguese `pt`, while the rest of Bookkit uses the precise BCP 47 tag.
 export function stripeLocaleFor(locale: string): string {
   return locale.toLowerCase() === 'pt-pt' ? 'pt' : locale;
+}
+
+export function adminLocaleFor(config: ClientConfig): string {
+  return config.admin.locale ?? config.locales.default;
 }
 
 // BK-SEC-002: default for booking.tokenExpiryDays when a deployment doesn't set one — long
@@ -208,6 +214,7 @@ export const clientConfigSchema = z.object({
   admin: z.object({
     accessTeamDomain: z.string().refine(isValidAccessTeamDomain, 'must be an HTTPS Cloudflare Access origin'),
     accessAud: z.string().min(1),
+    locale: z.string().min(1).refine(isValidLocale, 'must be a valid BCP 47 locale').optional(),
   }),
   tours: z.record(z.string(), tourSchema).refine((value) => Object.keys(value).length > 0, 'at least one tour is required'),
   booking: z.object({
@@ -239,6 +246,15 @@ function addIssue(ctx: { addIssue: (issue: { code: 'custom'; path: (string | num
 function isValidTimezone(timezone: string): boolean {
   try {
     new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isValidLocale(locale: string): boolean {
+  try {
+    Intl.getCanonicalLocales(locale);
     return true;
   } catch {
     return false;

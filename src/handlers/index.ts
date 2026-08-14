@@ -6,7 +6,7 @@ import {
   rescheduleBooking,
   type Booking,
 } from '../core/booking';
-import { DEFAULT_PICKUP_OPTIONS, DEFAULT_TOKEN_EXPIRY_DAYS, meetingPointForBooking, pickupOptionFor, resolveMeetingPoint, resolveTour, type MeetingPoint, type PickupType, type TourConfig } from '../core/config';
+import { DEFAULT_PICKUP_OPTIONS, DEFAULT_TOKEN_EXPIRY_DAYS, adminLocaleFor, meetingPointForBooking, pickupOptionFor, resolveMeetingPoint, resolveTour, type MeetingPoint, type PickupType, type TourConfig } from '../core/config';
 import { availabilityForDay, capacityForDate, defaultCapacityForDate, occupancyFor, type CalEvent, type CapacityDefault } from '../core/occupancy';
 import { verifyPayment } from '../core/payment-verification';
 import { priceFor } from '../core/pricing';
@@ -1276,7 +1276,7 @@ function incidentsSection(
   // incident opens and remains visible while there is open work or 30-day history to review.
   if (openIncidents.length === 0 && counts.opened === 0 && counts.resolved === 0) return '';
 
-  const locale = context.config.locales.default;
+  const locale = adminLocaleFor(context.config);
   const timezone = context.config.business.timezone;
   const csrfField = `<input type="hidden" name="csrf_token" value="${escapeHtml(csrfToken)}">`;
   const savedAlert = saved === 'incident-retried'
@@ -1356,8 +1356,7 @@ function adminPage(
   incidentsHtml: string,
   openIncidentCount: number,
 ): string {
-  // Admin is operator-facing (behind Cloudflare Access), so copy uses the business default locale.
-  const locale = context.config.locales.default;
+  const locale = adminLocaleFor(context.config);
   const messages = resolveMessages(context.config, locale);
   const timezone = context.config.business.timezone;
   const managePagePath = context.routeConfig.paths.managePage;
@@ -1678,7 +1677,7 @@ function adminPage(
 // and a visible saved confirmation after POST. Tabs degrade to plain links without JS.
 // csrfToken is undefined when BOOKKIT_CSRF_SECRET isn't configured — see adminPage's csrfToken param above.
 function settingsPage(context: BookkitContext, storedRows: Record<string, string>, saved: boolean, sectionParam: string, csrfToken: string | undefined): string {
-  const locale = context.config.locales.default;
+  const locale = adminLocaleFor(context.config);
   const messages = resolveMessages(context.config, locale);
   const catalog = messages as Record<string, string>;
   // One section visible at a time behind a tab bar; tabs are plain links (?section=) so switching
@@ -1833,9 +1832,7 @@ export function handleAdminGet(request: Request, context: BookkitContext): Promi
     };
     const editDate = url.searchParams.get('date')?.trim() ?? '';
     const saved = url.searchParams.get('saved') ?? '';
-    // Admin is operator-facing (behind Cloudflare Access), so copy uses the business default
-    // locale — same choice adminPage/settingsPage make internally.
-    const messages = resolveMessages(context.config, context.config.locales.default);
+    const messages = resolveMessages(context.config, adminLocaleFor(context.config));
     // Plan 020 (design decision 14): "30-day counts and recent resolved history" — since is a
     // fixed 30-day lookback from the render clock, not a config option.
     const incidentsSince = new Date(parseUtcInstant(now).getTime() - 30 * 86_400_000).toISOString();

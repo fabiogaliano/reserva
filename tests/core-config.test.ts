@@ -266,6 +266,17 @@ describe('core config and pricing validation', () => {
     expect(() => validateConfig({ ...config, locales: { supported: ['en', 'xx'], default: 'en' } })).toThrow(/not supported by Stripe/);
   });
 
+  it('allows the operator locale to differ from customer and Stripe locales', () => {
+    const validated = validateConfig({
+      ...config,
+      admin: { ...config.admin, locale: 'pt-PT' },
+      locales: { supported: ['en'], default: 'en' },
+    });
+    expect(validated.admin.locale).toBe('pt-PT');
+    expect(() => validateConfig({ ...config, admin: { ...config.admin, locale: '' } })).toThrow();
+    expect(() => validateConfig({ ...config, admin: { ...config.admin, locale: 'not_a_locale' } })).toThrow(/valid BCP 47 locale/);
+  });
+
   it('requires the admin domain to be a bare HTTPS Cloudflare Access origin', () => {
     for (const accessTeamDomain of [
       'http://team.cloudflareaccess.com',
