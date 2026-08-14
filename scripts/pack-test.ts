@@ -98,6 +98,16 @@ function writeImportAll(consumerDir: string): string[] {
   return subpaths;
 }
 
+function assertScheduledTemplatePackaged(consumerDir: string): void {
+  for (const relativePath of [
+    'examples/smoke-site/worker/scheduled.ts',
+    'examples/smoke-site/worker/wrangler.jsonc',
+  ]) {
+    const installedPath = resolve(consumerDir, 'node_modules/bookkit', relativePath);
+    if (!existsSync(installedPath)) fail('template', `scheduled Worker template file missing from packed package: ${relativePath}`);
+  }
+}
+
 function typecheck(consumerDir: string, subpaths: string[]): void {
   const result = run('bunx', ['tsc', '--noEmit'], { cwd: consumerDir });
   if (result.status !== 0) {
@@ -112,6 +122,11 @@ function typecheck(consumerDir: string, subpaths: string[]): void {
 // `astro build` both compiles the `.astro` exports (via the fixture's own pages, one per exported
 // component) and proves the injected routes are actually mounted — the built worker entry contains
 // every enabled route's pattern.
+function scheduledWorkerBuild(consumerDir: string): void {
+  const result = run('bunx', ['wrangler', 'deploy', '--dry-run', '--config', 'wrangler.scheduled.jsonc', '--outdir', 'dist-scheduled'], { cwd: consumerDir });
+  if (result.status !== 0) fail('scheduled-build', `packed consumer scheduled Worker build failed:\n${result.stdout}\n${result.stderr}`);
+}
+
 function astroBuild(consumerDir: string): void {
   const result = run('bunx', ['astro', 'build'], { cwd: consumerDir });
   if (result.status !== 0) fail('build', `\`astro build\` failed:\n${result.stdout}\n${result.stderr}`);
@@ -155,9 +170,15 @@ async function main(): Promise<void> {
     console.log('pack-test: bun add <tarball> (installs bookkit the way a real consumer would)');
     bunAddTarball(consumerDir, tarballPath);
 
-    console.log('pack-test: typechecking every non-.astro exports subpath');
+    console.log('pack-test: asserting the scheduled Worker template is included');
+    assertScheduledTemplatePackaged(consumerDir);
+
+    console.log('pack-test: typechecking every non-.astro exports subpath and the production-like provider factory');
     const subpaths = writeImportAll(consumerDir);
     typecheck(consumerDir, subpaths);
+
+    console.log('pack-test: building the packed consumer scheduled Worker');
+    scheduledWorkerBuild(consumerDir);
 
     console.log('pack-test: astro build (compiles .astro exports, mounts injected routes)');
     astroBuild(consumerDir);

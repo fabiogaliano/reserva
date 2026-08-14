@@ -9,7 +9,7 @@ import { fakeRepository, providers } from './fakes';
 // must cause a Stripe redelivery that re-runs only the still-unsynced sink. The gating
 // lives in src/confirmation.ts:54-71 via the calendarSynced/emailSynced flags.
 describe('webhook partial-failure redelivery re-runs only the unsynced sink', () => {
-  it('calendar fails first: email is never attempted before the calendar throw, and redelivery re-syncs only calendar+email once each', async () => {
+  it('calendar fails first: healthy email still sends, and redelivery retries only calendar', async () => {
     const seeded = booking({
       id: 'b-redelivery-calendar',
       status: 'hold',
@@ -61,13 +61,13 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
     const first = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
     expect(first.status).toBeGreaterThanOrEqual(500);
     expect(calendarCalls).toBe(1);
-    // Calendar dispatch runs before email in confirmBookingFromPaymentUnlocked — a throw
-    // there must prevent email from being attempted at all on this delivery.
-    expect(emailCalls).toBe(0);
+    // Provider failures are isolated per durable row; the webhook still returns non-2xx after
+    // every confirmation operation has had its own attempt.
+    expect(emailCalls).toBe(1);
     const afterFirst = repo.rows.get(seeded.id);
     expect(afterFirst?.status).toBe('confirmed');
     expect(afterFirst?.calendarSynced).toBe(false);
-    expect(afterFirst?.emailSynced).toBe(false);
+    expect(afterFirst?.emailSynced).toBe(true);
 
     const second = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
     expect(second.status).toBe(200);

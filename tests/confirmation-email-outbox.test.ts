@@ -176,7 +176,7 @@ describe('confirmation-path per-recipient email outbox (plan 012)', () => {
     expect(repo.sideEffectOperations.get(`${seeded.id}:${OWNER_KIND}`)).toMatchObject({ status: 'pending', attemptCount: 0 });
   });
 
-  it('a repository failure resolving the customer row as succeeded leaves the owner row untouched, still pending', async () => {
+  it('a repository failure resolving the customer row does not block the independent owner row', async () => {
     const seeded = booking({ id: 'b-email-split-repo-write-fails', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', stripeSessionId: 'cs_email_repo_write_fails' });
     const repo = fakeRepository([seeded]);
     const resolveOperation = repo.resolveSideEffectOperation;
@@ -202,14 +202,12 @@ describe('confirmation-path per-recipient email outbox (plan 012)', () => {
     });
 
     await expect(handleStripeWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context)).resolves.toMatchObject({ status: 500 });
-    // The owner row was never reached — the customer row's D1 write failure stopped the loop
-    // before the owner recipient was even attempted.
-    expect(recipients).toEqual(['customer']);
+    expect(recipients).toEqual(['customer', 'owner']);
     expect(repo.sideEffectOperations.get(`${seeded.id}:${CUSTOMER_KIND}`)).toMatchObject({ status: 'failed', attemptCount: 1 });
-    expect(repo.sideEffectOperations.get(`${seeded.id}:${OWNER_KIND}`)).toMatchObject({ status: 'pending', attemptCount: 0 });
+    expect(repo.sideEffectOperations.get(`${seeded.id}:${OWNER_KIND}`)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
 
     await expect(handleStripeWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context)).resolves.toMatchObject({ status: 200 });
-    expect(recipients).toEqual(['customer', 'customer', 'owner']);
+    expect(recipients).toEqual(['customer', 'owner', 'customer']);
     expect(repo.sideEffectOperations.get(`${seeded.id}:${CUSTOMER_KIND}`)).toMatchObject({ status: 'succeeded', attemptCount: 2 });
     expect(repo.sideEffectOperations.get(`${seeded.id}:${OWNER_KIND}`)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
     expect(repo.rows.get(seeded.id)).toMatchObject({ emailSynced: true });

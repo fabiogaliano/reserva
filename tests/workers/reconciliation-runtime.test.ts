@@ -125,6 +125,61 @@ describe('runReconciliation against real D1', () => {
     ]));
   });
 
+  it('resumes a requested refund whose cancellation CAS was interrupted, with Stripe gated on durable cancellation', async () => {
+    const id = 'recon-d1-refund-before-cancel';
+    await seedConfirmed(id);
+    let refunds = 0;
+    const context = createBookkitContext({
+      config, db, clock,
+      providers: providers({
+        payments: {
+          createCheckout: async () => ({ url: '', sessionId: '' }),
+          parseWebhook: async () => { throw new Error('unused'); },
+          getSession: async () => ({ status: 'open' }),
+          refund: async () => {
+            refunds += 1;
+            await expect(context.repo.getBookingById(id)).resolves.toMatchObject({ status: 'cancelled' });
+            return { refundId: 're_recon_d1_after_cancel', amountCents: 12000 };
+          },
+        },
+      }),
+    });
+    await context.repo.claimRefundOperation({ id: 'op-recon-d1-before-cancel', bookingId: id, paymentIntent: `pi_${id}`, choice: 'full', requestedAt: '2026-08-14T09:00:00.000Z' });
+
+    await runReconciliation(context);
+    expect(refunds).toBe(1);
+    await expect(context.repo.getBookingById(id)).resolves.toMatchObject({ status: 'cancelled' });
+    await expect(context.repo.getRefundOperationByBookingId(id)).resolves.toMatchObject({ status: 'succeeded' });
+  });
+
+  it('does not let more terminal rows than sourceLimit starve newer executable debt', async () => {
+    const terminalIds = Array.from({ length: 12 }, (_, index) => `recon-d1-terminal-${index}`);
+    for (const id of [...terminalIds, 'recon-d1-actionable']) await seedConfirmed(id);
+    for (const id of terminalIds) {
+      await db.prepare(
+        `INSERT INTO side_effect_operations (booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at, failure_started_at, next_attempt_at)
+         VALUES (?, 'email_confirmation', 'abandoned', NULL, 10, ?, ?, 'terminal', ?, ?, ?, NULL)`,
+      ).bind(id, '2026-08-14T08:00:00.000Z', '2026-08-14T08:00:00.000Z', '2026-08-14T08:00:00.000Z', '2026-08-14T08:00:00.000Z', '2026-08-14T08:00:00.000Z').run();
+    }
+    await db.prepare(
+      `INSERT INTO side_effect_operations (booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at, failure_started_at, next_attempt_at)
+       VALUES ('recon-d1-actionable', 'calendar_create', 'pending', NULL, 0, NULL, NULL, NULL, ?, ?, NULL, NULL)`,
+    ).bind('2026-08-14T09:59:00.000Z', '2026-08-14T09:59:00.000Z').run();
+    let calendarCalls = 0;
+    const context = createBookkitContext({
+      config, db, clock,
+      providers: providers({ calendar: { listEvents: async () => [], createEvent: async () => { calendarCalls += 1; return 'cal_fair_d1'; }, deleteEvent: async () => undefined, patchEvent: async () => undefined } }),
+    });
+
+    const summary = await runReconciliation(context, { sourceLimit: 10 });
+    expect(calendarCalls).toBe(1);
+    expect(summary.sideEffectBookingsProcessed).toBe(1);
+    expect(summary.incidentsOpened).toBe(10);
+    await expect(context.repo.listSideEffectOperations('recon-d1-actionable')).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'calendar_create', status: 'succeeded' }),
+    ]));
+  });
+
   it('reports an unreported oversell marker as a persisted, real-D1 incident row', async () => {
     const id = 'recon-d1-oversell';
     await seedConfirmed(id);

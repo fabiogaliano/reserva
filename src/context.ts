@@ -25,9 +25,9 @@ export interface BookkitProviders {
   email?: EmailProvider;
   ops?: OpsSink;
   analytics?: AnalyticsSink;
-  // Plan 020 (design decision 10): optional — a deployment with no alert sink configured simply
-  // never has an alert to send (the reconciler still opens/tracks incidents; only delivery is
-  // skipped), same tolerance every other optional provider here already gets.
+  // Optional for HTTP-only/test contexts. Production scheduled entrypoints should call
+  // runReconciliation with requireAlertSink so a missing central alert channel fails preflight;
+  // pending revisions are never acknowledged when this provider is absent.
   alerts?: OperationalAlertSink;
 }
 

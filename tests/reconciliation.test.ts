@@ -129,21 +129,40 @@ describe('runReconciliation', () => {
     expect(summary.incidentsOpened).toBe(0);
   });
 
-  it('never calls Stripe for a refund operation whose booking is not yet durably cancelled', async () => {
+  it('resumes the cancellation gate after a crash between the refund decision claim and cancellation CAS', async () => {
     const seeded = booking({ id: 'recon-refund-not-cancelled', status: 'confirmed', stripePaymentIntent: 'pi_recon_not_cancelled' });
     const repo = fakeRepository([seeded]);
     await repo.claimRefundOperation({ id: 'op-not-cancelled', bookingId: seeded.id, paymentIntent: seeded.stripePaymentIntent, choice: 'full', requestedAt: '2026-08-14T09:00:00.000Z' });
     let refunds = 0;
     const context = createBookkitContext({
       config, db: {} as D1Database, repo, clock,
-      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionId: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => { refunds += 1; return { refundId: 're_should_not_run', amountCents: seeded.priceCents }; } } }),
+      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionId: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => {
+        refunds += 1;
+        expect(repo.rows.get(seeded.id)?.status).toBe('cancelled');
+        return { refundId: 're_after_cancel', amountCents: seeded.priceCents };
+      } } }),
     });
 
-    // The candidate list only surfaces requested/failed/in_flight rows; a 'confirmed' booking's
-    // still-requested row is a candidate, but processRefundCandidate must skip Stripe entirely.
     await runReconciliation(context);
+    expect(refunds).toBe(1);
+    expect(repo.rows.get(seeded.id)?.status).toBe('cancelled');
+    expect(repo.refundOperations.get(seeded.id)?.status).toBe('succeeded');
+  });
+
+  it('opens an incident and never calls Stripe when a requested refund cannot safely resume cancellation', async () => {
+    const seeded = booking({ id: 'recon-refund-blocked', status: 'no_show', stripePaymentIntent: 'pi_recon_blocked' });
+    const repo = fakeRepository([seeded]);
+    await repo.claimRefundOperation({ id: 'op-blocked', bookingId: seeded.id, paymentIntent: seeded.stripePaymentIntent, choice: 'full', requestedAt: '2026-08-14T09:00:00.000Z' });
+    let refunds = 0;
+    const context = createBookkitContext({
+      config, db: {} as D1Database, repo, clock,
+      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionId: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => { refunds += 1; return { refundId: 'never', amountCents: seeded.priceCents }; } } }),
+    });
+
+    const summary = await runReconciliation(context);
     expect(refunds).toBe(0);
-    expect(repo.refundOperations.get(seeded.id)?.status).toBe('requested');
+    expect(summary.incidentsOpened).toBe(1);
+    expect(await repo.getIncidentBySource('refund', seeded.id)).toMatchObject({ status: 'open', severity: 'action_required' });
   });
 
   it('opens an action_required refund incident on failure and resolves it once a later attempt succeeds', async () => {
@@ -210,6 +229,30 @@ describe('runReconciliation', () => {
     expect(sent).toHaveLength(1);
   });
 
+  it('does not send an obsolete action alert after the same pass auto-resolves its incident', async () => {
+    const seeded = booking({ id: 'recon-no-obsolete-alert', status: 'confirmed', calendarSynced: false, emailSynced: true });
+    const repo = fakeRepository([seeded]);
+    seedSideEffect(repo, seeded.id, 'calendar_create', {
+      status: 'failed', attemptCount: 1, attemptedAt: '2026-08-14T09:00:00.000Z', failureStartedAt: '2026-08-14T09:00:00.000Z',
+    });
+    await repo.upsertOpenIncident({
+      id: 'incident-no-obsolete-alert', bookingId: seeded.id, sourceType: 'side_effect',
+      sourceKey: `${seeded.id}:calendar_create`, action: 'calendar', severity: 'delayed',
+      attemptCount: 1, sourceUpdatedAt: '2026-08-14T09:00:00.000Z', now: '2026-08-14T09:10:00.000Z', escalate: false,
+    });
+    const sent: unknown[] = [];
+    const context = createBookkitContext({
+      config, db: {} as D1Database, repo, clock,
+      providers: providers({ alerts: { send: async (alert) => { sent.push(alert); } } }),
+    });
+
+    const summary = await runReconciliation(context);
+    expect(summary.incidentsResolved).toBe(1);
+    expect(summary.alertsSent).toBe(0);
+    expect(sent).toHaveLength(0);
+    expect(await repo.getIncidentBySource('side_effect', `${seeded.id}:calendar_create`)).toMatchObject({ status: 'resolved', alertedRevision: 0 });
+  });
+
   it('schedules a backoff retry for a failing alert sink without crashing the sweep', async () => {
     const seeded = booking({ id: 'recon-alert-fail', status: 'confirmed', calendarSynced: true, emailSynced: false });
     const repo = fakeRepository([seeded]);
@@ -223,6 +266,83 @@ describe('runReconciliation', () => {
     const incident = await repo.getIncidentBySource('side_effect', `${seeded.id}:email_confirmation`);
     expect(incident?.alertNextAttemptAt).not.toBeNull();
     expect(incident?.alertError).toContain('slack webhook down');
+  });
+
+  it('attempts due side-effect siblings independently and isolates provider failures', async () => {
+    const seeded = booking({ id: 'recon-independent-rows', status: 'confirmed', calendarSynced: false, emailSynced: false });
+    const repo = fakeRepository([seeded]);
+    seedSideEffect(repo, seeded.id, 'calendar_create', { status: 'pending' });
+    seedSideEffect(repo, seeded.id, 'email_confirmation', { status: 'pending' });
+    seedSideEffect(repo, seeded.id, 'email:booking.cancelled_by_operator', {
+      status: 'failed', attemptCount: 4, attemptedAt: '2026-08-14T09:30:00.000Z', failureStartedAt: '2026-08-14T09:30:00.000Z',
+    });
+    let confirmationEmails = 0;
+    let mutationEmails = 0;
+    const context = createBookkitContext({
+      config, db: {} as D1Database, repo, clock,
+      providers: providers({
+        calendar: { listEvents: async () => [], createEvent: async () => { throw new Error('calendar down'); }, deleteEvent: async () => undefined, patchEvent: async () => undefined },
+        email: { send: async (event) => { if (event === 'booking.confirmed') confirmationEmails += 1; else mutationEmails += 1; } },
+      }),
+    });
+
+    await runReconciliation(context);
+    expect(confirmationEmails).toBe(1);
+    expect(mutationEmails).toBe(0);
+    expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_create`)?.status).toBe('failed');
+    expect(repo.sideEffectOperations.get(`${seeded.id}:email_confirmation`)?.status).toBe('succeeded');
+    expect(repo.sideEffectOperations.get(`${seeded.id}:email:booking.cancelled_by_operator`)?.attemptCount).toBe(4);
+  });
+
+  it('does not let terminal rows starve newer executable debt', async () => {
+    const terminal = Array.from({ length: 12 }, (_, index) => booking({ id: `recon-terminal-${index}`, status: 'confirmed' }));
+    const actionable = booking({ id: 'recon-action-after-terminal', status: 'confirmed', calendarSynced: false, emailSynced: true });
+    const repo = fakeRepository([...terminal, actionable]);
+    for (const seeded of terminal) seedSideEffect(repo, seeded.id, 'email_confirmation', { status: 'abandoned', attemptCount: 10 });
+    seedSideEffect(repo, actionable.id, 'calendar_create', { status: 'pending' });
+    let calendarCalls = 0;
+    const context = createBookkitContext({
+      config, db: {} as D1Database, repo, clock,
+      providers: providers({ calendar: { listEvents: async () => [], createEvent: async () => { calendarCalls += 1; return 'cal_fair'; }, deleteEvent: async () => undefined, patchEvent: async () => undefined } }),
+    });
+
+    const summary = await runReconciliation(context, { sourceLimit: 10 });
+    expect(calendarCalls).toBe(1);
+    expect(summary.sideEffectBookingsProcessed).toBe(1);
+    expect(summary.incidentsOpened).toBe(10);
+  });
+
+  it('reprojects an open incident after ordinary HTTP recovery removes the source from execution candidates', async () => {
+    const seeded = booking({ id: 'recon-http-reprojection', status: 'confirmed', calendarSynced: true, emailSynced: false });
+    const repo = fakeRepository([seeded]);
+    seedSideEffect(repo, seeded.id, 'email_confirmation', { status: 'abandoned', attemptCount: 10 });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers({ alerts: { send: async () => undefined } }) });
+    await runReconciliation(context);
+
+    const operation = repo.sideEffectOperations.get(`${seeded.id}:email_confirmation`);
+    if (!operation) throw new Error('missing seeded operation');
+    repo.sideEffectOperations.set(`${seeded.id}:email_confirmation`, {
+      ...operation, status: 'succeeded', updatedAt: '2026-08-14T10:01:00.000Z', resolvedAt: '2026-08-14T10:01:00.000Z',
+    });
+
+    const summary = await runReconciliation(context);
+    expect(summary.sideEffectBookingsProcessed).toBe(0);
+    expect(summary.incidentsResolved).toBe(1);
+    expect(await repo.getIncidentBySource('side_effect', `${seeded.id}:email_confirmation`)).toMatchObject({ status: 'resolved', resolutionKind: 'automatic' });
+  });
+
+  it('leaves alert revisions undelivered when no sink is configured and supports strict cron preflight', async () => {
+    const seeded = booking({ id: 'recon-alert-missing', status: 'confirmed', emailSynced: false });
+    const repo = fakeRepository([seeded]);
+    seedSideEffect(repo, seeded.id, 'email_confirmation', { status: 'abandoned', attemptCount: 10 });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+
+    const summary = await runReconciliation(context);
+    const incident = await repo.getIncidentBySource('side_effect', `${seeded.id}:email_confirmation`);
+    expect(summary.alertsFailed).toBe(1);
+    expect(incident).toMatchObject({ alertRevision: 1, alertedRevision: 0 });
+    await expect(runReconciliation(context, { requireAlertSink: true })).rejects.toThrow('requires an operational alert sink');
+    expect((await repo.getIncidentBySource('side_effect', `${seeded.id}:email_confirmation`))?.alertedRevision).toBe(0);
   });
 
   it('honors a bounded sourceLimit and remains resumable across invocations', async () => {

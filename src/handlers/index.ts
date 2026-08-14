@@ -41,6 +41,7 @@ import {
 } from '../confirmation';
 import type { BookkitContext } from '../context';
 import { getSecret, nowIso } from '../context';
+import { resumeClaimedOperatorCancellation } from '../operator-cancellation';
 import { isManageableToken } from '../providers/brevo';
 import {
   CONFIRMATION_TOURFLOW_KIND,
@@ -1022,26 +1023,20 @@ async function completeClaimedOperatorCancellation(
   operationId: string,
   refund: 'full' | 'none',
 ): Promise<Response> {
-  const cancelled = cancelBooking(booking, 'operator', nowIso(context));
-  const updated = await context.repo.transitionToCancelled(cancelled.id, {
-    expectedStatusIn: ['confirmed'], expectedStartsAt: booking.startsAt,
-    cancelledAt: cancelled.updatedAt, cancelledBy: 'operator', updatedAt: cancelled.updatedAt,
-    mutationSideEffectKinds: cancellationSideEffectKinds(context, booking, 'booking.cancelled_by_operator'),
-  });
-  if (!updated) {
-    const fresh = await context.repo.getBookingById(cancelled.id);
-    if (fresh?.status === 'cancelled') return reconcileCancelledRefund(context, fresh, refund);
-    // A non-cancelled winner makes this request's decision unusable. The repository only
-    // deletes requested rows, so a webhook's already-recorded Stripe success cannot be lost.
-    await context.repo.deleteRefundOperation(operationId);
-    if (fresh?.status === 'confirmed' && fresh.startsAt !== booking.startsAt) {
-      throw new HttpError(409, 'slot_unavailable', 'The selected slot is no longer available');
-    }
+  const result = await resumeClaimedOperatorCancellation(context, booking, operationId);
+  if (result.kind === 'slot_changed') {
+    throw new HttpError(409, 'slot_unavailable', 'The selected slot is no longer available');
+  }
+  if (result.kind === 'invalid_transition') {
     throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
   }
-
-  await dispatchMutation(context, 'booking.cancelled_by_operator', updated);
-  await resolvePendingRefund(context, booking, operationId, refund, booking.stripePaymentIntent ?? null);
+  await resolvePendingRefund(
+    context,
+    result.booking,
+    operationId,
+    refund,
+    result.booking.stripePaymentIntent ?? booking.stripePaymentIntent ?? null,
+  );
   return json({ ok: true });
 }
 

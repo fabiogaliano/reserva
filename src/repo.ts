@@ -568,17 +568,14 @@ export interface BookingRepository {
   // still refuses a live (non-stale) 'in_flight' claim and still increments the lifetime count.
   claimRefundExecutionForRetry(id: string, attemptedAt: string): Promise<number | null>;
 
-  // Plan 020 (design decision 4): bounded global candidate reads for the scheduled reconciler.
-  // Returns booking ids only (not full records) — the reconciler re-drains each booking through the
-  // SAME per-booking claim/execute paths (runOwedConfirmationSideEffects/runOwedMutationSideEffects/
-  // the refund executor) an HTTP request already uses, so no new claim/execution logic is
-  // duplicated here. Ordering/eligibility precision is intentionally simple at this deployment's
-  // scale (20-40 bookings/year): candidates in pending/failed/in_flight/abandoned status, oldest
-  // first by COALESCE(next_attempt_at, attempted_at, created_at) — the real per-row claim (not this
-  // read) is what actually enforces next_attempt_at/staleness/cap. 'abandoned' rows never re-enter
-  // execution (both drains already skip them) but still need one incident-projection pass.
-  listSideEffectCandidateBookingIds(limit: number): Promise<string[]>;
-  listRefundCandidateBookingIds(limit: number): Promise<string[]>;
+  // Execution, first-time incident projection, and existing-incident maintenance use separate
+  // bounded pages. Terminal rows can therefore never consume the page reserved for executable
+  // debt, while row-level side-effect candidates preserve each sibling's independent backoff.
+  listSideEffectExecutionCandidates(now: string, staleBefore: string, limit: number): Promise<SideEffectOperationRecord[]>;
+  listRefundExecutionCandidateBookingIds(now: string, staleBefore: string, limit: number): Promise<string[]>;
+  listSideEffectIncidentCandidateBookingIds(failureDueBefore: string, limit: number): Promise<string[]>;
+  listRefundIncidentCandidateBookingIds(limit: number): Promise<string[]>;
+  listIncidentReprojectionCandidates(limit: number): Promise<OperationalIncidentRecord[]>;
   // Plan 020 (design decision 3/6): 'oversell' rows are permanent markers (never retried — see
   // src/repo.ts confirmWithSideEffectOperations), so the candidate set is simply "no incident row
   // has ever been opened for this marker yet" rather than a claim/backoff query.
@@ -629,7 +626,7 @@ export interface BookingRepository {
   // incident's own detection state — mirrors claimRefundExecution's single-row-lease shape.
   // Claimable only when alerted_revision < alert_revision (an undelivered revision exists) and the
   // claim/backoff windows allow it.
-  listAlertCandidateIds(limit: number): Promise<string[]>;
+  listAlertCandidateIds(now: string, limit: number): Promise<string[]>;
   claimIncidentAlert(id: string, token: string, now: string, leaseUntil: string): Promise<OperationalIncidentRecord | null>;
   resolveIncidentAlertSuccess(id: string, token: string, alertedRevision: number): Promise<void>;
   resolveIncidentAlertFailure(id: string, token: string, error: string, nextAttemptAt: string): Promise<void>;
@@ -2050,31 +2047,93 @@ export function createBookingRepository(
       return result.results[0]?.attempt_count ?? null;
     },
 
-    async listSideEffectCandidateBookingIds(limit) {
-      // 'abandoned' rows do no further execution work (src/confirmation.ts's
-      // isActionableSideEffectStatus already skips them on re-drain) but still need to reach
-      // src/reconciliation.ts's incident projection at least once — surfacing them here, rather
-      // than via a second query, keeps the reconciler's incident pass a byproduct of the same
-      // bounded candidate read instead of a separate unbounded scan.
+    async listSideEffectExecutionCandidates(now, staleBefore, limit) {
+      const result = await db.prepare(
+        `SELECT ${sideEffectOperationColumns} FROM side_effect_operations
+         WHERE kind != 'oversell' AND attempt_count < ?
+           AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+           AND (
+             status = 'pending'
+             OR (status = 'in_flight' AND attempted_at < ?)
+             OR (status = 'failed' AND (
+               attempted_at IS NULL
+               OR datetime(attempted_at, '+' || CASE
+                 WHEN attempt_count <= 1 THEN 5
+                 WHEN attempt_count = 2 THEN 10
+                 WHEN attempt_count = 3 THEN 20
+                 WHEN attempt_count = 4 THEN 40
+                 ELSE 60 END || ' minutes') <= datetime(?)
+             ))
+           )
+         ORDER BY COALESCE(next_attempt_at, attempted_at, created_at), booking_id, kind
+         LIMIT ?`,
+      ).bind(SIDE_EFFECT_MAX_ATTEMPTS, now, staleBefore, now, limit).all<SideEffectOperationRow>();
+      return result.results.map(mapSideEffectOperation);
+    },
+    async listRefundExecutionCandidateBookingIds(now, staleBefore, limit) {
+      const result = await db.prepare(
+        `SELECT booking_id FROM refund_operations
+         WHERE attempt_count < ?
+           AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+           AND (status IN ('requested', 'failed') OR (status = 'in_flight' AND attempted_at < ?))
+         ORDER BY COALESCE(next_attempt_at, attempted_at, requested_at), booking_id
+         LIMIT ?`,
+      ).bind(SIDE_EFFECT_MAX_ATTEMPTS, now, staleBefore, limit).all<{ booking_id: string }>();
+      return result.results.map((row) => row.booking_id);
+    },
+    async listSideEffectIncidentCandidateBookingIds(failureDueBefore, limit) {
       const result = await db.prepare(
         `SELECT booking_id FROM side_effect_operations
-         WHERE status IN ('pending', 'failed', 'in_flight', 'abandoned')
+         WHERE (status = 'abandoned' OR (status = 'failed' AND failure_started_at <= ?))
+           AND NOT EXISTS (
+             SELECT 1 FROM operational_incidents
+             WHERE source_type = 'side_effect'
+               AND source_key = side_effect_operations.booking_id || ':' || side_effect_operations.kind
+           )
          GROUP BY booking_id
-         ORDER BY MIN(COALESCE(next_attempt_at, attempted_at, created_at))
+         ORDER BY MIN(updated_at), booking_id
+         LIMIT ?`,
+      ).bind(failureDueBefore, limit).all<{ booking_id: string }>();
+      return result.results.map((row) => row.booking_id);
+    },
+    async listRefundIncidentCandidateBookingIds(limit) {
+      const result = await db.prepare(
+        `SELECT refund_operations.booking_id FROM refund_operations
+         JOIN bookings ON bookings.id = refund_operations.booking_id
+         WHERE (refund_operations.status IN ('failed', 'abandoned') OR bookings.status != 'cancelled')
+           AND refund_operations.status != 'succeeded'
+           AND NOT EXISTS (
+             SELECT 1 FROM operational_incidents
+             WHERE source_type = 'refund' AND source_key = refund_operations.booking_id
+           )
+         ORDER BY COALESCE(refund_operations.resolved_at, refund_operations.requested_at), refund_operations.booking_id
          LIMIT ?`,
       ).bind(limit).all<{ booking_id: string }>();
       return result.results.map((row) => row.booking_id);
     },
-    async listRefundCandidateBookingIds(limit) {
-      // Same reasoning as listSideEffectCandidateBookingIds above: 'abandoned' refund rows need
-      // one incident-projection pass even though processRefundCandidate never re-attempts them.
+    async listIncidentReprojectionCandidates(limit) {
       const result = await db.prepare(
-        `SELECT booking_id FROM refund_operations
-         WHERE status IN ('requested', 'failed', 'in_flight', 'abandoned')
-         ORDER BY COALESCE(next_attempt_at, attempted_at, requested_at)
+        `SELECT ${operationalIncidentColumns} FROM operational_incidents
+         WHERE (status = 'open' OR (status = 'resolved' AND resolution_kind = 'manual'))
+           AND (
+             (source_type = 'side_effect' AND EXISTS (
+               SELECT 1 FROM side_effect_operations
+               WHERE source_key = side_effect_operations.booking_id || ':' || side_effect_operations.kind
+                 AND side_effect_operations.updated_at != operational_incidents.source_updated_at
+             ))
+             OR (source_type = 'refund' AND (
+               NOT EXISTS (SELECT 1 FROM refund_operations WHERE booking_id = operational_incidents.source_key)
+               OR EXISTS (
+                 SELECT 1 FROM refund_operations
+                 WHERE booking_id = operational_incidents.source_key
+                   AND COALESCE(resolved_at, requested_at) != operational_incidents.source_updated_at
+               )
+             ))
+           )
+         ORDER BY last_detected_at, id
          LIMIT ?`,
-      ).bind(limit).all<{ booking_id: string }>();
-      return result.results.map((row) => row.booking_id);
+      ).bind(limit).all<OperationalIncidentRow>();
+      return result.results.map(mapOperationalIncident);
     },
     async listUnreportedOversellMarkers(limit) {
       const result = await db.prepare(
@@ -2159,20 +2218,22 @@ export function createBookingRepository(
       return { opened: Number(opened?.count ?? 0), resolved: Number(resolved?.count ?? 0) };
     },
 
-    async listAlertCandidateIds(limit) {
+    async listAlertCandidateIds(now, limit) {
       const result = await db.prepare(
         `SELECT id FROM operational_incidents
-         WHERE alerted_revision < alert_revision
+         WHERE status = 'open' AND alerted_revision < alert_revision
+           AND (alert_next_attempt_at IS NULL OR alert_next_attempt_at <= ?)
+           AND (alert_claim_until IS NULL OR alert_claim_until < ?)
          ORDER BY COALESCE(alert_next_attempt_at, first_detected_at)
          LIMIT ?`,
-      ).bind(limit).all<{ id: string }>();
+      ).bind(now, now, limit).all<{ id: string }>();
       return result.results.map((row) => row.id);
     },
     async claimIncidentAlert(id, token, now, leaseUntil) {
       const result = await db.prepare(
         `UPDATE operational_incidents
          SET alert_claim_token = ?, alert_claim_until = ?, alert_attempt_count = alert_attempt_count + 1
-         WHERE id = ? AND alerted_revision < alert_revision
+         WHERE id = ? AND status = 'open' AND alerted_revision < alert_revision
            AND (alert_next_attempt_at IS NULL OR alert_next_attempt_at <= ?)
            AND (alert_claim_until IS NULL OR alert_claim_until < ?)
          RETURNING ${operationalIncidentColumns}`,

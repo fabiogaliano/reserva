@@ -13,8 +13,9 @@
 // entrypoint at all, so the site's HTTP serving cannot regress by construction.
 //
 // This is installed and deployed once by the technical operator (`wrangler deploy` from this
-// directory — see the smoke-site README), same as any other Cloudflare binding/secret setup; it is
-// not something the business owner configures.
+// directory — see the smoke-site README). Cloudflare secrets are per Worker, so a production copy
+// must configure every credential read by the shared runtime's provider factory on this Worker too;
+// sharing D1 does not inherit the site Worker's payment/calendar/email/ops/alert secrets.
 //
 // runtime.createContext falls back to the `cloudflare:workers` env/waitUntil globals whenever no
 // Astro `locals` are supplied (src/runtime-context.ts's getWorkerEnv/getWorkerWaitUntil) — those
@@ -24,8 +25,14 @@ import { runReconciliation } from '../../../src/runtime';
 import runtime from '../src/runtime';
 
 export default {
-  async scheduled(_controller: ScheduledController, _env: unknown, ctx: ExecutionContext): Promise<void> {
-    const context = await runtime.createContext({ request: new Request('https://bookkit-scheduled.invalid/') });
-    ctx.waitUntil(runReconciliation(context));
+  async scheduled(_controller: ScheduledController, _env: unknown, _ctx: ExecutionContext): Promise<void> {
+    try {
+      const context = await runtime.createContext({ request: new Request('https://bookkit-scheduled.invalid/') });
+      const summary = await runReconciliation(context, { requireAlertSink: true });
+      context.logger.info?.('bookkit scheduled reconciliation summary', { ...summary });
+    } catch (error) {
+      console.error('bookkit scheduled reconciliation failed', { lifecycle: 'failed', error: String(error) });
+      throw error;
+    }
   },
 };

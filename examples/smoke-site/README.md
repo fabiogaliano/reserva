@@ -37,8 +37,19 @@ supported way to splice a `scheduled()` handler into it without re-fighting that
 risking the site's own routes/assets/bindings). It shares the same `BOOKKIT_DB` D1 database as this
 site (same `database_name`), so both Workers see the same bookings.
 
+D1 is the shared ledger, not the Cron Worker's complete configuration. Cloudflare bindings and
+secrets are per Worker and are not inherited from the site Worker. A production copy must attach
+all credentials read by the shared provider factory to this Worker too: Stripe payment/webhook
+secrets; Google service-account, impersonation, and calendar-id values; Brevo; Tourflow; the central
+operational-alert channel; and Bookkit's token-encryption secret when recovered emails need working
+management links. Repeat `wrangler secret put <NAME> --config worker/wrangler.jsonc` for every
+secret even if the site Worker already has a secret with the same name; put non-secret provider
+URLs/ids in this Worker's `vars`. The checked-in fixture uses simulated providers and local-only
+values, so its short `vars` block is not a production credential inventory.
+
 This is installed once by whoever deploys the Worker (a technical operator), not something the
-business owner configures from the admin dashboard.
+business owner configures from the admin dashboard. Its handler requires an alert sink and fails
+preflight when one is missing, leaving incident alert revisions undelivered for a corrected deploy.
 
 ```bash
 # Run the cron worker locally against this demo's D1 state, with wrangler's built-in scheduled-

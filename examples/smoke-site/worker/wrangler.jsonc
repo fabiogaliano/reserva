@@ -4,8 +4,9 @@
   // sweep — see scheduled.ts's header comment for why this lives outside the Astro site's own
   // build/deploy instead of wrapping @astrojs/cloudflare's generated entrypoint. It shares the same
   // BOOKKIT_DB database (same database_name/id as ../wrangler.jsonc) so both Workers read/write one
-  // D1 instance; it does not need the site's ASSETS/SESSION/IMAGES bindings because it never serves
-  // HTTP routes.
+  // D1 instance; it does not need HTTP-only ASSETS/SESSION/IMAGES bindings. Production copies do
+  // need their own payment/calendar/email/ops/alert credentials because Worker secrets are not
+  // inherited — see ../README.md.
   "name": "bookkit-smoke-scheduled",
   "compatibility_date": "2026-07-21",
   "main": "scheduled.ts",

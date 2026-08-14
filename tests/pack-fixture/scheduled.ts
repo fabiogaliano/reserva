@@ -16,8 +16,14 @@ import { runReconciliation } from 'bookkit/runtime';
 import runtime from './runtime';
 
 export default {
-  async scheduled(_controller: ScheduledController, _env: unknown, ctx: ExecutionContext): Promise<void> {
-    const context = await runtime.createContext({ request: new Request('https://bookkit-scheduled.invalid/') });
-    ctx.waitUntil(runReconciliation(context));
+  async scheduled(_controller: ScheduledController, _env: unknown, _ctx: ExecutionContext): Promise<void> {
+    try {
+      const context = await runtime.createContext({ request: new Request('https://bookkit-scheduled.invalid/') });
+      const summary = await runReconciliation(context, { requireAlertSink: true });
+      context.logger.info?.('bookkit scheduled reconciliation summary', { ...summary });
+    } catch (error) {
+      console.error('bookkit scheduled reconciliation failed', { lifecycle: 'failed', error: String(error) });
+      throw error;
+    }
   },
 };

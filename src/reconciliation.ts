@@ -1,64 +1,30 @@
-// Plan 020 (design decisions 1-6, 9-11): the scheduled reconciler — a Cron Trigger (every five
-// minutes, wired by the consumer's own custom Worker entrypoint, step 7) calls runReconciliation
-// once per invocation. D1 remains authoritative (decision 2): this module re-drains bookings
-// through the SAME per-row claim/execute paths an HTTP request already uses
-// (confirmBookingFromPayment/runOwedMutationSideEffects/attemptRefund) rather than duplicating any
-// claim or Stripe-call logic, then projects/persists incident state and drains pending alerts.
-//
-// Deviation from decision 5's literal "all ordinary HTTP and scheduled claim predicates honor
-// next_attempt_at" for SIDE-EFFECT operations specifically (recorded here since it's easy to miss):
-// confirmBookingFromPayment/runOwedMutationSideEffects are the exact same functions an HTTP request
-// already calls opportunistically on every request that touches a booking, and several pinned
-// tests (tests/confirmation-outbox.test.ts, tests/handlers-customer-actions.test.ts,
-// tests/handlers-webhook-redelivery.test.ts, tests/confirmation-tourflow-outbox.test.ts, and
-// friends) require an immediate same-tick HTTP-driven retry to recover a failed row. Because both
-// callers claim through the identical claimSideEffectOperation/claimMutationSideEffectOperation
-// methods, src/confirmation.ts's three resolve call sites deliberately never write next_attempt_at
-// on that shared column — a real backoff window there would block the legitimate HTTP retry exactly
-// as long as it blocks this reconciler.
-//
-// That does NOT mean side-effect operations get no backoff at all: without one, this reconciler's
-// flat five-minute cron cadence burns SIDE_EFFECT_MAX_ATTEMPTS (10) attempts in ~45 minutes, far
-// short of the outage-survival runway design decision 5's 5/10/20/40/60 schedule intends (~4.7
-// hours). Since the schedule can't live on the shared next_attempt_at column, this module computes
-// it at scan time instead, scoped to the scheduled path only: isDueForScheduledRetry below derives
-// the same schedule from a row's own attempt_count/attempted_at (computeNextAttemptAt), and
-// processSideEffectCandidate only calls each drain entry point when it has at least one row
-// actually due — HTTP callers never consult this function, so their immediate retry is untouched.
-// (failure_started_at, the ten-minute delayed-incident threshold's input, was already a correct
-// uninterrupted-failure timestamp independent of this — src/repo.ts's resolveSideEffectOperation
-// COALESCEs it across repeated failures and only clears it on success, regardless of whether
-// next_attempt_at is supplied — so no separate fix was needed there.)
-//
-// Refund operations don't have this conflict at all: the HTTP path (src/refund-executor.ts's
-// attemptRefund with no claim) and this reconciler (attemptRefund WITH a claimRefundExecution
-// claim) are structurally separate call sites, so refund backoff is real on the shared column and
-// gates only the scheduled path.
-import {
-  classifyAttemptOutcome,
-  confirmBookingFromPayment,
-  isActionableSideEffectStatus,
-  isConfirmationSideEffectOperation,
-  runOwedMutationSideEffects,
-} from './confirmation';
+// The scheduled reconciler keeps D1 authoritative and separates three bounded workloads:
+// executable rows that are eligible now, incident-worthy rows not yet reported, and existing
+// incidents whose source changed. Row-level execution preserves sibling backoff and failure
+// isolation; terminal history can never occupy the executable page. Side-effect backoff is derived
+// in the repository query because HTTP recovery deliberately remains immediate, while refund rows
+// use their persisted next_attempt_at. Both paths still claim through the same operation-specific
+// primitives used by ordinary request recovery.
+import { classifyAttemptOutcome, runScheduledSideEffectOperation } from './confirmation';
 import type { Booking } from './core/booking';
 import type { OperationalAlert } from './core/events';
 import type { BookkitContext } from './context';
 import { nowIso } from './context';
+import { resumeClaimedOperatorCancellation } from './operator-cancellation';
 import { attemptRefund } from './refund-executor';
 import {
   actionForSideEffectKind,
   buildOperationalAlert,
   computeNextAttemptAt,
+  INCIDENT_DELAY_THRESHOLD_MS,
   isDelayIncidentDue,
-  isMutationEmailOrTourflowKind,
   projectIncident,
   type ExistingIncidentSignal,
   type IncidentProjection,
   type IncidentSourceSignal,
 } from './reconciliation-helpers';
 import {
-  CONFIRMATION_TOURFLOW_KIND,
+  MUTATION_SIDE_EFFECT_LEASE_MS,
   type OperationalIncidentAction,
   type OperationalIncidentRecord,
   type OperationalIncidentSourceType,
@@ -78,6 +44,7 @@ const ALERT_CLAIM_LEASE_MS = 5 * 60_000;
 export interface ReconciliationOptions {
   sourceLimit?: number;
   alertLimit?: number;
+  requireAlertSink?: boolean;
 }
 
 export interface ReconciliationSummary {
@@ -124,8 +91,9 @@ async function applyIncidentProjection(
   addTally(tally, projection);
   const now = nowIso(context);
   if (projection.action === 'open' || projection.action === 'update') {
+    const incidentId = existing?.id ?? crypto.randomUUID();
     await context.repo.upsertOpenIncident({
-      id: existing?.id ?? crypto.randomUUID(),
+      id: incidentId,
       bookingId,
       sourceType,
       sourceKey,
@@ -136,8 +104,15 @@ async function applyIncidentProjection(
       now,
       escalate: projection.escalate,
     });
+    context.logger.info?.('bookkit reconciliation incident projected', {
+      incidentId, sourceType, action, severity: signal.severity,
+      lifecycle: projection.action, escalated: projection.escalate,
+    });
   } else if (projection.action === 'resolve-automatic') {
     await context.repo.resolveIncidentAutomatic(sourceType, sourceKey, now);
+    context.logger.info?.('bookkit reconciliation incident resolved', {
+      incidentId: existing?.id, sourceType, action, lifecycle: 'resolved_automatic',
+    });
   }
 }
 
@@ -168,29 +143,35 @@ async function projectSideEffectIncidentsForBooking(context: BookkitContext, tal
 
 // Plan 020 (design decision 6): "refund failures ... open an action-required incident
 // immediately" — no ten-minute delay gate, unlike side-effect delivery failures.
-function refundSignal(operation: RefundOperationRecord): IncidentSourceSignal {
-  const detected = operation.status === 'failed' || operation.status === 'abandoned';
+function refundSignal(operation: RefundOperationRecord, booking: Booking | null): IncidentSourceSignal {
+  const detected = operation.status === 'failed' || operation.status === 'abandoned'
+    || (operation.status !== 'succeeded' && booking?.status !== 'cancelled');
   return { detected, severity: 'action_required', action: 'refund', attemptCount: operation.attemptCount, sourceUpdatedAt: operation.resolvedAt ?? operation.requestedAt };
 }
 
 async function projectRefundIncidentForBooking(context: BookkitContext, tally: IncidentTally, bookingId: string): Promise<void> {
-  const operation = await context.repo.getRefundOperationByBookingId(bookingId);
-  if (!operation) return;
-  const signal = refundSignal(operation);
+  const [operation, booking] = await Promise.all([
+    context.repo.getRefundOperationByBookingId(bookingId),
+    context.repo.getBookingById(bookingId),
+  ]);
+  if (!operation) {
+    const existing = await context.repo.getIncidentBySource('refund', bookingId);
+    if (existing?.status === 'open') {
+      await context.repo.resolveIncidentAutomatic('refund', bookingId, nowIso(context));
+      tally.resolved += 1;
+      context.logger.info?.('bookkit reconciliation incident resolved', {
+        incidentId: existing.id, sourceType: 'refund', action: 'refund', lifecycle: 'resolved_automatic',
+      });
+    }
+    return;
+  }
+  const signal = refundSignal(operation, booking);
   await applyIncidentProjection(context, tally, bookingId, 'refund', bookingId, 'refund', signal);
 }
 
-// Plan 020 (design decision 9/13): once a booking's *only* actionable row is fixed (by any path —
-// an admin "Try again", or an ordinary HTTP-driven opportunistic retry), it drops out of
-// listSideEffectCandidateBookingIds/listRefundCandidateBookingIds' WHERE clauses (there is nothing
-// left for a scheduled drain to do), so the next reconciliation pass would never look at that
-// booking again and its now-stale open incident would never auto-resolve. An ordinary reconciler
-// pass never hits this: it gathers candidate ids once, drains them, and reprojects incidents
-// against that SAME pre-drain id list — a row that fails then succeeds within one pass is still
-// reprojected. An admin retry (src/handlers/index.ts's `incident-retry` action) happens entirely
-// outside any reconciliation pass, so it must reproject its own incident directly rather than
-// waiting for a scan that will never include this booking again. Exported for that one caller;
-// every other reconciliation caller still goes through the normal candidate-list pass above.
+// Admin retries reproject synchronously so the card disappears in the same response flow. Cron's
+// independent source-change page now provides the equivalent safety net for ordinary status,
+// manage, and webhook recovery that happens outside reconciliation.
 export async function reprojectIncidentAfterAdminRetry(
   context: BookkitContext,
   sourceType: 'side_effect' | 'refund',
@@ -208,8 +189,9 @@ async function reportUnreportedOversellMarkers(context: BookkitContext, tally: I
   const markers = await context.repo.listUnreportedOversellMarkers(limit);
   const now = nowIso(context);
   for (const marker of markers) {
+    const incidentId = crypto.randomUUID();
     await context.repo.upsertOpenIncident({
-      id: crypto.randomUUID(),
+      id: incidentId,
       bookingId: marker.bookingId,
       sourceType: 'oversell',
       sourceKey: marker.bookingId,
@@ -221,85 +203,61 @@ async function reportUnreportedOversellMarkers(context: BookkitContext, tally: I
       escalate: false,
     });
     tally.opened += 1;
+    context.logger.info?.('bookkit reconciliation incident projected', {
+      incidentId, sourceType: 'oversell', action: 'oversell', severity: 'action_required', lifecycle: 'open', escalated: false,
+    });
   }
 }
 
-// Plan 020 (design decision 5), scheduled-side only — see this file's header comment. A row is due
-// for an ORDINARY scheduled retry when it has never failed (pending/in_flight: the claim itself
-// gates a live in_flight lease) or its 5/10/20/40/60-minute backoff window — computed from the
-// row's own last attempt, not a stored column — has elapsed. A terminal row (succeeded/abandoned)
-// is never due; abandoned rows still get their one incident-projection pass via the candidate list,
-// just not a re-attempt here.
-function isDueForScheduledRetry(operation: SideEffectOperationRecord, nowIsoValue: string): boolean {
-  if (!isActionableSideEffectStatus(operation.status)) return false;
-  if (operation.status !== 'failed') return true;
-  if (!operation.attemptedAt) return true; // defensive: no timestamp to compute a window from
-  return computeNextAttemptAt(new Date(operation.attemptedAt), operation.attemptCount) <= nowIsoValue;
-}
-
-// Re-drains one candidate booking's owed confirmation/mutation side effects through the exact same
-// paths an HTTP request already uses (src/confirmation.ts) — no new claim logic here, only a
-// booking-level "is anything in this bucket actually due yet" gate in front of each entry point
-// (see isDueForScheduledRetry above). A booking that no longer exists (should not happen; ids come
-// from a live FK-backed table) is skipped. Each of the three kind-buckets below is checked against
-// the SAME already-fetched operations list, matching confirmBookingFromPayment/
-// runOwedMutationSideEffects/runConfirmationTourflowSideEffect's own row-kind partition — a due row
-// in one bucket does not force-drain another still-backed-off bucket's rows for this booking, since
-// each bucket has its own gated entry point.
-async function processSideEffectCandidate(context: BookkitContext, bookingId: string): Promise<void> {
-  const booking = await context.repo.getBookingById(bookingId);
+async function processSideEffectCandidate(
+  context: BookkitContext,
+  operation: SideEffectOperationRecord,
+): Promise<void> {
+  const booking = await context.repo.getBookingById(operation.bookingId);
   if (!booking) return;
-  const now = nowIso(context);
-  const operations = await context.repo.listSideEffectOperations(bookingId);
-
-  const confirmationDue = operations.some((operation) => isConfirmationSideEffectOperation(operation) && isDueForScheduledRetry(operation, now));
-  if (booking.status === 'confirmed' && confirmationDue) {
-    try {
-      await confirmBookingFromPayment(context, booking);
-    } catch (error) {
-      context.logger.warn?.('bookkit reconciliation: confirmation drain failed', { bookingId, error: String(error) });
-    }
-  }
-
-  // runOwedMutationSideEffects bundles the mutation-kind loop and the confirmation-path Tourflow
-  // row (CONFIRMATION_TOURFLOW_KIND, claimed via claimMutationSideEffectOperation but resolved
-  // through resolveConfirmationTourflowOperation — see src/confirmation.ts) into one call; either
-  // bucket having a due row is enough to invoke it.
-  const mutationDue = operations.some((operation) => operation.kind !== CONFIRMATION_TOURFLOW_KIND && isMutationEmailOrTourflowKind(operation.kind) && isDueForScheduledRetry(operation, now));
-  const tourflowConfirmationDue = operations.some((operation) => operation.kind === CONFIRMATION_TOURFLOW_KIND && isDueForScheduledRetry(operation, now));
-  if (mutationDue || tourflowConfirmationDue) {
-    try {
-      await runOwedMutationSideEffects(context, booking);
-    } catch (error) {
-      context.logger.warn?.('bookkit reconciliation: mutation drain failed', { bookingId, error: String(error) });
-    }
+  try {
+    await runScheduledSideEffectOperation(context, booking, operation);
+  } catch (error) {
+    context.logger.warn?.('bookkit reconciliation side effect attempt failed', {
+      bookingId: operation.bookingId, kind: operation.kind, error: String(error),
+    });
   }
 }
 
-// Plan 020 (design decision 7): claims this booking's refund execution slot before ever calling
-// Stripe, and — mirroring "a claimed cancellation left before its booking CAS is resumed through
-// the same existing cancellation gate; Stripe is never called while the booking is still
-// non-cancelled" — only proceeds once the booking is durably cancelled. A non-cancelled booking
-// with a claimed-but-unresolved refund operation is left for the operator's own retry (which
-// re-enters the CAS gate directly), not redriven here.
+// The same cancellation CAS used by HTTP recovery is resumed before an execution claim. A crash
+// after claimRefundOperation therefore cannot strand a confirmed booking, and Stripe remains
+// unreachable until the returned booking is durably cancelled.
 async function processRefundCandidate(context: BookkitContext, bookingId: string): Promise<void> {
-  const [booking, operation] = await Promise.all([
+  const [initialBooking, operation] = await Promise.all([
     context.repo.getBookingById(bookingId),
     context.repo.getRefundOperationByBookingId(bookingId),
   ]);
-  if (!booking || !operation || booking.status !== 'cancelled') return;
-  if (operation.status === 'succeeded' || operation.status === 'abandoned') return;
+  if (!initialBooking || !operation || operation.status === 'succeeded' || operation.status === 'abandoned') return;
+
+  let booking = initialBooking;
+  if (booking.status !== 'cancelled') {
+    if (operation.status !== 'requested' || booking.status !== 'confirmed') return;
+    const cancellation = await resumeClaimedOperatorCancellation(context, booking, operation.id);
+    if (cancellation.kind !== 'cancelled') return;
+    booking = cancellation.booking;
+  }
+
   const now = nowIso(context);
   const attemptNumber = await context.repo.claimRefundExecution(operation.id, now);
   if (attemptNumber === null) return;
   try {
     await attemptRefund(context, booking, operation.id, operation.choice, operation.paymentIntent, { attemptNumber });
   } catch (error) {
-    context.logger.warn?.('bookkit reconciliation: refund attempt failed', { bookingId, error: String(error) });
+    context.logger.warn?.('bookkit reconciliation refund attempt failed', { bookingId, error: String(error) });
   }
 }
 
-async function projectIncidents(context: BookkitContext, sideEffectBookingIds: string[], refundBookingIds: string[], limit: number): Promise<IncidentTally> {
+async function projectIncidents(
+  context: BookkitContext,
+  sideEffectBookingIds: Iterable<string>,
+  refundBookingIds: Iterable<string>,
+  limit: number,
+): Promise<IncidentTally> {
   const tally: IncidentTally = { opened: 0, updated: 0, resolved: 0 };
   for (const bookingId of sideEffectBookingIds) await projectSideEffectIncidentsForBooking(context, tally, bookingId);
   for (const bookingId of refundBookingIds) await projectRefundIncidentForBooking(context, tally, bookingId);
@@ -312,12 +270,18 @@ function adminUrlForIncident(context: BookkitContext, incidentId: string): strin
   return new URL(`${adminPage}?view=incidents#incident-${incidentId}`, context.config.business.url).toString();
 }
 
-// Plan 020 (design decision 11): alert delivery's own claim/attempt/backoff, independent of the
-// incident's own open/resolved state — an incident that resolved after being alerted still needed
-// (and keeps) its delivered alertedRevision; one that reopens gets a fresh, undelivered revision.
+// Alert delivery has its own claim/attempt/backoff. Only open incidents are eligible: a revision
+// that auto-resolves before delivery is obsolete, while a later reopen increments alert_revision
+// and becomes independently deliverable.
 async function drainAlerts(context: BookkitContext, limit: number): Promise<{ sent: number; failed: number }> {
   const sink = context.providers.alerts;
-  const ids = await context.repo.listAlertCandidateIds(limit);
+  const ids = await context.repo.listAlertCandidateIds(nowIso(context), limit);
+  if (!sink && ids.length > 0) {
+    context.logger.error?.('bookkit reconciliation alert sink missing', {
+      lifecycle: 'configuration_error', pendingAlerts: ids.length,
+    });
+    return { sent: 0, failed: ids.length };
+  }
   let sent = 0;
   let failed = 0;
   for (const id of ids) {
@@ -326,12 +290,7 @@ async function drainAlerts(context: BookkitContext, limit: number): Promise<{ se
     const leaseUntil = new Date(Date.parse(now) + ALERT_CLAIM_LEASE_MS).toISOString();
     const claimed = await context.repo.claimIncidentAlert(id, token, now, leaseUntil);
     if (!claimed) continue;
-    if (!sink) {
-      // No alert sink configured — there is no technical operator to notify, so mark this
-      // revision delivered rather than retrying forever against a provider that doesn't exist.
-      await context.repo.resolveIncidentAlertSuccess(id, token, claimed.alertRevision);
-      continue;
-    }
+    if (!sink) continue;
     const alert: OperationalAlert = buildOperationalAlert({
       incidentId: claimed.id,
       reference: await referenceForBooking(context, claimed.bookingId),
@@ -342,15 +301,25 @@ async function drainAlerts(context: BookkitContext, limit: number): Promise<{ se
       adminUrl: adminUrlForIncident(context, claimed.id),
     });
     try {
+      context.logger.info?.('bookkit reconciliation alert delivery started', {
+        incidentId: claimed.id, alertRevision: claimed.alertRevision, lifecycle: 'started',
+      });
       await sink.send(alert);
       await context.repo.resolveIncidentAlertSuccess(id, token, claimed.alertRevision);
       sent += 1;
+      context.logger.info?.('bookkit reconciliation alert delivered', {
+        incidentId: claimed.id, alertRevision: claimed.alertRevision, lifecycle: 'succeeded',
+      });
     } catch (error) {
       const outcome = classifyAttemptOutcome(claimed.alertAttemptCount, error);
       const message = outcome.error;
       const nextAttemptAt = computeNextAttemptAt(new Date(now), claimed.alertAttemptCount);
       await context.repo.resolveIncidentAlertFailure(id, token, message, nextAttemptAt);
       failed += 1;
+      context.logger.warn?.('bookkit reconciliation alert delivery failed', {
+        incidentId: claimed.id, alertRevision: claimed.alertRevision,
+        lifecycle: 'failed', nextAttemptAt, error: message,
+      });
     }
   }
   return { sent, failed };
@@ -367,21 +336,45 @@ async function referenceForBooking(context: BookkitContext, bookingId: string): 
 export async function runReconciliation(context: BookkitContext, options: ReconciliationOptions = {}): Promise<ReconciliationSummary> {
   const sourceLimit = clampLimit(options.sourceLimit, DEFAULT_SOURCE_LIMIT, HARD_SOURCE_LIMIT);
   const alertLimit = clampLimit(options.alertLimit, DEFAULT_ALERT_LIMIT, HARD_ALERT_LIMIT);
+  if (options.requireAlertSink && !context.providers.alerts) {
+    context.logger.error?.('bookkit reconciliation alert sink missing', { lifecycle: 'configuration_error' });
+    throw new Error('Bookkit reconciliation requires an operational alert sink');
+  }
 
-  const expiredHoldsSwept = await context.repo.sweepExpiredHolds(nowIso(context));
+  const startedAt = nowIso(context);
+  const staleBefore = new Date(Date.parse(startedAt) - MUTATION_SIDE_EFFECT_LEASE_MS).toISOString();
+  const failureDueBefore = new Date(Date.parse(startedAt) - INCIDENT_DELAY_THRESHOLD_MS).toISOString();
+  context.logger.info?.('bookkit reconciliation started', {
+    lifecycle: 'started', sourceLimit, alertLimit,
+  });
 
-  const sideEffectBookingIds = await context.repo.listSideEffectCandidateBookingIds(sourceLimit);
-  for (const bookingId of sideEffectBookingIds) await processSideEffectCandidate(context, bookingId);
+  const expiredHoldsSwept = await context.repo.sweepExpiredHolds(startedAt);
 
-  const refundBookingIds = await context.repo.listRefundCandidateBookingIds(sourceLimit);
+  const sideEffectCandidates = await context.repo.listSideEffectExecutionCandidates(startedAt, staleBefore, sourceLimit);
+  for (const operation of sideEffectCandidates) await processSideEffectCandidate(context, operation);
+
+  const refundBookingIds = await context.repo.listRefundExecutionCandidateBookingIds(startedAt, staleBefore, sourceLimit);
   for (const bookingId of refundBookingIds) await processRefundCandidate(context, bookingId);
 
-  const incidentTally = await projectIncidents(context, sideEffectBookingIds, refundBookingIds, sourceLimit);
-  const alertResult = await drainAlerts(context, alertLimit);
+  const [sideEffectIncidentIds, refundIncidentIds, reprojectionCandidates] = await Promise.all([
+    context.repo.listSideEffectIncidentCandidateBookingIds(failureDueBefore, sourceLimit),
+    context.repo.listRefundIncidentCandidateBookingIds(sourceLimit),
+    context.repo.listIncidentReprojectionCandidates(sourceLimit),
+  ]);
+  const sideEffectProjectionIds = new Set(sideEffectCandidates.map((operation) => operation.bookingId));
+  const refundProjectionIds = new Set(refundBookingIds);
+  for (const bookingId of sideEffectIncidentIds) sideEffectProjectionIds.add(bookingId);
+  for (const bookingId of refundIncidentIds) refundProjectionIds.add(bookingId);
+  for (const incident of reprojectionCandidates) {
+    if (incident.sourceType === 'side_effect') sideEffectProjectionIds.add(incident.bookingId);
+    else if (incident.sourceType === 'refund') refundProjectionIds.add(incident.bookingId);
+  }
 
-  return {
+  const incidentTally = await projectIncidents(context, sideEffectProjectionIds, refundProjectionIds, sourceLimit);
+  const alertResult = await drainAlerts(context, alertLimit);
+  const summary: ReconciliationSummary = {
     expiredHoldsSwept,
-    sideEffectBookingsProcessed: sideEffectBookingIds.length,
+    sideEffectBookingsProcessed: new Set(sideEffectCandidates.map((operation) => operation.bookingId)).size,
     refundBookingsProcessed: refundBookingIds.length,
     incidentsOpened: incidentTally.opened,
     incidentsUpdated: incidentTally.updated,
@@ -389,4 +382,6 @@ export async function runReconciliation(context: BookkitContext, options: Reconc
     alertsSent: alertResult.sent,
     alertsFailed: alertResult.failed,
   };
+  context.logger.info?.('bookkit reconciliation completed', { lifecycle: 'completed', ...summary });
+  return summary;
 }

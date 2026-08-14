@@ -835,29 +835,69 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       return attemptNumber;
     },
 
-    // Plan 020 (design decision 4): bounded global candidate reads for the scheduled reconciler —
-    // ordering/eligibility precision is intentionally simple at this deployment's scale; the real
-    // per-row claim (not this read) enforces next_attempt_at/staleness/cap.
-    listSideEffectCandidateBookingIds: async (limit) => {
+    listSideEffectExecutionCandidates: async (now, staleBefore, limit) => {
+      const backoffMinutes = (attemptCount: number) => [5, 10, 20, 40, 60][Math.min(Math.max(attemptCount, 1) - 1, 4)] ?? 60;
+      return [...sideEffectOperations.values()]
+        .filter((row) => {
+          if (row.kind === 'oversell' || row.attemptCount >= SIDE_EFFECT_MAX_ATTEMPTS) return false;
+          if (row.nextAttemptAt !== null && row.nextAttemptAt > now) return false;
+          if (row.status === 'pending') return true;
+          if (row.status === 'in_flight') return row.attemptedAt !== null && row.attemptedAt < staleBefore;
+          if (row.status !== 'failed') return false;
+          if (row.attemptedAt === null) return true;
+          return new Date(Date.parse(row.attemptedAt) + backoffMinutes(row.attemptCount) * 60_000).toISOString() <= now;
+        })
+        .sort((a, b) => {
+          const byTime = (a.nextAttemptAt ?? a.attemptedAt ?? a.createdAt).localeCompare(b.nextAttemptAt ?? b.attemptedAt ?? b.createdAt);
+          return byTime || a.bookingId.localeCompare(b.bookingId) || a.kind.localeCompare(b.kind);
+        })
+        .slice(0, limit);
+    },
+    listRefundExecutionCandidateBookingIds: async (now, staleBefore, limit) => [...refundOperations.values()]
+      .filter((row) => row.attemptCount < SIDE_EFFECT_MAX_ATTEMPTS
+        && (row.nextAttemptAt === null || row.nextAttemptAt <= now)
+        && (row.status === 'requested' || row.status === 'failed'
+          || (row.status === 'in_flight' && row.attemptedAt !== null && row.attemptedAt < staleBefore)))
+      .sort((a, b) => (a.nextAttemptAt ?? a.attemptedAt ?? a.requestedAt).localeCompare(b.nextAttemptAt ?? b.attemptedAt ?? b.requestedAt)
+        || a.bookingId.localeCompare(b.bookingId))
+      .slice(0, limit)
+      .map((row) => row.bookingId),
+    listSideEffectIncidentCandidateBookingIds: async (failureDueBefore, limit) => {
       const candidates = [...sideEffectOperations.values()]
-        .filter((row) => row.status === 'pending' || row.status === 'failed' || row.status === 'in_flight' || row.status === 'abandoned');
+        .filter((row) => (row.status === 'abandoned' || (row.status === 'failed' && row.failureStartedAt !== null && row.failureStartedAt <= failureDueBefore))
+          && !operationalIncidents.has(incidentKey('side_effect', `${row.bookingId}:${row.kind}`)));
       const byBooking = new Map<string, string>();
       for (const row of candidates) {
-        const sortKey = row.nextAttemptAt ?? row.attemptedAt ?? row.createdAt;
         const existing = byBooking.get(row.bookingId);
-        if (!existing || sortKey < existing) byBooking.set(row.bookingId, sortKey);
+        if (!existing || row.updatedAt < existing) byBooking.set(row.bookingId, row.updatedAt);
       }
-      return [...byBooking.entries()].sort((a, b) => a[1].localeCompare(b[1])).slice(0, limit).map(([bookingId]) => bookingId);
+      return [...byBooking.entries()].sort((a, b) => a[1].localeCompare(b[1]) || a[0].localeCompare(b[0])).slice(0, limit).map(([bookingId]) => bookingId);
     },
-    listRefundCandidateBookingIds: async (limit) => {
-      const candidates = [...refundOperations.values()]
-        .filter((row) => row.status === 'requested' || row.status === 'failed' || row.status === 'in_flight' || row.status === 'abandoned');
-      return candidates
-        .map((row) => ({ bookingId: row.bookingId, sortKey: row.nextAttemptAt ?? row.attemptedAt ?? row.requestedAt }))
-        .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
-        .slice(0, limit)
-        .map((entry) => entry.bookingId);
-    },
+    listRefundIncidentCandidateBookingIds: async (limit) => [...refundOperations.values()]
+      .filter((row) => {
+        const item = rows.get(row.bookingId);
+        return row.status !== 'succeeded'
+          && (row.status === 'failed' || row.status === 'abandoned' || item?.status !== 'cancelled')
+          && !operationalIncidents.has(incidentKey('refund', row.bookingId));
+      })
+      .sort((a, b) => (a.resolvedAt ?? a.requestedAt).localeCompare(b.resolvedAt ?? b.requestedAt) || a.bookingId.localeCompare(b.bookingId))
+      .slice(0, limit)
+      .map((row) => row.bookingId),
+    listIncidentReprojectionCandidates: async (limit) => [...operationalIncidents.values()]
+      .filter((incident) => {
+        if (incident.status !== 'open' && !(incident.status === 'resolved' && incident.resolutionKind === 'manual')) return false;
+        if (incident.sourceType === 'side_effect') {
+          const operation = sideEffectOperations.get(incident.sourceKey);
+          return operation !== undefined && operation.updatedAt !== incident.sourceUpdatedAt;
+        }
+        if (incident.sourceType === 'refund') {
+          const operation = refundOperations.get(incident.sourceKey);
+          return operation === undefined || (operation.resolvedAt ?? operation.requestedAt) !== incident.sourceUpdatedAt;
+        }
+        return false;
+      })
+      .sort((a, b) => a.lastDetectedAt.localeCompare(b.lastDetectedAt) || a.id.localeCompare(b.id))
+      .slice(0, limit),
     // Plan 020 (design decision 3/6): 'oversell' rows are permanent markers, so the candidate set
     // is simply "no incident row has ever been opened for this marker yet".
     listUnreportedOversellMarkers: async (limit) => {
@@ -938,14 +978,16 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
 
     // Plan 020 (design decision 11): alert delivery's own claim/attempt/backoff, independent of the
     // incident's own detection state — mirrors claimRefundExecution's single-row-lease shape.
-    listAlertCandidateIds: async (limit) => [...operationalIncidents.values()]
-      .filter((incident) => incident.alertedRevision < incident.alertRevision)
+    listAlertCandidateIds: async (now, limit) => [...operationalIncidents.values()]
+      .filter((incident) => incident.status === 'open' && incident.alertedRevision < incident.alertRevision
+        && (incident.alertNextAttemptAt === null || incident.alertNextAttemptAt <= now)
+        && (incident.alertClaimUntil === null || incident.alertClaimUntil < now))
       .sort((a, b) => (a.alertNextAttemptAt ?? a.firstDetectedAt).localeCompare(b.alertNextAttemptAt ?? b.firstDetectedAt))
       .slice(0, limit)
       .map((incident) => incident.id),
     claimIncidentAlert: async (id, token, now, leaseUntil) => {
       const current = [...operationalIncidents.values()].find((incident) => incident.id === id);
-      if (!current || current.alertedRevision >= current.alertRevision) return null;
+      if (!current || current.status !== 'open' || current.alertedRevision >= current.alertRevision) return null;
       if (current.alertNextAttemptAt !== null && current.alertNextAttemptAt > now) return null;
       if (current.alertClaimUntil !== null && current.alertClaimUntil >= now) return null;
       const claimed: OperationalIncidentRecord = {

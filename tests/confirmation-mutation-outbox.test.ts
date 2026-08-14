@@ -2,6 +2,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { runOwedMutationSideEffects } from '../src/confirmation';
 import type { BookkitProviders } from '../src/context';
+import type { EmailBookingEvent, EmailProvider, EmailRecipientRole } from '../src/core/events';
 import { createBookkitContext } from '../src/context';
 import { handleCustomerReschedule, handleOperatorNoShow } from '../src/handlers';
 import type { SideEffectOperationKind } from '../src/repo';
@@ -183,6 +184,28 @@ describe('mutation side-effect outbox', () => {
     await runOwedMutationSideEffects(context, seeded);
     expect(sends).toBe(0);
     expect(repo.sideEffectOperations.get(`${seeded.id}:email:booking.no_show:customer`)).toMatchObject({ status: 'pending', attemptCount: 0 });
+  });
+
+  it('preserves a class-based provider method receiver for mutation recipient delivery', async () => {
+    const seeded = booking({ id: 'mutation-email-method-receiver', startsAt: '2026-06-14T07:00:00.000Z', endsAt: '2026-06-14T08:00:00.000Z' });
+    const repo = fakeRepository([seeded]);
+    class StatefulEmailProvider implements EmailProvider {
+      readonly recipients: EmailRecipientRole[] = [];
+      recipientsForEvent(): EmailRecipientRole[] { return ['customer']; }
+      async send(): Promise<void> {}
+      async sendToRecipient(recipient: EmailRecipientRole, _event: EmailBookingEvent): Promise<void> {
+        this.recipients.push(recipient);
+      }
+    }
+    const email = new StatefulEmailProvider();
+    const context = createBookkitContext({
+      config, db: {} as D1Database, repo, clock,
+      providers: providers({ email }),
+    });
+
+    await handleOperatorNoShow(operatorNoShowRequest(seeded.operatorToken), context);
+    expect(email.recipients).toEqual(['customer']);
+    expect(repo.sideEffectOperations.get(`${seeded.id}:email:booking.no_show:customer`)).toMatchObject({ status: 'succeeded' });
   });
 
   it('retries only a failed owner recipient row', async () => {

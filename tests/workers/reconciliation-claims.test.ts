@@ -135,9 +135,9 @@ describe('side-effect operation backoff gating and retry bypass on real D1', () 
   });
 });
 
-// Plan 020 (design decision 11): claimIncidentAlert is the alert-delivery lease — independent of
-// the incident's own open/resolved state, keyed by (alerted_revision < alert_revision) plus its
-// own claim/backoff window. Proves the same single-winner shape against real D1.
+// Plan 020 (design decision 11): claimIncidentAlert is the alert-delivery lease for an open,
+// undelivered revision, with its own claim/backoff window. Resolved revisions are obsolete and a
+// later reopen increments alert_revision before becoming eligible again.
 describe('operational_incidents alert claim concurrency and lifecycle on real D1', () => {
   it('exactly one of several concurrent alert claims for the same undelivered revision wins', async () => {
     const id = 'incident-alert-claim-race';

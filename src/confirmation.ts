@@ -299,7 +299,17 @@ async function confirmBookingFromPaymentUnlocked(
   const allOperations = await context.repo.listSideEffectOperations(current.id);
   const operations = allOperations.filter(isConfirmationSideEffectOperation);
   shouldDispatchConfirmation ||= operations.some((operation) => isActionableSideEffectStatus(operation.status));
-  for (const operation of operations) await executeOperation(context, current, operation, token);
+  let firstProviderError: unknown;
+  let providerFailed = false;
+  for (const operation of operations) {
+    try {
+      await executeOperation(context, current, operation, token);
+    } catch (error) {
+      if (error instanceof ConfirmationInProgressError) throw error;
+      if (!providerFailed) firstProviderError = error;
+      providerFailed = true;
+    }
+  }
   current = await context.repo.getBookingById(current.id) ?? current;
   if (shouldDispatchConfirmation) {
     dispatchAnalytics(context, 'booking.confirmed', current);
@@ -308,6 +318,7 @@ async function confirmBookingFromPaymentUnlocked(
     // request (runOwedMutationSideEffects below) retries a failed/stale claim durably.
     scheduleConfirmationTourflowDelivery(context, current);
   }
+  if (providerFailed) throw firstProviderError;
   return current;
 }
 
@@ -573,7 +584,7 @@ function attemptForKind(context: BookkitContext, booking: Booking, kind: Mutatio
     const recipient: EmailRecipientRole | undefined = rest[0] === 'customer' || rest[0] === 'owner' ? rest[0] : undefined;
     if (recipient) {
       if (!email.sendToRecipient) return null;
-      const sendToRecipient = email.sendToRecipient;
+      const sendToRecipient = email.sendToRecipient.bind(email);
       return {
         event: emailBookingEvent, provider: 'email',
         run: () => sendToRecipient(recipient, emailBookingEvent, booking, context.config, context.routeConfig.paths),
@@ -652,6 +663,43 @@ export async function runOwedMutationSideEffects(context: BookkitContext, bookin
     await runMutationSideEffect(context, booking, operation.kind, attempt);
   }
   await runConfirmationTourflowSideEffect(context, booking);
+}
+
+// Scheduled reconciliation receives row-level eligible candidates from the repository and executes
+// exactly that row. Reusing the operation-specific claim/run/resolve primitives here prevents one
+// due row from pulling a sibling out of backoff through a booking-wide drain.
+export async function runScheduledSideEffectOperation(
+  context: BookkitContext,
+  booking: Booking,
+  operation: SideEffectOperationRecord,
+): Promise<void> {
+  if (!isActionableSideEffectStatus(operation.status)) return;
+  if (isConfirmationSideEffectOperation(operation)) {
+    if (operation.kind === 'oversell' || booking.status !== 'confirmed') return;
+    const startedAt = context.clock();
+    const token = crypto.randomUUID();
+    const acquired = await context.repo.acquireConfirmationLease(
+      booking.id,
+      token,
+      startedAt.toISOString(),
+      new Date(startedAt.getTime() + 5 * 60_000).toISOString(),
+    );
+    if (!acquired) return;
+    try {
+      await executeOperation(context, booking, operation, token);
+    } finally {
+      await context.repo.releaseConfirmationLease(booking.id, token);
+    }
+    return;
+  }
+  if (operation.kind === CONFIRMATION_TOURFLOW_KIND) {
+    await runConfirmationTourflowSideEffect(context, booking);
+    return;
+  }
+  if (!isMutationSideEffectKind(operation.kind)) return;
+  const attempt = attemptForKind(context, booking, operation.kind);
+  if (!attempt) return;
+  await runMutationSideEffect(context, booking, operation.kind, attempt);
 }
 
 // Plan 020 (design decision 13): the admin "Try again" action's result — 'nothing_to_retry' covers
