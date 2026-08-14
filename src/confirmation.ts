@@ -205,6 +205,14 @@ async function executeOperation(
   } catch (error) {
     if (error instanceof ConfirmationInProgressError) throw error;
     const outcome = classifyAttemptOutcome(attemptNumber, error);
+    // Plan 020 (design decision 5): deliberately does NOT set next_attempt_at here. This same
+    // drain path (executeOperation) is what an HTTP request touching the booking already uses to
+    // retry immediately — see tests/confirmation-outbox.test.ts and friends, which pin an
+    // immediate same-tick retry recovering a failed row. A real backoff window here would block
+    // that legitimate HTTP-driven retry exactly as long as it blocks the scheduled reconciler
+    // (both claim through the same claimSideEffectOperation call), so backoff for side-effect
+    // operations comes only from the reconciler's own five-minute cron cadence, not from this
+    // column — next_attempt_at's gate is a no-op (always null) for rows resolved through here.
     await resolveOperation(context, {
       bookingId: booking.id,
       kind: operation.kind,
@@ -441,6 +449,8 @@ async function runConfirmationTourflowSideEffect(context: BookkitContext, bookin
     });
   } catch (error) {
     const outcome = classifyAttemptOutcome(attemptNumber, error);
+    // Plan 020 (design decision 5): see the matching comment in executeOperation above — this
+    // drain also runs from an HTTP-driven retry, so next_attempt_at is deliberately left unset.
     await context.repo.resolveConfirmationTourflowOperation({
       bookingId: booking.id, status: outcome.status, claimedAt: attemptedAt,
       error: outcome.error, resolvedAt: nowIso(context),
@@ -601,6 +611,8 @@ async function runMutationSideEffect(
     });
   } catch (error) {
     const outcome = classifyAttemptOutcome(attemptNumber, error);
+    // Plan 020 (design decision 5): see the matching comment in executeOperation above — this
+    // drain also runs from an HTTP-driven retry, so next_attempt_at is deliberately left unset.
     await context.repo.resolveMutationSideEffectOperation({
       bookingId: booking.id, kind, status: outcome.status, claimedAt: attemptedAt,
       error: outcome.error, resolvedAt: nowIso(context),

@@ -840,7 +840,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     // per-row claim (not this read) enforces next_attempt_at/staleness/cap.
     listSideEffectCandidateBookingIds: async (limit) => {
       const candidates = [...sideEffectOperations.values()]
-        .filter((row) => row.status === 'pending' || row.status === 'failed' || row.status === 'in_flight');
+        .filter((row) => row.status === 'pending' || row.status === 'failed' || row.status === 'in_flight' || row.status === 'abandoned');
       const byBooking = new Map<string, string>();
       for (const row of candidates) {
         const sortKey = row.nextAttemptAt ?? row.attemptedAt ?? row.createdAt;
@@ -851,7 +851,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     },
     listRefundCandidateBookingIds: async (limit) => {
       const candidates = [...refundOperations.values()]
-        .filter((row) => row.status === 'requested' || row.status === 'failed' || row.status === 'in_flight');
+        .filter((row) => row.status === 'requested' || row.status === 'failed' || row.status === 'in_flight' || row.status === 'abandoned');
       return candidates
         .map((row) => ({ bookingId: row.bookingId, sortKey: row.nextAttemptAt ?? row.attemptedAt ?? row.requestedAt }))
         .sort((a, b) => a.sortKey.localeCompare(b.sortKey))

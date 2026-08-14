@@ -573,9 +573,10 @@ export interface BookingRepository {
   // SAME per-booking claim/execute paths (runOwedConfirmationSideEffects/runOwedMutationSideEffects/
   // the refund executor) an HTTP request already uses, so no new claim/execution logic is
   // duplicated here. Ordering/eligibility precision is intentionally simple at this deployment's
-  // scale (20-40 bookings/year): candidates in pending/failed/in_flight status, oldest first by
-  // COALESCE(next_attempt_at, attempted_at, created_at) — the real per-row claim (not this read)
-  // is what actually enforces next_attempt_at/staleness/cap.
+  // scale (20-40 bookings/year): candidates in pending/failed/in_flight/abandoned status, oldest
+  // first by COALESCE(next_attempt_at, attempted_at, created_at) — the real per-row claim (not this
+  // read) is what actually enforces next_attempt_at/staleness/cap. 'abandoned' rows never re-enter
+  // execution (both drains already skip them) but still need one incident-projection pass.
   listSideEffectCandidateBookingIds(limit: number): Promise<string[]>;
   listRefundCandidateBookingIds(limit: number): Promise<string[]>;
   // Plan 020 (design decision 3/6): 'oversell' rows are permanent markers (never retried — see
@@ -2050,9 +2051,14 @@ export function createBookingRepository(
     },
 
     async listSideEffectCandidateBookingIds(limit) {
+      // 'abandoned' rows do no further execution work (src/confirmation.ts's
+      // isActionableSideEffectStatus already skips them on re-drain) but still need to reach
+      // src/reconciliation.ts's incident projection at least once — surfacing them here, rather
+      // than via a second query, keeps the reconciler's incident pass a byproduct of the same
+      // bounded candidate read instead of a separate unbounded scan.
       const result = await db.prepare(
         `SELECT booking_id FROM side_effect_operations
-         WHERE status IN ('pending', 'failed', 'in_flight')
+         WHERE status IN ('pending', 'failed', 'in_flight', 'abandoned')
          GROUP BY booking_id
          ORDER BY MIN(COALESCE(next_attempt_at, attempted_at, created_at))
          LIMIT ?`,
@@ -2060,9 +2066,11 @@ export function createBookingRepository(
       return result.results.map((row) => row.booking_id);
     },
     async listRefundCandidateBookingIds(limit) {
+      // Same reasoning as listSideEffectCandidateBookingIds above: 'abandoned' refund rows need
+      // one incident-projection pass even though processRefundCandidate never re-attempts them.
       const result = await db.prepare(
         `SELECT booking_id FROM refund_operations
-         WHERE status IN ('requested', 'failed', 'in_flight')
+         WHERE status IN ('requested', 'failed', 'in_flight', 'abandoned')
          ORDER BY COALESCE(next_attempt_at, attempted_at, requested_at)
          LIMIT ?`,
       ).bind(limit).all<{ booking_id: string }>();
