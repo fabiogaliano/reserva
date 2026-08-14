@@ -49,7 +49,7 @@ function run(command: string, args: string[]): void {
   }
 }
 
-rmSync(new URL(PERSIST_DIR, `file://${smokeSiteRoot}`), { recursive: true, force: true });
+rmSync(persistPath, { recursive: true, force: true });
 run('bun', ['../../scripts/bookkit-migrate.ts', '--local', '--persist-to', PERSIST_DIR]);
 
 // Never actually called: seeding uses only repo methods that don't dispatch to providers
@@ -156,7 +156,7 @@ try {
   const stopDeadline = Date.now() + 5_000;
   while (!exited && Date.now() < stopDeadline) await delay(100);
   if (!exited) cronWorker.kill('SIGKILL');
-  if (!process.env.BOOKKIT_SCHEDULED_TEST_KEEP && existsSync(new URL(PERSIST_DIR, `file://${smokeSiteRoot}`))) {
-    rmSync(new URL(PERSIST_DIR, `file://${smokeSiteRoot}`), { recursive: true, force: true });
+  if (!process.env.BOOKKIT_SCHEDULED_TEST_KEEP && existsSync(persistPath)) {
+    rmSync(persistPath, { recursive: true, force: true });
   }
 }

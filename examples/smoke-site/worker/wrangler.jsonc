@@ -27,5 +27,18 @@
     // computed for (design decision 5). A production deployment can tune this per its own outage
     // tolerance — nothing in src/reconciliation.ts assumes this exact cadence.
     "crons": ["*/5 * * * *"]
+  },
+  // Plan 020 (design decision 15): full-logs observability here matters more than on the site
+  // Worker — this is the only place reconciliation/incident/alert structured log fields
+  // (src/reconciliation.ts) are emitted, and a failed cron run has no other durable trace unless a
+  // production deployment also wires the separate cron-failure/log alert README.md documents.
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "invocation_logs": true
+    }
   }
 }

@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import type { CalEvent } from '../../../src/core/occupancy';
-import type { StripeEventParsed } from '../../../src/core/events';
+import type { OperationalAlert, StripeEventParsed } from '../../../src/core/events';
 import { defineCloudflareBookkitRuntime, type BookkitProviders } from '../../../src/runtime';
 import { pickupOptionFor, resolveTour } from '../../../src/core/config';
 import config from './config';
@@ -30,6 +30,24 @@ function manageUrl(token: string): string {
 }
 
 export const emailOutbox: Array<{ event: string; reference: string; customerManageUrl: string; operatorManageUrl: string; sentAt: string }> = [];
+
+// Plan 020 (design decisions 10/11, step 8): the independent operator alert sink, captured
+// in-memory the same way emailOutbox captures the confirmation-email provider above — proves the
+// scheduled reconciler's alert-drain call actually reaches a configured `BookkitProviders.alerts`
+// and delivers exactly the seven-field `OperationalAlert` shape, no more, no less.
+export const alertOutbox: OperationalAlert[] = [];
+
+// Plan 020 (step 8, e2e coverage): armed by the dev-only /dev/force-calendar-failure.json route
+// (examples/smoke-site/src/pages/dev/) before the e2e suite creates a booking, so exactly the
+// booking's first calendar_create attempt fails — permanently (a 400-shaped error, see
+// src/provider-failure.ts's isRetryableStatus), so src/confirmation.ts's classifyAttemptOutcome
+// abandons it on that first attempt rather than making the test wait out the real ten-minute
+// delayed-incident threshold. Consumed (reset to false) on the throw, so it never affects any
+// booking after the one it was armed for.
+let forceNextCalendarFailure = false;
+export function armNextCalendarFailure(): void {
+  forceNextCalendarFailure = true;
+}
 
 const providers: BookkitProviders = {
   payments: {
@@ -80,6 +98,12 @@ const providers: BookkitProviders = {
       return [...calendarEvents.values()];
     },
     async createEvent(booking) {
+      if (forceNextCalendarFailure) {
+        forceNextCalendarFailure = false;
+        // status 400 -> classifyProviderError/isRetryableStatus treats this as permanent, so the
+        // first attempt itself abandons (see this file's armNextCalendarFailure doc comment).
+        throw Object.assign(new Error('simulated calendar outage'), { status: 400 });
+      }
       const id = `local_calendar_${booking.id}`;
       calendarEvents.set(id, {
         id,
@@ -129,6 +153,12 @@ const providers: BookkitProviders = {
   analytics: {
     async track(event, booking) {
       console.info('[bookkit demo] analytics event', { event, reference: booking.reference });
+    },
+  },
+  alerts: {
+    async send(alert) {
+      alertOutbox.push(alert);
+      console.info('[bookkit demo] operational alert', alert);
     },
   },
 };

@@ -14,5 +14,18 @@
     "BOOKKIT_TOKEN_ENC_KEY": "local-demo-token-encryption-key",
     "TOURFLOW_SHARED_SECRET": "local-tourflow-secret",
     "BOOKKIT_CSRF_SECRET": "local-demo-csrf-secret"
+  },
+  // Plan 020 (design decision 15): the reference/smoke Wrangler configuration enables Workers
+  // observability with full logs — this booking site is low-volume enough that 100% sampling is
+  // affordable, and reconciliation/incident/alert events (src/reconciliation.ts) are only useful in
+  // production if their structured log fields are actually captured.
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "invocation_logs": true
+    }
   }
 }

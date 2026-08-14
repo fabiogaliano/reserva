@@ -51,6 +51,7 @@ import {
   type SettingsBatchOperation,
   type SideEffectOperationKind,
 } from '../repo';
+import { reprojectIncidentAfterAdminRetry } from '../reconciliation';
 import { ownerFacingIncidentTitle } from '../reconciliation-helpers';
 import { attemptRefund } from '../refund-executor';
 import { cssAssetHref, jsAssetHref } from '../ui/asset-hrefs';
@@ -1896,6 +1897,11 @@ export function handleAdminPost(request: Request, context: BookkitContext): Prom
           }
         }
       }
+      // An admin retry happens outside any reconciliation pass — reproject this one incident
+      // directly so a successful retry's incident can auto-resolve without waiting for a
+      // reconciliation scan that will never revisit this booking again once its debt clears (see
+      // reprojectIncidentAfterAdminRetry's doc comment in src/reconciliation.ts).
+      await reprojectIncidentAfterAdminRetry(context, sourceType, incident.bookingId);
       location.searchParams.set('saved', 'incident-retried');
       return new Response(null, { status: 303, headers: { location: location.toString(), 'cache-control': 'no-store' } });
     }

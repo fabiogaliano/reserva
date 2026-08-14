@@ -180,6 +180,27 @@ async function projectRefundIncidentForBooking(context: BookkitContext, tally: I
   await applyIncidentProjection(context, tally, bookingId, 'refund', bookingId, 'refund', signal);
 }
 
+// Plan 020 (design decision 9/13): once a booking's *only* actionable row is fixed (by any path —
+// an admin "Try again", or an ordinary HTTP-driven opportunistic retry), it drops out of
+// listSideEffectCandidateBookingIds/listRefundCandidateBookingIds' WHERE clauses (there is nothing
+// left for a scheduled drain to do), so the next reconciliation pass would never look at that
+// booking again and its now-stale open incident would never auto-resolve. An ordinary reconciler
+// pass never hits this: it gathers candidate ids once, drains them, and reprojects incidents
+// against that SAME pre-drain id list — a row that fails then succeeds within one pass is still
+// reprojected. An admin retry (src/handlers/index.ts's `incident-retry` action) happens entirely
+// outside any reconciliation pass, so it must reproject its own incident directly rather than
+// waiting for a scan that will never include this booking again. Exported for that one caller;
+// every other reconciliation caller still goes through the normal candidate-list pass above.
+export async function reprojectIncidentAfterAdminRetry(
+  context: BookkitContext,
+  sourceType: 'side_effect' | 'refund',
+  bookingId: string,
+): Promise<void> {
+  const tally: IncidentTally = { opened: 0, updated: 0, resolved: 0 };
+  if (sourceType === 'side_effect') await projectSideEffectIncidentsForBooking(context, tally, bookingId);
+  else await projectRefundIncidentForBooking(context, tally, bookingId);
+}
+
 // Plan 020 (design decision 3/6): oversell markers are permanent (never retried) and always
 // action_required the first time they're observed unreported — listUnreportedOversellMarkers
 // already excludes markers with an existing incident row, so this is always a fresh 'open'.

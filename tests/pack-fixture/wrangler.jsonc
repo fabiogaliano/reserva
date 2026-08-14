@@ -11,5 +11,17 @@
       "database_name": "bookkit-pack-fixture",
       "database_id": "00000000-0000-0000-0000-000000000000"
     }
-  ]
+  ],
+  // Plan 020 (design decision 15): the reference configuration this fixture mirrors enables
+  // Workers observability with full logs; kept here too so the packed-consumer build proves the
+  // pattern typechecks/builds with it present, not just the smoke-site copies.
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "invocation_logs": true
+    }
+  }
 }
