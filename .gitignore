@@ -19,3 +19,6 @@ playwright-report/
 
 # smoke-preview-test database (plan 015)
 .wrangler-preview-test/
+
+# smoke-scheduled-test database (plan 020)
+.wrangler-scheduled-test/
