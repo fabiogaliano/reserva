@@ -310,6 +310,36 @@ describe('pickup option label + sub-lines (plan 018 design decision 8)', () => {
     // usesMeetingPoint: true, requiresAddress: false — meeting-point sub-line, no address sub-line.
     expect(body).toContain('<span class="bk-sub">The Square</span>');
   });
+
+  it('search cannot match a meeting-point label the row does not display (usesMeetingPoint: false)', async () => {
+    const noMeetTour: TourConfig = {
+      ...mazeTour,
+      pickupOptions: [
+        { id: 'default', requiresAddress: false, usesMeetingPoint: true },
+        { id: 'hotel_pickup', requiresAddress: true, usesMeetingPoint: false },
+      ],
+      pricing: [
+        { maxPeople: 8, pickup: 'default', priceCents: 18000 },
+        { maxPeople: 8, pickup: 'hotel_pickup', priceCents: 20000 },
+      ],
+    };
+    const noMeetConfig: ClientConfig = { ...config, tours: { ...config.tours, vintage: noMeetTour } };
+    const seeded = booking({
+      id: 'b-admin-hidden-point', reference: 'LVT-2026-504', startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
+      operatorToken: 'op-hidden-point', cancelToken: 'cancel-hidden-point',
+      pickupType: 'hotel_pickup', pickupAddress: 'Hotel Avenida', meetingPointId: 'station', meetingPointLabel: 'The Station',
+    });
+    const repo = fakeRepository([seeded]);
+    const context = createBookkitContext({ config: noMeetConfig, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+
+    // The row hides the meeting point for this option, so the stored label must be invisible to
+    // search too — the haystack and the renderer share adminMeetingPointSubLabel.
+    const unfiltered = await (await handleAdminGet(adminGetRequest(), context)).text();
+    expect(unfiltered).toContain(seeded.reference);
+    expect(unfiltered).not.toContain('The Station');
+    const searched = await (await handleAdminGet(new Request(`${ADMIN_URL}?q=station`), context)).text();
+    expect(searched).not.toContain(seeded.reference);
+  });
 });
 
 describe('POST /admin day overrides (spec §11)', () => {

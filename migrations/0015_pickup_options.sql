@@ -42,7 +42,28 @@ CREATE TABLE side_effect_operations (
   -- No FOREIGN KEY here, temporarily -- restored below, right after the bookings rebuild.
 );
 
-INSERT INTO side_effect_operations SELECT * FROM side_effect_operations_fk_hold_0015;
+-- Explicit columns (never SELECT *) for the same fail-loudly reason as the bookings copy below,
+-- and with 0013's abandon-at-cap CASE conversion re-applied rather than a plain copy. On a
+-- correctly migrated database this CASE is a pure no-op: 0013 already converted every nonterminal
+-- row at the attempt cap, and the runtime (src/confirmation.ts) abandons a row the moment it hits
+-- the cap, so no such row can exist here. But a consumer migration colliding with 0013's filename
+-- skips its DATA conversion while this rebuild re-establishes its SCHEMA (the 'abandoned' CHECK),
+-- which satisfies the runtime fingerprint — schema checks cannot see skipped data. Without this
+-- CASE those rows would stay pending/failed/in_flight forever: both claim predicates
+-- (src/repo.ts) reject attempt_count >= 10, stranding them permanently.
+INSERT INTO side_effect_operations
+  SELECT
+    booking_id,
+    kind,
+    CASE WHEN status IN ('pending', 'failed', 'in_flight') AND attempt_count >= 10 THEN 'abandoned' ELSE status END,
+    provider_result_id,
+    attempt_count,
+    attempted_at,
+    CASE WHEN status IN ('pending', 'failed', 'in_flight') AND attempt_count >= 10 THEN COALESCE(resolved_at, updated_at) ELSE resolved_at END,
+    CASE WHEN status IN ('pending', 'failed', 'in_flight') AND attempt_count >= 10 THEN 'max attempts (10) reached during upgrade to migration 0015' ELSE error END,
+    created_at,
+    updated_at
+  FROM side_effect_operations_fk_hold_0015;
 
 DROP TABLE side_effect_operations_fk_hold_0015;
 

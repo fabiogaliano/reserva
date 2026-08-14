@@ -121,13 +121,13 @@ describe('BookingWidget.astro (Plan 018 design decision 9: tour-declared pickupO
     expect(widgetSource).toContain("hint: option.hint ?? (isDefaultOrCustomId(option.id) ? pickupCopy[option.id].hint : null),");
   });
 
-  it('renders data-uses-meeting-point only on the radio group, carrying an explicit true/false string', () => {
+  it('renders data-uses-meeting-point on the radio group AND the single-option hidden input, carrying an explicit true/false string', () => {
     expect(widgetSource).toContain('data-uses-meeting-point={option.usesMeetingPointAttr}');
     expect(widgetSource).toContain("usesMeetingPointAttr: option.usesMeetingPoint ? 'true' : 'false',");
-  });
-
-  it('the single-option render stays a hidden input keyed off pickupOptionEntries, matching the pre-018 pickupTypes-keyed hidden input', () => {
-    expect(widgetSource).toContain('<input type="hidden" name="pickupType" value={pickupOptionEntries[0].id} />');
+    // The hidden input must carry the flag too: syncMeetingPoints's un-suffixed selector fallback
+    // reads it there, and without it a sole non-custom usesMeetingPoint:false option would fall
+    // back to the legacy id === 'custom' heuristic and wrongly show/require the group.
+    expect(widgetSource).toContain('<input type="hidden" name="pickupType" value={pickupOptionEntries[0].id} data-uses-meeting-point={pickupOptionEntries[0].usesMeetingPointAttr} />');
   });
 
   it('client ResolvedPriceTable widens to Record<string, number[]>, and updatePrice keys off the raw selected value', () => {

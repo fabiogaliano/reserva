@@ -2,6 +2,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createBookkitContext } from '../src/context';
 import { handleManage } from '../src/handlers';
+import { renderManagePage } from '../src/components/manage-page';
 import { utcToLocalIso } from '../src/core/time';
 import { booking, config, tour } from './fixtures';
 import { fakeRepository, providers } from './fakes';
@@ -103,6 +104,89 @@ describe('GET /manage (spec §11)', () => {
     const removedResponse = await handleManage(manageRequest(removedId.cancelToken), context);
     const removedPayload = await removedResponse.json() as { booking: { meetingPoint: unknown } };
     expect(removedPayload.booking.meetingPoint).toEqual({ label: 'The Old Dock', mapsUrl: null });
+  });
+
+  // Plan 018 (design decision 8): the manage page can't know from the raw id whether an address or
+  // meeting point applies, so the summary carries the chosen option's two flags and the renderer
+  // gates each fact on them independently.
+  describe('pickup option flags (plan 018 design decision 8)', () => {
+    const points = [
+      { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
+      { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
+    ];
+    const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = tour;
+    const mazeConfig = {
+      ...config,
+      tours: {
+        ...config.tours,
+        vintage: {
+          ...vintageWithoutShorthand,
+          meetingPoints: points,
+          pickupOptions: [
+            { id: 'default', requiresAddress: false, usesMeetingPoint: true },
+            { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
+            { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
+          ],
+          pricing: [
+            { maxPeople: 8, pickup: 'default', priceCents: 18000 },
+            { maxPeople: 8, pickup: 'custom_pickup', priceCents: 20000 },
+            { maxPeople: 8, pickup: 'custom_dropoff', priceCents: 21000 },
+          ],
+        },
+      },
+    };
+
+    function mazeContext(seed: ReturnType<typeof booking>[]) {
+      return createBookkitContext({ config: mazeConfig, db: {} as D1Database, repo: fakeRepository(seed), clock, providers: providers() });
+    }
+
+    it('reports the declared option\'s requiresAddress/usesMeetingPoint in the summary', async () => {
+      const seeded = booking({
+        id: 'b-manage-pickup-flags', cancelToken: 'cancel-pickup-flags', operatorToken: 'operator-pickup-flags',
+        startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
+        pickupType: 'custom_pickup', pickupAddress: 'Hotel Mundial, Lisbon',
+      });
+      const response = await handleManage(manageRequest(seeded.cancelToken), mazeContext([seeded]));
+      const payload = await response.json() as { booking: Record<string, unknown> };
+      expect(payload.booking).toMatchObject({ pickupRequiresAddress: true, pickupUsesMeetingPoint: false });
+    });
+
+    it('degrades an undeclared stored id to the pre-018 flags (address iff the literal custom id, meeting point shown)', async () => {
+      const seeded = booking({
+        id: 'b-manage-pickup-undeclared', cancelToken: 'cancel-pickup-undeclared', operatorToken: 'operator-pickup-undeclared',
+        startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
+        pickupType: 'no_longer_declared', pickupAddress: null,
+      });
+      const response = await handleManage(manageRequest(seeded.cancelToken), mazeContext([seeded]));
+      const payload = await response.json() as { booking: Record<string, unknown> };
+      expect(payload.booking).toMatchObject({ pickupRequiresAddress: false, pickupUsesMeetingPoint: true });
+    });
+
+    it('renderManagePage gates the address and meeting-point facts on the flags, independently', () => {
+      const base = {
+        reference: 'LVT-2026-800', tourSlug: 'vintage', start: '2026-06-20T09:00', people: 2, status: 'confirmed',
+        pickupAddress: 'Hotel Mundial, Lisbon', meetingPoint: { label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
+      };
+      const addressOnly = renderManagePage({
+        booking: { ...base, pickupType: 'custom_pickup', pickupRequiresAddress: true, pickupUsesMeetingPoint: false },
+      }, '/manage');
+      expect(addressOnly).toContain('Hotel Mundial, Lisbon');
+      expect(addressOnly).not.toContain('The Square');
+
+      const bothFlags = renderManagePage({
+        booking: { ...base, pickupType: 'custom_dropoff', pickupRequiresAddress: true, pickupUsesMeetingPoint: true },
+      }, '/manage');
+      expect(bothFlags).toContain('Hotel Mundial, Lisbon');
+      expect(bothFlags).toContain('The Square');
+
+      // A payload without the flags (a direct caller predating them) keeps the pre-018 behavior:
+      // address only for the literal 'custom' id, meeting point whenever one resolved.
+      const legacy = renderManagePage({ booking: { ...base, pickupType: 'custom' } }, '/manage');
+      expect(legacy).toContain('Hotel Mundial, Lisbon');
+      expect(legacy).toContain('The Square');
+      const legacyNonCustom = renderManagePage({ booking: { ...base, pickupType: 'default' } }, '/manage');
+      expect(legacyNonCustom).not.toContain('Hotel Mundial, Lisbon');
+    });
   });
 
   it('customer token inside the cutoff cannot cancel or reschedule', async () => {

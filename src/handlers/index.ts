@@ -335,15 +335,18 @@ export function handleAvailability(request: Request, context: BookkitContext): P
 // Plan 018 (design decision 6): validated against the tour's own declared option ids (via
 // pickupOptionFor, which already falls back to DEFAULT_PICKUP_OPTIONS for a tour with none) rather
 // than a fixed 'default'/'custom' enum — a legacy tour still only accepts that same pair, but a
-// tour that declares more gets every id it names. The 400 names the valid ids so a client with a
-// stale option list gets an actionable error instead of a generic "must be default or custom".
+// tour that declares more gets every id it names. For a declared set, the 400 names the valid ids
+// so a client with a stale option list gets an actionable error.
 function parsePickup(tour: TourConfig, value: unknown): PickupType {
-  const id = requireString(value, 'pickupType');
-  if (!pickupOptionFor(tour, id)) {
-    const validIds = (tour.pickupOptions ?? DEFAULT_PICKUP_OPTIONS).map((option) => option.id).join(', ');
-    throw new HttpError(400, 'validation_failed', `pickupType must be one of: ${validIds}`);
+  if (typeof value === 'string' && pickupOptionFor(tour, value)) return value;
+  const validIds = (tour.pickupOptions ?? DEFAULT_PICKUP_OPTIONS).map((option) => option.id);
+  // Byte-identity done criterion (plan 018): a tour on the default pair must keep emitting the
+  // exact pre-018 error, for missing and invalid values alike — API callers may match on it.
+  if (validIds.length === 2 && validIds[0] === 'default' && validIds[1] === 'custom') {
+    throw new HttpError(400, 'validation_failed', 'pickupType must be default or custom');
   }
-  return id;
+  requireString(value, 'pickupType');
+  throw new HttpError(400, 'validation_failed', `pickupType must be one of: ${validIds.join(', ')}`);
 }
 
 // Plan 017 (design decision 2): meetingPointId is optional on the wire but the RESOLVED id is
@@ -625,6 +628,12 @@ export function handleStripeWebhook(request: Request, context: BookkitContext): 
 
 function bookingSummary(context: BookkitContext, booking: Booking): Record<string, unknown> {
   const tour = resolveTour(context.config, booking.tourSlug);
+  // Plan 018 (design decision 8): the manage page renders off these two flags, not off the raw
+  // pickupType — a declared option like Maze's custom pick-up must show its address and hide the
+  // meeting point regardless of what its id happens to be. A stored id no longer declared in
+  // config degrades to the pre-018 rendering: address only for the literal 'custom' id, meeting
+  // point always shown.
+  const option = pickupOptionFor(tour, booking.pickupType);
   return {
     reference: booking.reference,
     tourSlug: booking.tourSlug,
@@ -633,6 +642,8 @@ function bookingSummary(context: BookkitContext, booking: Booking): Record<strin
     people: booking.people,
     pickupType: booking.pickupType,
     pickupAddress: booking.pickupAddress,
+    pickupRequiresAddress: option ? option.requiresAddress : booking.pickupType === 'custom',
+    pickupUsesMeetingPoint: option ? option.usesMeetingPoint : true,
     customerName: booking.customerName,
     customerEmail: booking.customerEmail,
     customerPhone: booking.customerPhone,
@@ -1200,12 +1211,21 @@ function adminSidebar(context: BookkitContext, messages: ReturnType<typeof resol
     + link(`${adminPath}?view=settings`, navIcons.settings, messages['admin.settings'], active === 'settings');
 }
 
-// Plan 017 (design decision 4): resolveTour throws for a tourSlug no longer in the live config
-// (renamed/removed since the booking was made) — degrade to an empty label rather than 500 the
-// whole admin search, the same tolerance the day-calendar unit aggregation below already applies.
-function adminMeetingPointLabel(config: BookkitContext['config'], booking: Booking): string {
+// Plan 017 (design decision 4) / Plan 018 (design decision 8): the meeting-point label the
+// bookings-table row actually displays — '' when the row shows none. Shared by the row renderer
+// and the search haystack so search can only ever match visible text: only an option that starts
+// at a meeting point surfaces a choice, and only when the tour declares more than one (a
+// single-point tour's sub-line would just repeat what "Meeting point" implies). resolveTour throws
+// for a tourSlug no longer in the live config (renamed/removed since the booking was made) —
+// degrade to no label rather than 500 the whole admin page, the same tolerance the day-calendar
+// unit aggregation below already applies.
+function adminMeetingPointSubLabel(config: BookkitContext['config'], booking: Booking): string {
   try {
-    return meetingPointForBooking(resolveTour(config, booking.tourSlug), booking.meetingPointId, booking.meetingPointLabel).label;
+    const tour = resolveTour(config, booking.tourSlug);
+    const option = pickupOptionFor(tour, booking.pickupType);
+    const usesMeetingPoint = option ? option.usesMeetingPoint : booking.pickupType === 'default';
+    if (!usesMeetingPoint || (tour.meetingPoints?.length ?? 0) <= 1) return '';
+    return meetingPointForBooking(tour, booking.meetingPointId, booking.meetingPointLabel).label;
   } catch {
     return '';
   }
@@ -1215,9 +1235,9 @@ function matchesAdminFilters(booking: Booking, filters: AdminFilters, config: Bo
   if (filters.status && booking.status !== filters.status) return false;
   if (filters.q) {
     const needle = filters.q.toLowerCase();
-    // The meeting-point label is only in the haystack, never a rendering decision here — it must
-    // match what the row actually displays (see the pickup-cell sub-line in adminPage below).
-    const haystack = [booking.reference, booking.tourSlug, booking.pickupType, booking.pickupAddress ?? '', adminMeetingPointLabel(config, booking), booking.customerName ?? '', booking.customerEmail ?? ''].join(' ').toLowerCase();
+    // adminMeetingPointSubLabel is exactly what the row displays (it is the renderer's own
+    // source), so a hidden meeting point can never make a booking match.
+    const haystack = [booking.reference, booking.tourSlug, booking.pickupType, booking.pickupAddress ?? '', adminMeetingPointSubLabel(config, booking), booking.customerName ?? '', booking.customerEmail ?? ''].join(' ').toLowerCase();
     if (!haystack.includes(needle)) return false;
   }
   return true;
@@ -1285,13 +1305,10 @@ function adminPage(
     const pickupSub = requiresAddress && booking.pickupAddress
       ? `<span class="bk-sub">${escapeHtml(booking.pickupAddress)}</span>`
       : '';
-    // Plan 017 (design decision 4) / Plan 018 (design decision 8): only an option that starts at a
-    // meeting point ever carries a choice worth surfacing, and only when the tour actually declares
-    // more than one — a single-point tour's sub-line would just repeat what "Meeting point" implies.
-    const usesMeetingPoint = option ? option.usesMeetingPoint : booking.pickupType === 'default';
-    const meetingPointSub = usesMeetingPoint && rowTour && (rowTour.meetingPoints?.length ?? 0) > 1
-      ? `<span class="bk-sub">${escapeHtml(meetingPointForBooking(rowTour, booking.meetingPointId, booking.meetingPointLabel).label)}</span>`
-      : '';
+    // The same helper the search haystack uses (see matchesAdminFilters above), so the two can
+    // never disagree about which meeting points are visible.
+    const meetingPointLabel = adminMeetingPointSubLabel(context.config, booking);
+    const meetingPointSub = meetingPointLabel ? `<span class="bk-sub">${escapeHtml(meetingPointLabel)}</span>` : '';
     const manageHref = manageLinkHref(managePagePath, booking.operatorToken);
     const manageCell = manageHref
       ? `<a href="${escapeHtml(manageHref)}">${escapeHtml(messages['admin.manage'])}</a>`

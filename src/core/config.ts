@@ -1,10 +1,9 @@
 import { z } from 'astro/zod';
 
-// Plan 018 (design decision 2): widened from the fixed 'default' | 'custom' union to a plain
-// string — the pickup axis is now whatever ids a tour declares in TourConfig.pickupOptions
-// (below), not a hard-coded pair. Kept as a named export (rather than inlining `string`
-// everywhere) so call sites read as "the pickup axis" and so a future narrowing wouldn't need to
-// touch every signature again.
+// A plain string because the pickup axis is whatever ids a tour declares in
+// TourConfig.pickupOptions (below), which no static union can enumerate. Kept as a named export
+// (rather than inlining `string` everywhere) so call sites read as "the pickup axis" and so a
+// future narrowing wouldn't need to touch every signature again.
 export type PickupType = string;
 export type PaymentMethod = 'card' | 'mb_way';
 
@@ -172,9 +171,8 @@ const tourSchema = z.object({
   schedule: z.array(scheduleSchema).min(1),
   pricing: z.array(z.object({
     maxPeople: z.number().int().positive(),
-    // Plan 018 (design decision 2): widened from the fixed enum — validateTour checks each row's
-    // pickup against the tour's own declared option ids (default/custom when none are declared),
-    // since a plain zod enum can no longer express a per-tour id set.
+    // A plain zod enum can't express a per-tour id set, so validateTour checks each row's pickup
+    // against the tour's own declared option ids (default/custom when none are declared).
     pickup: z.string().min(1),
     priceCents: z.number().int().nonnegative(),
   })).min(1),

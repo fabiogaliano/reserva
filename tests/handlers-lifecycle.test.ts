@@ -531,6 +531,28 @@ describe('checkout pickupType (plan 018 design decision 6)', () => {
     expect(repo.rows.get(bookingId)).toMatchObject({ pickupType: 'custom', priceCents: 12000 });
   });
 
+  it('a legacy two-option tour keeps the exact pre-018 validation error for an invalid AND a missing pickupType', async () => {
+    // The byte-identity done criterion covers error bodies too — API callers may match on the
+    // message — so the default pair must never emit the new "must be one of" wording.
+    const { context } = checkoutContext(config);
+    for (const body of [{ pickupType: 'bogus' }, { pickupType: undefined }]) {
+      const response = await handleCheckout(checkoutRequest(body), context);
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: 'validation_failed', message: 'pickupType must be default or custom' },
+      });
+    }
+  });
+
+  it('a declared tour distinguishes a missing pickupType from an undeclared one', async () => {
+    const { context } = checkoutContext();
+    const response = await handleCheckout(checkoutRequest({ pickupType: undefined }), context);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'validation_failed', message: 'pickupType is required' },
+    });
+  });
+
   it('requires meetingPointId for an option with usesMeetingPoint: true even when it also requires an address (Maze\'s custom drop-off)', async () => {
     const { context } = checkoutContext();
     const response = await handleCheckout(checkoutRequest({ pickupType: 'custom_dropoff' }), context);

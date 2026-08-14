@@ -9,8 +9,7 @@ export interface BookingInsert {
   reference: string;
   tourSlug: string;
   people: number;
-  // Plan 018 (design decision 2/4): widened from the fixed 'default' | 'custom' union — see
-  // core/booking.ts Booking.pickupType.
+  // Any tour-declared option id — see core/booking.ts Booking.pickupType.
   pickupType: PickupType;
   startsAt: string;
   endsAt: string;
@@ -490,9 +489,9 @@ interface BookingRow {
   reference: string;
   tour_slug: string;
   people: number;
-  // Plan 018 (design decision 2/4): widened from the fixed 'default' | 'custom' union — the
-  // domain lives in config now, so mapBooking gains no new predicate for it (see
-  // assertValidBookingRow below, unchanged).
+  // Plan 018 (design decision 2/4): the pickup domain lives in TourConfig.pickupOptions, which
+  // the DB can't see — assertValidBookingRow below only enforces the config-independent invariant
+  // that the id is a non-empty string.
   pickup_type: PickupType;
   pickup_address: string | null;
   // Plan 017 (design decision 3): see migrations/0014_meeting_points.sql for what each means.
@@ -541,6 +540,12 @@ function assertValidBookingRow(row: BookingRow): void {
   if (row.price_cents < 0) throw new InvalidBookingRowError(row.id, `price_cents must be >= 0, got ${row.price_cents}`);
   if (!(row.ends_at > row.starts_at)) {
     throw new InvalidBookingRowError(row.id, `ends_at (${row.ends_at}) must be after starts_at (${row.starts_at})`);
+  }
+  // Plan 018 (design decision 4): migration 0015 dropped the pickup_type CHECK because the id
+  // domain is per-tour config the DB can't enumerate — but an empty id is invalid under every
+  // possible config (pickupOption ids are non-empty by schema), so that floor is enforced here.
+  if (typeof row.pickup_type !== 'string' || row.pickup_type === '') {
+    throw new InvalidBookingRowError(row.id, 'pickup_type must be a non-empty string');
   }
   for (const [column, value] of [
     ['calendar_synced', row.calendar_synced],

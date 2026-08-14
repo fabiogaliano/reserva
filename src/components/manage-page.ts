@@ -38,6 +38,10 @@ interface ManageBookingPayload {
   people?: number;
   pickupType?: string;
   pickupAddress?: string | null;
+  // Plan 018 (design decision 8): the chosen pickup option's flags, resolved by the manage
+  // handler (bookingSummary) — the id alone can't say whether an address or meeting point applies.
+  pickupRequiresAddress?: boolean;
+  pickupUsesMeetingPoint?: boolean;
   customerName?: string | null;
   customerEmail?: string | null;
   customerPhone?: string | null;
@@ -78,7 +82,14 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
   if (typeof booking.priceCents === 'number' && options.currency) {
     facts.push([messages['common.price'], escapeHtml(formatPrice(booking.priceCents, locale, options.currency))]);
   }
-  if (booking.pickupType === 'custom' && booking.pickupAddress) {
+  // Plan 018 (design decision 8): both facts key off the chosen option's flags, independently — a
+  // both-flags option (Maze's custom drop-off) shows its address AND its meeting point. When a
+  // direct caller's payload predates the flags, fall back to the pre-018 behavior: address only
+  // for the literal 'custom' id, meeting point whenever one resolved.
+  const requiresAddress = typeof booking.pickupRequiresAddress === 'boolean'
+    ? booking.pickupRequiresAddress
+    : booking.pickupType === 'custom';
+  if (requiresAddress && booking.pickupAddress) {
     facts.push([messages['common.pickupAddress'], escapeHtml(booking.pickupAddress)]);
   }
   // Contact details are operator-only: customers already know who they are, and the customer
@@ -92,7 +103,7 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
       facts.push([messages['common.phone'], `<a href="tel:${escapeHtml(booking.customerPhone)}">${escapeHtml(booking.customerPhone)}</a>`]);
     }
   }
-  if (booking.meetingPoint?.label) {
+  if (booking.pickupUsesMeetingPoint !== false && booking.meetingPoint?.label) {
     const maps = booking.meetingPoint.mapsUrl
       ? ` <a href="${escapeHtml(booking.meetingPoint.mapsUrl)}" rel="noopener" target="_blank">${escapeHtml(messages['common.openInMaps'])}</a>`
       : '';

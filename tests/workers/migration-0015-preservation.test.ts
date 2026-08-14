@@ -108,9 +108,50 @@ describe('migration 0015 rebuild removes the pickup_type CHECK, preserving every
          booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
        ) VALUES (?, 'calendar_create', 'pending', NULL, 0, NULL, NULL, NULL, ?, ?)`,
     ).bind('mp-1', '2026-07-20T00:00:00.000Z', '2026-07-20T00:00:00.000Z').run();
+    // A nonterminal row already at the attempt cap -- what a skipped 0013 (consumer filename
+    // collision) leaves behind. 0015's copy must re-apply 0013's abandon-at-cap conversion, or
+    // this row stays claimable-by-nobody forever (both claim predicates in src/repo.ts reject
+    // attempt_count >= 10) while the rebuilt schema satisfies the runtime fingerprint.
+    await db.prepare(
+      `INSERT INTO side_effect_operations (
+         booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
+       ) VALUES (?, 'email_confirmation', 'failed', NULL, 10, ?, NULL, 'provider 500', ?, ?)`,
+    ).bind('mp-2', '2026-07-21T09:30:00.000Z', '2026-07-21T09:00:00.000Z', '2026-07-21T09:45:00.000Z').run();
+
+    // The pre-0015 schema text, captured for the direct byte-for-byte comparison below -- the
+    // composed 0011-0014 shape as sqlite_master actually stores it.
+    const normalizedSql = async (type: 'table' | 'index', name: string): Promise<string> => {
+      const row = (await db.prepare(`SELECT sql FROM sqlite_master WHERE type = ? AND name = ?`)
+        .bind(type, name).all<{ sql: string | null }>()).results[0];
+      return row?.sql?.toLowerCase().replace(/\s+/g, '') ?? '';
+    };
+    const bookingsSqlBefore = await normalizedSql('table', 'bookings');
+    const sideEffectSqlBefore = await normalizedSql('table', 'side_effect_operations');
+    const paymentIndexSqlBefore = await normalizedSql('index', 'idx_bookings_payment_intent');
 
     // The actual production migration, run for real -- not a hand-copied approximation of it.
     await applyD1Migrations(db, [migration0015], 'd1_migrations_0015_test');
+
+    // Direct proof of "removes ONLY the pickup_type CHECK": the rebuilt bookings schema equals the
+    // pre-0015 schema with exactly that CHECK deleted -- every other CHECK and column definition
+    // byte-for-byte (modulo whitespace), not just the behaviorally sampled subset below. The
+    // side_effect_operations table and the partial payment-intent index must come back unchanged.
+    const removedCheck = "check(pickup_typein('default','custom'))";
+    expect(bookingsSqlBefore).toContain(removedCheck);
+    expect(await normalizedSql('table', 'bookings')).toBe(bookingsSqlBefore.replace(removedCheck, ''));
+    expect(await normalizedSql('table', 'side_effect_operations')).toBe(sideEffectSqlBefore);
+    expect(await normalizedSql('index', 'idx_bookings_payment_intent')).toBe(paymentIndexSqlBefore);
+
+    // The at-cap leftover was converted exactly the way 0013's own upgrade CASE converts one:
+    // terminal 'abandoned', resolved_at backfilled from updated_at, a migration-named error.
+    await expect(
+      db.prepare(`SELECT status, resolved_at, error, attempt_count FROM side_effect_operations WHERE booking_id = ? AND kind = 'email_confirmation'`).bind('mp-2').all(),
+    ).resolves.toMatchObject({
+      results: [{
+        status: 'abandoned', resolved_at: '2026-07-21T09:45:00.000Z',
+        error: 'max attempts (10) reached during upgrade to migration 0015', attempt_count: 10,
+      }],
+    });
 
     for (const row of [withMeetingPoint, withoutMeetingPoint]) {
       const survived = (await db.prepare(

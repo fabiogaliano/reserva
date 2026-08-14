@@ -10,8 +10,8 @@ export interface Booking {
   reference: string;
   tourSlug: string;
   people: number;
-  // Plan 018 (design decision 2/4): widened from the fixed 'default' | 'custom' union — the
-  // pickup domain now lives in TourConfig.pickupOptions (core/config.ts), not the DB or this type.
+  // The valid id set lives in TourConfig.pickupOptions (core/config.ts), per tour — neither the
+  // DB nor this type can enumerate it.
   pickupType: PickupType;
   pickupAddress: string | null;
   // Plan 017 (design decision 3): the resolved meeting point chosen at checkout, when the tour

@@ -120,11 +120,17 @@ describe('BookingWidget.astro pickupOptions prop (plan 018 design decision 9)', 
     expect(harborBlock).not.toContain('bkw-pickup-hint');
   });
 
-  it('a single declared option renders a hidden input, not a radio group, and carries no data attribute', async () => {
-    const html = await render({ ...baseProps, pickupOptions: [{ id: 'meeting_point', label: 'Meeting point', usesMeetingPoint: true }] });
-    expect(html).toContain('<input type="hidden" name="pickupType" value="meeting_point">');
-    expect(html).not.toContain('data-uses-meeting-point');
-    expect(html).not.toContain('<fieldset class="bkw-field">\n      <legend class="bkw-label">Where do we meet?');
+  // The hidden input must carry the flag too: syncMeetingPoints falls back to the legacy
+  // id === 'custom' heuristic when the attribute is absent, which would wrongly show/require the
+  // meeting-point group for a sole non-custom option with usesMeetingPoint: false (and hide it for
+  // a sole custom option with usesMeetingPoint: true).
+  it('a single declared option renders a hidden input, not a radio group, carrying its data-uses-meeting-point flag', async () => {
+    const trueHtml = await render({ ...baseProps, pickupOptions: [{ id: 'meeting_point', label: 'Meeting point', usesMeetingPoint: true }] });
+    expect(trueHtml).toContain('<input type="hidden" name="pickupType" value="meeting_point" data-uses-meeting-point="true">');
+    expect(trueHtml).not.toContain('<fieldset class="bkw-field">\n      <legend class="bkw-label">Where do we meet?');
+
+    const falseHtml = await render({ ...baseProps, pickupOptions: [{ id: 'hotel_pickup', label: 'Hotel pickup', usesMeetingPoint: false }] });
+    expect(falseHtml).toContain('<input type="hidden" name="pickupType" value="hotel_pickup" data-uses-meeting-point="false">');
   });
 
   it('resolves the four-option non-additive price table (180/200/200/210) keyed by the declared ids, not a fixed pair', async () => {

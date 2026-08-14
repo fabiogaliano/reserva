@@ -303,6 +303,21 @@ describe('D1 booking repository', () => {
     await expect(repo.getBookingById(created.id)).resolves.toMatchObject({ pickupType: 'custom_both' });
   });
 
+  // Plan 018 (design decision 4): with the SQL CHECK gone, SQLite happily stores pickup_type = ''
+  // (e.g. a hand-restored row) -- mapBooking's read-time floor must reject it, since an empty id
+  // is undeclarable under every possible config.
+  it('rejects a stored empty-string pickup_type at read time (InvalidBookingRowError)', async () => {
+    await repo.insertHold({
+      id: 'booking-pickup-empty', reference: 'BKT-2026-PICKUPEMPTY', tourSlug: 'vintage', people: 2, pickupType: 'default',
+      startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceCents: 12000,
+      holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'pickup-empty-cancel', operatorToken: 'pickup-empty-operator',
+      createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
+    });
+    await db.prepare(`UPDATE bookings SET pickup_type = '' WHERE id = ?`).bind('booking-pickup-empty').run();
+
+    await expect(repo.getBookingById('booking-pickup-empty')).rejects.toThrow(/pickup_type must be a non-empty string/);
+  });
+
   // BK-SEC-002: manage-token hashing, expiry, and revocation, against real SQLite (D1).
   describe('token hashing, expiry, and revocation (BK-SEC-002)', () => {
     // A second repository instance bound to the SAME D1 database but with BOOKKIT_TOKEN_ENC_KEY

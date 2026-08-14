@@ -145,4 +145,18 @@ describe('non-additive pickup options (Maze fixture)', () => {
     expect(table.custom_pickup?.[2]).toBe(20000);
     expect(table.custom_both?.[2]).toBe(21000);
   });
+
+  it('always serializes default before custom, regardless of pricing-row order (widget byte-identity)', () => {
+    // The widget embeds JSON.stringify of this table in its markup; the pre-018 table always
+    // inserted { default, custom } in that fixed order, so a legacy config whose raw pricing array
+    // lists custom rows first must not change the rendered bytes.
+    const customFirst: PricingRule[] = [
+      { maxPeople: 4, pickup: 'custom', priceCents: 12000 },
+      { maxPeople: 4, pickup: 'default', priceCents: 10000 },
+    ];
+    expect(Object.keys(resolvedPriceTableFor({ pricing: customFirst }))).toEqual(['default', 'custom']);
+    // Declared non-default/custom ids keep their first-occurrence order after the pinned pair.
+    expect(Object.keys(resolvedPriceTableFor({ pricing: [...mazePricing, ...customFirst] })))
+      .toEqual(['default', 'custom', 'meeting_point', 'custom_dropoff', 'custom_pickup', 'custom_both']);
+  });
 });
