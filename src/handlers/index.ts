@@ -36,12 +36,22 @@ import {
   isActionableSideEffectStatus,
   isConfirmationSideEffectOperation,
   mutationSideEffectKinds,
+  retrySideEffectOperation,
   runOwedMutationSideEffects,
 } from '../confirmation';
 import type { BookkitContext } from '../context';
 import { getSecret, nowIso } from '../context';
 import { isManageableToken } from '../providers/brevo';
-import { CONFIRMATION_TOURFLOW_KIND, HoldLimitExceededError, type RefundChoice, type SettingsBatchOperation } from '../repo';
+import {
+  CONFIRMATION_TOURFLOW_KIND,
+  HoldLimitExceededError,
+  type OperationalIncidentRecord,
+  type OperationalIncidentSourceType,
+  type RefundChoice,
+  type SettingsBatchOperation,
+  type SideEffectOperationKind,
+} from '../repo';
+import { ownerFacingIncidentTitle } from '../reconciliation-helpers';
 import { attemptRefund } from '../refund-executor';
 import { cssAssetHref, jsAssetHref } from '../ui/asset-hrefs';
 import { formatDateTime, formatDayDate, formatPrice } from '../ui/format';
@@ -1177,17 +1187,20 @@ const navIcons = {
   bookings: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>',
   days: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></svg>',
   settings: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+  incidents: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/></svg>',
 };
 
 // The app-shell navigation shared by the admin and settings pages. Anchors deep-link into the
-// admin page's sections; everything stays plain links, no script.
-function adminSidebar(context: BookkitContext, messages: ReturnType<typeof resolveMessages>, active: 'admin' | 'settings'): string {
+// admin page's sections; everything stays plain links, no script. openIncidentCount is undefined
+// on the settings page (it doesn't load incidents) — the badge is simply omitted there.
+function adminSidebar(context: BookkitContext, messages: ReturnType<typeof resolveMessages>, active: 'admin' | 'settings', openIncidentCount?: number): string {
   const adminPath = escapeHtml(context.routeConfig.paths.adminPage);
-  const link = (href: string, icon: string, label: string, isActive: boolean): string =>
-    `<a href="${href}"${isActive ? ' class="bk-active" aria-current="page"' : ''}>${icon} ${escapeHtml(label)}</a>`;
+  const link = (href: string, icon: string, label: string, isActive: boolean, badge?: number): string =>
+    `<a href="${href}"${isActive ? ' class="bk-active" aria-current="page"' : ''}>${icon} ${escapeHtml(label)}${badge ? ` <span class="bk-badge bk-badge--warn">${badge}</span>` : ''}</a>`;
   return `<p class="bk-sidebar-brand">${escapeHtml(context.config.business.name)}</p>`
     + link(`${adminPath}#bk-bookings`, navIcons.bookings, messages['admin.navBookings'], active === 'admin')
     + link(`${adminPath}#bk-days`, navIcons.days, messages['admin.navDays'], false)
+    + (openIncidentCount ? link(`${adminPath}#bk-incidents`, navIcons.incidents, messages['admin.navIncidents'], false, openIncidentCount) : '')
     + link(`${adminPath}?view=settings`, navIcons.settings, messages['admin.settings'], active === 'settings');
 }
 
@@ -1232,6 +1245,95 @@ function manageLinkHref(managePagePath: string, token: string): string | null {
   return isManageableToken(token) ? `${managePagePath}?token=${encodeURIComponent(token)}` : null;
 }
 
+// Plan 020 (design decision 12): relative "how long ago" phrasing for a card's first-detected
+// timestamp — plain locale date/time is precise but doesn't read as urgency the way "since" does,
+// and this is the one place on the admin page that needs it.
+function formatIncidentSince(iso: string, locale: string, timezone: string): string {
+  return formatDateTime(utcToLocalIso(iso, timezone), locale, timezone);
+}
+
+// Plan 020 (design decisions 12/13/14): the "Attention required" section — open incident cards
+// (already sorted action-required-then-delayed-then-oldest by listOpenIncidents), each with a
+// collapsed technical-details disclosure and two CSRF-protected actions (retry, manual resolve),
+// plus a 30-day counts line and a short recently-resolved history distinguishing automatic from
+// manual resolutions. Never renders the internal word "abandoned" (ownerFacingIncidentTitle/plain
+// severity labels only) and never renders a Retry button for an 'oversell' incident — the STOP
+// condition in src/confirmation.ts's retrySideEffectOperation ('oversell' -> 'not_retryable') is
+// mirrored here so the UI never offers an action the server would refuse anyway.
+function incidentsSection(
+  context: BookkitContext,
+  messages: ReturnType<typeof resolveMessages>,
+  openIncidents: OperationalIncidentRecord[],
+  resolvedIncidents: OperationalIncidentRecord[],
+  counts: { opened: number; resolved: number },
+  referenceByBookingId: Map<string, string>,
+  csrfToken: string | undefined,
+  saved: string,
+): string {
+  const locale = context.config.locales.default;
+  const timezone = context.config.business.timezone;
+  const csrfField = `<input type="hidden" name="csrf_token" value="${escapeHtml(csrfToken)}">`;
+  const savedAlert = saved === 'incident-retried'
+    ? `<p class="bk-alert bk-alert--ok" role="status">${escapeHtml(messages['admin.incidentRetried'])}</p>`
+    : saved === 'incident-resolved'
+      ? `<p class="bk-alert bk-alert--ok" role="status">${escapeHtml(messages['admin.incidentResolved'])}</p>`
+      : '';
+  const hiddenSource = (incident: OperationalIncidentRecord): string =>
+    `<input type="hidden" name="source_type" value="${escapeHtml(incident.sourceType)}">`
+    + `<input type="hidden" name="source_key" value="${escapeHtml(incident.sourceKey)}">`;
+  const cards = openIncidents.map((incident) => {
+    const reference = referenceByBookingId.get(incident.bookingId) ?? incident.bookingId;
+    const title = ownerFacingIncidentTitle(incident.action);
+    const severityLabel = incident.severity === 'action_required' ? messages['admin.incidentSeverityActionRequired'] : messages['admin.incidentSeverityDelayed'];
+    const severityTone = incident.severity === 'action_required' ? ' bk-badge--danger' : ' bk-badge--warn';
+    const canRetry = incident.action !== 'oversell';
+    const isMultiRecipientish = incident.action === 'confirmation_email' || incident.action === 'customer_notification' || incident.action === 'operations_sync';
+    const retryForm = canRetry
+      ? `<form method="post" class="bk-incident-action">${csrfField}${hiddenSource(incident)}`
+        + (isMultiRecipientish ? `<p class="bk-hint">${escapeHtml(messages['admin.incidentRetryDuplicateWarning'])}</p>` : '')
+        + `<button type="submit" class="bk-btn bk-btn--secondary bk-btn--sm" name="action" value="incident-retry">${escapeHtml(messages['admin.incidentRetry'])}</button></form>`
+      : `<p class="bk-hint">${escapeHtml(messages['admin.incidentNoRetry'])}</p>`;
+    const resolveForm = `<form method="post" class="bk-incident-action">${csrfField}${hiddenSource(incident)}`
+      + `<label class="bk-field"><span>${escapeHtml(messages['admin.incidentResolveNoteLabel'])}</span>`
+      + `<textarea class="bk-input" name="note" required minlength="1" maxlength="500"></textarea>`
+      + `<span class="bk-hint">${escapeHtml(messages['admin.incidentResolveNoteHint'])}</span></label>`
+      + `<button type="submit" class="bk-btn bk-btn--outline-danger bk-btn--sm" name="action" value="incident-resolve">${escapeHtml(messages['admin.incidentResolveSubmit'])}</button></form>`;
+    const details = `<details class="bk-disclosure bk-disclosure--bare"><summary>${escapeHtml(messages['admin.incidentDetails'])}</summary><div>`
+      + `<p class="bk-mono bk-sub">${escapeHtml(incident.action)} · ${escapeHtml(incident.sourceType)} · attempt ${incident.attemptCount}</p>`
+      + `</div></details>`;
+    return `<li class="bk-card bk-incident-card">`
+      + `<h3>${escapeHtml(title)} <span class="bk-badge${severityTone}">${escapeHtml(severityLabel)}</span></h3>`
+      + `<p class="bk-sub">${escapeHtml(messages['common.reference'])}: <span class="bk-mono">${escapeHtml(reference)}</span></p>`
+      + `<p class="bk-sub">${escapeHtml(formatMessage(messages['admin.incidentSince'], { date: formatIncidentSince(incident.firstDetectedAt, locale, timezone) }))} · ${escapeHtml(formatMessage(messages['admin.incidentAttempts'], { n: incident.attemptCount }))}</p>`
+      + details
+      + `<div class="bk-actions">${retryForm}${resolveForm}</div>`
+      + `</li>`;
+  }).join('');
+
+  const historyItems = resolvedIncidents.map((incident) => {
+    const reference = referenceByBookingId.get(incident.bookingId) ?? incident.bookingId;
+    const resolution = incident.resolutionKind === 'manual'
+      ? formatMessage(messages['admin.incidentHistoryManual'], { who: incident.resolvedBy ?? '' })
+      : messages['admin.incidentHistoryAutomatic'];
+    return `<li><span class="bk-mono">${escapeHtml(reference)}</span> — ${escapeHtml(ownerFacingIncidentTitle(incident.action))}`
+      + `<span class="bk-sub">${escapeHtml(resolution)}</span></li>`;
+  }).join('');
+  const history = `<details class="bk-disclosure" id="bk-incidents-history">`
+    + `<summary>${escapeHtml(messages['admin.incidentHistory'])}</summary><div>`
+    + (historyItems ? `<ul class="bk-incident-history">${historyItems}</ul>` : `<p class="bk-hint">${escapeHtml(messages['admin.incidentHistoryNone'])}</p>`)
+    + `</div></details>`;
+
+  const countsLine = `<p class="bk-sub">${escapeHtml(formatMessage(messages['admin.incidentCounts30d'], { opened: counts.opened, resolved: counts.resolved }))}</p>`;
+
+  return `<section class="bk-card" id="bk-incidents"><h2>${escapeHtml(messages['admin.incidentsTitle'])}</h2>`
+    + `<p class="bk-hint">${escapeHtml(messages['admin.incidentsHint'])}</p>`
+    + savedAlert
+    + countsLine
+    + (cards ? `<ul class="bk-incident-list">${cards}</ul>` : `<p class="bk-lead">${escapeHtml(messages['admin.incidentsNone'])}</p>`)
+    + history
+    + `</section>`;
+}
+
 function adminPage(
   context: BookkitContext,
   bookings: Booking[],
@@ -1245,6 +1347,8 @@ function adminPage(
   // undefined when BOOKKIT_CSRF_SECRET isn't configured (src/admin-csrf.ts mintAdminCsrfToken) — the
   // field below then renders empty and verifyAdminCsrfToken is a deliberate no-op on the POST side.
   csrfToken: string | undefined,
+  incidentsHtml: string,
+  openIncidentCount: number,
 ): string {
   // Admin is operator-facing (behind Cloudflare Access), so copy uses the business default locale.
   const locale = context.config.locales.default;
@@ -1540,10 +1644,10 @@ function adminPage(
     title: `${messages['admin.title']} — ${context.config.business.name}`,
     cssHref: cssAssetHref(context.routeConfig.paths.assetsCss),
     scriptHref: jsAssetHref(context.routeConfig.paths.assetsJs),
-    sidebar: adminSidebar(context, messages, 'admin'),
+    sidebar: adminSidebar(context, messages, 'admin', openIncidentCount),
     theme: context.viewerTheme,
     themeToggle: themeToggle(messages, context.viewerTheme),
-    body: `<div class="bk-toolbar"><h1>${escapeHtml(messages['admin.title'])}</h1></div>${bookingsSection}${daysSection}`,
+    body: `<div class="bk-toolbar"><h1>${escapeHtml(messages['admin.title'])}</h1></div>${incidentsHtml}${bookingsSection}${daysSection}`,
   });
 }
 
@@ -1706,7 +1810,26 @@ export function handleAdminGet(request: Request, context: BookkitContext): Promi
     };
     const editDate = url.searchParams.get('date')?.trim() ?? '';
     const saved = url.searchParams.get('saved') ?? '';
-    return html(adminPage(context, bookings, overrides, fromDate, toDate, filters, editDate, capacityDefaults, saved, csrfToken), 200, {
+    // Admin is operator-facing (behind Cloudflare Access), so copy uses the business default
+    // locale — same choice adminPage/settingsPage make internally.
+    const messages = resolveMessages(context.config, context.config.locales.default);
+    // Plan 020 (design decision 14): "30-day counts and recent resolved history" — since is a
+    // fixed 30-day lookback from the render clock, not a config option.
+    const incidentsSince = new Date(parseUtcInstant(now).getTime() - 30 * 86_400_000).toISOString();
+    const [openIncidents, resolvedIncidents, incidentCounts] = await Promise.all([
+      context.repo.listOpenIncidents(100),
+      context.repo.listRecentResolvedIncidents(incidentsSince, 20),
+      context.repo.countIncidentsSince(incidentsSince),
+    ]);
+    const incidentBookingIds = [...new Set([...openIncidents, ...resolvedIncidents].map((incident) => incident.bookingId))];
+    const incidentBookings = await Promise.all(incidentBookingIds.map((id) => context.repo.getBookingById(id)));
+    const referenceByBookingId = new Map<string, string>();
+    incidentBookingIds.forEach((id, index) => {
+      const found = incidentBookings[index];
+      referenceByBookingId.set(id, found?.reference ?? id);
+    });
+    const incidentsHtml = incidentsSection(context, messages, openIncidents, resolvedIncidents, incidentCounts, referenceByBookingId, csrfToken, saved);
+    return html(adminPage(context, bookings, overrides, fromDate, toDate, filters, editDate, capacityDefaults, saved, csrfToken, incidentsHtml, openIncidents.length), 200, {
       'cache-control': 'no-store',
       // `no-referrer` nulls the `Origin` header (per the Fetch spec) on this page's own
       // same-origin POSTs (the day-override/default-capacity/settings forms below), which trips
@@ -1734,6 +1857,48 @@ export function handleAdminPost(request: Request, context: BookkitContext): Prom
     const csrfOk = await verifyAdminCsrfToken(context, typeof csrfToken === 'string' ? csrfToken : null, access.sub, context.clock().getTime());
     if (!csrfOk) throw new HttpError(403, 'forbidden', 'Invalid or expired CSRF token');
     const action = requireString(form.get('action'), 'action');
+    if (action === 'incident-retry' || action === 'incident-resolve') {
+      const sourceType = requireString(form.get('source_type'), 'source_type') as OperationalIncidentSourceType;
+      const sourceKey = requireString(form.get('source_key'), 'source_key');
+      const incident = await context.repo.getIncidentBySource(sourceType, sourceKey);
+      if (!incident || incident.status !== 'open') throw new HttpError(400, 'validation_failed', 'Incident not found or already resolved');
+      const location = new URL(request.url);
+      location.hash = 'bk-incidents';
+      if (action === 'incident-resolve') {
+        // Decision 13: "requires a trimmed 1-500 char note", records the Access subject/time, and
+        // never falsifies the underlying provider/refund row — this only ever calls
+        // resolveIncidentManual, nothing that touches bookings/side_effect_operations/
+        // refund_operations.
+        const note = requireString(form.get('note'), 'note').trim();
+        if (note.length < 1 || note.length > 500) throw new HttpError(400, 'validation_failed', 'note must be between 1 and 500 characters');
+        await context.repo.resolveIncidentManual({
+          sourceType, sourceKey, resolvedAt: nowIso(context), resolvedBy: access.sub || 'admin', resolutionNote: note,
+        });
+        location.searchParams.set('saved', 'incident-resolved');
+        return new Response(null, { status: 303, headers: { location: location.toString(), 'cache-control': 'no-store' } });
+      }
+      // 'incident-retry': one immediate leased attempt, per decision 13. 'oversell' has no safe
+      // one-shot retry (the STOP condition src/confirmation.ts's retrySideEffectOperation already
+      // enforces) — reject it server-side too, so the UI's omitted Retry button is not the only
+      // thing stopping the action.
+      if (sourceType === 'oversell') throw new HttpError(400, 'validation_failed', 'This incident cannot be retried automatically');
+      const booking = await context.repo.getBookingById(incident.bookingId);
+      if (!booking) throw new HttpError(404, 'not_found', 'Booking not found');
+      if (sourceType === 'side_effect') {
+        const kind = sourceKey.slice(incident.bookingId.length + 1) as SideEffectOperationKind;
+        await retrySideEffectOperation(context, booking, kind);
+      } else {
+        const refundOperation = await context.repo.getRefundOperationByBookingId(incident.bookingId);
+        if (refundOperation) {
+          const attemptNumber = await context.repo.claimRefundExecutionForRetry(refundOperation.id, nowIso(context));
+          if (attemptNumber !== null) {
+            await attemptRefund(context, booking, refundOperation.id, refundOperation.choice, refundOperation.paymentIntent, { attemptNumber });
+          }
+        }
+      }
+      location.searchParams.set('saved', 'incident-retried');
+      return new Response(null, { status: 303, headers: { location: location.toString(), 'cache-control': 'no-store' } });
+    }
     if (action.startsWith('settings-')) {
       // Redirect target carries saved=1 so the settings page can confirm the change visibly.
       const location = new URL(request.url);
