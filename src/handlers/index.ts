@@ -41,7 +41,8 @@ import {
 import type { BookkitContext } from '../context';
 import { getSecret, nowIso } from '../context';
 import { isManageableToken } from '../providers/brevo';
-import { CONFIRMATION_TOURFLOW_KIND, HoldLimitExceededError, type SettingsBatchOperation } from '../repo';
+import { CONFIRMATION_TOURFLOW_KIND, HoldLimitExceededError, type RefundChoice, type SettingsBatchOperation } from '../repo';
+import { attemptRefund } from '../refund-executor';
 import { cssAssetHref, jsAssetHref } from '../ui/asset-hrefs';
 import { formatDateTime, formatDayDate, formatPrice } from '../ui/format';
 import { factList, pageShell, statusBadge, statusToneOf, themeToggle } from '../ui/layout';
@@ -939,50 +940,22 @@ async function operatorBooking(
 // (BK-REFUND-001). Safe to call more than once for the same operation id: refund() carries
 // Stripe's own idempotency key, so a resumed/retried call cannot double-refund even when a
 // previous attempt's D1 write never landed (crash between Stripe success and recording it).
+// Plan 020: a thin HTTP-facing wrapper around the shared attemptRefund executor (src/refund-executor.ts)
+// — see that module's header comment for why the HTTP path calls it with no execution claim.
 async function resolvePendingRefund(
   context: BookkitContext,
   booking: Booking,
   operationId: string,
-  choice: 'full' | 'none',
+  choice: RefundChoice,
   paymentIntent: string | null,
 ): Promise<void> {
-  const { id: bookingId, priceCents } = booking;
-  if (choice === 'none') {
-    await context.repo.resolveRefundOperation(operationId, { status: 'succeeded', resolvedAt: nowIso(context) });
-    return;
-  }
-  if (!paymentIntent) {
-    // Legacy requested rows can bypass the pre-claim guard below. They must remain visibly
-    // unresolved rather than claiming a full refund succeeded when Stripe was never called.
-    await context.repo.resolveRefundOperation(operationId, {
-      status: 'failed', error: 'Stripe payment intent is missing', resolvedAt: nowIso(context),
-    });
+  const outcome = await attemptRefund(context, booking, operationId, choice, paymentIntent);
+  if (outcome.kind === 'payment_intent_missing') {
     throw new HttpError(409, 'refund_payment_intent_missing', 'Cannot refund a booking without a Stripe payment intent');
   }
-  // A same-choice loser can hold a stale requested snapshot while the winner records success.
-  // Re-read immediately before Stripe so it does not turn that success into a needless retry.
-  const current = await context.repo.getRefundOperationByBookingId(bookingId);
-  if (current?.id !== operationId || current.status === 'succeeded') return;
-  let result: { refundId: string; amountCents: number };
-  try {
-    result = await context.providers.payments.refund(paymentIntent, priceCents);
-  } catch (error) {
-    // Only a failure of the Stripe call itself is a genuine refund failure — record it so the
-    // operation row remains for retry/reconciliation.
-    await context.repo.resolveRefundOperation(operationId, {
-      status: 'failed', error: error instanceof Error ? error.message : 'Refund failed', resolvedAt: nowIso(context),
-    });
+  if (outcome.kind === 'failed') {
     throw new HttpError(502, 'refund_failed', 'The refund could not be completed; it will be retried');
   }
-  // Stripe has already moved the money by this point — a failure recording that outcome to D1
-  // must never be classified as a Stripe failure (that would misreport a completed refund as
-  // failed, or mark it 'failed' forever). Let a write failure here propagate as a plain error
-  // instead: the row stays 'requested', and a retry recovers the same result via Stripe's
-  // idempotency key (or, once that key's ~24h window has lapsed, via refunds.list reconciliation
-  // in StripeProvider.refund) rather than ever double-refunding or losing the outcome.
-  await context.repo.resolveRefundOperation(operationId, {
-    status: 'succeeded', stripeRefundId: result.refundId, amountCents: result.amountCents, resolvedAt: nowIso(context),
-  });
 }
 
 // Reconciles a request against the refund-operation row for an already-cancelled booking

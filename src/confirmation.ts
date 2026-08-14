@@ -34,7 +34,7 @@ export function isActionableSideEffectStatus(status: SideEffectOperationStatus):
   return status !== 'succeeded' && status !== 'abandoned';
 }
 
-interface AttemptOutcome {
+export interface AttemptOutcome {
   status: 'failed' | 'abandoned';
   error: string;
   statusCode: number | undefined;
@@ -47,7 +47,10 @@ interface AttemptOutcome {
 // failure (classifyProviderError says not retryable) abandons immediately, regardless of attempt
 // number; a retryable failure abandons only once it has exhausted SIDE_EFFECT_MAX_ATTEMPTS
 // attempts; otherwise it stays 'failed' for a later touch to retry.
-function classifyAttemptOutcome(attemptNumber: number, error: unknown): AttemptOutcome {
+// Exported (plan 020) so src/refund-executor.ts's scheduled-attempt path classifies a refund
+// failure with the exact same permanent-vs-exhausted rule side-effect operations already use,
+// rather than a second, potentially-drifting copy of the same decision.
+export function classifyAttemptOutcome(attemptNumber: number, error: unknown): AttemptOutcome {
   const classification = classifyProviderError(error);
   const message = (error instanceof Error ? error.message : String(error)).slice(0, 200);
   if (!classification.retryable) {
