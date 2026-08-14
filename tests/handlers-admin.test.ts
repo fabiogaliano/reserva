@@ -449,8 +449,29 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     expect(body).toContain('Default: 24');
     // The overridden field offers a per-field reset action.
     expect(body).toContain('value="settings-reset:booking.minNoticeHours"');
-    // The deploy-time card lists file-only values.
+    // Fleet size is a normal setting; only genuinely structural values remain deploy-time.
+    expect(body).toContain('data-bookkit-tab="fleet"');
+    expect(body).toContain('name="fleet.defaultCapacity"');
+    expect(body).toContain('value="2" min="0" step="1" required');
     expect(body).toContain(config.business.timezone);
+    expect(body).toContain('These cannot be changed here.');
+  });
+
+  it('saves, resets, and validates the normal number of fleet vehicles', async () => {
+    const repo = fakeRepository();
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+
+    const save = await handleAdminPost(adminPostRequest({ action: 'settings-save', section: 'fleet', 'fleet.defaultCapacity': '4' }), context);
+    expect(save.status).toBe(303);
+    expect(repo.settings.get('fleet.defaultCapacity')).toBe('4');
+
+    const resetToFileValue = await handleAdminPost(adminPostRequest({ action: 'settings-save', section: 'fleet', 'fleet.defaultCapacity': '2' }), context);
+    expect(resetToFileValue.status).toBe(303);
+    expect(repo.settings.has('fleet.defaultCapacity')).toBe(false);
+
+    const invalid = await handleAdminPost(adminPostRequest({ action: 'settings-save', section: 'fleet', 'fleet.defaultCapacity': '-1' }), context);
+    expect(invalid.status).toBe(400);
+    await expect(invalid.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('fleet.defaultCapacity') } });
   });
 
   // BK-CONFIG-001: the holdMinutes kind declares max: 1440 (core/settings.ts); the rendered input

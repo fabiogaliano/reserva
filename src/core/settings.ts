@@ -13,7 +13,7 @@ import { validateConfig, type ClientConfig, type PaymentMethod } from './config'
 
 export type SettingValue = string | number | boolean | string[] | null;
 
-export type SettingSection = 'policy' | 'contact' | 'payments' | 'legal';
+export type SettingSection = 'policy' | 'fleet' | 'contact' | 'payments' | 'legal';
 
 export type SettingKind =
   // `optional: true` allows clearing the field: an empty submission stores an explicit null,
@@ -109,6 +109,12 @@ export const settingDefinitions: readonly SettingDefinition[] = [
     set: (config, value) => { config.booking.limitedThreshold = value as number; },
   },
   {
+    key: 'fleet.defaultCapacity', section: 'fleet', labelKey: 'setting.fleetCapacity',
+    kind: { type: 'int', min: 0 },
+    get: (config) => config.fleet.defaultCapacity,
+    set: (config, value) => { config.fleet.defaultCapacity = value as number; },
+  },
+  {
     key: 'business.name', section: 'contact', labelKey: 'setting.businessName',
     kind: { type: 'text' },
     get: (config) => config.business.name,
@@ -149,7 +155,7 @@ export const settingDefinitions: readonly SettingDefinition[] = [
   },
 ];
 
-export const settingSections: readonly SettingSection[] = ['policy', 'contact', 'payments', 'legal'];
+export const settingSections: readonly SettingSection[] = ['policy', 'fleet', 'contact', 'payments', 'legal'];
 
 function isValidHttpUrl(value: string): boolean {
   try {
@@ -205,6 +211,7 @@ export function applySettingOverrides(
   if (keys.length === 0) return config;
   const next: ClientConfig = {
     ...config,
+    fleet: { ...config.fleet },
     business: { ...config.business, contact: { ...config.business.contact } },
     booking: { ...config.booking, reschedule: { ...config.booking.reschedule } },
     payments: { ...config.payments, methods: [...config.payments.methods] },

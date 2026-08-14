@@ -139,8 +139,8 @@ export const defaultMessages = {
   'admin.nextMonth': 'Next month',
   'admin.save': 'Save',
   'admin.clear': 'Reset to default',
-  'admin.defaultTitle': 'Change capacity for all future days',
-  'admin.defaultHint': 'Use when the fleet itself changes, like a car breaking down. Individually adjusted days keep their own value.',
+  'admin.defaultTitle': 'Schedule a capacity change',
+  'admin.defaultHint': 'Use when fleet capacity changes from a specific date, like a vehicle becoming unavailable. This overrides the normal number of vehicles. Individually adjusted days keep their own value.',
   'admin.defaultScheduled': '{n} scheduled',
   'admin.monthFlagged': '{n} adjusted',
   'admin.defaultFrom': 'From date',
@@ -165,6 +165,8 @@ export const defaultMessages = {
   'admin.saved': 'Saved. Changes reach the public site within a minute.',
   'admin.sectionPolicy': 'Booking policy',
   'admin.sectionPolicyHint': 'The rules customers book, cancel and reschedule under.',
+  'admin.sectionFleet': 'Fleet',
+  'admin.sectionFleetHint': 'Set how many vehicles are normally available for bookings.',
   'admin.sectionContact': 'Business & contact',
   'admin.sectionContactHint': 'Shown to customers on booking pages and emails.',
   'admin.sectionPayments': 'Payments',
@@ -172,7 +174,7 @@ export const defaultMessages = {
   'admin.sectionLegal': 'Legal',
   'admin.sectionLegalHint': 'Documents linked from the booking flow.',
   'admin.sectionReadonly': 'Deploy-time settings',
-  'admin.readonlyHint': 'These come from the site config file and only change with a deploy.',
+  'admin.readonlyHint': 'These cannot be changed here. Edit the site’s Bookkit config file and redeploy.',
   'admin.modified': 'Modified',
   'admin.default': 'Default: {v}',
   'admin.resetField': 'Reset',
@@ -180,7 +182,6 @@ export const defaultMessages = {
   'admin.on': 'On',
   'admin.off': 'Off',
   'admin.none': 'None',
-  'admin.fleetCapacityNote': 'Schedule capacity changes from the booking admin page.',
   // Shown by the embeddable AdminDashboard component in place of its override form when the
   // viewing request isn't Cloudflare Access-authenticated (see src/components/AdminDashboard.astro)
   // — rendering a form that could only ever 403 on submit is worse than saying so up front.
@@ -219,7 +220,8 @@ export const defaultMessages = {
   'setting.shortCode': 'Reference prefix',
   'setting.siteUrl': 'Site URL',
   'setting.tours': 'Tours',
-  'setting.fleetCapacity': 'Fleet default capacity',
+  'setting.fleetCapacity': 'Number of vehicles',
+  'setting.fleetCapacity.hint': 'Applies to dates without a scheduled or day-specific capacity change. Set to 0 to stop availability everywhere.',
   // Plan 020 (design decision 12/13/14): operator incident cards on the admin page.
   'admin.navIncidents': 'Attention required',
   'admin.incidentsTitle': 'Attention required',

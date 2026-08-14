@@ -47,6 +47,25 @@ function seedSideEffect(repo: ReturnType<typeof fakeRepository>, bookingId: stri
 // handled this manually) dispatch to the right executor per source type without ever falsifying
 // the underlying booking/side-effect/refund row.
 describe('admin incidents (plan 020 design decisions 12-14)', () => {
+  it('does not render the incident section before any incident activity exists', async () => {
+    const context = createBookkitContext({
+      config,
+      db: {} as D1Database,
+      repo: fakeRepository(),
+      clock,
+      verifyAccess: async () => true,
+      providers: providers(),
+      secrets: csrfSecrets,
+    });
+
+    const response = await handleAdminGet(new Request(ADMIN_URL), context);
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).not.toContain('id="bk-incidents"');
+    expect(html).not.toContain('Attention required');
+    expect(html).not.toContain('Recently resolved');
+  });
+
   it('GET renders an open incident card with its owner-facing title, never the word "abandoned"', async () => {
     const seeded = booking({ id: 'inc-render', status: 'confirmed', calendarSynced: false });
     const repo = fakeRepository([seeded]);

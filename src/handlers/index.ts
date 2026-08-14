@@ -1266,6 +1266,10 @@ function incidentsSection(
   csrfToken: string | undefined,
   saved: string,
 ): string {
+  // An all-clear dashboard needs no incident UI; the section becomes useful only after an
+  // incident opens and remains visible while there is open work or 30-day history to review.
+  if (openIncidents.length === 0 && counts.opened === 0 && counts.resolved === 0) return '';
+
   const locale = context.config.locales.default;
   const timezone = context.config.business.timezone;
   const csrfField = `<input type="hidden" name="csrf_token" value="${escapeHtml(csrfToken)}">`;
@@ -1667,12 +1671,14 @@ function settingsPage(context: BookkitContext, storedRows: Record<string, string
   const base = context.baseConfig ?? context.config;
   const sectionTitles: Record<SettingSection, string> = {
     policy: messages['admin.sectionPolicy'],
+    fleet: messages['admin.sectionFleet'],
     contact: messages['admin.sectionContact'],
     payments: messages['admin.sectionPayments'],
     legal: messages['admin.sectionLegal'],
   };
   const sectionHints: Record<SettingSection, string> = {
     policy: messages['admin.sectionPolicyHint'],
+    fleet: messages['admin.sectionFleetHint'],
     contact: messages['admin.sectionContactHint'],
     payments: messages['admin.sectionPaymentsHint'],
     legal: messages['admin.sectionLegalHint'],
@@ -1747,7 +1753,6 @@ function settingsPage(context: BookkitContext, storedRows: Record<string, string
       [messages['setting.shortCode'], escapeHtml(context.config.business.shortCode)],
       [messages['setting.siteUrl'], escapeHtml(context.config.business.url)],
       [messages['setting.tours'], escapeHtml(Object.keys(context.config.tours).join(', '))],
-      [messages['setting.fleetCapacity'], `${context.config.fleet.defaultCapacity}<span class="bk-sub">${escapeHtml(messages['admin.fleetCapacityNote'])}</span>`],
     ])
     + `</section>`;
 
@@ -1825,7 +1830,20 @@ export function handleAdminGet(request: Request, context: BookkitContext): Promi
       referenceByBookingId.set(id, found?.reference ?? id);
     });
     const incidentsHtml = incidentsSection(context, messages, openIncidents, resolvedIncidents, incidentCounts, referenceByBookingId, csrfToken, saved);
-    return html(adminPage(context, bookings, overrides, fromDate, toDate, filters, editDate, capacityDefaults, saved, csrfToken, incidentsHtml, openIncidents.length), 200, {
+    return html(adminPage(
+      context,
+      bookings,
+      overrides,
+      fromDate,
+      toDate,
+      filters,
+      editDate,
+      capacityDefaults,
+      saved,
+      csrfToken,
+      incidentsHtml,
+      openIncidents.length,
+    ), 200, {
       'cache-control': 'no-store',
       // `no-referrer` nulls the `Origin` header (per the Fetch spec) on this page's own
       // same-origin POSTs (the day-override/default-capacity/settings forms below), which trips

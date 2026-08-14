@@ -38,16 +38,19 @@ describe('core settings', () => {
     const merged = applySettingOverrides(config, {
       'booking.minNoticeHours': '2',
       'booking.reschedule.enabled': 'false',
+      'fleet.defaultCapacity': '4',
       'business.contact.email': JSON.stringify('new@example.test'),
       'payments.methods': JSON.stringify(['card']),
     });
     expect(merged.booking.minNoticeHours).toBe(2);
     expect(merged.booking.reschedule.enabled).toBe(false);
+    expect(merged.fleet.defaultCapacity).toBe(4);
     expect(merged.business.contact.email).toBe('new@example.test');
     expect(merged.payments.methods).toEqual(['card']);
     // Untouched values still come from the file config, and the original is not mutated.
     expect(merged.booking.maxHorizonDays).toBe(config.booking.maxHorizonDays);
     expect(config.booking.minNoticeHours).toBe(24);
+    expect(config.fleet.defaultCapacity).toBe(2);
     expect(config.payments.methods).toEqual(['card', 'mb_way']);
   });
 
@@ -82,6 +85,7 @@ describe('core settings', () => {
   it('parses form values per kind: numbers, checkboxes, methods, and optional empties', () => {
     expect(parseSettingForm(definition('booking.minNoticeHours'), form({ 'booking.minNoticeHours': '1.5' }))).toBe(1.5);
     expect(parseSettingForm(definition('booking.maxHorizonDays'), form({ 'booking.maxHorizonDays': '45' }))).toBe(45);
+    expect(parseSettingForm(definition('fleet.defaultCapacity'), form({ 'fleet.defaultCapacity': '5' }))).toBe(5);
     expect(parseSettingForm(definition('booking.reschedule.enabled'), form({ 'booking.reschedule.enabled': 'on' }))).toBe(true);
     expect(parseSettingForm(definition('booking.reschedule.enabled'), form({}))).toBe(false);
     expect(parseSettingForm(definition('booking.maxHoldsPerIp'), form({ 'booking.maxHoldsPerIp': '' }))).toBeNull();
@@ -92,6 +96,8 @@ describe('core settings', () => {
   it('rejects invalid form values with SettingParseError', () => {
     expect(() => parseSettingForm(definition('booking.maxHorizonDays'), form({ 'booking.maxHorizonDays': '2.5' }))).toThrow(SettingParseError);
     expect(() => parseSettingForm(definition('booking.maxHorizonDays'), form({ 'booking.maxHorizonDays': '0' }))).toThrow(SettingParseError);
+    expect(() => parseSettingForm(definition('fleet.defaultCapacity'), form({ 'fleet.defaultCapacity': '-1' }))).toThrow(SettingParseError);
+    expect(() => parseSettingForm(definition('fleet.defaultCapacity'), form({ 'fleet.defaultCapacity': '2.5' }))).toThrow(SettingParseError);
     expect(() => parseSettingForm(definition('business.name'), form({ 'business.name': '   ' }))).toThrow(SettingParseError);
     expect(() => parseSettingForm(definition('business.contact.email'), form({ 'business.contact.email': 'not-an-email' }))).toThrow(SettingParseError);
     expect(() => parseSettingForm(definition('legal.termsUrl'), form({ 'legal.termsUrl': 'ftp://example.test' }))).toThrow(SettingParseError);
