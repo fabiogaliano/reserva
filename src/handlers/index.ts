@@ -1180,6 +1180,7 @@ interface AdminFilters {
 }
 
 const navIcons = {
+  overview: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
   bookings: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>',
   days: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></svg>',
   settings: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
@@ -1193,11 +1194,12 @@ function adminSidebar(context: BookkitContext, messages: ReturnType<typeof resol
   const adminPath = escapeHtml(context.routeConfig.paths.adminPage);
   const link = (href: string, icon: string, label: string, isActive: boolean, badge?: number): string =>
     `<a href="${href}"${isActive ? ' class="bk-active" aria-current="page"' : ''}>${icon} ${escapeHtml(label)}${badge ? ` <span class="bk-badge bk-badge--warn">${badge}</span>` : ''}</a>`;
-  return `<p class="bk-sidebar-brand">${escapeHtml(context.config.business.name)}</p>`
-    + link(`${adminPath}#bk-bookings`, navIcons.bookings, messages['admin.navBookings'], active === 'admin')
+  const links = link(adminPath, navIcons.overview, messages['admin.navOverview'], active === 'admin')
+    + link(`${adminPath}#bk-bookings`, navIcons.bookings, messages['admin.navBookings'], false)
     + link(`${adminPath}#bk-days`, navIcons.days, messages['admin.navDays'], false)
     + (openIncidentCount ? link(`${adminPath}#bk-incidents`, navIcons.incidents, messages['admin.navIncidents'], false, openIncidentCount) : '')
     + link(`${adminPath}?view=settings`, navIcons.settings, messages['admin.settings'], active === 'settings');
+  return `<p class="bk-sidebar-brand">${escapeHtml(context.config.business.name)}</p><div class="bk-sidebar-links">${links}</div>`;
 }
 
 // Plan 017 (design decision 4) / Plan 018 (design decision 8): the meeting-point label the
@@ -1398,12 +1400,12 @@ function adminPage(
       ? `<a href="${escapeHtml(manageHref)}">${escapeHtml(messages['admin.manage'])}</a>`
       : `<span class="bk-sub">${escapeHtml(messages['admin.manageUnavailable'])}</span>`;
     return `<tr>`
-      + `<td>${escapeHtml(formatDateTime(utcToLocalIso(booking.startsAt, timezone), locale, timezone))}<span class="bk-sub bk-mono">${escapeHtml(booking.reference)}</span></td>`
-      + `<td><strong>${escapeHtml(customerPrimary)}</strong>${customerSub}</td>`
-      + `<td>${escapeHtml(booking.tourSlug)}<span class="bk-sub">${escapeHtml(people)} · ${escapeHtml(price)}</span></td>`
-      + `<td>${escapeHtml(pickupLabel)}${pickupSub}${meetingPointSub}</td>`
-      + `<td>${statusBadge(booking.status, messages)}</td>`
-      + `<td>${manageCell}</td>`
+      + `<td data-label="${escapeHtml(messages['common.date'])}">${escapeHtml(formatDateTime(utcToLocalIso(booking.startsAt, timezone), locale, timezone))}<span class="bk-sub bk-mono">${escapeHtml(booking.reference)}</span></td>`
+      + `<td data-label="${escapeHtml(messages['common.customer'])}"><strong>${escapeHtml(customerPrimary)}</strong>${customerSub}</td>`
+      + `<td data-label="${escapeHtml(messages['common.tour'])}">${escapeHtml(booking.tourSlug)}<span class="bk-sub">${escapeHtml(people)} · ${escapeHtml(price)}</span></td>`
+      + `<td data-label="${escapeHtml(messages['common.pickup'])}">${escapeHtml(pickupLabel)}${pickupSub}${meetingPointSub}</td>`
+      + `<td data-label="${escapeHtml(messages['common.status'])}">${statusBadge(booking.status, messages)}</td>`
+      + `<td class="bk-table-action" data-label="${escapeHtml(messages['admin.manage'])}">${manageCell}</td>`
       + `</tr>`;
   }).join('');
 
@@ -1502,17 +1504,23 @@ function adminPage(
 
   // The hidden date field keeps the selected day when filters are (re)applied — the two workflows
   // share one URL, so neither form may silently drop the other's state.
+  const clearParams = new URLSearchParams();
+  if (editDate) clearParams.set('date', editDate);
+  const clearHref = `${clearParams.size ? `?${clearParams}` : context.routeConfig.paths.adminPage}#bk-bookings`;
+  const filterActions = `<div class="bk-filter-actions"><button type="submit" class="bk-btn bk-btn--secondary">${escapeHtml(messages['admin.apply'])}</button>`
+    + (filters.q || filters.status ? `<a class="bk-filter-clear" href="${escapeHtml(clearHref)}">${escapeHtml(messages['admin.clearFilters'])}</a>` : '')
+    + `</div>`;
   const filterForm = `<form method="get" class="bk-filters" role="search">`
     + (editDate ? `<input type="hidden" name="date" value="${escapeHtml(editDate)}">` : '')
     + `<label class="bk-field"><span>${escapeHtml(messages['admin.search'])}</span><input class="bk-input" type="search" name="q" value="${escapeHtml(filters.q)}" placeholder="${escapeHtml(messages['admin.searchPlaceholder'])}"></label>`
     + `<label class="bk-field"><span>${escapeHtml(messages['admin.filterStatus'])}</span><select class="bk-select" name="status">${statusOptions}</select></label>`
-    + `<button type="submit" class="bk-btn bk-btn--secondary">${escapeHtml(messages['admin.apply'])}</button></form>`;
+    + filterActions + `</form>`;
 
   const resultsBadge = formatMessage(messages[filtered.length === 1 ? 'admin.resultsOne' : 'admin.results'], { n: filtered.length });
-  const bookingsSection = `<section class="bk-card" id="bk-bookings"><h2>${escapeHtml(messages['admin.bookings'])} <span class="bk-badge">${escapeHtml(resultsBadge)}</span></h2>`
+  const bookingsSection = `<section class="bk-admin-panel" id="bk-bookings"><header class="bk-section-head"><h2>${escapeHtml(messages['admin.bookings'])}</h2><span class="bk-badge">${escapeHtml(resultsBadge)}</span></header>`
     + filterForm
     + (filtered.length === 0
-      ? `<p class="bk-lead">${escapeHtml(messages['admin.noBookings'])}</p>`
+      ? `<div class="bk-empty-state"><p>${escapeHtml(messages['admin.noBookings'])}</p></div>`
       : `<div class="bk-table-wrap"><table class="bk-table"><thead><tr><th>${escapeHtml(messages['common.date'])}</th><th>${escapeHtml(messages['common.customer'])}</th><th>${escapeHtml(messages['common.tour'])}</th><th>${escapeHtml(messages['common.pickup'])}</th><th>${escapeHtml(messages['common.status'])}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`)
     + `</section>`;
 
@@ -1633,11 +1641,16 @@ function adminPage(
 
   const legend = `<span class="bk-badge bk-badge--danger">${escapeHtml(messages['widget.closed'])}</span> `
     + `<span class="bk-badge bk-badge--warn">${escapeHtml(messages['admin.stateOverride'])}</span>`;
-  const daysSection = `<section class="bk-card" id="bk-days"><h2>${escapeHtml(messages['admin.days'])}</h2>`
-    + `<p class="bk-hint">${escapeHtml(messages['admin.daysHint'])}</p>`
-    + `<p class="bk-legend">${legend}</p>`
-    + `<div class="bk-days-layout"><div class="bk-months">${monthGrids}</div><div>${overrideForm}${defaultForm}</div></div>`
+  const daysSection = `<section class="bk-admin-panel" id="bk-days"><header class="bk-section-head bk-section-head--availability"><div><h2>${escapeHtml(messages['admin.days'])}</h2>`
+    + `<p class="bk-hint">${escapeHtml(messages['admin.daysHint'])}</p></div><p class="bk-legend">${legend}</p></header>`
+    + `<div class="bk-days-layout"><div class="bk-months">${monthGrids}</div><aside class="bk-day-editor" aria-label="${escapeHtml(messages['admin.overrideTitle'])}">${overrideForm}${defaultForm}</aside></div>`
     + `</section>`;
+
+  const confirmedCount = bookings.filter((booking) => booking.status === 'confirmed').length;
+  const holdCount = bookings.filter((booking) => booking.status === 'hold').length;
+  const metric = (label: string, value: number, tone = ''): string => `<div class="bk-stat${tone}"><dt>${escapeHtml(label)}</dt><dd>${value}</dd></div>`;
+  const stats = `<dl class="bk-admin-stats">${metric(messages['admin.metricUpcoming'], bookings.length)}${metric(messages['admin.metricConfirmed'], confirmedCount)}${metric(messages['admin.metricHolds'], holdCount)}${metric(messages['admin.metricAttention'], openIncidentCount, openIncidentCount ? ' bk-stat--attention' : '')}</dl>`;
+  const adminHeader = `<header class="bk-admin-header"><div><p class="bk-eyebrow">${escapeHtml(messages['admin.workspace'])}</p><h1>${escapeHtml(messages['admin.title'])}</h1><p class="bk-lead">${escapeHtml(messages['admin.pageHint'])}</p></div></header>`;
 
   return pageShell({
     lang: locale,
@@ -1645,9 +1658,11 @@ function adminPage(
     cssHref: cssAssetHref(context.routeConfig.paths.assetsCss),
     scriptHref: jsAssetHref(context.routeConfig.paths.assetsJs),
     sidebar: adminSidebar(context, messages, 'admin', openIncidentCount),
+    sidebarLabel: messages['admin.navigation'],
+    skipLabel: messages['common.skipContent'],
     theme: context.viewerTheme,
     themeToggle: themeToggle(messages, context.viewerTheme),
-    body: `<div class="bk-toolbar"><h1>${escapeHtml(messages['admin.title'])}</h1></div>${incidentsHtml}${bookingsSection}${daysSection}`,
+    body: `${adminHeader}${stats}<div class="bk-admin-stack">${incidentsHtml}${bookingsSection}${daysSection}</div>`,
   });
 }
 
@@ -1770,9 +1785,11 @@ function settingsPage(context: BookkitContext, storedRows: Record<string, string
     cssHref: cssAssetHref(context.routeConfig.paths.assetsCss),
     scriptHref: jsAssetHref(context.routeConfig.paths.assetsJs),
     sidebar: adminSidebar(context, messages, 'settings'),
+    sidebarLabel: messages['admin.navigation'],
+    skipLabel: messages['common.skipContent'],
     theme: context.viewerTheme,
     themeToggle: themeToggle(messages, context.viewerTheme),
-    body: `<div class="bk-toolbar"><div><h1>${escapeHtml(messages['admin.settings'])}</h1><p class="bk-lead">${escapeHtml(messages['admin.settingsHint'])}</p></div></div>`
+    body: `<header class="bk-admin-header"><div><p class="bk-eyebrow">${escapeHtml(messages['admin.workspace'])}</p><h1>${escapeHtml(messages['admin.settings'])}</h1><p class="bk-lead">${escapeHtml(messages['admin.settingsHint'])}</p></div></header>`
       + savedAlert
       + tabs
       + `<div class="bk-settings-sections">${sections}${readonlySection}</div>`,

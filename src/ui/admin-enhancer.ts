@@ -52,6 +52,7 @@ export const adminEnhancerJs = `(() => {
     };
     const prev = mkButton(i18n.prevMonth, '\\u2039');
     const pagerTitle = document.createElement('h3');
+    pagerTitle.setAttribute('aria-live', 'polite');
     const next = mkButton(i18n.nextMonth, '\\u203a');
     pager.append(prev, pagerTitle, next);
     monthsBox.insertBefore(pager, monthsBox.firstChild);
@@ -77,10 +78,11 @@ export const adminEnhancerJs = `(() => {
   // this script is running, so no-JS markup never mentions them.
   if (i18n.selectHint) {
     const hint = document.createElement('p');
-    hint.className = 'bk-hint';
+    hint.className = 'bk-hint bk-selection-hint';
     hint.setAttribute('data-bookkit-select-hint', '');
     hint.textContent = i18n.selectHint;
-    monthsBox.parentElement.insertBefore(hint, monthsBox);
+    const firstMonth = monthsBox.querySelector('.bk-month');
+    monthsBox.insertBefore(hint, firstMonth);
   }
 
   // --- day selection + form prefill + day panel ---

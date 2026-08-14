@@ -24,6 +24,8 @@ export interface PageShellOptions {
   theme?: ThemePreference | undefined;
   // Pre-built theme-toggle control (see themeToggle below); placed in the masthead or sidebar.
   themeToggle?: string;
+  sidebarLabel?: string;
+  skipLabel?: string;
 }
 
 // Shared document chrome for every server-rendered bookkit page. Styling comes exclusively from
@@ -34,8 +36,10 @@ export function pageShell(options: PageShellOptions): string {
   const head = `<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">${options.headExtra ?? ''}<title>${escapeHtml(options.title)}</title>${stylesheet}${options.scriptHref ? `<script type="module" src="${escapeHtml(options.scriptHref)}"></script>` : ''}</head>`;
   const htmlTag = `<html lang="${escapeHtml(options.lang)}"${options.theme ? ` data-theme="${options.theme}"` : ''}>`;
   const toggle = options.themeToggle ?? '';
+  const skip = options.skipLabel ? `<a class="bk-skip" href="#bk-main">${escapeHtml(options.skipLabel)}</a>` : '';
   if (options.sidebar) {
-    const content = `<div class="bk-shell"><nav class="bk-sidebar">${options.sidebar}${toggle}</nav><div class="bk-shell-main"><main class="bk-main bk-main--shell">${options.body}</main></div></div>`;
+    const navLabel = options.sidebarLabel ? ` aria-label="${escapeHtml(options.sidebarLabel)}"` : '';
+    const content = `${skip}<div class="bk-shell"><nav class="bk-sidebar"${navLabel}>${options.sidebar}${toggle}</nav><div class="bk-shell-main"><main id="bk-main" class="bk-main bk-main--shell">${options.body}</main></div></div>`;
     return `<!doctype html>${htmlTag}${head}<body class="bk-page">${content}</body></html>`;
   }
   const widthClass = options.width === 'wide' ? ' bk-main--wide' : options.width === 'mid' ? ' bk-main--mid' : '';
@@ -44,7 +48,7 @@ export function pageShell(options: PageShellOptions): string {
     ? `<header class="bk-masthead"><div class="bk-masthead-inner${innerWidthClass}">${toggle}${options.header}</div></header>`
     : '';
   const mainClass = `bk-main${widthClass}${options.header ? ' bk-main--raised' : ''}`;
-  return `<!doctype html>${htmlTag}${head}<body class="bk-page">${masthead}<main class="${mainClass}">${options.body}</main></body></html>`;
+  return `<!doctype html>${htmlTag}${head}<body class="bk-page">${skip}${masthead}<main id="bk-main" class="${mainClass}">${options.body}</main></body></html>`;
 }
 
 // Builds the per-viewer theme toggle: a button the enhancer reveals and wires (see ui/theme-toggle).
