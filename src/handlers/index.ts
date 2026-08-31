@@ -1343,6 +1343,10 @@ function incidentsSection(
 function adminPage(
   context: BookkitContext,
   bookings: Booking[],
+  // The table's source set — same as `bookings` with no filters active, widened to include
+  // cancelled/expired/past rows when a search or status filter is applied. Separate from
+  // `bookings` because the occupancy calendar and stats below must keep counting only live rows.
+  tableBookings: Booking[],
   overrides: Awaited<ReturnType<BookkitContext['repo']['listDayOverrides']>>,
   fromDate: string,
   toDate: string,
@@ -1360,7 +1364,7 @@ function adminPage(
   const messages = resolveMessages(context.config, locale);
   const timezone = context.config.business.timezone;
   const managePagePath = context.routeConfig.paths.managePage;
-  const filtered = bookings.filter((booking) => matchesAdminFilters(booking, filters, context.config));
+  const filtered = tableBookings.filter((booking) => matchesAdminFilters(booking, filters, context.config));
 
   // Operators scan by when → who → what, so the row leads with date and customer; secondary
   // detail (reference, email, party size, pickup address) stacks as sub-lines instead of
@@ -1830,6 +1834,13 @@ export function handleAdminGet(request: Request, context: BookkitContext): Promi
       q: url.searchParams.get('q')?.trim() ?? '',
       status: url.searchParams.get('status')?.trim() ?? '',
     };
+    // An active search/status filter widens the table's source to every booking (any status,
+    // past year included): listUpcoming can never return the cancelled/expired/past rows those
+    // filters exist to find. The unfiltered `bookings` set stays the source for the occupancy
+    // calendar and the stat counts, where cancelled rows must not consume capacity.
+    const tableBookings = filters.q || filters.status
+      ? await context.repo.listAllFrom(new Date(parseUtcInstant(now).getTime() - 365 * 86_400_000).toISOString())
+      : bookings;
     const editDate = url.searchParams.get('date')?.trim() ?? '';
     const saved = url.searchParams.get('saved') ?? '';
     const messages = resolveMessages(context.config, adminLocaleFor(context.config));
@@ -1852,6 +1863,7 @@ export function handleAdminGet(request: Request, context: BookkitContext): Promi
     return html(adminPage(
       context,
       bookings,
+      tableBookings,
       overrides,
       fromDate,
       toDate,

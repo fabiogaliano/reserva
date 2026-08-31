@@ -495,6 +495,9 @@ export interface BookingRepository {
   } & CapacityGuardInput): Promise<Booking | null>;
   listOccupancyBookings(from: string, to: string): Promise<Booking[]>;
   listUpcoming(now: string): Promise<Booking[]>;
+  // Every booking regardless of status from a starts_at lower bound — the admin's search/status
+  // filters need cancelled/expired/past rows that listUpcoming (live upcoming only) never returns.
+  listAllFrom(startsAtFrom: string): Promise<Booking[]>;
   listSince(since: string): Promise<Booking[]>;
   getDayOverride(date: string): Promise<DayCapacityOverride | null>;
   listDayOverrides(from: string, to: string): Promise<DayCapacityOverride[]>;
@@ -1902,6 +1905,11 @@ export function createBookingRepository(
     // Hydrated: a custom OpsSink.mapBooking (src/handlers/index.ts handleFeed) may read a
     // booking's tokens, and the default feed mapping doesn't, so hydrating here is the only way
     // to keep that consumer contract honest without knowing which mapper is plugged in.
+    async listAllFrom(startsAtFrom) {
+      const result = await db.prepare(`SELECT ${bookingColumns} FROM bookings WHERE starts_at >= ? ORDER BY starts_at`).bind(startsAtFrom).all<BookingRow>();
+      const key = await resolveTokenKey();
+      return Promise.all(result.results.map((row) => hydrateBooking(row, key)));
+    },
     async listSince(since) {
       const result = await db.prepare(`SELECT ${bookingColumns} FROM bookings WHERE updated_at > ? ORDER BY updated_at`).bind(since).all<BookingRow>();
       const key = await resolveTokenKey();

@@ -684,6 +684,11 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       .filter((item) => item.startsAt >= now && (item.status === 'confirmed' || (item.status === 'hold' && item.holdExpiresAt !== null && item.holdExpiresAt > now)))
       .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
       .map(hydrateBooking),
+    // Mirrors src/repo.ts listAllFrom — starts_at >= bound, any status, ordered by starts_at.
+    listAllFrom: async (startsAtFrom) => [...rows.values()]
+      .filter((item) => item.startsAt >= startsAtFrom)
+      .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
+      .map(hydrateBooking),
     // Mirrors src/repo.ts:268 — updated_at > since, ordered by updated_at.
     listSince: async (since) => [...rows.values()]
       .filter((item) => item.updatedAt > since)

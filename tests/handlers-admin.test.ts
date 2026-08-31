@@ -122,6 +122,22 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
     expect(repo.rows.get(futureExpiredHold.id)?.status).toBe('expired');
   });
 
+  // An active search/status filter widens the table's source (repo.listAllFrom) — the default
+  // upcoming-only view can never contain the cancelled/past rows those filters exist to find.
+  it('surfaces cancelled and past rows when a status or search filter is active', async () => {
+    const cancelledFuture = booking({ id: 'b-admin-filter-cancelled', reference: 'LVT-2026-110', status: 'cancelled', cancelledAt: '2026-06-13T08:00:00.000Z', cancelledBy: 'customer', startsAt: '2026-06-23T09:00:00.000Z', endsAt: '2026-06-23T10:00:00.000Z', operatorToken: 'op-filter-cancelled', cancelToken: 'cancel-filter-cancelled' });
+    const pastConfirmed = booking({ id: 'b-admin-filter-past', reference: 'LVT-2026-111', status: 'confirmed', startsAt: '2026-06-10T09:00:00.000Z', endsAt: '2026-06-10T10:00:00.000Z', operatorToken: 'op-filter-past', cancelToken: 'cancel-filter-past' });
+    const repo = fakeRepository([cancelledFuture, pastConfirmed]);
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+
+    const byStatus = await (await handleAdminGet(new Request(`${ADMIN_URL}?status=cancelled`), context)).text();
+    expect(byStatus).toContain(cancelledFuture.reference);
+    expect(byStatus).not.toContain(pastConfirmed.reference);
+
+    const bySearch = await (await handleAdminGet(new Request(`${ADMIN_URL}?q=LVT-2026-111`), context)).text();
+    expect(bySearch).toContain(pastConfirmed.reference);
+  });
+
   it('separates page destinations from the dashboard’s in-page section menu', async () => {
     const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
 
