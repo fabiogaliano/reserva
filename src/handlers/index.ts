@@ -1402,10 +1402,15 @@ function adminPage(
     // never disagree about which meeting points are visible.
     const meetingPointLabel = adminMeetingPointSubLabel(context.config, booking);
     const meetingPointSub = meetingPointLabel ? `<span class="bk-sub">${escapeHtml(meetingPointLabel)}</span>` : '';
-    const manageHref = manageLinkHref(managePagePath, booking.operatorToken);
-    const manageCell = manageHref
-      ? `<a href="${escapeHtml(manageHref)}">${escapeHtml(messages['admin.manage'])}</a>`
-      : `<span class="bk-sub">${escapeHtml(messages['admin.manageUnavailable'])}</span>`;
+    // No row action on terminal rows (reachable since the filter widening): "Manage" would open
+    // a page with no actions left, so cancelled/expired/no_show rows get an empty cell instead.
+    const isTerminal = booking.status === 'cancelled' || booking.status === 'expired' || booking.status === 'no_show';
+    const manageHref = isTerminal ? null : manageLinkHref(managePagePath, booking.operatorToken);
+    const manageCell = isTerminal
+      ? ''
+      : manageHref
+        ? `<a href="${escapeHtml(manageHref)}">${escapeHtml(messages['admin.manage'])}</a>`
+        : `<span class="bk-sub">${escapeHtml(messages['admin.manageUnavailable'])}</span>`;
     return `<tr>`
       + `<td data-label="${escapeHtml(messages['common.date'])}">${escapeHtml(formatDateTime(utcToLocalIso(booking.startsAt, timezone), locale, timezone))}<span class="bk-sub bk-mono">${escapeHtml(booking.reference)}</span></td>`
       + `<td data-label="${escapeHtml(messages['common.customer'])}"><strong>${escapeHtml(customerPrimary)}</strong>${customerSub}</td>`

@@ -133,6 +133,8 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
     const byStatus = await (await handleAdminGet(new Request(`${ADMIN_URL}?status=cancelled`), context)).text();
     expect(byStatus).toContain(cancelledFuture.reference);
     expect(byStatus).not.toContain(pastConfirmed.reference);
+    // Terminal rows carry no manage link — the operator page would have no actions to offer.
+    expect(byStatus).not.toContain('op-filter-cancelled');
 
     const bySearch = await (await handleAdminGet(new Request(`${ADMIN_URL}?q=LVT-2026-111`), context)).text();
     expect(bySearch).toContain(pastConfirmed.reference);
