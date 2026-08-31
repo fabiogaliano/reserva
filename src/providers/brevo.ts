@@ -37,68 +37,154 @@ export interface BrevoEmailProviderOptions {
   fetch?: typeof fetch; fetchImpl?: typeof fetch; render?: BrevoEmailRenderer; renderEmail?: BrevoEmailRenderer;
 }
 
-type TemplateSet = Record<EmailBookingEvent, Record<BrevoRecipient, BrevoEmailContent>>;
 const ownerEvents = new Set<EmailBookingEvent>(['booking.confirmed', 'booking.cancelled_by_customer']);
-const english: TemplateSet = {
-  'booking.confirmed': {
-    customer: { subject: 'Booking confirmed — {reference}', htmlContent: '<p>Hi {customerName},</p><p>Your booking <strong>{reference}</strong> is confirmed for <strong>{startsAtLocal}</strong>.</p><p>Pickup: <strong>{pickupDetails}</strong>.</p><p>{pickupMapLink}</p><p>Contact: {contact}</p><p><a href="{customerManageUrl}">Manage your booking</a></p>' },
-    owner: { subject: 'New booking — {reference}', htmlContent: '<p>A new booking was confirmed.</p><p><strong>{reference}</strong> · {customerName} · {people} people · {startsAtLocal}</p><p><a href="{operatorManageUrl}">Open operator actions</a></p>' },
-  },
-  'booking.cancelled_by_customer': {
-    customer: { subject: 'Booking cancelled — {reference}', htmlContent: '<p>Hi {customerName},</p><p>Your booking <strong>{reference}</strong> has been cancelled.</p>' },
-    owner: { subject: 'Customer cancelled — {reference}', htmlContent: '<p>The customer cancelled booking <strong>{reference}</strong>.</p><p><a href="{operatorManageUrl}">Open operator actions</a></p>' },
-  },
-  'booking.cancelled_by_operator': { customer: { subject: 'Booking cancelled by the operator — {reference}', htmlContent: '<p>Your booking <strong>{reference}</strong> was cancelled by the operator.</p>' }, owner: { subject: 'Booking cancelled — {reference}', htmlContent: '<p>Booking <strong>{reference}</strong> was cancelled by the operator.</p>' } },
-  'booking.rescheduled': { customer: { subject: 'Booking rescheduled — {reference}', htmlContent: '<p>Your booking <strong>{reference}</strong> is now scheduled for <strong>{startsAtLocal}</strong>.</p><p><a href="{customerManageUrl}">Manage your booking</a></p>' }, owner: { subject: 'Booking rescheduled — {reference}', htmlContent: '<p>Booking <strong>{reference}</strong> is now scheduled for <strong>{startsAtLocal}</strong>.</p>' } },
-  'booking.no_show': { customer: { subject: 'Booking update — {reference}', htmlContent: '<p>Booking <strong>{reference}</strong> was marked as a no-show.</p>' }, owner: { subject: 'No-show — {reference}', htmlContent: '<p>Booking <strong>{reference}</strong> was marked as a no-show.</p>' } },
-  'booking.reminder': { customer: { subject: 'Reminder for your booking — {reference}', htmlContent: '<p>This is a reminder for your booking on <strong>{startsAtLocal}</strong>.</p><p><a href="{customerManageUrl}">View booking details</a></p>' }, owner: { subject: 'Booking reminder — {reference}', htmlContent: '<p>Reminder: booking <strong>{reference}</strong> starts at <strong>{startsAtLocal}</strong>.</p>' } },
-  'booking.review_request': { customer: { subject: 'How was your tour? — {reference}', htmlContent: '<p>We hope you enjoyed your tour. We would love to hear your feedback.</p>' }, owner: { subject: 'Review request — {reference}', htmlContent: '<p>Booking <strong>{reference}</strong> is ready for a review request.</p>' } },
+
+// ---------------------------------------------------------------------------
+// Copy catalogs. Flat keys so a client can override any string per locale via
+// config.emails.messages — the same merge pattern ui.messages uses for widget
+// copy. {placeholders} interpolate with HTML-escaped values in htmlContent and
+// raw values in subject/textContent.
+// ---------------------------------------------------------------------------
+const eventCopyKey: Record<EmailBookingEvent, string> = {
+  'booking.confirmed': 'confirmed',
+  'booking.cancelled_by_customer': 'cancelledByCustomer',
+  'booking.cancelled_by_operator': 'cancelledByOperator',
+  'booking.rescheduled': 'rescheduled',
+  'booking.no_show': 'noShow',
+  'booking.reminder': 'reminder',
+  'booking.review_request': 'review',
 };
-const portuguesePortugal: TemplateSet = {
-  'booking.confirmed': {
-    customer: { subject: 'Reserva confirmada — {reference}', htmlContent: '<p>Olá {customerName},</p><p>A sua reserva <strong>{reference}</strong> está confirmada para <strong>{startsAtLocal}</strong>.</p><p>Recolha: <strong>{pickupDetails}</strong>.</p><p>{pickupMapLink}</p><p>Contacto: {contact}</p><p><a href="{customerManageUrl}">Gerir a sua reserva</a></p>' },
-    owner: { subject: 'Nova reserva — {reference}', htmlContent: '<p>Foi confirmada uma nova reserva.</p><p><strong>{reference}</strong> · {customerName} · {people} pessoas · {startsAtLocal}</p><p><a href="{operatorManageUrl}">Abrir ações do operador</a></p>' },
-  },
-  'booking.cancelled_by_customer': {
-    customer: { subject: 'Reserva cancelada — {reference}', htmlContent: '<p>Olá {customerName},</p><p>A sua reserva <strong>{reference}</strong> foi cancelada.</p>' },
-    owner: { subject: 'Cancelamento pelo cliente — {reference}', htmlContent: '<p>O cliente cancelou a reserva <strong>{reference}</strong>.</p><p><a href="{operatorManageUrl}">Abrir ações do operador</a></p>' },
-  },
-  'booking.cancelled_by_operator': {
-    customer: { subject: 'Reserva cancelada pelo operador — {reference}', htmlContent: '<p>A sua reserva <strong>{reference}</strong> foi cancelada pelo operador.</p>' },
-    owner: { subject: 'Reserva cancelada — {reference}', htmlContent: '<p>A reserva <strong>{reference}</strong> foi cancelada pelo operador.</p>' },
-  },
-  'booking.rescheduled': {
-    customer: { subject: 'Reserva alterada — {reference}', htmlContent: '<p>A sua reserva <strong>{reference}</strong> está agora marcada para <strong>{startsAtLocal}</strong>.</p><p><a href="{customerManageUrl}">Gerir a sua reserva</a></p>' },
-    owner: { subject: 'Reserva alterada — {reference}', htmlContent: '<p>A reserva <strong>{reference}</strong> está agora marcada para <strong>{startsAtLocal}</strong>.</p>' },
-  },
-  'booking.no_show': {
-    customer: { subject: 'Atualização da reserva — {reference}', htmlContent: '<p>A reserva <strong>{reference}</strong> foi marcada como não comparecimento.</p>' },
-    owner: { subject: 'Não comparecimento — {reference}', htmlContent: '<p>A reserva <strong>{reference}</strong> foi marcada como não comparecimento.</p>' },
-  },
-  'booking.reminder': {
-    customer: { subject: 'Lembrete da sua reserva — {reference}', htmlContent: '<p>Este é um lembrete da sua reserva para <strong>{startsAtLocal}</strong>.</p><p><a href="{customerManageUrl}">Ver detalhes da reserva</a></p>' },
-    owner: { subject: 'Lembrete de reserva — {reference}', htmlContent: '<p>Lembrete: a reserva <strong>{reference}</strong> começa em <strong>{startsAtLocal}</strong>.</p>' },
-  },
-  'booking.review_request': {
-    customer: { subject: 'Como correu o seu tour? — {reference}', htmlContent: '<p>Esperamos que tenha gostado do tour. Gostaríamos muito de receber a sua opinião.</p>' },
-    owner: { subject: 'Pedido de avaliação — {reference}', htmlContent: '<p>A reserva <strong>{reference}</strong> está pronta para um pedido de avaliação.</p>' },
-  },
+
+const englishEmailCopy: Record<string, string> = {
+  'greeting.named': 'Hi {customerName},',
+  'greeting.anonymous': 'Hello,',
+  'word.guest': 'guest',
+  'word.guests': 'guests',
+  'label.date': 'Date',
+  'label.time': 'Time',
+  'label.guests': 'Guests',
+  'label.meetingPoint': 'Meeting point',
+  'label.pickup': 'Pickup',
+  'label.openMap': 'Open map',
+  'label.paid': 'Paid',
+  'label.email': 'Email',
+  'label.phone': 'Phone',
+  'label.whatsapp': 'WhatsApp',
+  'label.bookingId': 'Booking ID',
+  'pickup.pending': 'Custom pickup address pending',
+  'contact.lead.whatsapp': 'Questions? Just reply to this email, or call / WhatsApp us:',
+  'contact.lead.plain': 'Questions? Just reply to this email, or call us:',
+  'confirmed.customer.subject': 'Booking confirmed: {tourTitle} — {when}',
+  'confirmed.customer.lead': "Your <strong>{tourTitle}</strong> is confirmed — we can't wait to show you around!",
+  'confirmed.customer.button': 'Manage my booking',
+  'confirmed.owner.subject': 'New booking: {tourTitle} — {when} · {people} {guestsWord}',
+  'confirmed.owner.lead': '<strong>{customerName}</strong> booked <strong>{tourTitle}</strong>.',
+  'owner.button': 'Open booking actions',
+  'cancelledByCustomer.customer.subject': 'Booking cancelled: {tourTitle} — {when}',
+  'cancelledByCustomer.customer.lead': 'Your <strong>{tourTitle}</strong> on {when} has been cancelled. If a refund applies, it will reach your account within 5–10 business days.',
+  'cancelledByCustomer.owner.subject': 'Customer cancelled: {tourTitle} — {when}',
+  'cancelledByCustomer.owner.lead': '<strong>{customerName}</strong> cancelled <strong>{tourTitle}</strong>.',
+  'cancelledByOperator.customer.subject': 'Your booking was cancelled: {tourTitle} — {when}',
+  'cancelledByOperator.customer.lead': "We're sorry — your <strong>{tourTitle}</strong> on {when} had to be cancelled. Any payment will be fully refunded within 5–10 business days.",
+  'cancelledByOperator.owner.subject': 'Booking cancelled: {tourTitle} — {when}',
+  'cancelledByOperator.owner.lead': 'Booking <strong>{reference}</strong> was cancelled by the operator.',
+  'rescheduled.customer.subject': 'Booking rescheduled: {tourTitle} — {when}',
+  'rescheduled.customer.lead': 'Your <strong>{tourTitle}</strong> has a new date.',
+  'rescheduled.customer.button': 'Manage my booking',
+  'rescheduled.owner.subject': 'Booking rescheduled: {tourTitle} — {when}',
+  'rescheduled.owner.lead': 'Booking <strong>{reference}</strong> is now scheduled for {when}.',
+  'noShow.customer.subject': 'Booking update: {tourTitle} — {when}',
+  'noShow.customer.lead': 'Your booking for <strong>{tourTitle}</strong> on {when} was marked as a no-show. If you think this is a mistake, just reply to this email.',
+  'noShow.owner.subject': 'No-show: {tourTitle} — {when}',
+  'noShow.owner.lead': 'Booking <strong>{reference}</strong> was marked as a no-show.',
+  'reminder.customer.subject': 'See you soon: {tourTitle} — {when}',
+  'reminder.customer.lead': 'Your <strong>{tourTitle}</strong> is coming up!',
+  'reminder.customer.button': 'View my booking',
+  'reminder.owner.subject': 'Booking reminder: {tourTitle} — {when}',
+  'reminder.owner.lead': 'Reminder: booking <strong>{reference}</strong> starts at {when}.',
+  'review.customer.subject': 'How was your {tourTitle}?',
+  'review.customer.lead': "Thank you for touring with us! We'd love to hear how it went — just reply to this email.",
+  'review.owner.subject': 'Review request: {tourTitle} — {when}',
+  'review.owner.lead': 'Booking <strong>{reference}</strong> is ready for a review request.',
 };
-const templates: Record<string, TemplateSet> = { en: english, pt: portuguesePortugal, 'pt-PT': portuguesePortugal };
+
+const portuguesePortugalEmailCopy: Record<string, string> = {
+  'greeting.named': 'Olá {customerName},',
+  'greeting.anonymous': 'Olá,',
+  'word.guest': 'pessoa',
+  'word.guests': 'pessoas',
+  'label.date': 'Data',
+  'label.time': 'Hora',
+  'label.guests': 'Pessoas',
+  'label.meetingPoint': 'Ponto de encontro',
+  'label.pickup': 'Recolha',
+  'label.openMap': 'Abrir mapa',
+  'label.paid': 'Pago',
+  'label.email': 'Email',
+  'label.phone': 'Telefone',
+  'label.whatsapp': 'WhatsApp',
+  'label.bookingId': 'Referência',
+  'pickup.pending': 'Endereço de recolha a confirmar',
+  'contact.lead.whatsapp': 'Dúvidas? Responda a este email, ou contacte-nos por telefone / WhatsApp:',
+  'contact.lead.plain': 'Dúvidas? Responda a este email, ou ligue-nos:',
+  'confirmed.customer.subject': 'Reserva confirmada: {tourTitle} — {when}',
+  'confirmed.customer.lead': 'A sua reserva de <strong>{tourTitle}</strong> está confirmada — mal podemos esperar por si!',
+  'confirmed.customer.button': 'Gerir a minha reserva',
+  'confirmed.owner.subject': 'Nova reserva: {tourTitle} — {when} · {people} {guestsWord}',
+  'confirmed.owner.lead': '<strong>{customerName}</strong> reservou <strong>{tourTitle}</strong>.',
+  'owner.button': 'Abrir ações da reserva',
+  'cancelledByCustomer.customer.subject': 'Reserva cancelada: {tourTitle} — {when}',
+  'cancelledByCustomer.customer.lead': 'A sua reserva de <strong>{tourTitle}</strong> para {when} foi cancelada. Se houver lugar a reembolso, será creditado na sua conta em 5–10 dias úteis.',
+  'cancelledByCustomer.owner.subject': 'Cancelamento pelo cliente: {tourTitle} — {when}',
+  'cancelledByCustomer.owner.lead': '<strong>{customerName}</strong> cancelou <strong>{tourTitle}</strong>.',
+  'cancelledByOperator.customer.subject': 'A sua reserva foi cancelada: {tourTitle} — {when}',
+  'cancelledByOperator.customer.lead': 'Lamentamos — a sua reserva de <strong>{tourTitle}</strong> para {when} teve de ser cancelada. Qualquer pagamento será totalmente reembolsado em 5–10 dias úteis.',
+  'cancelledByOperator.owner.subject': 'Reserva cancelada: {tourTitle} — {when}',
+  'cancelledByOperator.owner.lead': 'A reserva <strong>{reference}</strong> foi cancelada pelo operador.',
+  'rescheduled.customer.subject': 'Reserva alterada: {tourTitle} — {when}',
+  'rescheduled.customer.lead': 'A sua reserva de <strong>{tourTitle}</strong> tem uma nova data.',
+  'rescheduled.customer.button': 'Gerir a minha reserva',
+  'rescheduled.owner.subject': 'Reserva alterada: {tourTitle} — {when}',
+  'rescheduled.owner.lead': 'A reserva <strong>{reference}</strong> está agora marcada para {when}.',
+  'noShow.customer.subject': 'Atualização da reserva: {tourTitle} — {when}',
+  'noShow.customer.lead': 'A sua reserva de <strong>{tourTitle}</strong> para {when} foi marcada como não comparecimento. Se acha que se trata de um erro, responda a este email.',
+  'noShow.owner.subject': 'Não comparecimento: {tourTitle} — {when}',
+  'noShow.owner.lead': 'A reserva <strong>{reference}</strong> foi marcada como não comparecimento.',
+  'reminder.customer.subject': 'Até já: {tourTitle} — {when}',
+  'reminder.customer.lead': 'A sua reserva de <strong>{tourTitle}</strong> está quase a chegar!',
+  'reminder.customer.button': 'Ver a minha reserva',
+  'reminder.owner.subject': 'Lembrete de reserva: {tourTitle} — {when}',
+  'reminder.owner.lead': 'Lembrete: a reserva <strong>{reference}</strong> começa em {when}.',
+  'review.customer.subject': 'Como correu o seu {tourTitle}?',
+  'review.customer.lead': 'Obrigado por ter passeado connosco! Adorávamos saber como correu — basta responder a este email.',
+  'review.owner.subject': 'Pedido de avaliação: {tourTitle} — {when}',
+  'review.owner.lead': 'A reserva <strong>{reference}</strong> está pronta para um pedido de avaliação.',
+};
+
+const emailCopyCatalogs: Record<string, Record<string, string>> = {
+  en: englishEmailCopy, pt: portuguesePortugalEmailCopy, 'pt-PT': portuguesePortugalEmailCopy,
+};
 
 function candidates(locale: string, fallback: string): string[] {
   const values: Array<string | undefined> = [locale, locale.split('-')[0], fallback, fallback.split('-')[0], 'en'];
   return values.filter((value, index): value is string => Boolean(value) && values.indexOf(value) === index);
 }
-function getTemplate(event: EmailBookingEvent, recipient: BrevoRecipient, locale: string, fallback: string): BrevoEmailContent {
-  for (const candidate of candidates(locale, fallback)) {
-    const value = templates[candidate]?.[event]?.[recipient];
+
+function emailString(config: ClientConfig, locale: string, key: string): string {
+  for (const candidate of candidates(locale, config.locales.default)) {
+    const override = config.emails?.messages?.[candidate]?.[key];
+    if (override) return override;
+  }
+  for (const candidate of candidates(locale, config.locales.default)) {
+    const value = emailCopyCatalogs[candidate]?.[key];
     if (value) return value;
   }
-  return english[event][recipient];
+  return englishEmailCopy[key] ?? key;
 }
+
 function escapeHtml(value: string): string { return value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!); }
 function interpolate(template: string, values: Record<string, string>): string { return template.replace(/\{([A-Za-z][A-Za-z0-9]*)\}/g, (_, key: string) => values[key] ?? ''); }
+function stripTags(html: string): string { return html.replace(/<[^>]+>/g, ''); }
 function manageUrl(config: ClientConfig, token: string, routePaths?: BookkitResolvedRouteConfig['paths']): string { return `${config.business.url.replace(/\/$/, '')}${routePaths?.managePage ?? '/booking/manage'}?token=${encodeURIComponent(token)}`; }
 // BK-SEC-002 (patch-11-r1 LOW 1): a `nohash:`-prefixed value (src/repo.ts placeholderToken) is
 // what a DB-loaded Booking.cancelToken/operatorToken looks like when the row has no decryptable
@@ -106,53 +192,196 @@ function manageUrl(config: ClientConfig, token: string, routePaths?: BookkitReso
 // predates that secret being set. A link built from it would 403 the instant it's clicked; better
 // to omit the link entirely than render one that looks live but is already dead.
 export function isManageableToken(token: string): boolean { return !token.startsWith('nohash:'); }
+
+// config.emails.locale pins every email to one language (an operator whose working language
+// differs from the site's customer locales); absent keeps the per-booking language.
+export function emailLocaleFor(booking: Booking, config: ClientConfig): string {
+  return config.emails?.locale
+    ?? (config.locales.supported.includes(booking.locale) ? booking.locale : config.locales.default);
+}
+
+// Bare 'en' resolves to en-US date ordering (Oct 15); European operators expect 15 Oct, so
+// formatting (not copy) upgrades it to en-GB.
+function formatLocaleFor(locale: string): string { return locale === 'en' ? 'en-GB' : locale; }
+
 function localStart(booking: Booking, config: ClientConfig): string {
-  const locale = booking.locale === 'auto' ? config.locales.default : booking.locale || config.locales.default;
-  return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short', timeZone: config.business.timezone }).format(new Date(booking.startsAt));
+  return new Intl.DateTimeFormat(formatLocaleFor(emailLocaleFor(booking, config)), { dateStyle: 'medium', timeStyle: 'short', timeZone: config.business.timezone }).format(new Date(booking.startsAt));
 }
-// BK-SEC-002 (patch-11-r1 LOW 1): every current template renders its manage link as a fixed
-// `<p><a href="{...ManageUrl}">label</a></p>` fragment. When manageUrl was left '' above (token
-// not presentable), interpolate leaves `<p><a href="">label</a></p>` behind — cut that exact shape
-// rather than restructure every locale's template string with conditional markup, which is a
-// bigger, non-localized change out of scope here.
-function stripUnusableManageLinks(html: string): string {
-  return html.replace(/<p><a href="">[^<]*<\/a><\/p>/g, '');
+
+interface EmailCardRow { label: string; valueHtml: string; valueText: string }
+interface EmailModel {
+  subject: string;
+  greetingHtml?: string;
+  leadHtml: string;
+  card: EmailCardRow[];
+  button: { label: string; url: string } | null;
+  buttonInverted: boolean;
+  contact: { lead: string; phones: string[]; whatsappLine: string | null } | null;
+  footerHtml?: string;
 }
-function defaultRender(context: BrevoEmailTemplateContext): BrevoEmailContent {
-  const source = getTemplate(context.event, context.recipient, context.locale, context.config.locales.default);
-  const tour = context.config.tours[context.booking.tourSlug];
-  // Plan 017 (design decision 4/7): per-booking resolution — a removed meeting point id falls back
-  // to the booking's stored label snapshot with no maps link (meetingPointForBooking) — while the
-  // {pickupDetails}/{pickupMapLink} template variable names themselves stay unchanged.
-  const resolvedPoint = tour ? meetingPointForBooking(tour, context.booking.meetingPointId ?? null, context.booking.meetingPointLabel ?? null) : null;
-  // Plan 018 (design decision 8): re-keyed off the tour's declared option instead of the fixed
-  // 'custom'/'default' ids. The two gates are independent, not mutually exclusive, so an option
-  // that declares BOTH flags (Maze's combined pickup+drop-off) renders both: the address on
-  // pickupDetails and the meeting-point maps link on pickupMapLink. Undefined option (no tour, or a
-  // stored pickupType no longer declared) falls back to the exact pre-018 pickupType check.
-  const option = tour ? pickupOptionFor(tour, context.booking.pickupType) : undefined;
-  const requiresAddress = option ? option.requiresAddress : context.booking.pickupType === 'custom';
-  const usesMeetingPoint = option ? option.usesMeetingPoint : context.booking.pickupType === 'default';
-  const pickupDetails = requiresAddress
-    ? context.booking.pickupAddress ?? 'Custom pickup address pending'
-    : resolvedPoint?.label ?? '';
-  const pickupMapLink = usesMeetingPoint && resolvedPoint?.mapsUrl
-    ? `<a href="${escapeHtml(resolvedPoint.mapsUrl)}">Open map</a>`
-    : '';
-  const contact = [context.config.business.contact.phone, context.config.business.contact.whatsapp]
-    .filter(Boolean)
-    .join(' · ');
-  const values = {
-    customerName: escapeHtml(context.booking.customerName ?? ''), reference: escapeHtml(context.booking.reference), people: String(context.booking.people),
-    startsAtLocal: escapeHtml(context.startsAtLocal), pickupDetails: escapeHtml(pickupDetails), pickupMapLink, contact: escapeHtml(contact),
-    customerManageUrl: escapeHtml(context.customerManageUrl), operatorManageUrl: escapeHtml(context.operatorManageUrl),
+
+const NEUTRAL_BRANDING = {
+  logoUrl: undefined as string | undefined, logoWidth: 200, logoHeight: 28,
+  headerBackground: '#1a1a1a', accentColor: '#e0b64a', cardBackground: '#f7f7f5',
+};
+
+function resolvedBranding(config: ClientConfig): typeof NEUTRAL_BRANDING {
+  return { ...NEUTRAL_BRANDING, ...config.emails?.branding };
+}
+
+function digitsOf(value: string): string { return value.replace(/\D/g, ''); }
+
+function buildModel(context: BrevoEmailTemplateContext): EmailModel {
+  const { event, booking, config, locale, recipient } = context;
+  const copy = (key: string) => emailString(config, locale, key);
+  const eventKey = eventCopyKey[event];
+  const tour = config.tours[booking.tourSlug];
+  const tourTitle = tour?.title ?? booking.tourSlug;
+  const formatLocale = formatLocaleFor(locale);
+  const timeZone = config.business.timezone;
+  const startsAt = new Date(booking.startsAt);
+  const time = new Intl.DateTimeFormat(formatLocale, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone }).format(startsAt);
+  const when = `${new Intl.DateTimeFormat(formatLocale, { weekday: 'short', day: 'numeric', month: 'short', timeZone }).format(startsAt)}, ${time}`;
+  const dateLong = new Intl.DateTimeFormat(formatLocale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone }).format(startsAt);
+  const guestsWord = copy(booking.people === 1 ? 'word.guest' : 'word.guests');
+  const customerName = booking.customerName ?? '';
+
+  const rawValues: Record<string, string> = {
+    tourTitle, when, customerName, reference: booking.reference,
+    people: String(booking.people), guestsWord, startsAtLocal: context.startsAtLocal,
   };
+  const htmlValues = Object.fromEntries(Object.entries(rawValues).map(([key, value]) => [key, escapeHtml(value)]));
+
+  // Plan 017 (design decision 4/7): per-booking meeting-point resolution — a removed id falls back
+  // to the booking's stored label snapshot with no maps link. Plan 018 (design decision 8): the
+  // requiresAddress/usesMeetingPoint gates are independent, so an option declaring both renders
+  // both the collected address and the meeting-point row.
+  const resolvedPoint = tour ? meetingPointForBooking(tour, booking.meetingPointId ?? null, booking.meetingPointLabel ?? null) : null;
+  const option = tour ? pickupOptionFor(tour, booking.pickupType) : undefined;
+  const requiresAddress = option ? option.requiresAddress : booking.pickupType === 'custom';
+  const usesMeetingPoint = option ? option.usesMeetingPoint : booking.pickupType === 'default';
+
+  const pickupRows: EmailCardRow[] = [];
+  if (requiresAddress) {
+    const address = booking.pickupAddress ?? copy('pickup.pending');
+    pickupRows.push({ label: copy('label.pickup'), valueHtml: `<strong>${escapeHtml(address)}</strong>`, valueText: address });
+  }
+  if (usesMeetingPoint && resolvedPoint) {
+    const mapHtml = resolvedPoint.mapsUrl
+      ? `<br><a href="${escapeHtml(resolvedPoint.mapsUrl)}" style="color:#b8860b;font-weight:400;font-size:14px;">${escapeHtml(copy('label.openMap'))} &nearr;</a>`
+      : '';
+    pickupRows.push({
+      label: copy('label.meetingPoint'),
+      valueHtml: `<strong>${escapeHtml(resolvedPoint.label)}</strong>${mapHtml}`,
+      valueText: resolvedPoint.mapsUrl ? `${resolvedPoint.label} — ${resolvedPoint.mapsUrl}` : resolvedPoint.label,
+    });
+  }
+
+  const subject = interpolate(copy(`${eventKey}.${recipient}.subject`), rawValues);
+  const leadHtml = `<p style="margin:0 0 26px;font-size:17px;line-height:1.5;">${interpolate(copy(`${eventKey}.${recipient}.lead`), htmlValues)}</p>`;
+
+  if (recipient === 'owner') {
+    const price = new Intl.NumberFormat(formatLocale, { style: 'currency', currency: config.business.currency.toUpperCase() }).format(booking.priceCents / 100);
+    const card: EmailCardRow[] = [
+      { label: copy('label.date'), valueHtml: `<strong>${escapeHtml(`${dateLong}, ${time}`)}</strong>`, valueText: `${dateLong}, ${time}` },
+      { label: copy('label.guests'), valueHtml: `<strong>${booking.people}</strong>`, valueText: String(booking.people) },
+      { label: copy('label.paid'), valueHtml: `<strong>${escapeHtml(price)}</strong>`, valueText: price },
+      ...pickupRows,
+      ...(booking.customerEmail ? [{ label: copy('label.email'), valueHtml: `<a href="mailto:${escapeHtml(booking.customerEmail)}" style="color:inherit;">${escapeHtml(booking.customerEmail)}</a>`, valueText: booking.customerEmail }] : []),
+      ...(booking.customerPhone ? [{ label: copy('label.phone'), valueHtml: `<strong>${escapeHtml(booking.customerPhone)}</strong>`, valueText: booking.customerPhone }] : []),
+      { label: copy('label.bookingId'), valueHtml: escapeHtml(booking.reference), valueText: booking.reference },
+    ];
+    return {
+      subject, leadHtml, card,
+      button: context.operatorManageUrl ? { label: copy('owner.button'), url: context.operatorManageUrl } : null,
+      buttonInverted: true,
+      contact: null,
+    };
+  }
+
+  const greeting = customerName
+    ? interpolate(copy('greeting.named'), htmlValues)
+    : copy('greeting.anonymous');
+  const greetingHtml = `<p style="margin:0 0 18px;font-size:17px;line-height:1.5;">${greeting}</p>`;
+
+  const withCard = event === 'booking.confirmed' || event === 'booking.rescheduled' || event === 'booking.reminder';
+  const card: EmailCardRow[] = withCard
+    ? [
+        { label: copy('label.date'), valueHtml: `<strong>${escapeHtml(dateLong)}</strong>`, valueText: dateLong },
+        { label: copy('label.time'), valueHtml: `<strong>${escapeHtml(time)}</strong>`, valueText: time },
+        { label: copy('label.guests'), valueHtml: `<strong>${booking.people}</strong>`, valueText: String(booking.people) },
+        ...pickupRows,
+      ]
+    : [];
+
+  const buttonKey = `${eventKey}.customer.button`;
+  const buttonLabel = withCard ? copy(buttonKey) : '';
+  const contactPhones = [config.business.contact.phone, config.business.contact.phoneSecondary].filter((value): value is string => Boolean(value));
+  const whatsapp = config.business.contact.whatsapp;
+  const whatsappIsListed = whatsapp ? contactPhones.some((phone) => digitsOf(phone) === digitsOf(whatsapp)) : false;
+
   return {
-    subject: interpolate(source.subject, values),
-    htmlContent: stripUnusableManageLinks(interpolate(source.htmlContent, values)),
-    ...(source.textContent ? { textContent: stripUnusableManageLinks(interpolate(source.textContent, values)) } : {}),
+    subject, greetingHtml, leadHtml, card,
+    button: withCard && buttonLabel && context.customerManageUrl ? { label: buttonLabel, url: context.customerManageUrl } : null,
+    buttonInverted: false,
+    contact: {
+      lead: copy(whatsappIsListed ? 'contact.lead.whatsapp' : 'contact.lead.plain'),
+      phones: contactPhones,
+      whatsappLine: whatsapp && !whatsappIsListed ? `${copy('label.whatsapp')}: ${whatsapp}` : null,
+    },
+    footerHtml: `${escapeHtml(copy('label.bookingId'))}: ${escapeHtml(booking.reference)}`,
   };
 }
+
+const BODY_FONT = "-apple-system,'Segoe UI',Helvetica,Arial,sans-serif";
+const SERIF_FONT = "Georgia,'Times New Roman',serif";
+
+function renderHtml(model: EmailModel, config: ClientConfig): string {
+  const branding = resolvedBranding(config);
+  const header = branding.logoUrl
+    ? `<a href="${escapeHtml(config.business.url)}" style="text-decoration:none;"><img src="${escapeHtml(branding.logoUrl)}" alt="${escapeHtml(config.business.name)}" width="${branding.logoWidth}" height="${branding.logoHeight}" style="display:block;width:${branding.logoWidth}px;height:${branding.logoHeight}px;border:0;color:${branding.accentColor};font-family:${SERIF_FONT};font-size:20px;"></a>`
+    : `<a href="${escapeHtml(config.business.url)}" style="text-decoration:none;"><span style="color:${branding.accentColor};font-family:${SERIF_FONT};font-size:22px;letter-spacing:0.5px;">${escapeHtml(config.business.name)}</span></a>`;
+
+  const cardHtml = model.card.length
+    ? `<tr><td style="padding:0 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:${branding.cardBackground};border-radius:8px;border-left:4px solid ${branding.accentColor};"><tr><td style="padding:20px 24px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-family:${BODY_FONT};font-size:15px;color:#191919;line-height:2;">${model.card.map((row) => `<tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">${escapeHtml(row.label)}</td><td style="font-weight:600;">${row.valueHtml}</td></tr>`).join('')}</table></td></tr></table></td></tr>`
+    : '';
+
+  const buttonHtml = model.button
+    ? `<tr><td align="center" style="padding:30px 32px 8px;"><a href="${escapeHtml(model.button.url)}" style="display:inline-block;background-color:${model.buttonInverted ? branding.headerBackground : branding.accentColor};color:${model.buttonInverted ? branding.accentColor : branding.headerBackground};font-family:${BODY_FONT};font-size:15px;font-weight:700;text-decoration:none;padding:13px 34px;border-radius:6px;">${escapeHtml(model.button.label)}</a></td></tr>`
+    : '';
+
+  const contactHtml = model.contact
+    ? `<tr><td align="center" style="padding:22px 32px 6px;font-family:${BODY_FONT};font-size:14px;color:#404040;line-height:1.7;">${escapeHtml(model.contact.lead)}<br>${model.contact.phones.map((phone) => `<a href="tel:${escapeHtml(phone.replace(/\s/g, ''))}" style="color:#191919;font-weight:600;text-decoration:none;">${escapeHtml(phone)}</a>`).join('<br>')}${model.contact.whatsappLine ? `<br>${escapeHtml(model.contact.whatsappLine)}` : ''}</td></tr>`
+    : '';
+
+  const footerHtml = model.footerHtml
+    ? `<tr><td align="center" style="padding:18px 32px 26px;font-family:${BODY_FONT};font-size:12px;color:#a6a6a6;">${model.footerHtml}</td></tr>`
+    : '<tr><td style="padding:0 0 26px;"></td></tr>';
+
+  return `<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:${branding.headerBackground};padding:22px 32px;" align="left">${header}</td></tr><tr><td style="padding:36px 32px 8px;font-family:${SERIF_FONT};color:#191919;">${model.greetingHtml ?? ''}${model.leadHtml}</td></tr>${cardHtml}${buttonHtml}${contactHtml}${footerHtml}</table></td></tr></table></body></html>`;
+}
+
+function renderText(model: EmailModel, config: ClientConfig): string {
+  const lines: string[] = [config.business.name.toUpperCase(), ''];
+  if (model.greetingHtml) lines.push(stripTags(model.greetingHtml), '');
+  lines.push(stripTags(model.leadHtml), '');
+  for (const row of model.card) lines.push(`  ${row.label}: ${row.valueText}`);
+  if (model.card.length) lines.push('');
+  if (model.button) lines.push(`${model.button.label}:`, model.button.url, '');
+  if (model.contact) {
+    lines.push(model.contact.lead, ...model.contact.phones);
+    if (model.contact.whatsappLine) lines.push(model.contact.whatsappLine);
+    lines.push('');
+  }
+  if (model.footerHtml) lines.push(stripTags(model.footerHtml));
+  return lines.join('\n').trimEnd();
+}
+
+function defaultRender(context: BrevoEmailTemplateContext): BrevoEmailContent {
+  const model = buildModel(context);
+  return { subject: model.subject, htmlContent: renderHtml(model, context.config), textContent: renderText(model, context.config) };
+}
+
 function addressFor(recipient: BrevoRecipient, booking: Booking, config: ClientConfig, owner?: BrevoRecipientAddress): BrevoRecipientAddress | null {
   if (recipient === 'customer') return booking.customerEmail ? { email: booking.customerEmail, ...(booking.customerName ? { name: booking.customerName } : {}) } : null;
   return owner ?? { email: config.business.contact.email, name: config.business.name };
@@ -187,9 +416,9 @@ export class BrevoEmailProvider implements EmailProvider {
     const address = addressFor(recipient, booking, config, this.owner);
     if (!address) return;
     // BK-SEC-002 (patch-11-r1 LOW 1): '' rather than a dead link when the token isn't
-    // presentable — defaultRender below strips the paragraph an empty URL leaves behind. Kept
-    // here (not lost in the sendToRecipient/send split) — see the isManageableToken doc comment.
-    const context: BrevoEmailTemplateContext = { event, booking, config, locale: config.locales.supported.includes(booking.locale) ? booking.locale : config.locales.default, recipient, customerManageUrl: isManageableToken(booking.cancelToken) ? manageUrl(config, booking.cancelToken, routePaths) : '', operatorManageUrl: isManageableToken(booking.operatorToken) ? manageUrl(config, booking.operatorToken, routePaths) : '', startsAtLocal: localStart(booking, config) };
+    // presentable — the renderer omits the manage button for an empty URL. Kept here (not lost in
+    // the sendToRecipient/send split) — see the isManageableToken doc comment.
+    const context: BrevoEmailTemplateContext = { event, booking, config, locale: emailLocaleFor(booking, config), recipient, customerManageUrl: isManageableToken(booking.cancelToken) ? manageUrl(config, booking.cancelToken, routePaths) : '', operatorManageUrl: isManageableToken(booking.operatorToken) ? manageUrl(config, booking.operatorToken, routePaths) : '', startsAtLocal: localStart(booking, config) };
     const content = this.renderer(context);
     const response = await this.request(this.endpoint, { method: 'POST', headers: { accept: 'application/json', 'api-key': this.apiKey, 'content-type': 'application/json' }, body: JSON.stringify({ ...content, sender: this.sender ?? { email: config.business.contact.email, name: config.business.name }, to: [address] }) });
     if (!response.ok) throw new BrevoResponseError(response.status, await response.text());
@@ -213,4 +442,3 @@ export class BrevoEmailProvider implements EmailProvider {
 }
 export function brevoEmail(options: BrevoEmailProviderOptions): BrevoEmailProvider { return new BrevoEmailProvider(options); }
 export const createBrevoEmailProvider = brevoEmail;
-export function resolveBrevoLocale(locale: string, fallback: string): string { return candidates(locale, fallback)[0] ?? fallback; }

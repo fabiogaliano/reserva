@@ -171,10 +171,10 @@ describe('email providers', () => {
     const ownerHtml = JSON.parse(request.mock.calls[1]![1]!.body as string) as { htmlContent: string };
     expect(customerHtml.htmlContent).not.toContain('nohash:');
     expect(customerHtml.htmlContent).not.toContain('href=""');
-    expect(customerHtml.htmlContent).not.toContain('Manage your booking');
+    expect(customerHtml.htmlContent).not.toContain('Manage my booking');
     expect(ownerHtml.htmlContent).not.toContain('nohash:');
     expect(ownerHtml.htmlContent).not.toContain('href=""');
-    expect(ownerHtml.htmlContent).not.toContain('Open operator actions');
+    expect(ownerHtml.htmlContent).not.toContain('Open booking actions');
     // The rest of the email is unaffected — only the dead link paragraph is gone.
     expect(customerHtml.htmlContent).toContain('Ada Lovelace');
   });
@@ -221,7 +221,7 @@ describe('email providers', () => {
     }), bothFlagsConfig);
 
     const body = JSON.parse(request.mock.calls[0]![1]!.body as string) as { htmlContent: string };
-    expect(body.htmlContent).toContain('Pickup: <strong>Hotel Avenida</strong>');
+    expect(body.htmlContent).toContain('Hotel Avenida');
     expect(body.htmlContent).not.toContain('Open map');
   });
 
@@ -238,8 +238,9 @@ describe('email providers', () => {
     }), bothFlagsConfig);
 
     const body = JSON.parse(request.mock.calls[0]![1]!.body as string) as { htmlContent: string };
-    expect(body.htmlContent).toContain('Pickup: <strong>Hotel Avenida</strong>');
-    expect(body.htmlContent).toContain('<a href="https://maps.google.com/?q=Belem+Tower">Open map</a>');
+    expect(body.htmlContent).toContain('Hotel Avenida');
+    expect(body.htmlContent).toContain('https://maps.google.com/?q=Belem+Tower');
+    expect(body.htmlContent).toContain('Open map');
   });
 
   // Plan 017 done criterion: an existing single-point `meetingPoint` config renders byte-identical
@@ -252,8 +253,9 @@ describe('email providers', () => {
     await provider.sendToRecipient('customer', 'booking.confirmed', booking(), config);
 
     const body = JSON.parse(request.mock.calls[0]![1]!.body as string) as { htmlContent: string };
-    expect(body.htmlContent).toContain('Pickup: <strong>Praça do Comércio</strong>');
-    expect(body.htmlContent).toContain('<a href="https://maps.google.com/?q=Praca+do+Comercio">Open map</a>');
+    expect(body.htmlContent).toContain('Praça do Comércio');
+    expect(body.htmlContent).toContain('https://maps.google.com/?q=Praca+do+Comercio');
+    expect(body.htmlContent).toContain('Open map');
   });
 
   it('escapes the manage-link URLs like every other interpolated field', async () => {

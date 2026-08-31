@@ -52,6 +52,9 @@ export const DEFAULT_PICKUP_OPTIONS: PickupOption[] = [
 ];
 
 export interface TourConfig {
+  // Customer-facing display name used in emails ("Your Alfama Discovery is confirmed");
+  // absent falls back to the tour slug.
+  title?: string;
   durationMin: number;
   turnaroundMin: number;
   schedule: ScheduleRule[];
@@ -82,6 +85,8 @@ export interface ClientConfig {
     contact: {
       email: string;
       phone: string;
+      // A second phone line, shown alongside `phone` wherever contact details render.
+      phoneSecondary?: string;
       whatsapp?: string;
     };
   };
@@ -127,6 +132,26 @@ export interface ClientConfig {
   ui?: {
     // Per-locale overrides for Bookkit's rendered copy, merged over its bundled catalog and
     // English fallback. Keys are locale tags ('pt-PT', 'fr', …); values are partial message maps.
+    messages?: Record<string, Record<string, string>>;
+  };
+  emails?: {
+    // Forces every outgoing email into one locale regardless of the language the customer booked
+    // in. Absent keeps the per-booking locale (with the usual supported/default fallback).
+    locale?: string;
+    // Visual identity for the branded email shell. All optional — a client without branding gets
+    // a neutral dark header with the business name as text.
+    branding?: {
+      logoUrl?: string;
+      // Rendered size of the logo <img>; explicit dimensions because some desktop clients
+      // (Outlook) otherwise paint the image at its natural pixel size.
+      logoWidth?: number;
+      logoHeight?: number;
+      headerBackground?: string;
+      accentColor?: string;
+      cardBackground?: string;
+    };
+    // Per-locale overrides for email copy, merged over the bundled catalog exactly like
+    // ui.messages is for widget copy.
     messages?: Record<string, Record<string, string>>;
   };
 }
@@ -177,6 +202,7 @@ const pickupOptionSchema = z.object({
 });
 
 const tourSchema = z.object({
+  title: z.string().min(1).optional(),
   durationMin: z.number().int().positive(),
   turnaroundMin: z.number().int().nonnegative(),
   schedule: z.array(scheduleSchema).min(1),
@@ -207,6 +233,7 @@ export const clientConfigSchema = z.object({
     contact: z.object({
       email: z.string().email(),
       phone: z.string().min(1),
+      phoneSecondary: z.string().min(1).optional(),
       whatsapp: z.string().optional(),
     }),
   }),
@@ -235,6 +262,18 @@ export const clientConfigSchema = z.object({
   payments: z.object({ methods: z.array(z.enum(['card', 'mb_way'])).min(1) }),
   legal: z.object({ termsUrl: z.string().url() }),
   ui: z.object({
+    messages: z.record(z.string(), z.record(z.string(), z.string())).optional(),
+  }).optional(),
+  emails: z.object({
+    locale: z.string().min(1).refine(isValidLocale, 'must be a valid BCP 47 locale').optional(),
+    branding: z.object({
+      logoUrl: z.string().url().optional(),
+      logoWidth: z.number().int().positive().optional(),
+      logoHeight: z.number().int().positive().optional(),
+      headerBackground: z.string().min(1).optional(),
+      accentColor: z.string().min(1).optional(),
+      cardBackground: z.string().min(1).optional(),
+    }).optional(),
     messages: z.record(z.string(), z.record(z.string(), z.string())).optional(),
   }).optional(),
 });
