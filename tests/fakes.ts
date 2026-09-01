@@ -20,6 +20,7 @@ import {
   type BookingRepository,
   type OperationalIncidentRecord,
   type RefundOperationRecord,
+  type SideEffectFamily,
   type SideEffectOperationIdentity,
   type SideEffectOperationRecord,
   type SideEffectOperationSeed,
@@ -947,6 +948,24 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         opened: all.filter((incident) => incident.firstDetectedAt >= since).length,
         resolved: all.filter((incident) => incident.status === 'resolved' && incident.resolvedAt !== null && incident.resolvedAt >= since).length,
       };
+    },
+    countOpenIncidents: async () => [...operationalIncidents.values()].filter((incident) => incident.status === 'open').length,
+    // Plan 027 (design decision 7): the same grouping the D1 implementation does in SQL — every
+    // unsettled row counts as debt, abandoned rows counted separately, oldest pending first seen.
+    countSideEffectDebtByFamily: async () => {
+      const byFamily = new Map<SideEffectFamily, { family: SideEffectFamily; pending: number; abandoned: number; oldestPendingAt: string | null }>();
+      for (const operation of sideEffectOperations.values()) {
+        if (operation.status === 'succeeded') continue;
+        const entry = byFamily.get(operation.family) ?? { family: operation.family, pending: 0, abandoned: 0, oldestPendingAt: null };
+        if (operation.status === 'abandoned') {
+          entry.abandoned += 1;
+        } else {
+          entry.pending += 1;
+          if (entry.oldestPendingAt === null || operation.createdAt < entry.oldestPendingAt) entry.oldestPendingAt = operation.createdAt;
+        }
+        byFamily.set(operation.family, entry);
+      }
+      return [...byFamily.values()].sort((a, b) => a.family.localeCompare(b.family));
     },
 
     // Plan 020 (design decision 11): alert delivery's own claim/attempt/backoff, independent of the

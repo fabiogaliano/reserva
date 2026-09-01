@@ -287,6 +287,17 @@ export interface RefundOperationUpsertInput {
   error?: string | null;
 }
 
+// Plan 027 (design decision 7): outbox debt per operation family, from one GROUP BY over the
+// `family` identity column plan 021 introduced (there is no kind string to parse any more).
+// `pending` counts every row that has neither succeeded nor been abandoned — pending, in flight,
+// and failed-but-retryable are all undelivered work an operator needs to see as one number.
+export interface SideEffectDebtByFamily {
+  family: SideEffectFamily;
+  pending: number;
+  abandoned: number;
+  oldestPendingAt: string | null;
+}
+
 export interface SideEffectOperationRecord extends SideEffectOperationIdentity {
   bookingId: string;
   name: string | null;
@@ -645,6 +656,11 @@ export interface BookingRepository {
   // Plan 020 (design decision 14): "simple 30-day counts and recent resolved history".
   listRecentResolvedIncidents(since: string, limit: number): Promise<OperationalIncidentRecord[]>;
   countIncidentsSince(since: string): Promise<{ opened: number; resolved: number }>;
+  // Plan 027 (design decision 7): the ops-health read surface. Both are pure aggregates — no
+  // booking data, no parameters — so the endpoint can answer "is this deployment healthy?" without
+  // exposing rows.
+  countOpenIncidents(): Promise<number>;
+  countSideEffectDebtByFamily(): Promise<SideEffectDebtByFamily[]>;
 
   // Plan 020 (design decision 11): alert delivery's own claim/attempt/backoff, independent of the
   // incident's own detection state — mirrors claimRefundExecution's single-row-lease shape.
@@ -2262,6 +2278,30 @@ export function createBookingRepository(
         first(db.prepare("SELECT COUNT(*) AS count FROM operational_incidents WHERE status = 'resolved' AND resolved_at >= ?").bind(since).all<{ count: number }>()),
       ]);
       return { opened: Number(opened?.count ?? 0), resolved: Number(resolved?.count ?? 0) };
+    },
+    async countOpenIncidents() {
+      const row = await first(db.prepare("SELECT COUNT(*) AS count FROM operational_incidents WHERE status = 'open'").all<{ count: number }>());
+      return Number(row?.count ?? 0);
+    },
+    async countSideEffectDebtByFamily() {
+      // One statement: the WHERE drops the settled rows, so the aggregate only ever scans debt, and
+      // families with none simply don't come back (the empty-collection rule at the API edge).
+      const result = await db.prepare(
+        `SELECT family,
+                SUM(CASE WHEN status = 'abandoned' THEN 0 ELSE 1 END) AS pending,
+                SUM(CASE WHEN status = 'abandoned' THEN 1 ELSE 0 END) AS abandoned,
+                MIN(CASE WHEN status = 'abandoned' THEN NULL ELSE created_at END) AS oldest_pending_at
+         FROM side_effect_operations
+         WHERE status != 'succeeded'
+         GROUP BY family
+         ORDER BY family`,
+      ).all<{ family: SideEffectFamily; pending: number; abandoned: number; oldest_pending_at: string | null }>();
+      return result.results.map((row) => ({
+        family: row.family,
+        pending: Number(row.pending ?? 0),
+        abandoned: Number(row.abandoned ?? 0),
+        oldestPendingAt: row.oldest_pending_at,
+      }));
     },
 
     async listAlertCandidateIds(now, limit) {

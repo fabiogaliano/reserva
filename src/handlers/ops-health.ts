@@ -1,0 +1,58 @@
+import type { OpsHealthOutbox, OpsHealthResponse } from '../core/api';
+import { parseUtcInstant } from '../core/time';
+import { accessAllowed } from '../admin-access';
+import type { BookkitContext } from '../context';
+import { nowIso } from '../context';
+import { bookkitMigrationStatus } from '../runtime-context';
+import type { SideEffectDebtByFamily } from '../repo';
+import { HttpError, json } from '../http';
+import { run, withSensitiveHeaders } from './shared';
+
+// Plan 027 (design decision 7): the ops group's read surface, restored generically after plan 021
+// deleted the Tourflow feed. One read-only answer to "is this deployment healthy and current?" for
+// an operator — or an agent debugging a deployment — who would otherwise need raw SQL.
+//
+// It takes no parameters, returns no booking data, and mutates nothing. If it ever needs to, the
+// design is wrong (the plan's STOP condition): this is a health check, not a query API.
+
+function outboxSummary(debt: readonly SideEffectDebtByFamily[], now: string): OpsHealthOutbox {
+  let pending = 0;
+  let abandoned = 0;
+  let oldestPendingAt: string | null = null;
+  for (const entry of debt) {
+    pending += entry.pending;
+    abandoned += entry.abandoned;
+    if (entry.oldestPendingAt !== null && (oldestPendingAt === null || entry.oldestPendingAt < oldestPendingAt)) {
+      oldestPendingAt = entry.oldestPendingAt;
+    }
+  }
+  // Age, not a timestamp: "the oldest undelivered side effect has been waiting 4 hours" is the fact
+  // an operator acts on, and it needs no clock-skew reasoning on the reader's side.
+  const ageMs = oldestPendingAt === null ? null : parseUtcInstant(now).getTime() - parseUtcInstant(oldestPendingAt).getTime();
+  return {
+    pending,
+    abandoned,
+    oldestPendingAgeSeconds: ageMs === null ? null : Math.max(0, Math.round(ageMs / 1000)),
+    families: debt.map((entry) => ({ family: entry.family, pending: entry.pending, abandoned: entry.abandoned })),
+  };
+}
+
+export function handleOpsHealth(request: Request, context: BookkitContext): Promise<Response> {
+  return run(async () => {
+    if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
+    // The ops group's shared, fail-closed gate (plan 025) — this route inherits admin auth by
+    // consuming it, exactly like every operator endpoint, with no per-route wiring of its own.
+    if (!(await accessAllowed(request, context))) throw new HttpError(403, 'forbidden', 'Admin authorization required');
+    const now = nowIso(context);
+    const [schema, debt, openIncidents] = await Promise.all([
+      bookkitMigrationStatus(context.db),
+      context.repo.countSideEffectDebtByFamily(),
+      context.repo.countOpenIncidents(),
+    ]);
+    return json<OpsHealthResponse>({
+      schema,
+      outbox: outboxSummary(debt, now),
+      incidents: { open: openIncidents },
+    });
+  }).then(withSensitiveHeaders);
+}

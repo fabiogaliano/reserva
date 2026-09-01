@@ -1,5 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { cloudflareAccessAdminAuth } from './access';
+import type { OpsHealthSchema } from './core/api';
 import { createBookkitContext, type AdminAuth, type BookkitCache, type BookkitContext, type BookkitContextInput, type BookkitProviders, type BookkitLogger } from './context';
 import { validateConfig, type ClientConfig } from './core/config';
 import { OPERATOR_SECRET_NAME } from './handlers/booking-actions';
@@ -312,10 +313,29 @@ export async function checkBookkitMigrationsApplied(
   db: MigrationsQueryable,
   migrationsTable = D1_MIGRATIONS_TABLE,
 ): Promise<void> {
+  const status = await bookkitMigrationStatus(db, migrationsTable);
+  if (status.detail !== null) throw new Error(status.detail);
+}
+
+// Plan 027 (design decision 7): the same check, reported instead of thrown, so the ops-health
+// endpoint can answer "is this deployment current?" with the exact facts (and the exact remediating
+// message) the isolate-time guard uses — one code path, two audiences.
+export async function bookkitMigrationStatus(
+  db: MigrationsQueryable,
+  migrationsTable = D1_MIGRATIONS_TABLE,
+): Promise<OpsHealthSchema> {
   const applied = await appliedMigrationNames(db, requireMigrationsTableName(migrationsTable));
-  const missing = BOOKKIT_MIGRATIONS.filter((name) => !applied.has(name));
-  if (missing.length > 0) throw new Error(migrationsErrorMessage(missing));
-  if (!(await bookkitSchemaFingerprintPresent(db))) throw new Error(migrationCollisionErrorMessage());
+  const missingMigrations = BOOKKIT_MIGRATIONS.filter((name) => !applied.has(name));
+  if (missingMigrations.length > 0) {
+    return { ok: false, missingMigrations, fingerprintOk: false, detail: migrationsErrorMessage(missingMigrations) };
+  }
+  const fingerprintOk = await bookkitSchemaFingerprintPresent(db);
+  return {
+    ok: fingerprintOk,
+    missingMigrations: [],
+    fingerprintOk,
+    detail: fingerprintOk ? null : migrationCollisionErrorMessage(),
+  };
 }
 
 // Plan 022 (design decision 7): a payment provider's own limits (its supported currencies and
