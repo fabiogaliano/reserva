@@ -1,0 +1,773 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`email renderer output (plan 026 snapshot discipline) > location-ful booking, English 1`] = `
+{
+  "booking.cancelled_by_customer.customer": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 18px;font-size:17px;line-height:1.5;">Hi Ada Lovelace,</p><p style="margin:0 0 26px;font-size:17px;line-height:1.5;">Your <strong>vintage</strong> on Mon 15 Jun, 10:00 has been cancelled. If a refund applies, it will reach your account within 5–10 business days.</p></td></tr><tr><td align="center" style="padding:22px 32px 6px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;color:#404040;line-height:1.7;">Questions? Just reply to this email, or call us:<br><a href="tel:+351000000000" style="color:#191919;font-weight:600;text-decoration:none;">+351000000000</a></td></tr><tr><td align="center" style="padding:18px 32px 26px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;color:#a6a6a6;">Booking ID: LVT-2026-001</td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "Booking cancelled: vintage — Mon 15 Jun, 10:00",
+    "textContent": "EXAMPLE CITY TOURS
+
+Hi Ada Lovelace,
+
+Your vintage on Mon 15 Jun, 10:00 has been cancelled. If a refund applies, it will reach your account within 5–10 business days.
+
+Questions? Just reply to this email, or call us:
++351000000000
+
+Booking ID: LVT-2026-001",
+    "to": [
+      {
+        "email": "ada@example.test",
+        "name": "Ada Lovelace",
+      },
+    ],
+  },
+  "booking.cancelled_by_customer.owner": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 26px;font-size:17px;line-height:1.5;"><strong>Ada Lovelace</strong> cancelled <strong>vintage</strong>.</p></td></tr><tr><td style="padding:0 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7f7f5;border-radius:8px;border-left:4px solid #e0b64a;"><tr><td style="padding:20px 24px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;color:#191919;line-height:2;"><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Date</td><td style="font-weight:600;"><strong>Monday, 15 June 2026, 10:00</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Guests</td><td style="font-weight:600;"><strong>2</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Paid</td><td style="font-weight:600;"><strong>€100.00</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Meeting point</td><td style="font-weight:600;"><strong>Praça do Comércio</strong><br><a href="https://maps.google.com/?q=Praca+do+Comercio" style="color:#b8860b;font-weight:400;font-size:14px;">Open map &nearr;</a></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Email</td><td style="font-weight:600;"><a href="mailto:ada@example.test" style="color:inherit;">ada@example.test</a></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Booking ID</td><td style="font-weight:600;">LVT-2026-001</td></tr></table></td></tr></table></td></tr><tr><td align="center" style="padding:30px 32px 8px;"><a href="https://example.test/booking/manage?token=operator-token" style="display:inline-block;background-color:#1a1a1a;color:#e0b64a;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;padding:13px 34px;border-radius:6px;">Open booking actions</a></td></tr><tr><td style="padding:0 0 26px;"></td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "Customer cancelled: vintage — Mon 15 Jun, 10:00",
+    "textContent": "EXAMPLE CITY TOURS
+
+Ada Lovelace cancelled vintage.
+
+  Date: Monday, 15 June 2026, 10:00
+  Guests: 2
+  Paid: €100.00
+  Meeting point: Praça do Comércio — https://maps.google.com/?q=Praca+do+Comercio
+  Email: ada@example.test
+  Booking ID: LVT-2026-001
+
+Open booking actions:
+https://example.test/booking/manage?token=operator-token",
+    "to": [
+      {
+        "email": "owner@example.test",
+        "name": "Example City Tours",
+      },
+    ],
+  },
+  "booking.cancelled_by_operator.customer": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 18px;font-size:17px;line-height:1.5;">Hi Ada Lovelace,</p><p style="margin:0 0 26px;font-size:17px;line-height:1.5;">We're sorry — your <strong>vintage</strong> on Mon 15 Jun, 10:00 had to be cancelled. Any payment will be fully refunded within 5–10 business days.</p></td></tr><tr><td align="center" style="padding:22px 32px 6px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;color:#404040;line-height:1.7;">Questions? Just reply to this email, or call us:<br><a href="tel:+351000000000" style="color:#191919;font-weight:600;text-decoration:none;">+351000000000</a></td></tr><tr><td align="center" style="padding:18px 32px 26px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;color:#a6a6a6;">Booking ID: LVT-2026-001</td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "Your booking was cancelled: vintage — Mon 15 Jun, 10:00",
+    "textContent": "EXAMPLE CITY TOURS
+
+Hi Ada Lovelace,
+
+We're sorry — your vintage on Mon 15 Jun, 10:00 had to be cancelled. Any payment will be fully refunded within 5–10 business days.
+
+Questions? Just reply to this email, or call us:
++351000000000
+
+Booking ID: LVT-2026-001",
+    "to": [
+      {
+        "email": "ada@example.test",
+        "name": "Ada Lovelace",
+      },
+    ],
+  },
+  "booking.confirmed.customer": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 18px;font-size:17px;line-height:1.5;">Hi Ada Lovelace,</p><p style="margin:0 0 26px;font-size:17px;line-height:1.5;">Your <strong>vintage</strong> is confirmed — we can't wait to show you around!</p></td></tr><tr><td style="padding:0 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7f7f5;border-radius:8px;border-left:4px solid #e0b64a;"><tr><td style="padding:20px 24px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;color:#191919;line-height:2;"><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Date</td><td style="font-weight:600;"><strong>Monday, 15 June 2026</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Time</td><td style="font-weight:600;"><strong>10:00</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Guests</td><td style="font-weight:600;"><strong>2</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Meeting point</td><td style="font-weight:600;"><strong>Praça do Comércio</strong><br><a href="https://maps.google.com/?q=Praca+do+Comercio" style="color:#b8860b;font-weight:400;font-size:14px;">Open map &nearr;</a></td></tr></table></td></tr></table></td></tr><tr><td align="center" style="padding:30px 32px 8px;"><a href="https://example.test/booking/manage?token=cancel-token" style="display:inline-block;background-color:#e0b64a;color:#1a1a1a;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;padding:13px 34px;border-radius:6px;">Manage my booking</a></td></tr><tr><td align="center" style="padding:22px 32px 6px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;color:#404040;line-height:1.7;">Questions? Just reply to this email, or call us:<br><a href="tel:+351000000000" style="color:#191919;font-weight:600;text-decoration:none;">+351000000000</a></td></tr><tr><td align="center" style="padding:18px 32px 26px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;color:#a6a6a6;">Booking ID: LVT-2026-001</td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "Booking confirmed: vintage — Mon 15 Jun, 10:00",
+    "textContent": "EXAMPLE CITY TOURS
+
+Hi Ada Lovelace,
+
+Your vintage is confirmed — we can't wait to show you around!
+
+  Date: Monday, 15 June 2026
+  Time: 10:00
+  Guests: 2
+  Meeting point: Praça do Comércio — https://maps.google.com/?q=Praca+do+Comercio
+
+Manage my booking:
+https://example.test/booking/manage?token=cancel-token
+
+Questions? Just reply to this email, or call us:
++351000000000
+
+Booking ID: LVT-2026-001",
+    "to": [
+      {
+        "email": "ada@example.test",
+        "name": "Ada Lovelace",
+      },
+    ],
+  },
+  "booking.confirmed.owner": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 26px;font-size:17px;line-height:1.5;"><strong>Ada Lovelace</strong> booked <strong>vintage</strong>.</p></td></tr><tr><td style="padding:0 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7f7f5;border-radius:8px;border-left:4px solid #e0b64a;"><tr><td style="padding:20px 24px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;color:#191919;line-height:2;"><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Date</td><td style="font-weight:600;"><strong>Monday, 15 June 2026, 10:00</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Guests</td><td style="font-weight:600;"><strong>2</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Paid</td><td style="font-weight:600;"><strong>€100.00</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Meeting point</td><td style="font-weight:600;"><strong>Praça do Comércio</strong><br><a href="https://maps.google.com/?q=Praca+do+Comercio" style="color:#b8860b;font-weight:400;font-size:14px;">Open map &nearr;</a></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Email</td><td style="font-weight:600;"><a href="mailto:ada@example.test" style="color:inherit;">ada@example.test</a></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Booking ID</td><td style="font-weight:600;">LVT-2026-001</td></tr></table></td></tr></table></td></tr><tr><td align="center" style="padding:30px 32px 8px;"><a href="https://example.test/booking/manage?token=operator-token" style="display:inline-block;background-color:#1a1a1a;color:#e0b64a;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;padding:13px 34px;border-radius:6px;">Open booking actions</a></td></tr><tr><td style="padding:0 0 26px;"></td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "New booking: vintage — Mon 15 Jun, 10:00 · 2 guests",
+    "textContent": "EXAMPLE CITY TOURS
+
+Ada Lovelace booked vintage.
+
+  Date: Monday, 15 June 2026, 10:00
+  Guests: 2
+  Paid: €100.00
+  Meeting point: Praça do Comércio — https://maps.google.com/?q=Praca+do+Comercio
+  Email: ada@example.test
+  Booking ID: LVT-2026-001
+
+Open booking actions:
+https://example.test/booking/manage?token=operator-token",
+    "to": [
+      {
+        "email": "owner@example.test",
+        "name": "Example City Tours",
+      },
+    ],
+  },
+  "booking.no_show.customer": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 18px;font-size:17px;line-height:1.5;">Hi Ada Lovelace,</p><p style="margin:0 0 26px;font-size:17px;line-height:1.5;">Your booking for <strong>vintage</strong> on Mon 15 Jun, 10:00 was marked as a no-show. If you think this is a mistake, just reply to this email.</p></td></tr><tr><td align="center" style="padding:22px 32px 6px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;color:#404040;line-height:1.7;">Questions? Just reply to this email, or call us:<br><a href="tel:+351000000000" style="color:#191919;font-weight:600;text-decoration:none;">+351000000000</a></td></tr><tr><td align="center" style="padding:18px 32px 26px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;color:#a6a6a6;">Booking ID: LVT-2026-001</td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "Booking update: vintage — Mon 15 Jun, 10:00",
+    "textContent": "EXAMPLE CITY TOURS
+
+Hi Ada Lovelace,
+
+Your booking for vintage on Mon 15 Jun, 10:00 was marked as a no-show. If you think this is a mistake, just reply to this email.
+
+Questions? Just reply to this email, or call us:
++351000000000
+
+Booking ID: LVT-2026-001",
+    "to": [
+      {
+        "email": "ada@example.test",
+        "name": "Ada Lovelace",
+      },
+    ],
+  },
+  "booking.rescheduled.customer": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 18px;font-size:17px;line-height:1.5;">Hi Ada Lovelace,</p><p style="margin:0 0 26px;font-size:17px;line-height:1.5;">Your <strong>vintage</strong> has a new date.</p></td></tr><tr><td style="padding:0 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7f7f5;border-radius:8px;border-left:4px solid #e0b64a;"><tr><td style="padding:20px 24px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;color:#191919;line-height:2;"><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Date</td><td style="font-weight:600;"><strong>Monday, 15 June 2026</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Time</td><td style="font-weight:600;"><strong>10:00</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Guests</td><td style="font-weight:600;"><strong>2</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Meeting point</td><td style="font-weight:600;"><strong>Praça do Comércio</strong><br><a href="https://maps.google.com/?q=Praca+do+Comercio" style="color:#b8860b;font-weight:400;font-size:14px;">Open map &nearr;</a></td></tr></table></td></tr></table></td></tr><tr><td align="center" style="padding:30px 32px 8px;"><a href="https://example.test/booking/manage?token=cancel-token" style="display:inline-block;background-color:#e0b64a;color:#1a1a1a;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;padding:13px 34px;border-radius:6px;">Manage my booking</a></td></tr><tr><td align="center" style="padding:22px 32px 6px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;color:#404040;line-height:1.7;">Questions? Just reply to this email, or call us:<br><a href="tel:+351000000000" style="color:#191919;font-weight:600;text-decoration:none;">+351000000000</a></td></tr><tr><td align="center" style="padding:18px 32px 26px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;color:#a6a6a6;">Booking ID: LVT-2026-001</td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "Booking rescheduled: vintage — Mon 15 Jun, 10:00",
+    "textContent": "EXAMPLE CITY TOURS
+
+Hi Ada Lovelace,
+
+Your vintage has a new date.
+
+  Date: Monday, 15 June 2026
+  Time: 10:00
+  Guests: 2
+  Meeting point: Praça do Comércio — https://maps.google.com/?q=Praca+do+Comercio
+
+Manage my booking:
+https://example.test/booking/manage?token=cancel-token
+
+Questions? Just reply to this email, or call us:
++351000000000
+
+Booking ID: LVT-2026-001",
+    "to": [
+      {
+        "email": "ada@example.test",
+        "name": "Ada Lovelace",
+      },
+    ],
+  },
+}
+`;
+
+exports[`email renderer output (plan 026 snapshot discipline) > location-ful booking, European Portuguese 1`] = `
+{
+  "booking.cancelled_by_customer.customer": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 18px;font-size:17px;line-height:1.5;">Olá Ada Lovelace,</p><p style="margin:0 0 26px;font-size:17px;line-height:1.5;">A sua reserva de <strong>vintage</strong> para segunda, 15/06, 10:00 foi cancelada. Se houver lugar a reembolso, será creditado na sua conta em 5–10 dias úteis.</p></td></tr><tr><td align="center" style="padding:22px 32px 6px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;color:#404040;line-height:1.7;">Dúvidas? Responda a este email, ou ligue-nos:<br><a href="tel:+351000000000" style="color:#191919;font-weight:600;text-decoration:none;">+351000000000</a></td></tr><tr><td align="center" style="padding:18px 32px 26px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;color:#a6a6a6;">Referência: LVT-2026-001</td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "Reserva cancelada: vintage — segunda, 15/06, 10:00",
+    "textContent": "EXAMPLE CITY TOURS
+
+Olá Ada Lovelace,
+
+A sua reserva de vintage para segunda, 15/06, 10:00 foi cancelada. Se houver lugar a reembolso, será creditado na sua conta em 5–10 dias úteis.
+
+Dúvidas? Responda a este email, ou ligue-nos:
++351000000000
+
+Referência: LVT-2026-001",
+    "to": [
+      {
+        "email": "ada@example.test",
+        "name": "Ada Lovelace",
+      },
+    ],
+  },
+  "booking.cancelled_by_customer.owner": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 26px;font-size:17px;line-height:1.5;"><strong>Ada Lovelace</strong> cancelou <strong>vintage</strong>.</p></td></tr><tr><td style="padding:0 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7f7f5;border-radius:8px;border-left:4px solid #e0b64a;"><tr><td style="padding:20px 24px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;color:#191919;line-height:2;"><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Data</td><td style="font-weight:600;"><strong>segunda-feira, 15 de junho de 2026, 10:00</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Pessoas</td><td style="font-weight:600;"><strong>2</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Pago</td><td style="font-weight:600;"><strong>100,00 €</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Ponto de encontro</td><td style="font-weight:600;"><strong>Praça do Comércio</strong><br><a href="https://maps.google.com/?q=Praca+do+Comercio" style="color:#b8860b;font-weight:400;font-size:14px;">Abrir mapa &nearr;</a></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Email</td><td style="font-weight:600;"><a href="mailto:ada@example.test" style="color:inherit;">ada@example.test</a></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Referência</td><td style="font-weight:600;">LVT-2026-001</td></tr></table></td></tr></table></td></tr><tr><td align="center" style="padding:30px 32px 8px;"><a href="https://example.test/booking/manage?token=operator-token" style="display:inline-block;background-color:#1a1a1a;color:#e0b64a;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;padding:13px 34px;border-radius:6px;">Abrir ações da reserva</a></td></tr><tr><td style="padding:0 0 26px;"></td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "Cancelamento pelo cliente: vintage — segunda, 15/06, 10:00",
+    "textContent": "EXAMPLE CITY TOURS
+
+Ada Lovelace cancelou vintage.
+
+  Data: segunda-feira, 15 de junho de 2026, 10:00
+  Pessoas: 2
+  Pago: 100,00 €
+  Ponto de encontro: Praça do Comércio — https://maps.google.com/?q=Praca+do+Comercio
+  Email: ada@example.test
+  Referência: LVT-2026-001
+
+Abrir ações da reserva:
+https://example.test/booking/manage?token=operator-token",
+    "to": [
+      {
+        "email": "owner@example.test",
+        "name": "Example City Tours",
+      },
+    ],
+  },
+  "booking.cancelled_by_operator.customer": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 18px;font-size:17px;line-height:1.5;">Olá Ada Lovelace,</p><p style="margin:0 0 26px;font-size:17px;line-height:1.5;">Lamentamos — a sua reserva de <strong>vintage</strong> para segunda, 15/06, 10:00 teve de ser cancelada. Qualquer pagamento será totalmente reembolsado em 5–10 dias úteis.</p></td></tr><tr><td align="center" style="padding:22px 32px 6px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;color:#404040;line-height:1.7;">Dúvidas? Responda a este email, ou ligue-nos:<br><a href="tel:+351000000000" style="color:#191919;font-weight:600;text-decoration:none;">+351000000000</a></td></tr><tr><td align="center" style="padding:18px 32px 26px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;color:#a6a6a6;">Referência: LVT-2026-001</td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "A sua reserva foi cancelada: vintage — segunda, 15/06, 10:00",
+    "textContent": "EXAMPLE CITY TOURS
+
+Olá Ada Lovelace,
+
+Lamentamos — a sua reserva de vintage para segunda, 15/06, 10:00 teve de ser cancelada. Qualquer pagamento será totalmente reembolsado em 5–10 dias úteis.
+
+Dúvidas? Responda a este email, ou ligue-nos:
++351000000000
+
+Referência: LVT-2026-001",
+    "to": [
+      {
+        "email": "ada@example.test",
+        "name": "Ada Lovelace",
+      },
+    ],
+  },
+  "booking.confirmed.customer": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 18px;font-size:17px;line-height:1.5;">Olá Ada Lovelace,</p><p style="margin:0 0 26px;font-size:17px;line-height:1.5;">A sua reserva de <strong>vintage</strong> está confirmada — mal podemos esperar por si!</p></td></tr><tr><td style="padding:0 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7f7f5;border-radius:8px;border-left:4px solid #e0b64a;"><tr><td style="padding:20px 24px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;color:#191919;line-height:2;"><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Data</td><td style="font-weight:600;"><strong>segunda-feira, 15 de junho de 2026</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Hora</td><td style="font-weight:600;"><strong>10:00</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Pessoas</td><td style="font-weight:600;"><strong>2</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Ponto de encontro</td><td style="font-weight:600;"><strong>Praça do Comércio</strong><br><a href="https://maps.google.com/?q=Praca+do+Comercio" style="color:#b8860b;font-weight:400;font-size:14px;">Abrir mapa &nearr;</a></td></tr></table></td></tr></table></td></tr><tr><td align="center" style="padding:30px 32px 8px;"><a href="https://example.test/booking/manage?token=cancel-token" style="display:inline-block;background-color:#e0b64a;color:#1a1a1a;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;padding:13px 34px;border-radius:6px;">Gerir a minha reserva</a></td></tr><tr><td align="center" style="padding:22px 32px 6px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;color:#404040;line-height:1.7;">Dúvidas? Responda a este email, ou ligue-nos:<br><a href="tel:+351000000000" style="color:#191919;font-weight:600;text-decoration:none;">+351000000000</a></td></tr><tr><td align="center" style="padding:18px 32px 26px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;color:#a6a6a6;">Referência: LVT-2026-001</td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "Reserva confirmada: vintage — segunda, 15/06, 10:00",
+    "textContent": "EXAMPLE CITY TOURS
+
+Olá Ada Lovelace,
+
+A sua reserva de vintage está confirmada — mal podemos esperar por si!
+
+  Data: segunda-feira, 15 de junho de 2026
+  Hora: 10:00
+  Pessoas: 2
+  Ponto de encontro: Praça do Comércio — https://maps.google.com/?q=Praca+do+Comercio
+
+Gerir a minha reserva:
+https://example.test/booking/manage?token=cancel-token
+
+Dúvidas? Responda a este email, ou ligue-nos:
++351000000000
+
+Referência: LVT-2026-001",
+    "to": [
+      {
+        "email": "ada@example.test",
+        "name": "Ada Lovelace",
+      },
+    ],
+  },
+  "booking.confirmed.owner": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 26px;font-size:17px;line-height:1.5;"><strong>Ada Lovelace</strong> reservou <strong>vintage</strong>.</p></td></tr><tr><td style="padding:0 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7f7f5;border-radius:8px;border-left:4px solid #e0b64a;"><tr><td style="padding:20px 24px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;color:#191919;line-height:2;"><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Data</td><td style="font-weight:600;"><strong>segunda-feira, 15 de junho de 2026, 10:00</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Pessoas</td><td style="font-weight:600;"><strong>2</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Pago</td><td style="font-weight:600;"><strong>100,00 €</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Ponto de encontro</td><td style="font-weight:600;"><strong>Praça do Comércio</strong><br><a href="https://maps.google.com/?q=Praca+do+Comercio" style="color:#b8860b;font-weight:400;font-size:14px;">Abrir mapa &nearr;</a></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Email</td><td style="font-weight:600;"><a href="mailto:ada@example.test" style="color:inherit;">ada@example.test</a></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Referência</td><td style="font-weight:600;">LVT-2026-001</td></tr></table></td></tr></table></td></tr><tr><td align="center" style="padding:30px 32px 8px;"><a href="https://example.test/booking/manage?token=operator-token" style="display:inline-block;background-color:#1a1a1a;color:#e0b64a;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;padding:13px 34px;border-radius:6px;">Abrir ações da reserva</a></td></tr><tr><td style="padding:0 0 26px;"></td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "Nova reserva: vintage — segunda, 15/06, 10:00 · 2 pessoas",
+    "textContent": "EXAMPLE CITY TOURS
+
+Ada Lovelace reservou vintage.
+
+  Data: segunda-feira, 15 de junho de 2026, 10:00
+  Pessoas: 2
+  Pago: 100,00 €
+  Ponto de encontro: Praça do Comércio — https://maps.google.com/?q=Praca+do+Comercio
+  Email: ada@example.test
+  Referência: LVT-2026-001
+
+Abrir ações da reserva:
+https://example.test/booking/manage?token=operator-token",
+    "to": [
+      {
+        "email": "owner@example.test",
+        "name": "Example City Tours",
+      },
+    ],
+  },
+  "booking.no_show.customer": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 18px;font-size:17px;line-height:1.5;">Olá Ada Lovelace,</p><p style="margin:0 0 26px;font-size:17px;line-height:1.5;">A sua reserva de <strong>vintage</strong> para segunda, 15/06, 10:00 foi marcada como não comparecimento. Se acha que se trata de um erro, responda a este email.</p></td></tr><tr><td align="center" style="padding:22px 32px 6px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;color:#404040;line-height:1.7;">Dúvidas? Responda a este email, ou ligue-nos:<br><a href="tel:+351000000000" style="color:#191919;font-weight:600;text-decoration:none;">+351000000000</a></td></tr><tr><td align="center" style="padding:18px 32px 26px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;color:#a6a6a6;">Referência: LVT-2026-001</td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "Atualização da reserva: vintage — segunda, 15/06, 10:00",
+    "textContent": "EXAMPLE CITY TOURS
+
+Olá Ada Lovelace,
+
+A sua reserva de vintage para segunda, 15/06, 10:00 foi marcada como não comparecimento. Se acha que se trata de um erro, responda a este email.
+
+Dúvidas? Responda a este email, ou ligue-nos:
++351000000000
+
+Referência: LVT-2026-001",
+    "to": [
+      {
+        "email": "ada@example.test",
+        "name": "Ada Lovelace",
+      },
+    ],
+  },
+  "booking.rescheduled.customer": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 18px;font-size:17px;line-height:1.5;">Olá Ada Lovelace,</p><p style="margin:0 0 26px;font-size:17px;line-height:1.5;">A sua reserva de <strong>vintage</strong> tem uma nova data.</p></td></tr><tr><td style="padding:0 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7f7f5;border-radius:8px;border-left:4px solid #e0b64a;"><tr><td style="padding:20px 24px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;color:#191919;line-height:2;"><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Data</td><td style="font-weight:600;"><strong>segunda-feira, 15 de junho de 2026</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Hora</td><td style="font-weight:600;"><strong>10:00</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Pessoas</td><td style="font-weight:600;"><strong>2</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Ponto de encontro</td><td style="font-weight:600;"><strong>Praça do Comércio</strong><br><a href="https://maps.google.com/?q=Praca+do+Comercio" style="color:#b8860b;font-weight:400;font-size:14px;">Abrir mapa &nearr;</a></td></tr></table></td></tr></table></td></tr><tr><td align="center" style="padding:30px 32px 8px;"><a href="https://example.test/booking/manage?token=cancel-token" style="display:inline-block;background-color:#e0b64a;color:#1a1a1a;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;padding:13px 34px;border-radius:6px;">Gerir a minha reserva</a></td></tr><tr><td align="center" style="padding:22px 32px 6px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;color:#404040;line-height:1.7;">Dúvidas? Responda a este email, ou ligue-nos:<br><a href="tel:+351000000000" style="color:#191919;font-weight:600;text-decoration:none;">+351000000000</a></td></tr><tr><td align="center" style="padding:18px 32px 26px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;color:#a6a6a6;">Referência: LVT-2026-001</td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "Reserva alterada: vintage — segunda, 15/06, 10:00",
+    "textContent": "EXAMPLE CITY TOURS
+
+Olá Ada Lovelace,
+
+A sua reserva de vintage tem uma nova data.
+
+  Data: segunda-feira, 15 de junho de 2026
+  Hora: 10:00
+  Pessoas: 2
+  Ponto de encontro: Praça do Comércio — https://maps.google.com/?q=Praca+do+Comercio
+
+Gerir a minha reserva:
+https://example.test/booking/manage?token=cancel-token
+
+Dúvidas? Responda a este email, ou ligue-nos:
++351000000000
+
+Referência: LVT-2026-001",
+    "to": [
+      {
+        "email": "ada@example.test",
+        "name": "Ada Lovelace",
+      },
+    ],
+  },
+}
+`;
+
+exports[`email renderer output (plan 026 snapshot discipline) > location-less booking, English 1`] = `
+{
+  "booking.cancelled_by_customer.customer": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 18px;font-size:17px;line-height:1.5;">Hi Ada Lovelace,</p><p style="margin:0 0 26px;font-size:17px;line-height:1.5;">Your <strong>cruise</strong> on Mon 15 Jun, 10:00 has been cancelled. If a refund applies, it will reach your account within 5–10 business days.</p></td></tr><tr><td align="center" style="padding:22px 32px 6px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;color:#404040;line-height:1.7;">Questions? Just reply to this email, or call us:<br><a href="tel:+351000000000" style="color:#191919;font-weight:600;text-decoration:none;">+351000000000</a></td></tr><tr><td align="center" style="padding:18px 32px 26px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;color:#a6a6a6;">Booking ID: LVT-2026-001</td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "Booking cancelled: cruise — Mon 15 Jun, 10:00",
+    "textContent": "EXAMPLE CITY TOURS
+
+Hi Ada Lovelace,
+
+Your cruise on Mon 15 Jun, 10:00 has been cancelled. If a refund applies, it will reach your account within 5–10 business days.
+
+Questions? Just reply to this email, or call us:
++351000000000
+
+Booking ID: LVT-2026-001",
+    "to": [
+      {
+        "email": "ada@example.test",
+        "name": "Ada Lovelace",
+      },
+    ],
+  },
+  "booking.cancelled_by_customer.owner": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 26px;font-size:17px;line-height:1.5;"><strong>Ada Lovelace</strong> cancelled <strong>cruise</strong>.</p></td></tr><tr><td style="padding:0 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7f7f5;border-radius:8px;border-left:4px solid #e0b64a;"><tr><td style="padding:20px 24px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;color:#191919;line-height:2;"><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Date</td><td style="font-weight:600;"><strong>Monday, 15 June 2026, 10:00</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Guests</td><td style="font-weight:600;"><strong>2</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Paid</td><td style="font-weight:600;"><strong>€100.00</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Email</td><td style="font-weight:600;"><a href="mailto:ada@example.test" style="color:inherit;">ada@example.test</a></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Booking ID</td><td style="font-weight:600;">LVT-2026-001</td></tr></table></td></tr></table></td></tr><tr><td align="center" style="padding:30px 32px 8px;"><a href="https://example.test/booking/manage?token=operator-token" style="display:inline-block;background-color:#1a1a1a;color:#e0b64a;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;padding:13px 34px;border-radius:6px;">Open booking actions</a></td></tr><tr><td style="padding:0 0 26px;"></td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "Customer cancelled: cruise — Mon 15 Jun, 10:00",
+    "textContent": "EXAMPLE CITY TOURS
+
+Ada Lovelace cancelled cruise.
+
+  Date: Monday, 15 June 2026, 10:00
+  Guests: 2
+  Paid: €100.00
+  Email: ada@example.test
+  Booking ID: LVT-2026-001
+
+Open booking actions:
+https://example.test/booking/manage?token=operator-token",
+    "to": [
+      {
+        "email": "owner@example.test",
+        "name": "Example City Tours",
+      },
+    ],
+  },
+  "booking.cancelled_by_operator.customer": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 18px;font-size:17px;line-height:1.5;">Hi Ada Lovelace,</p><p style="margin:0 0 26px;font-size:17px;line-height:1.5;">We're sorry — your <strong>cruise</strong> on Mon 15 Jun, 10:00 had to be cancelled. Any payment will be fully refunded within 5–10 business days.</p></td></tr><tr><td align="center" style="padding:22px 32px 6px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;color:#404040;line-height:1.7;">Questions? Just reply to this email, or call us:<br><a href="tel:+351000000000" style="color:#191919;font-weight:600;text-decoration:none;">+351000000000</a></td></tr><tr><td align="center" style="padding:18px 32px 26px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;color:#a6a6a6;">Booking ID: LVT-2026-001</td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "Your booking was cancelled: cruise — Mon 15 Jun, 10:00",
+    "textContent": "EXAMPLE CITY TOURS
+
+Hi Ada Lovelace,
+
+We're sorry — your cruise on Mon 15 Jun, 10:00 had to be cancelled. Any payment will be fully refunded within 5–10 business days.
+
+Questions? Just reply to this email, or call us:
++351000000000
+
+Booking ID: LVT-2026-001",
+    "to": [
+      {
+        "email": "ada@example.test",
+        "name": "Ada Lovelace",
+      },
+    ],
+  },
+  "booking.confirmed.customer": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 18px;font-size:17px;line-height:1.5;">Hi Ada Lovelace,</p><p style="margin:0 0 26px;font-size:17px;line-height:1.5;">Your <strong>cruise</strong> is confirmed — we can't wait to show you around!</p></td></tr><tr><td style="padding:0 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7f7f5;border-radius:8px;border-left:4px solid #e0b64a;"><tr><td style="padding:20px 24px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;color:#191919;line-height:2;"><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Date</td><td style="font-weight:600;"><strong>Monday, 15 June 2026</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Time</td><td style="font-weight:600;"><strong>10:00</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Guests</td><td style="font-weight:600;"><strong>2</strong></td></tr></table></td></tr></table></td></tr><tr><td align="center" style="padding:30px 32px 8px;"><a href="https://example.test/booking/manage?token=cancel-token" style="display:inline-block;background-color:#e0b64a;color:#1a1a1a;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;padding:13px 34px;border-radius:6px;">Manage my booking</a></td></tr><tr><td align="center" style="padding:22px 32px 6px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;color:#404040;line-height:1.7;">Questions? Just reply to this email, or call us:<br><a href="tel:+351000000000" style="color:#191919;font-weight:600;text-decoration:none;">+351000000000</a></td></tr><tr><td align="center" style="padding:18px 32px 26px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;color:#a6a6a6;">Booking ID: LVT-2026-001</td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "Booking confirmed: cruise — Mon 15 Jun, 10:00",
+    "textContent": "EXAMPLE CITY TOURS
+
+Hi Ada Lovelace,
+
+Your cruise is confirmed — we can't wait to show you around!
+
+  Date: Monday, 15 June 2026
+  Time: 10:00
+  Guests: 2
+
+Manage my booking:
+https://example.test/booking/manage?token=cancel-token
+
+Questions? Just reply to this email, or call us:
++351000000000
+
+Booking ID: LVT-2026-001",
+    "to": [
+      {
+        "email": "ada@example.test",
+        "name": "Ada Lovelace",
+      },
+    ],
+  },
+  "booking.confirmed.owner": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 26px;font-size:17px;line-height:1.5;"><strong>Ada Lovelace</strong> booked <strong>cruise</strong>.</p></td></tr><tr><td style="padding:0 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7f7f5;border-radius:8px;border-left:4px solid #e0b64a;"><tr><td style="padding:20px 24px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;color:#191919;line-height:2;"><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Date</td><td style="font-weight:600;"><strong>Monday, 15 June 2026, 10:00</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Guests</td><td style="font-weight:600;"><strong>2</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Paid</td><td style="font-weight:600;"><strong>€100.00</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Email</td><td style="font-weight:600;"><a href="mailto:ada@example.test" style="color:inherit;">ada@example.test</a></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Booking ID</td><td style="font-weight:600;">LVT-2026-001</td></tr></table></td></tr></table></td></tr><tr><td align="center" style="padding:30px 32px 8px;"><a href="https://example.test/booking/manage?token=operator-token" style="display:inline-block;background-color:#1a1a1a;color:#e0b64a;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;padding:13px 34px;border-radius:6px;">Open booking actions</a></td></tr><tr><td style="padding:0 0 26px;"></td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "New booking: cruise — Mon 15 Jun, 10:00 · 2 guests",
+    "textContent": "EXAMPLE CITY TOURS
+
+Ada Lovelace booked cruise.
+
+  Date: Monday, 15 June 2026, 10:00
+  Guests: 2
+  Paid: €100.00
+  Email: ada@example.test
+  Booking ID: LVT-2026-001
+
+Open booking actions:
+https://example.test/booking/manage?token=operator-token",
+    "to": [
+      {
+        "email": "owner@example.test",
+        "name": "Example City Tours",
+      },
+    ],
+  },
+  "booking.no_show.customer": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 18px;font-size:17px;line-height:1.5;">Hi Ada Lovelace,</p><p style="margin:0 0 26px;font-size:17px;line-height:1.5;">Your booking for <strong>cruise</strong> on Mon 15 Jun, 10:00 was marked as a no-show. If you think this is a mistake, just reply to this email.</p></td></tr><tr><td align="center" style="padding:22px 32px 6px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;color:#404040;line-height:1.7;">Questions? Just reply to this email, or call us:<br><a href="tel:+351000000000" style="color:#191919;font-weight:600;text-decoration:none;">+351000000000</a></td></tr><tr><td align="center" style="padding:18px 32px 26px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;color:#a6a6a6;">Booking ID: LVT-2026-001</td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "Booking update: cruise — Mon 15 Jun, 10:00",
+    "textContent": "EXAMPLE CITY TOURS
+
+Hi Ada Lovelace,
+
+Your booking for cruise on Mon 15 Jun, 10:00 was marked as a no-show. If you think this is a mistake, just reply to this email.
+
+Questions? Just reply to this email, or call us:
++351000000000
+
+Booking ID: LVT-2026-001",
+    "to": [
+      {
+        "email": "ada@example.test",
+        "name": "Ada Lovelace",
+      },
+    ],
+  },
+  "booking.rescheduled.customer": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 18px;font-size:17px;line-height:1.5;">Hi Ada Lovelace,</p><p style="margin:0 0 26px;font-size:17px;line-height:1.5;">Your <strong>cruise</strong> has a new date.</p></td></tr><tr><td style="padding:0 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7f7f5;border-radius:8px;border-left:4px solid #e0b64a;"><tr><td style="padding:20px 24px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;color:#191919;line-height:2;"><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Date</td><td style="font-weight:600;"><strong>Monday, 15 June 2026</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Time</td><td style="font-weight:600;"><strong>10:00</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Guests</td><td style="font-weight:600;"><strong>2</strong></td></tr></table></td></tr></table></td></tr><tr><td align="center" style="padding:30px 32px 8px;"><a href="https://example.test/booking/manage?token=cancel-token" style="display:inline-block;background-color:#e0b64a;color:#1a1a1a;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;padding:13px 34px;border-radius:6px;">Manage my booking</a></td></tr><tr><td align="center" style="padding:22px 32px 6px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;color:#404040;line-height:1.7;">Questions? Just reply to this email, or call us:<br><a href="tel:+351000000000" style="color:#191919;font-weight:600;text-decoration:none;">+351000000000</a></td></tr><tr><td align="center" style="padding:18px 32px 26px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;color:#a6a6a6;">Booking ID: LVT-2026-001</td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "Booking rescheduled: cruise — Mon 15 Jun, 10:00",
+    "textContent": "EXAMPLE CITY TOURS
+
+Hi Ada Lovelace,
+
+Your cruise has a new date.
+
+  Date: Monday, 15 June 2026
+  Time: 10:00
+  Guests: 2
+
+Manage my booking:
+https://example.test/booking/manage?token=cancel-token
+
+Questions? Just reply to this email, or call us:
++351000000000
+
+Booking ID: LVT-2026-001",
+    "to": [
+      {
+        "email": "ada@example.test",
+        "name": "Ada Lovelace",
+      },
+    ],
+  },
+}
+`;
+
+exports[`email renderer output (plan 026 snapshot discipline) > location-less booking, European Portuguese 1`] = `
+{
+  "booking.cancelled_by_customer.customer": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 18px;font-size:17px;line-height:1.5;">Olá Ada Lovelace,</p><p style="margin:0 0 26px;font-size:17px;line-height:1.5;">A sua reserva de <strong>cruise</strong> para segunda, 15/06, 10:00 foi cancelada. Se houver lugar a reembolso, será creditado na sua conta em 5–10 dias úteis.</p></td></tr><tr><td align="center" style="padding:22px 32px 6px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;color:#404040;line-height:1.7;">Dúvidas? Responda a este email, ou ligue-nos:<br><a href="tel:+351000000000" style="color:#191919;font-weight:600;text-decoration:none;">+351000000000</a></td></tr><tr><td align="center" style="padding:18px 32px 26px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;color:#a6a6a6;">Referência: LVT-2026-001</td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "Reserva cancelada: cruise — segunda, 15/06, 10:00",
+    "textContent": "EXAMPLE CITY TOURS
+
+Olá Ada Lovelace,
+
+A sua reserva de cruise para segunda, 15/06, 10:00 foi cancelada. Se houver lugar a reembolso, será creditado na sua conta em 5–10 dias úteis.
+
+Dúvidas? Responda a este email, ou ligue-nos:
++351000000000
+
+Referência: LVT-2026-001",
+    "to": [
+      {
+        "email": "ada@example.test",
+        "name": "Ada Lovelace",
+      },
+    ],
+  },
+  "booking.cancelled_by_customer.owner": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 26px;font-size:17px;line-height:1.5;"><strong>Ada Lovelace</strong> cancelou <strong>cruise</strong>.</p></td></tr><tr><td style="padding:0 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7f7f5;border-radius:8px;border-left:4px solid #e0b64a;"><tr><td style="padding:20px 24px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;color:#191919;line-height:2;"><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Data</td><td style="font-weight:600;"><strong>segunda-feira, 15 de junho de 2026, 10:00</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Pessoas</td><td style="font-weight:600;"><strong>2</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Pago</td><td style="font-weight:600;"><strong>100,00 €</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Email</td><td style="font-weight:600;"><a href="mailto:ada@example.test" style="color:inherit;">ada@example.test</a></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Referência</td><td style="font-weight:600;">LVT-2026-001</td></tr></table></td></tr></table></td></tr><tr><td align="center" style="padding:30px 32px 8px;"><a href="https://example.test/booking/manage?token=operator-token" style="display:inline-block;background-color:#1a1a1a;color:#e0b64a;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;padding:13px 34px;border-radius:6px;">Abrir ações da reserva</a></td></tr><tr><td style="padding:0 0 26px;"></td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "Cancelamento pelo cliente: cruise — segunda, 15/06, 10:00",
+    "textContent": "EXAMPLE CITY TOURS
+
+Ada Lovelace cancelou cruise.
+
+  Data: segunda-feira, 15 de junho de 2026, 10:00
+  Pessoas: 2
+  Pago: 100,00 €
+  Email: ada@example.test
+  Referência: LVT-2026-001
+
+Abrir ações da reserva:
+https://example.test/booking/manage?token=operator-token",
+    "to": [
+      {
+        "email": "owner@example.test",
+        "name": "Example City Tours",
+      },
+    ],
+  },
+  "booking.cancelled_by_operator.customer": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 18px;font-size:17px;line-height:1.5;">Olá Ada Lovelace,</p><p style="margin:0 0 26px;font-size:17px;line-height:1.5;">Lamentamos — a sua reserva de <strong>cruise</strong> para segunda, 15/06, 10:00 teve de ser cancelada. Qualquer pagamento será totalmente reembolsado em 5–10 dias úteis.</p></td></tr><tr><td align="center" style="padding:22px 32px 6px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;color:#404040;line-height:1.7;">Dúvidas? Responda a este email, ou ligue-nos:<br><a href="tel:+351000000000" style="color:#191919;font-weight:600;text-decoration:none;">+351000000000</a></td></tr><tr><td align="center" style="padding:18px 32px 26px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;color:#a6a6a6;">Referência: LVT-2026-001</td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "A sua reserva foi cancelada: cruise — segunda, 15/06, 10:00",
+    "textContent": "EXAMPLE CITY TOURS
+
+Olá Ada Lovelace,
+
+Lamentamos — a sua reserva de cruise para segunda, 15/06, 10:00 teve de ser cancelada. Qualquer pagamento será totalmente reembolsado em 5–10 dias úteis.
+
+Dúvidas? Responda a este email, ou ligue-nos:
++351000000000
+
+Referência: LVT-2026-001",
+    "to": [
+      {
+        "email": "ada@example.test",
+        "name": "Ada Lovelace",
+      },
+    ],
+  },
+  "booking.confirmed.customer": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 18px;font-size:17px;line-height:1.5;">Olá Ada Lovelace,</p><p style="margin:0 0 26px;font-size:17px;line-height:1.5;">A sua reserva de <strong>cruise</strong> está confirmada — mal podemos esperar por si!</p></td></tr><tr><td style="padding:0 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7f7f5;border-radius:8px;border-left:4px solid #e0b64a;"><tr><td style="padding:20px 24px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;color:#191919;line-height:2;"><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Data</td><td style="font-weight:600;"><strong>segunda-feira, 15 de junho de 2026</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Hora</td><td style="font-weight:600;"><strong>10:00</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Pessoas</td><td style="font-weight:600;"><strong>2</strong></td></tr></table></td></tr></table></td></tr><tr><td align="center" style="padding:30px 32px 8px;"><a href="https://example.test/booking/manage?token=cancel-token" style="display:inline-block;background-color:#e0b64a;color:#1a1a1a;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;padding:13px 34px;border-radius:6px;">Gerir a minha reserva</a></td></tr><tr><td align="center" style="padding:22px 32px 6px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;color:#404040;line-height:1.7;">Dúvidas? Responda a este email, ou ligue-nos:<br><a href="tel:+351000000000" style="color:#191919;font-weight:600;text-decoration:none;">+351000000000</a></td></tr><tr><td align="center" style="padding:18px 32px 26px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;color:#a6a6a6;">Referência: LVT-2026-001</td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "Reserva confirmada: cruise — segunda, 15/06, 10:00",
+    "textContent": "EXAMPLE CITY TOURS
+
+Olá Ada Lovelace,
+
+A sua reserva de cruise está confirmada — mal podemos esperar por si!
+
+  Data: segunda-feira, 15 de junho de 2026
+  Hora: 10:00
+  Pessoas: 2
+
+Gerir a minha reserva:
+https://example.test/booking/manage?token=cancel-token
+
+Dúvidas? Responda a este email, ou ligue-nos:
++351000000000
+
+Referência: LVT-2026-001",
+    "to": [
+      {
+        "email": "ada@example.test",
+        "name": "Ada Lovelace",
+      },
+    ],
+  },
+  "booking.confirmed.owner": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 26px;font-size:17px;line-height:1.5;"><strong>Ada Lovelace</strong> reservou <strong>cruise</strong>.</p></td></tr><tr><td style="padding:0 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7f7f5;border-radius:8px;border-left:4px solid #e0b64a;"><tr><td style="padding:20px 24px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;color:#191919;line-height:2;"><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Data</td><td style="font-weight:600;"><strong>segunda-feira, 15 de junho de 2026, 10:00</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Pessoas</td><td style="font-weight:600;"><strong>2</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Pago</td><td style="font-weight:600;"><strong>100,00 €</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Email</td><td style="font-weight:600;"><a href="mailto:ada@example.test" style="color:inherit;">ada@example.test</a></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Referência</td><td style="font-weight:600;">LVT-2026-001</td></tr></table></td></tr></table></td></tr><tr><td align="center" style="padding:30px 32px 8px;"><a href="https://example.test/booking/manage?token=operator-token" style="display:inline-block;background-color:#1a1a1a;color:#e0b64a;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;padding:13px 34px;border-radius:6px;">Abrir ações da reserva</a></td></tr><tr><td style="padding:0 0 26px;"></td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "Nova reserva: cruise — segunda, 15/06, 10:00 · 2 pessoas",
+    "textContent": "EXAMPLE CITY TOURS
+
+Ada Lovelace reservou cruise.
+
+  Data: segunda-feira, 15 de junho de 2026, 10:00
+  Pessoas: 2
+  Pago: 100,00 €
+  Email: ada@example.test
+  Referência: LVT-2026-001
+
+Abrir ações da reserva:
+https://example.test/booking/manage?token=operator-token",
+    "to": [
+      {
+        "email": "owner@example.test",
+        "name": "Example City Tours",
+      },
+    ],
+  },
+  "booking.no_show.customer": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 18px;font-size:17px;line-height:1.5;">Olá Ada Lovelace,</p><p style="margin:0 0 26px;font-size:17px;line-height:1.5;">A sua reserva de <strong>cruise</strong> para segunda, 15/06, 10:00 foi marcada como não comparecimento. Se acha que se trata de um erro, responda a este email.</p></td></tr><tr><td align="center" style="padding:22px 32px 6px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;color:#404040;line-height:1.7;">Dúvidas? Responda a este email, ou ligue-nos:<br><a href="tel:+351000000000" style="color:#191919;font-weight:600;text-decoration:none;">+351000000000</a></td></tr><tr><td align="center" style="padding:18px 32px 26px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;color:#a6a6a6;">Referência: LVT-2026-001</td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "Atualização da reserva: cruise — segunda, 15/06, 10:00",
+    "textContent": "EXAMPLE CITY TOURS
+
+Olá Ada Lovelace,
+
+A sua reserva de cruise para segunda, 15/06, 10:00 foi marcada como não comparecimento. Se acha que se trata de um erro, responda a este email.
+
+Dúvidas? Responda a este email, ou ligue-nos:
++351000000000
+
+Referência: LVT-2026-001",
+    "to": [
+      {
+        "email": "ada@example.test",
+        "name": "Ada Lovelace",
+      },
+    ],
+  },
+  "booking.rescheduled.customer": {
+    "htmlContent": "<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:#1a1a1a;padding:22px 32px;" align="left"><a href="https://example.test" style="text-decoration:none;"><span style="color:#e0b64a;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:0.5px;">Example City Tours</span></a></td></tr><tr><td style="padding:36px 32px 8px;font-family:Georgia,'Times New Roman',serif;color:#191919;"><p style="margin:0 0 18px;font-size:17px;line-height:1.5;">Olá Ada Lovelace,</p><p style="margin:0 0 26px;font-size:17px;line-height:1.5;">A sua reserva de <strong>cruise</strong> tem uma nova data.</p></td></tr><tr><td style="padding:0 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7f7f5;border-radius:8px;border-left:4px solid #e0b64a;"><tr><td style="padding:20px 24px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;color:#191919;line-height:2;"><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Data</td><td style="font-weight:600;"><strong>segunda-feira, 15 de junho de 2026</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Hora</td><td style="font-weight:600;"><strong>10:00</strong></td></tr><tr><td style="color:#8f8f8f;width:130px;vertical-align:top;">Pessoas</td><td style="font-weight:600;"><strong>2</strong></td></tr></table></td></tr></table></td></tr><tr><td align="center" style="padding:30px 32px 8px;"><a href="https://example.test/booking/manage?token=cancel-token" style="display:inline-block;background-color:#e0b64a;color:#1a1a1a;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;padding:13px 34px;border-radius:6px;">Gerir a minha reserva</a></td></tr><tr><td align="center" style="padding:22px 32px 6px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;color:#404040;line-height:1.7;">Dúvidas? Responda a este email, ou ligue-nos:<br><a href="tel:+351000000000" style="color:#191919;font-weight:600;text-decoration:none;">+351000000000</a></td></tr><tr><td align="center" style="padding:18px 32px 26px;font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;color:#a6a6a6;">Referência: LVT-2026-001</td></tr></table></td></tr></table></body></html>",
+    "sender": {
+      "email": "owner@example.test",
+      "name": "Example City Tours",
+    },
+    "subject": "Reserva alterada: cruise — segunda, 15/06, 10:00",
+    "textContent": "EXAMPLE CITY TOURS
+
+Olá Ada Lovelace,
+
+A sua reserva de cruise tem uma nova data.
+
+  Data: segunda-feira, 15 de junho de 2026
+  Hora: 10:00
+  Pessoas: 2
+
+Gerir a minha reserva:
+https://example.test/booking/manage?token=cancel-token
+
+Dúvidas? Responda a este email, ou ligue-nos:
++351000000000
+
+Referência: LVT-2026-001",
+    "to": [
+      {
+        "email": "ada@example.test",
+        "name": "Ada Lovelace",
+      },
+    ],
+  },
+}
+`;
