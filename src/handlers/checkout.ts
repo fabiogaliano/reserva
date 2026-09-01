@@ -1,5 +1,5 @@
 import type { Booking } from '../core/booking';
-import { DEFAULT_TOKEN_EXPIRY_DAYS, pickupOptionFor, resolveMeetingPoint, resolveService, type PickupType, type ServiceConfig } from '../core/config';
+import { DEFAULT_TOKEN_EXPIRY_DAYS, pickupOptionFor, resolveMeetingPoint, resolveService, type MetadataField, type PickupType, type ServiceConfig } from '../core/config';
 import { availabilityForDay, capacityForDate, defaultCapacityForDate, occupancyFor } from '../core/occupancy';
 import { priceFor } from '../core/pricing';
 import { generateUniqueReference } from '../core/reference';
@@ -72,6 +72,76 @@ function resolveCheckoutLocation(service: ServiceConfig, body: Record<string, un
   const pickupType = parsePickup(service, body.pickupType);
   const meetingPoint = resolveCheckoutMeetingPoint(service, pickupType, body);
   return { pickupType, meetingPointId: meetingPoint.id, meetingPointLabel: meetingPoint.label };
+}
+
+// Plan 024 (design decision 2): the whole 8 KB cap is on the SERIALIZED result, checked once after
+// every field has been validated/coerced — a per-field maxLength (text only) bounds individual
+// values, but the object as a whole still needs its own ceiling.
+const METADATA_MAX_SERIALIZED_BYTES = 8 * 1024;
+const DEFAULT_METADATA_TEXT_MAX_LENGTH = 500;
+
+// Plan 024 (design decision 2): strict coercion — no `"true"` -> boolean, no `"5"` -> number.
+// Every throw names the offending key, its declared type, and the violated constraint, so the
+// caller can correct the request from the envelope alone (direction doc §8, remediating errors).
+function coerceMetadataValue(field: MetadataField, raw: unknown): string | number | boolean {
+  if (field.type === 'text') {
+    if (typeof raw !== 'string') throw new HttpError(400, 'validation_failed', `metadata.${field.key} must be a string (declared type: text)`);
+    const maxLength = field.maxLength ?? DEFAULT_METADATA_TEXT_MAX_LENGTH;
+    if (raw.length > maxLength) throw new HttpError(400, 'validation_failed', `metadata.${field.key} must be at most ${maxLength} characters (declared type: text)`);
+    return raw;
+  }
+  if (field.type === 'number') {
+    if (typeof raw !== 'number' || !Number.isFinite(raw)) throw new HttpError(400, 'validation_failed', `metadata.${field.key} must be a number (declared type: number)`);
+    return raw;
+  }
+  if (field.type === 'boolean') {
+    if (typeof raw !== 'boolean') throw new HttpError(400, 'validation_failed', `metadata.${field.key} must be a boolean (declared type: boolean); it was not strictly coerced from another type`);
+    return raw;
+  }
+  // 'select'
+  if (typeof raw !== 'string') throw new HttpError(400, 'validation_failed', `metadata.${field.key} must be a string matching one of its declared options (declared type: select)`);
+  const validValues = (field.options ?? []).map((option) => option.value);
+  if (!validValues.includes(raw)) throw new HttpError(400, 'validation_failed', `metadata.${field.key} must be one of: ${validValues.join(', ')} (declared type: select)`);
+  return raw;
+}
+
+// Plan 024 (design decision 2): unknown keys rejected, `required` enforced, strict type coercion,
+// the whole serialized result capped at 8 KB, and a service with no declaration rejects any
+// non-empty metadata object — every branch names what was wrong and what to send instead. Returns
+// null (not `{}`) for "nothing to store", matching every pre-024 row and repo.ts's own
+// serializeBookingMetadata symmetry.
+function validateCheckoutMetadata(service: ServiceConfig, serviceSlug: string, raw: unknown): Record<string, unknown> | null {
+  const value = raw === undefined ? {} : raw;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new HttpError(400, 'validation_failed', 'metadata must be an object');
+  }
+  const input = value as Record<string, unknown>;
+  const fields = service.metadataFields ?? [];
+  if (fields.length === 0) {
+    if (Object.keys(input).length > 0) {
+      throw new HttpError(400, 'validation_failed', `service ${serviceSlug} declares no metadata fields; do not send metadata`);
+    }
+    return null;
+  }
+  const fieldByKey = new Map(fields.map((field) => [field.key, field]));
+  for (const key of Object.keys(input)) {
+    if (!fieldByKey.has(key)) {
+      throw new HttpError(400, 'validation_failed', `metadata.${key} is not a declared field for service ${serviceSlug}; declared keys: ${fields.map((field) => field.key).join(', ')}`);
+    }
+  }
+  const result: Record<string, unknown> = {};
+  for (const field of fields) {
+    if (!Object.prototype.hasOwnProperty.call(input, field.key)) {
+      if (field.required) throw new HttpError(400, 'validation_failed', `metadata.${field.key} is required (declared type: ${field.type})`);
+      continue;
+    }
+    result[field.key] = coerceMetadataValue(field, input[field.key]);
+  }
+  const serializedBytes = new TextEncoder().encode(JSON.stringify(result)).length;
+  if (serializedBytes > METADATA_MAX_SERIALIZED_BYTES) {
+    throw new HttpError(400, 'validation_failed', `metadata is ${serializedBytes} bytes serialized, over the ${METADATA_MAX_SERIALIZED_BYTES} byte limit; remove or shorten some fields`);
+  }
+  return Object.keys(result).length > 0 ? result : null;
 }
 
 function assertSlot(config: BookkitContext['config'], serviceSlug: string, start: string, now: string): { service: ReturnType<typeof resolveService>; startsAt: string; endsAt: string } {
@@ -150,6 +220,7 @@ export function handleCheckout(request: Request, context: BookkitContext): Promi
     // needs the service itself to validate pickupType against its declared option ids.
     const service = resolveService(context.config, serviceSlug);
     const location = resolveCheckoutLocation(service, body);
+    const metadata = validateCheckoutMetadata(service, serviceSlug, body.metadata);
     const locale = requireString(body.locale, 'locale');
     if (!context.config.locales.supported.includes(locale)) throw new HttpError(400, 'validation_failed', 'Unsupported locale');
     const now = nowIso(context);
@@ -188,7 +259,7 @@ export function handleCheckout(request: Request, context: BookkitContext): Promi
         const created = await context.repo.insertHoldWithCapacity({
           id: crypto.randomUUID(), reference, serviceSlug, quantity, pickupType: location.pickupType,
           meetingPointId: location.meetingPointId, meetingPointLabel: location.meetingPointLabel,
-          startsAt: candidate.startsAt, endsAt: candidate.endsAt, locale, priceMinor,
+          startsAt: candidate.startsAt, endsAt: candidate.endsAt, locale, priceMinor, metadata,
           currency: context.config.business.currency,
           holdExpiresAt: new Date(parseUtcInstant(now).getTime() + context.config.booking.holdMinutes * 60_000).toISOString(),
           cancelToken: tokenBytes(), operatorToken: tokenBytes(), createdAt: now, updatedAt: now,
