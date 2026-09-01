@@ -39,7 +39,8 @@ site (same `database_name`), so both Workers see the same bookings.
 D1 is the shared ledger, not the Cron Worker's complete configuration. Cloudflare bindings and
 secrets are per Worker and are not inherited from the site Worker. A production copy must attach
 all credentials read by the shared provider factory to this Worker too: Stripe payment/webhook
-secrets; Google service-account, impersonation, and calendar-id values; Brevo; Tourflow; the central
+secrets; Google service-account, impersonation, and calendar-id values; Brevo; webhook signing keys;
+the central
 operational-alert channel; and Bookkit's token-encryption secret when recovered emails need working
 management links. Repeat `wrangler secret put <NAME> --config worker/wrangler.jsonc` for every
 secret even if the site Worker already has a secret with the same name; put non-secret provider

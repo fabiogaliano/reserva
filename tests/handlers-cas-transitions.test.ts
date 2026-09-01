@@ -199,9 +199,9 @@ describe('stale compare-and-set transitions', () => {
 
   it('a charge.refunded cancellation that loses a race to a concurrent customer cancel drains only the winner’s retryable outbox', async () => {
     // calendarEventId: the winning customer-cancel transition below carries 'calendar_delete' in
-    // its own mutationSideEffectKinds (mirroring cancellationSideEffectKinds in src/handlers/
-    // index.ts), so this also pins that the stale webhook's re-read-and-drain path picks up and
-    // resolves the winner's calendar debt, not just its email/tourflow rows.
+    // its own mutationSideEffects (mirroring cancellationSideEffectSeeds in src/confirmation.ts),
+    // so this also pins that the stale webhook's re-read-and-drain path picks up and resolves the
+    // winner's calendar debt, not just its email/hook rows.
     const seeded = booking({ id: 'b-refund-vs-cancel', stripePaymentIntent: 'pi_refund_stale', calendarEventId: 'cal-refund-vs-cancel' });
     const repo = fakeRepository([seeded]);
     const realRefundTransition = repo.upsertRefundOperationAndTransitionToCancelled;

@@ -140,13 +140,13 @@ describe('D1 booking repository', () => {
     await db.prepare('DROP TRIGGER fail_confirmation_outbox').run();
   });
 
-  // Plan 011: proves the optional Tourflow row shares confirmWithSideEffectOperations' one D1
+  // Plan 011: proves the optional subscriber row shares confirmWithSideEffectOperations' one D1
   // batch just like calendar_create/email_confirmation above — a failure inserting ONLY the
-  // Tourflow row (the other two rows would insert cleanly on their own) must still roll back the
+  // hook row (the other two rows would insert cleanly on their own) must still roll back the
   // whole batch, leaving the booking unconfirmed and no partial rows behind.
-  it('rolls back the confirmation status when creating its Tourflow outbox row fails inside the same batch', async () => {
+  it('rolls back the confirmation status when creating its hook outbox row fails inside the same batch', async () => {
     const created = await repo.insertHold({
-      id: 'booking-tourflow-outbox-atomic',
+      id: 'booking-hook-outbox-atomic',
       reference: 'BKT-2026-TFOUTBOX',
       tourSlug: 'vintage',
       people: 2,

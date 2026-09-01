@@ -47,7 +47,7 @@ describe('local smoke runtime', () => {
       locals: { env: {
         BOOKKIT_DB: db,
         BOOKKIT_TOKEN_ENC_KEY: 'local-demo-token-encryption-key',
-        TOURFLOW_SHARED_SECRET: 'local-tourflow-secret',
+        BOOKKIT_OPERATOR_SECRET: 'local-operator-secret',
       } },
     });
     const emailSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined);
