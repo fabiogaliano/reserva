@@ -1,9 +1,9 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import { BrevoEmailProvider } from 'bookkit/providers/email-brevo';
-import { GoogleCalendarProvider } from 'bookkit/providers/calendar-google';
-import { TourflowOpsSink } from 'bookkit/providers/ops-tourflow';
-import { StripeProvider } from 'bookkit/providers/payments-stripe';
-import { defineCloudflareBookkitRuntime, type BookkitProviders } from 'bookkit/runtime';
+import { BrevoEmailProvider } from '@reservajs/astro/providers/email-brevo';
+import { GoogleCalendarProvider } from '@reservajs/astro/providers/calendar-google';
+import { TourflowOpsSink } from '@reservajs/astro/providers/ops-tourflow';
+import { StripeProvider } from '@reservajs/astro/providers/payments-stripe';
+import { defineCloudflareBookkitRuntime, type BookkitProviders } from '@reservajs/astro/runtime';
 import config from './bookkit.config';
 
 // A packed consumer's site and scheduled Worker both instantiate this factory. Every credential

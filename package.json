@@ -1,7 +1,10 @@
 {
-  "name": "bookkit",
+  "name": "@reservajs/astro",
   "version": "0.1.0",
   "description": "Reusable Astro booking integration for Cloudflare Workers, D1, and Stripe",
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",

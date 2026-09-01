@@ -1,4 +1,4 @@
-import type { ClientConfig } from 'bookkit';
+import type { ClientConfig } from '@reservajs/astro';
 
 export default {
   business: {

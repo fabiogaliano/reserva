@@ -55,7 +55,7 @@ const resolvedVirtualRuntimeId = '\0' + virtualRuntimeId;
 // consumer's runtimeEntrypoint default-exports, which is a BookkitRuntimeDefinition (aliased
 // as BookkitRuntime) regardless of which entrypoint file is wired up.
 const virtualRuntimeTypes = `declare module '${virtualRuntimeId}' {
-  import type { BookkitRuntime } from 'bookkit/runtime';
+  import type { BookkitRuntime } from '@reservajs/astro/runtime';
   const runtime: BookkitRuntime;
   export default runtime;
 }
@@ -67,7 +67,7 @@ const resolvedVirtualConfigId = '\0' + virtualConfigId;
 // Static declaration, like virtualRuntimeTypes above: the shape is fixed (resolved paths + group
 // flags), only the values differ per-consumer, so this never needs to be regenerated per-build.
 const virtualConfigTypes = `declare module '${virtualConfigId}' {
-  import type { BookkitResolvedRouteConfig } from 'bookkit';
+  import type { BookkitResolvedRouteConfig } from '@reservajs/astro';
   const config: BookkitResolvedRouteConfig;
   export default config;
 }

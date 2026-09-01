@@ -12,7 +12,7 @@
 // Astro `locals` are supplied (see src/runtime-context.ts getWorkerEnv/getWorkerWaitUntil) — those
 // globals work the same way in any Module Worker handler, scheduled() included, so this needs no
 // extra plumbing beyond the runtime definition every other entrypoint already shares.
-import { runReconciliation } from 'bookkit/runtime';
+import { runReconciliation } from '@reservajs/astro/runtime';
 import runtime from './runtime';
 
 export default {

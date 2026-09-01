@@ -1,8 +1,8 @@
 // Minimal but fully valid ClientConfig, imported through the package's real "." and "./core"
 // exports subpaths (not a relative ../../src import) — this fixture exists to prove those subpaths
 // resolve and typecheck as an installed consumer sees them (plan 010).
-import type { ClientConfig } from 'bookkit';
-import type { TourConfig } from 'bookkit/core';
+import type { ClientConfig } from '@reservajs/astro';
+import type { TourConfig } from '@reservajs/astro/core';
 
 const demoTour: TourConfig = {
   durationMin: 60,

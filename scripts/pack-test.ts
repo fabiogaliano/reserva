@@ -91,7 +91,7 @@ function writeImportAll(consumerDir: string): string[] {
   // `.astro` subpaths are proven by the fixture's pages and astro build; tsc cannot parse them.
   const subpaths = Object.entries(packageJson.exports)
     .filter(([, target]) => !target.endsWith('.astro'))
-    .map(([subpath]) => (subpath === '.' ? 'bookkit' : `bookkit${subpath.slice(1)}`));
+    .map(([subpath]) => (subpath === '.' ? '@reservajs/astro' : `@reservajs/astro${subpath.slice(1)}`));
   const imports = subpaths.map((specifier, index) => `import * as mod${index} from ${JSON.stringify(specifier)};`).join('\n');
   const usage = `export const importedSubpaths: unknown[] = [${subpaths.map((_, index) => `mod${index}`).join(', ')}];\n`;
   writeFileSync(resolve(consumerDir, 'import-all.generated.ts'), `${imports}\n\n${usage}`);
@@ -103,7 +103,7 @@ function assertScheduledTemplatePackaged(consumerDir: string): void {
     'examples/smoke-site/worker/scheduled.ts',
     'examples/smoke-site/worker/wrangler.jsonc',
   ]) {
-    const installedPath = resolve(consumerDir, 'node_modules/bookkit', relativePath);
+    const installedPath = resolve(consumerDir, 'node_modules/@reservajs/astro', relativePath);
     if (!existsSync(installedPath)) fail('template', `scheduled Worker template file missing from packed package: ${relativePath}`);
   }
 }
