@@ -39,8 +39,9 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
     if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const access = await accessAllowed(request, context);
     if (!access) throw new HttpError(403, 'forbidden', 'Cloudflare Access authorization required');
-    // Minted fresh per render and embedded as a hidden field in every admin form (BK-SEC-001 layer
-    // 2); handleAdminPost verifies it against the same Access-authenticated subject.
+    // Minted fresh per render and embedded as a hidden field in every admin form (layer 2 of the
+    // CSRF defense — see src/admin-csrf.ts); handleAdminPost verifies it against the same
+    // Access-authenticated subject.
     const csrfToken = await mintAdminCsrfToken(context, access.subject, context.clock().getTime());
     const requestUrl = new URL(request.url);
     if (requestUrl.searchParams.get('view') === 'settings') {
@@ -74,7 +75,7 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
     const editDate = url.searchParams.get('date')?.trim() ?? '';
     const saved = url.searchParams.get('saved') ?? '';
     const messages = resolveMessages(context.config, adminLocaleFor(context.config));
-    // Plan 020 (design decision 14): "30-day counts and recent resolved history" — since is a
+    // 30-day counts and recent resolved history — since is a
     // fixed 30-day lookback from the render clock, not a config option.
     const incidentsSince = new Date(parseUtcInstant(now).getTime() - 30 * 86_400_000).toISOString();
     const [openIncidents, resolvedIncidents, incidentCounts] = await Promise.all([
@@ -109,7 +110,7 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
       // `no-referrer` nulls the `Origin` header (per the Fetch spec) on this page's own
       // same-origin POSTs (the day-override/default-capacity/settings forms below), which trips
       // Astro's checkOrigin default (Origin "null" != url.origin) — a real cross-origin attempt is
-      // still stopped by adminOriginAllowed (BK-SEC-001 layer 1) regardless of this header.
+      // still stopped by adminOriginAllowed (layer 1 — see src/admin-csrf.ts) regardless of this header.
       // `same-origin` keeps the same token-leak protection this header exists for while letting
       // legitimate same-origin form submissions through.
       'referrer-policy': 'same-origin',
@@ -122,16 +123,16 @@ export function handleAdminPost(request: Request, context: ReservaContext): Prom
     if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const access = await accessAllowed(request, context);
     if (!access) throw new HttpError(403, 'forbidden', 'Cloudflare Access authorization required');
-    // BK-SEC-001 layer 1: Fetch-Metadata / Origin enforcement. Wired only here (the admin mutation
+    // Layer 1: Fetch-Metadata / Origin enforcement. Wired only here (the admin mutation
     // route), never on the public booking API — see src/admin-csrf.ts.
     if (!adminOriginAllowed(request)) throw new HttpError(403, 'forbidden', 'Cross-origin admin requests are not allowed');
     const form = await requestFormData(request);
-    // BK-SEC-001 layer 2: per-session CSRF token, bound to the same Access-authenticated subject
+    // Layer 2: per-session CSRF token, bound to the same Access-authenticated subject
     // the request was just verified against.
     const csrfToken = form.get('csrf_token');
     const csrfOk = await verifyAdminCsrfToken(context, typeof csrfToken === 'string' ? csrfToken : null, access.subject, context.clock().getTime());
     if (!csrfOk) throw new HttpError(403, 'forbidden', 'Invalid or expired CSRF token');
-    // Plan 005: every settings/capacity write below records who changed it, atomically with the
+    // Every settings/capacity write below records who changed it, atomically with the
     // change. access.subject is '' when a custom adminAuth exposes no per-user identity (see
     // AdminIdentity's doc comment) — normalized to null here to match the design intent that an
     // anonymous-verifier deployment records "no known actor", not the empty string.
@@ -145,7 +146,7 @@ export function handleAdminPost(request: Request, context: ReservaContext): Prom
       const location = new URL(request.url);
       location.hash = 'bk-incidents';
       if (action === 'incident-resolve') {
-        // Decision 13: "requires a trimmed 1-500 char note", records the Access subject/time, and
+        // Requires a trimmed 1-500 char note, records the Access subject/time, and
         // never falsifies the underlying provider/refund row — this only ever calls
         // resolveIncidentManual, nothing that touches bookings/side_effect_operations/
         // refund_operations.
@@ -157,7 +158,7 @@ export function handleAdminPost(request: Request, context: ReservaContext): Prom
         location.searchParams.set('saved', 'incident-resolved');
         return new Response(null, { status: 303, headers: { location: location.toString(), 'cache-control': 'no-store' } });
       }
-      // 'incident-retry': one immediate leased attempt, per decision 13. 'oversell' has no safe
+      // 'incident-retry': one immediate leased attempt. 'oversell' has no safe
       // one-shot retry (the STOP condition src/confirmation.ts's retrySideEffectOperation already
       // enforces) — reject it server-side too, so the UI's omitted Retry button is not the only
       // thing stopping the action.
@@ -165,7 +166,7 @@ export function handleAdminPost(request: Request, context: ReservaContext): Prom
       const booking = await context.repo.getBookingById(incident.bookingId);
       if (!booking) throw new HttpError(404, 'not_found', 'Booking not found');
       if (sourceType === 'side_effect') {
-        // Plan 021: the incident's source_key is a rendering of an operation's identity, not a
+        // The incident's source_key is a rendering of an operation's identity, not a
         // parseable encoding of it — so find the row by rebuilding each candidate's key and
         // comparing, never by slicing the identity back out of the string.
         const operations = await context.repo.listSideEffectOperations(incident.bookingId);
@@ -209,7 +210,7 @@ export function handleAdminPost(request: Request, context: ReservaContext): Prom
       const base = context.baseConfig ?? context.config;
       // candidateRows starts from every currently stored override (not just this section) so the
       // merge-then-validate check below sees the config the way a request would actually merge it,
-      // catching cross-field rules that no single field's SettingKind bound can (BK-CONFIG-001).
+      // catching cross-field rules that no single field's SettingKind bound can.
       const candidateRows = await context.repo.listSettings();
       const operations: SettingsBatchOperation[] = [];
       for (const definition of definitions) {

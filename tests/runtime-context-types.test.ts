@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expectTypeOf, it } from 'vitest';
-import config from '../examples/client-config';
+import config from '../examples/minimal/client-config';
 import type { ReservaCache } from '../src/context';
 import { defineCloudflareReservaRuntime, type CloudflareRuntimeBindings } from '../src/runtime-context';
 

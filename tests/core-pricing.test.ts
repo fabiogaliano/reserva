@@ -99,8 +99,8 @@ describe('core pricing', () => {
   });
 });
 
-// Plan 023 (design decision 2): a service with no `location` module has no pickup axis at all —
-// pricing rules omit `pickup` entirely and selection is by quantity tier alone.
+// A service with no `location` module has no pickup axis at all — pricing rules omit `pickup`
+// entirely and selection is by quantity tier alone.
 describe('location-less pricing (tiers only)', () => {
   const tieredPricing: PricingRule[] = [
     { maxQuantity: 4, priceMinor: 10000 },
@@ -143,10 +143,10 @@ describe('location-less pricing (tiers only)', () => {
   });
 });
 
-// Plan 018 (design decision 2/3): Maze Services' motivating case — four declared pickup options
-// priced outright (180/200/200/210 €), not as a surcharge on top of the meeting-point price.
-// custom_both must resolve to 210 €, not 180 + 20 + 20 = 220 €, proving priceFor's per-(pickup,
-// maxQuantity) lookup stays non-additive once the axis is a service-declared id set instead of a fixed
+// Maze Services' motivating case — four declared pickup options priced outright
+// (180/200/200/210 €), not as a surcharge on top of the meeting-point price. custom_both must
+// resolve to 210 €, not 180 + 20 + 20 = 220 €, proving priceFor's per-(pickup, maxQuantity)
+// lookup stays non-additive once the axis is a service-declared id set instead of a fixed
 // default/custom pair.
 describe('non-additive pickup options (Maze fixture)', () => {
   const mazePricing: PricingRule[] = [
@@ -193,9 +193,9 @@ describe('non-additive pickup options (Maze fixture)', () => {
     expect(table.custom_both?.[2]).toBe(21000);
   });
 
-  // Plan 023 (design decision 2): pickupIdsFor's 'default'/'custom' pinning is gone — it existed
-  // only for byte-identity with the removed pre-018 widget markup. The key order is now plain
-  // first-occurrence order from the (maxQuantity-sorted) pricing rows.
+  // pickupIdsFor's 'default'/'custom' pinning is gone — it existed only for byte-identity with
+  // widget markup this library no longer renders. The key order is now plain first-occurrence
+  // order from the (maxQuantity-sorted) pricing rows.
   it('orders table keys by first occurrence, with no default/custom pinning', () => {
     const customFirst: PricingRule[] = [
       { maxQuantity: 4, pickup: 'custom', priceMinor: 12000 },

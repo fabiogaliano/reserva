@@ -1,4 +1,4 @@
-// Plan 021 (design decision 5): migrations/0017_side_effect_operation_identity.sql rebuilds
+// migrations/0017_side_effect_operation_identity.sql rebuilds
 // side_effect_operations to replace the colon-string `kind` with the family/name/event/discriminator
 // identity columns. This proves the decomposition is lossless for every legacy kind shape that ever
 // existed (0007's four literals, 0010's email grammar with and without a recipient/discriminator,

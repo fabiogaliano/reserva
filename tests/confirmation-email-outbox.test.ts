@@ -25,7 +25,7 @@ function paidWebhookProviders(bookingId: string, sessionRef: string, overrides: 
   });
 }
 
-// Plan 012: per-recipient confirmation email operations. Complements confirmation-outbox.test.ts
+// Per-recipient confirmation email operations. Complements confirmation-outbox.test.ts
 // (which covers the plain-send/combined shape) with coverage for a split-capable provider's
 // per-recipient email rows (family 'email', name 'customer'/'owner', event 'booking.confirmed').
 describe('confirmation-path per-recipient email outbox (plan 012)', () => {
@@ -61,7 +61,7 @@ describe('confirmation-path per-recipient email outbox (plan 012)', () => {
     expect(sideEffectOperation(repo, seeded.id, OWNER)).toMatchObject({ status: 'succeeded', attemptCount: 2 });
   });
 
-  // Plan 022: the derived emailSynced flag this used to observe is gone; the per-recipient rows ARE
+  // The derived emailSynced flag this used to observe is gone; the per-recipient rows ARE
   // the record now, so the invariant is asserted where it lives — after the first recipient
   // resolves, the confirmation as a whole is still not delivered.
   it('counts the confirmation email as delivered only once BOTH split rows have succeeded, not after the first', async () => {

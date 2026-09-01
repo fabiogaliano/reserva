@@ -1,4 +1,4 @@
-// Plan 025: the admin auth port's identity shape. `subject` is what the admin CSRF token binds to
+// The admin auth port's identity shape. `subject` is what the admin CSRF token binds to
 // (src/admin-csrf.ts) — the default Cloudflare Access implementation below prefers the Access JWT's
 // `email` claim over its raw `sub` claim (matching what an operator actually recognizes); a custom
 // adminAuth with no per-user identity to bind may return the documented empty-string subject
@@ -110,7 +110,7 @@ export async function verifyAccessJwt(request: Request, config: AccessAdminConfi
   if (!jwk || !(await verify(parts, jwk, crypto))) throw new AccessVerificationError('access assertion signature mismatch');
   return parts.claims;
 }
-// Plan 025 (design decision 2): the admin auth port's default implementation. Auto-wired by
+// The admin auth port's default implementation. Auto-wired by
 // defineCloudflareReservaRuntime only when `config.admin.access` is configured — never both this
 // and a consumer-supplied `adminAuth` at once (validated once, synchronously, at runtime-definition
 // initialization; see src/runtime-context.ts). A single-argument `(request) => ...` function is

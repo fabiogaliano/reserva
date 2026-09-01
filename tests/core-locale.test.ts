@@ -1,5 +1,5 @@
-// Plan 027 (design decision 5 / step 5): locale negotiation. The cases below are the ones the
-// first consumer had to shim around in its own code before this existed.
+// Locale negotiation. The cases below are the ones the first consumer had to shim around in its
+// own code before this existed.
 import { describe, expect, it } from 'vitest';
 import { resolveLocale } from '../src/core/locale';
 

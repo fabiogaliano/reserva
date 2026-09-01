@@ -1,4 +1,4 @@
-// Plan 021: the events layer's behavior through its public entry points — the Stripe webhook and
+// Covers the events layer's behavior through its public entry points — the Stripe webhook and
 // /status handlers, config validation, and the runtime factory — against the shared in-memory
 // repository fake. Signature mechanics live in tests/webhooks.test.ts (verified there with the
 // Standard Webhooks library); this file covers what the library promises ABOUT an event: who
@@ -235,9 +235,8 @@ describe('durable webhook delivery on the confirmation path', () => {
     for (const attempt of sent) expect(() => verifyAttempt(attempt)).not.toThrow();
   });
 
-  // Plan 024 (design decision 3): the webhook envelope carries the RAW consumer-declared record
-  // (values, not the labeled rows the manage/confirmation/email surfaces render), and follows the
-  // wave's empty-value rule — a collection is `{}` when absent, never `null`.
+  // The webhook envelope carries the RAW consumer-declared record (values, not the labeled rows
+  // the manage/confirmation/email surfaces render); a collection is `{}` when absent, never `null`.
   it('carries the raw metadata record in data.booking.metadata, and {} when the booking has none', async () => {
     const withMetadata = booking({
       id: 'webhook-metadata', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z',
@@ -259,7 +258,7 @@ describe('durable webhook delivery on the confirmation path', () => {
         secrets: async (name) => (name === 'PARTNER_WEBHOOK_SECRET' ? WEBHOOK_SECRET : undefined),
         waitUntil: (task) => pending.push(task),
         // A distinct paymentRef: paidWebhookProviders hardcodes 'pi_events_layer', which would
-        // collide with the first booking's already-confirmed payment_ref (BK-SCHEMA-001's partial
+        // collide with the first booking's already-confirmed payment_ref (the schema's partial
         // unique index) and 409 instead of confirming.
         providers: {
           ...paidWebhookProviders(withoutMetadata.id, 'cs_webhook_no_metadata'),

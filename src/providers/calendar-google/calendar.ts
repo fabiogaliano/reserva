@@ -46,13 +46,13 @@ function eventToCalEvent(event: GoogleEvent): CalEvent {
 function eventPayload(booking: Booking, config: ClientConfig | undefined, _timezone: string): GoogleEvent {
   const title = `${booking.reference} — ${booking.serviceSlug} — ${booking.quantity} quantity`;
   const service = config?.services[booking.serviceSlug];
-  // Plan 023 (design decision 4): gated on the row's own data first — a location-less booking
+  // Gated on the row's own data first — a location-less booking
   // gets no Pickup line at all, not a "Default meeting point" placeholder.
   const presentation = service ? pickupPresentationFor(service, booking) : null;
-  // Plan 017 (design decision 4): same per-booking resolution as Brevo — a removed meeting point
+  // Same per-booking resolution as Brevo — a removed meeting point
   // id falls back to the booking's stored label snapshot with no maps link.
   const resolvedPoint = service && presentation ? meetingPointForBooking(service, booking.meetingPointId ?? null, booking.meetingPointLabel ?? null) : null;
-  // Plan 018 (design decision 8): the two flags are independent gates, so an option declaring
+  // The two flags are independent gates, so an option declaring
   // BOTH (Maze's combined pickup+drop-off) shows the address on the Pickup line AND the maps URL
   // line.
   const requiresAddress = presentation?.requiresAddress ?? false;
@@ -102,7 +102,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
     headers.set('accept', 'application/json');
     headers.set('authorization', `Bearer ${await this.auth.getAccessToken()}`);
     const response = await this.request(this.url(path), { ...init, headers });
-    // Plan 016 (design decision 2): a structured ProviderFailure (status already in hand) so the
+    // A structured ProviderFailure (status already in hand) so the
     // outbox attempt cap (src/confirmation.ts) can classify this without parsing message text.
     if (!response.ok) throw new ProviderFailure({ status: response.status, message: `Google Calendar request failed (${response.status})` });
     return response;
@@ -132,7 +132,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
         try {
           events.push(eventToCalEvent(event));
         } catch {
-          // Calendar records without usable timed bounds cannot consume capacity capacity.
+          // Calendar records without usable timed bounds cannot consume capacity.
         }
       }
       pageToken = body.nextPageToken;

@@ -1,4 +1,4 @@
-// Plan 027 (design decision 6, step 7): the catalog endpoint is the deployment describing itself.
+// The catalog endpoint is the deployment describing itself.
 // Two properties matter and both are asserted here: the shape is always-present-nullable (so a
 // consumer never branches on key presence), and it never leaks the operational facts that belong
 // to the quote and availability endpoints.
@@ -10,7 +10,7 @@ import { handleCatalog } from '../src/handlers';
 import { config, service } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
-// Location-less, with consumer-declared metadata fields carrying per-locale labels (plan 024).
+// Location-less, with consumer-declared metadata fields carrying per-locale labels.
 const cruise: ServiceConfig = {
   title: 'River Cruise',
   durationMin: 90,
@@ -89,7 +89,7 @@ describe('GET /api/booking/catalog (plan 027 design decision 6)', () => {
       slug: 'cruise',
       title: 'River Cruise',
       durationMin: 90,
-      // Plan 023's always-present-nullable convention: an absent optional module is null, never a
+      // The always-present-nullable convention: an absent optional module is null, never a
       // missing key.
       location: null,
       metadataFields: [
@@ -109,7 +109,7 @@ describe('GET /api/booking/catalog (plan 027 design decision 6)', () => {
   it('resolves declared labels into the negotiated locale', async () => {
     const { payload } = await catalog('https://example.test/api/booking/catalog?locale=pt');
     const cruiseEntry = payload.services.find((entry: any) => entry.slug === 'cruise');
-    // 'pt' negotiates onto the supported 'pt-BR' (plan 027 design decision 5).
+    // 'pt' negotiates onto the supported 'pt-BR'.
     expect(cruiseEntry.metadataFields[0].label).toBe('Restrições alimentares');
     expect(cruiseEntry.metadataFields[1].options[0].label).toBe('Janela');
     // A label declared as a plain string is locale-independent by construction.

@@ -28,8 +28,8 @@ function providers(env: Env): ReservaProviders {
     payments: stripe({
       secretKey: env.STRIPE_SECRET_KEY,
       webhookSecret: env.STRIPE_WEBHOOK_SECRET,
-      // Plan 022 (design decision 7): payment methods are the adapter's option, not a core config
-      // key — a packed consumer has to be able to reach them from the factory.
+      // Payment methods are the adapter's option, not a core config key — a packed consumer has
+      // to be able to reach them from the factory.
       paymentMethods: ['card', 'mb_way'],
     }),
     calendar: new GoogleCalendarProvider({

@@ -6,7 +6,7 @@ interface TestEnv {
   RESERVA_DB: D1Database;
 }
 
-// Plan 003: real-D1 coverage for the capacity feature (per-day overrides + capacity defaults) and
+// Real-D1 coverage for the capacity feature (per-day overrides + capacity defaults) and
 // the two hottest list queries (listOccupancyBookings/listUpcoming), none of which ran against
 // actual SQL before this file existed — see tests/workers/repo-d1.test.ts for the established
 // pattern this file follows (createBookingRepository(db) on the RESERVA_DB binding, beforeEach
@@ -22,7 +22,7 @@ beforeEach(async () => {
   await db.prepare('DELETE FROM admin_change_history').run();
 });
 
-// Plan 005's required audit param, threaded through the plural/singular batched writes below.
+// The required audit param, threaded through the plural/singular batched writes below.
 // The history rows it produces are covered end to end by tests/workers/admin-history.test.ts —
 // this file stays focused on the day-override/capacity-default mechanics it already covered.
 const TEST_AUDIT = { actor: 'operator@example.test', changedAt: '2026-08-01T00:00:00.000Z' };
@@ -122,7 +122,7 @@ describe('plural batched day-override methods against real D1', () => {
     ]);
   });
 
-  // Plan 005: proves the change AND its per-date admin_change_history rows actually land together
+  // Proves the change AND its per-date admin_change_history rows actually land together
   // against real D1 — the unit-level fakeD1 test (tests/repo.test.ts) proves the mechanism (one
   // db.batch() call); this proves the mechanism's real-D1 effect.
   it('upsertDayOverrides writes one admin_change_history row per date, atomically with the day_overrides rows', async () => {

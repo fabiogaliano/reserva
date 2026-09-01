@@ -4,13 +4,13 @@ import { format } from 'date-fns';
 export interface BookingOpts {
   service: string;
   quantity: number;
-  // Plan 017 (design decision 5): selects a non-default meeting point when the service declares 2+
-  // (the widget pre-checks the first one, which is why every other caller omits this and still
-  // books that first point unchanged). No-op when the service has 0-1 points, since the widget then
-  // renders no such group to select from.
+  // Selects a non-default meeting point when the service declares 2+ (the widget pre-checks the
+  // first one, which is why every other caller omits this and still books that first point
+  // unchanged). No-op when the service has 0-1 points, since the widget then renders no such
+  // group to select from.
   meetingPointId?: string;
-  // Plan 023 (design decision 1): the page hosting `opts.service`'s widget — defaults to the
-  // homepage (oldTown). A location-less service is demoed from its own page (see river-cruise.astro).
+  // The page hosting `opts.service`'s widget — defaults to the homepage (oldTown). A
+  // location-less service is demoed from its own page (see river-cruise.astro).
   path?: string;
 }
 
@@ -45,8 +45,8 @@ export async function createBooking(page: Page, opts: BookingOpts) {
   // accidentally grabs the pickup-type radios rendered further down the same form).
   await page.getByRole('radiogroup').getByRole('radio').first().check();
 
-  // 5. Pick pickup — omitted entirely for a location-less service (plan 023), whose widget renders
-  // no pickupType radios at all.
+  // 5. Pick pickup — omitted entirely for a location-less service, whose widget renders no
+  // pickupType radios at all.
   const pickupRadio = page.locator('input[name="pickupType"][value="default"]');
   if (await pickupRadio.count() > 0) await pickupRadio.check();
 

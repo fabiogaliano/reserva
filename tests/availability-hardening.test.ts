@@ -209,7 +209,7 @@ describe('calendar availability hardening', () => {
     expect(calls).toBe(0);
   });
 
-  // Plan 018 (design decision 3): the party-size price probe iterates the pickup ids the service's
+  // The party-size price probe iterates the pickup ids the service's
   // pricing rows declare — a Maze-shaped service has no 'default'/'custom' rows at all, so the old
   // literal-pair probe would have 400'd every availability request for it.
   it('serves availability for a service whose pricing uses only declared non-enum pickup ids', async () => {

@@ -1,9 +1,9 @@
-// Plan 013 item D (audit finding #17): migrations/0012_calendar_delete_outbox.sql rebuilds
-// side_effect_operations via rename -> create -> INSERT...SELECT * -> drop, the same rebuild shape
-// 0010 and 0011 already have preservation tests for (tests/workers/repo-d1.test.ts:572,
-// tests/workers/schema-constraints.test.ts:226). 0012 had none. This proves the actual migration,
-// applied against real D1, carries every pre-existing outbox row through byte-for-byte, keeps the
-// pending index, widens the kind CHECK to admit 'calendar_delete', and leaves no dangling FK.
+// migrations/0012_calendar_delete_outbox.sql rebuilds side_effect_operations via rename -> create ->
+// INSERT...SELECT * -> drop, the same rebuild shape 0010 and 0011 already have preservation tests for
+// (tests/workers/repo-d1.test.ts:572, tests/workers/schema-constraints.test.ts:226). 0012 had none.
+// This proves the actual migration, applied against real D1, carries every pre-existing outbox row
+// through byte-for-byte, keeps the pending index, widens the kind CHECK to admit 'calendar_delete',
+// and leaves no dangling FK.
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
@@ -16,12 +16,12 @@ interface TestEnv {
 const bindings = env as unknown as TestEnv;
 const db = bindings.RESERVA_DB;
 
-// Plan 017 (design decision 3): repo.insertHold now always writes meeting_point_id/-label
-// (migration 0014), so it can't seed the FK-parent rows below against this test's deliberately
-// pre-0012 schema. Only these FK-parent rows need to exist at all (nothing here asserts on their
-// own columns) -- a raw INSERT covering just the columns 0001_init.sql guarantees NOT NULL,
-// present since before every migration this suite ever slices before, decouples this
-// historical-schema test from the CURRENT repo.ts column list going forward.
+// repo.insertHold now always writes meeting_point_id/-label (migration 0014), so it can't seed the
+// FK-parent rows below against this test's deliberately pre-0012 schema. Only these FK-parent rows
+// need to exist at all (nothing here asserts on their own columns) -- a raw INSERT covering just the
+// columns 0001_init.sql guarantees NOT NULL, present since before every migration this suite ever
+// slices before, decouples this historical-schema test from the CURRENT repo.ts column list going
+// forward.
 async function seedBooking(id: string): Promise<void> {
   await db.prepare(
     `INSERT INTO bookings (id, reference, tour_slug, people, pickup_type, starts_at, ends_at, locale, price_cents, status, cancel_token, operator_token, created_at, updated_at)

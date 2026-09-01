@@ -35,7 +35,7 @@ test('availability response carries the exact fields the widget consumes', async
 
   const slot = openDay.slots[0];
   expect(typeof slot.start).toBe('string');
-  // Plan 027 (design decision 4): structured scarcity — a number only inside the threshold band,
+  // Structured scarcity — a number only inside the threshold band,
   // null above it, and never a rendered status string.
   expect(slot.remaining === null || typeof slot.remaining === 'number').toBe(true);
   if (slot.remaining !== null) expect(slot.remaining).toBeLessThanOrEqual(availability.limitedThreshold);
@@ -52,7 +52,7 @@ test('booking a slot decreases its remaining count by one, and selling it out re
   // (3 in this fixture) and only ever counts down, so however many other specs' bookings already
   // landed on this exact slot before this test ran, driving it the rest of the way to zero (rather
   // than assuming a fixed starting count) keeps this test independent of run order.
-  // Plan 027 (design decision 4): the exact count is published only once it is at or below the
+  // The exact count is published only once it is at or below the
   // deployment's limitedThreshold, so this drives the slot to sold-out and asserts the countdown
   // over whatever part of it is visible, rather than assuming a starting number.
   let previous: number | null = openDay.slots[0].remaining;

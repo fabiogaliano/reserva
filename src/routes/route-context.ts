@@ -21,7 +21,7 @@ export async function createRouteContext(input: ReservaRuntimeRequest): Promise<
   // `baseConfig` keeps the pristine file values for the settings page's "config default" hints.
   const overrides = await context.repo.listSettings();
   if (Object.keys(overrides).length === 0) return { ...context, routeConfig, viewerTheme };
-  // Stored rows are never re-checked against today's rules once written (BK-CONFIG-001): a row
+  // Stored rows are never re-checked against today's rules once written: a row
   // saved before a bound tightened must degrade to the file config for this request, not serve an
   // invalid config or take the whole site down — loadMergedConfig drops offending rows and reports
   // them here so they show up in logs instead of silently persisting.

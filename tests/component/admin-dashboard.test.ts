@@ -1,6 +1,6 @@
-// Plan 009: renders the actual compiled AdminDashboard.astro component (not just its source text,
-// unlike tests/ui-booking-widget.test.ts — see vitest.component.config.ts for why this needs its
-// own Vitest config). Proves the component mints a working CSRF token from the Access-authenticated
+// Renders the actual compiled AdminDashboard.astro component (not just its source text, unlike
+// tests/ui-booking-widget.test.ts — see vitest.component.config.ts for why this needs its own
+// Vitest config). Proves the component mints a working CSRF token from the Access-authenticated
 // subject, matches the built-in admin page's "no secret configured" fail-open, and fails visibly
 // (a notice, not a form that can only 403) when Access itself fails.
 import { experimental_AstroContainer as AstroContainer } from 'astro/container';

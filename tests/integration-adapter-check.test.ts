@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { reserva } from '../src/integration';
-import config from '../examples/client-config';
+import config from '../examples/minimal/client-config';
 
-const baseOptions = { config, runtimeEntrypoint: './examples/runtime.ts' };
+const baseOptions = { config, runtimeEntrypoint: './examples/minimal/runtime.ts' };
 
 // astro:config:done only needs `config` and `injectTypes`/`logger` from the hook payload;
 // stub the rest as unused so this stays a narrow unit test of the adapter check.

@@ -1,5 +1,4 @@
-// Plan 018 (design decision 4): migrations/0015_pickup_options.sql rebuilds `bookings` the same
-// way 0011/0013 already do (rename -> create -> INSERT...SELECT with an explicit column list ->
+// migrations/0015_pickup_options.sql rebuilds `bookings` the same way 0011/0013 already do (rename -> create -> INSERT...SELECT with an explicit column list ->
 // drop -> rename — see tests/workers/schema-constraints.test.ts's 0011 lossless test and
 // tests/workers/migration-0013-preservation.test.ts, which this mirrors), removing ONLY the
 // pickup_type CHECK while every other 0011 CHECK and the partial unique payment-intent index
@@ -221,7 +220,7 @@ describe('migration 0015 rebuild removes the pickup_type CHECK, preserving every
     ).rejects.toThrow();
 
     // The rebuilt table's own CREATE TABLE sql must not carry the old pickup_type CHECK anywhere --
-    // normalized the same way src/runtime-context.ts's bookingsSchemaPresent checks it.
+    // normalized the same way src/schema-check.ts's bookingsSchemaPresent checks it.
     const bookingsSchema = (await db.prepare(
       `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'bookings'`,
     ).all<{ sql: string }>()).results[0];

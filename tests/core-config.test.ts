@@ -17,8 +17,8 @@ describe('core config and pricing validation', () => {
     expect(validateConfig(validated)).toEqual(validated);
   });
 
-  // Plan 023 (design decision 1): the v1 top-level keys are rejected with a message pointing at
-  // their new home under `location`, not silently ignored or misinterpreted.
+  // The v1 top-level keys are rejected with a message pointing at their new home under
+  // `location`, not silently ignored or misinterpreted.
   it('rejects the v1 top-level meetingPoint key with a migration-pointing message', () => {
     const invalid = {
       ...config,
@@ -43,8 +43,8 @@ describe('core config and pricing validation', () => {
     expect(() => validateConfig(invalid)).toThrow(/'pickupOptions' is a v1 top-level key.*declare services\.vintage\.location\.pickupOptions/);
   });
 
-  // Plan 023 (design decision 1): absent `location` is now a fully valid, ordinary service — no
-  // pickup dimension anywhere. This is the tiers-only case core-pricing.test.ts prices.
+  // Absent `location` is a fully valid, ordinary service — no pickup dimension anywhere. This
+  // is the tiers-only case core-pricing.test.ts prices.
   it('accepts a service with no location module at all', () => {
     const noLocation = {
       ...config,
@@ -225,8 +225,8 @@ describe('core config and pricing validation', () => {
     expect(() => validateConfig(invalid)).toThrow(/missing custom pricing for quantity=5/);
   });
 
-  // Plan 018 (design decision 2): the pricing axis is a plain string now, so validateService is the
-  // only thing that can reject a row pointing at an id the service never declared.
+  // The pricing axis is a plain string, so validateService is the only thing that can reject a
+  // row pointing at an id the service never declared.
   it('rejects a pricing row that references an undeclared pickup option id', () => {
     const invalid = {
       ...config,
@@ -246,8 +246,8 @@ describe('core config and pricing validation', () => {
     expect(() => validateConfig(invalid)).toThrow(/references undeclared pickup option unknown_option; valid pickup option ids: meeting_point/);
   });
 
-  // Plan 018 (design decision 2): the coverage loop iterates declared option ids instead of the
-  // old literal ['default', 'custom'] pair, so a hole is reported per declared id.
+  // The coverage loop iterates declared option ids instead of a fixed ['default', 'custom']
+  // pair, so a hole is reported per declared id.
   it('reports a per-id coverage hole for a declared pickup option', () => {
     const invalid = {
       ...config,
@@ -325,10 +325,10 @@ describe('core config and pricing validation', () => {
     expect(() => validateConfig({ ...config, booking: { ...config.booking, holdMinutes: 34 } })).toThrow(/at least 35/);
   });
 
-  // Plan 022 (design decision 7): the 24h checkout-session cap and Stripe's locale list are the
-  // Stripe adapter's limits, checked by its validateConfig (tests/providers-stripe.test.ts).
-  // Core only keeps the vendor-neutral rules: a hold long enough to outlive its payment session,
-  // and locale tags a formatter can actually use.
+  // The 24h checkout-session cap and Stripe's locale list are the Stripe adapter's limits,
+  // checked by its validateConfig (tests/providers-stripe.test.ts). Core only keeps the
+  // vendor-neutral rules: a hold long enough to outlive its payment session, and locale tags a
+  // formatter can actually use.
   it('accepts any hold at or above the safety floor, with no vendor-imposed ceiling', () => {
     expect(() => validateConfig({ ...config, booking: { ...config.booking, holdMinutes: 4320 } })).not.toThrow();
   });
@@ -361,9 +361,9 @@ describe('core config and pricing validation', () => {
     expect(() => validateConfig(config)).not.toThrow();
   });
 
-  // Plan 025 (design decision 3): admin.access is optional as a pair — declaring one field without
-  // the other is a config error, and omitting it entirely (a custom-adminAuth deployment) is valid
-  // at the config-schema layer (the runtime-definition boundary enforces that an auth path actually
+  // admin.access is optional as a pair — declaring one field without the other is a config
+  // error, and omitting it entirely (a custom-adminAuth deployment) is valid at the
+  // config-schema layer (the runtime-definition boundary enforces that an auth path actually
   // exists — see tests/runtime-context-admin-auth.test.ts).
   it('accepts admin.access absent entirely (custom-adminAuth deployment)', () => {
     const { access: _omit, ...adminWithoutAccess } = config.admin;
@@ -375,9 +375,9 @@ describe('core config and pricing validation', () => {
     expect(() => validateConfig({ ...config, admin: { ...config.admin, access: { aud: config.admin.access!.aud } } })).toThrow();
   });
 
-  // Plan 025 (design decision 3): routes.admin/routes.ops moved here from the Astro-only
-  // ReservaIntegrationOptions.routes — both are optional booleans, defaulted (`?? true`) by
-  // whoever reads them (the integration and the runtime factory), not by this schema.
+  // routes.admin/routes.ops moved here from the Astro-only ReservaIntegrationOptions.routes —
+  // both are optional booleans, defaulted (`?? true`) by whoever reads them (the integration and
+  // the runtime factory), not by this schema.
   it('accepts routes.admin/routes.ops as optional booleans, and rejects a non-boolean value', () => {
     expect(validateConfig({ ...config, routes: { admin: false, ops: false } }).routes).toEqual({ admin: false, ops: false });
     expect(validateConfig(config).routes).toBeUndefined();
@@ -472,9 +472,9 @@ describe('meetingPointForBooking', () => {
     });
   });
 
-  // Plan 017 (design decision 3): a stored id no longer declared falls back to the booking's own
-  // label snapshot with no maps link — validateConfig can't cross-check the DB, and an operator
-  // may remove a point that existing bookings still reference.
+  // A stored id no longer declared falls back to the booking's own label snapshot with no maps
+  // link — validateConfig can't cross-check the DB, and an operator may remove a point that
+  // existing bookings still reference.
   it('falls back to the stored label snapshot, with no maps link, for a since-removed id', () => {
     expect(meetingPointForBooking(multiPointTour, 'no-longer-declared', 'The Old Dock')).toEqual({
       label: 'The Old Dock',
@@ -498,8 +498,8 @@ describe('meetingPointForBooking', () => {
     });
   });
 
-  // Plan 023 (design decision 4): a service that has since dropped its location module entirely
-  // must still degrade gracefully (never throw) for a pre-v2 row that still references one.
+  // A service that has since dropped its location module entirely must still degrade gracefully
+  // (never throw) for a pre-v2 row that still references one.
   it('degrades gracefully, never throwing, for a service that no longer declares any location at all', () => {
     const { location: _location, ...noLocation }: ServiceConfig = service;
     expect(meetingPointForBooking(noLocation, null, null)).toEqual({ label: '', mapsUrl: null });
@@ -541,8 +541,8 @@ describe('pickupPresentationFor', () => {
       .toEqual({ requiresAddress: true, usesMeetingPoint: false });
   });
 
-  // Plan 023 (design decision 4): a stale/removed id falls back to what the row itself proves was
-  // collected, not a guess pinned to the retired default/custom pair.
+  // A stale/removed id falls back to what the row itself proves was collected, not a guess
+  // pinned to the retired default/custom pair.
   it('falls back to the row\'s own evidence for a since-removed pickup option id', () => {
     expect(pickupPresentationFor(service, { pickupType: 'no-longer-declared', pickupAddress: 'Hotel Mundial', meetingPointId: null }))
       .toEqual({ requiresAddress: true, usesMeetingPoint: false });
@@ -551,8 +551,8 @@ describe('pickupPresentationFor', () => {
   });
 });
 
-// Plan 024 (design decisions 1/3): the declaration DSL (four types, three modifiers), its config
-// validation, and the read-surface label/value resolution — checkout's own coercion is covered by
+// The declaration DSL (four types, three modifiers), its config validation, and the
+// read-surface label/value resolution — checkout's own coercion is covered by
 // tests/handlers-checkout-metadata.test.ts (a request-body concern, not a config-shape one).
 describe('metadata fields (plan 024)', () => {
   const dietaryField: MetadataField = { key: 'dietary_notes', label: 'Dietary notes', type: 'text', required: true, maxLength: 100 };

@@ -1,4 +1,4 @@
-// BK-SCHEMA-001 (handoff 12): proves migrations/0011_schema_constraints.sql's rebuild against real
+// Proves migrations/0011_schema_constraints.sql's rebuild against real
 // D1 (SQLite) -- the fake in-memory repo (tests/fakes.ts) has no schema at all, so it cannot prove
 // any of this. Three concerns, three describe blocks: (1) the new CHECK constraints/partial unique
 // index reject invalid rows at the DB layer, (2) a second booking cannot silently steal an
@@ -107,7 +107,7 @@ describe('bookings CHECK constraints and partial unique index (BK-SCHEMA-001, mi
     })).resolves.toBeDefined();
   });
 
-  // Plan 018 (design decision 4/5): migration 0015 rebuilds `bookings` with the
+  // Migration 0015 rebuilds `bookings` with the
   // CHECK (pickup_type IN ('default','custom')) removed -- the domain now lives in
   // ServiceConfig.pickupOptions (config), which the DB can't enumerate. A non-enum pickup id, which
   // this same INSERT would have rejected before 0015, must now succeed at the SQL level.
@@ -201,7 +201,7 @@ describe('duplicate payment_ref surfaces a clean conflict through the real write
     await expect(attempt).rejects.toMatchObject({ status: 409, code: 'duplicate_payment_ref' });
   });
 
-  // MEDIUM-1 (sol review): guardDuplicatePaymentIntent used to skip reclassification via a
+  // guardDuplicatePaymentIntent used to skip reclassification via a
   // truthiness check on paymentRef, so a collision on '' (falsy but non-null, and still covered
   // by the partial index's WHERE payment_ref IS NOT NULL clause) would have bubbled up
   // as an unhandled 500 instead of a clean 409.
@@ -218,11 +218,10 @@ describe('duplicate payment_ref surfaces a clean conflict through the real write
 
 describe('migration 0011 rebuild is lossless (BK-SCHEMA-001)', () => {
   // The full 42-column physical checklist from migrations 0001 (30), 0002 (+2), 0003 (+1), 0008
-  // (+2), 0009 (+6), 0010 (+1) -- see docs/tmp/handoff-audit-fixes/12-schema-constraints.md. This
-  // list, not src/repo.ts's 36-column `bookingColumns` (the app-read subset), is the ground truth
-  // for "did the rebuild's INSERT...SELECT drop or mismap anything" -- it deliberately includes the
-  // 6 columns bookingColumns omits (confirmation_lease_token/until, hold_ip, occupancy_units/
-  // ends_at, reschedule_transition_version).
+  // (+2), 0009 (+6), 0010 (+1). This list, not src/repo.ts's 36-column `bookingColumns` (the
+  // app-read subset), is the ground truth for "did the rebuild's INSERT...SELECT drop or mismap
+  // anything" -- it deliberately includes the 6 columns bookingColumns omits
+  // (confirmation_lease_token/until, hold_ip, occupancy_units/ends_at, reschedule_transition_version).
   const ALL_BOOKING_COLUMNS = [
     'id', 'reference', 'tour_slug', 'people', 'pickup_type', 'pickup_address', 'starts_at', 'ends_at',
     'customer_name', 'customer_email', 'customer_phone', 'locale', 'price_cents', 'status', 'hold_expires_at',
@@ -278,7 +277,7 @@ describe('migration 0011 rebuild is lossless (BK-SCHEMA-001)', () => {
       `INSERT INTO bookings (${ALL_BOOKING_COLUMNS.join(', ')}) VALUES (${ALL_BOOKING_COLUMNS.map(() => '?').join(', ')})`,
     ).bind(...ALL_BOOKING_COLUMNS.map((column) => seeded[column])).run();
 
-    // HIGH-2 (sol review): side_effect_operations.booking_id REFERENCES bookings(id) (migrations
+    // side_effect_operations.booking_id REFERENCES bookings(id) (migrations
     // 0007, 0010), and D1 enforces foreign keys -- so DROP TABLE bookings inside 0011's rebuild
     // must not choke on a real child row. A prior version of this test masked that risk entirely
     // by dropping side_effect_operations and never seeding one; this seeds a real child row

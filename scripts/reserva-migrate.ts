@@ -146,9 +146,8 @@ async function writeDerivedConfig(configPath: string, root: WranglerConfigRoot):
 }
 
 // Written beside the consumer's own config (not in os.tmpdir()) so wrangler's project root, and
-// therefore its default `.wrangler/state/v3` local-persistence location, is unaffected — see the
-// "derived-config location" design decision. randomUUID() makes concurrent invocations collision-
-// resistant without a retry loop.
+// therefore its default `.wrangler/state/v3` local-persistence location, is unaffected.
+// randomUUID() makes concurrent invocations collision-resistant without a retry loop.
 function uniqueSiblingConfigPath(configPath: string): string {
   return resolve(dirname(configPath), `.reserva-migrate.${randomUUID()}${extname(configPath)}`);
 }

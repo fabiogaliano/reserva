@@ -1,5 +1,5 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import { defineCloudflareReservaRuntime, type ReservaProviders } from '../src/runtime';
+import { defineCloudflareReservaRuntime, type ReservaProviders } from '../../src/runtime';
 import config from './client-config';
 
 // Stand-in for the `Env` interface `wrangler types` generates from wrangler.jsonc into

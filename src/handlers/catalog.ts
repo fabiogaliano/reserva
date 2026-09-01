@@ -16,17 +16,17 @@ import { HttpError, json } from '../http.js';
 import { resolveMessages, type ReservaMessages } from '../ui/messages.js';
 import { run } from './shared.js';
 
-// Plan 027 (design decision 6): the rendering contract — everything a consumer needs to build a
+// The rendering contract — everything a consumer needs to build a
 // booking flow before a date is chosen, read from the deployment instead of duplicated in its own
 // code. This is what lets a widget delete its hardcoded service and pickup-option tables the same
 // way the quote endpoint lets it delete its price math.
 //
-// What this must NEVER expose (the plan's STOP condition): turnaroundMin, the raw schedule, pricing
+// What this must NEVER expose: turnaroundMin, the raw schedule, pricing
 // rules, capacity, occupancyFor, or any occupancy number. Exact money is the quote endpoint's
 // answer; bookable times and scarcity are availability's, gated by limitedThreshold. Adding a field
 // here is a deliberate act: it means declaring it customer-facing.
 
-// Plan 018 kept `label`/`hint` optional on a declared pickup option, falling back to the message
+// `label`/`hint` stay optional on a declared pickup option, falling back to the message
 // catalog for the historical `default`/`custom` ids. That fallback chain lived in the widget; it
 // belongs here, so every consumer resolves the same copy from one place.
 function pickupCopy(option: PickupOption, messages: ReservaMessages): { label: string; hint: string | null } {

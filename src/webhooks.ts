@@ -1,4 +1,4 @@
-// Plan 021 (design decision 3): outbound webhook delivery. Deliberately an internal module rather
+// Outbound webhook delivery. Deliberately an internal module rather
 // than a provider subpath — a webhook endpoint is declared in `ClientConfig.webhooks`, not wired as
 // a provider, so there is nothing for a consumer to construct or import here.
 //
@@ -18,7 +18,7 @@ const SIGNATURE_SCHEME = 'v1';
 const MAX_ERROR_BODY_CHARS = 200;
 
 // Mirrors BrevoResponseError: a bounded body in the message and a
-// structured `status`, so plan 016's classification decides retryable vs. permanent.
+// structured `status`, so provider-failure classification (src/provider-failure.ts) decides retryable vs. permanent.
 export class WebhookResponseError extends ProviderFailure {
   constructor(name: string, status: number, body: string) {
     super({ status, message: `Webhook "${name}" request failed (${status}): ${body.slice(0, MAX_ERROR_BODY_CHARS)}` });

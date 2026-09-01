@@ -9,9 +9,9 @@ import { nowIso } from '../context.js';
 import { HttpError, json, parseDate, requireInteger, requireString } from '../http.js';
 import { run } from './shared.js';
 
-// Plan 027 (design decision 3): the bound is the deployment's own booking horizon, not a fixed
-// 62 days — that constant is why the first consumer's widget had to chunk-and-merge availability
-// requests, and a consumer must never have to. Nothing bookable exists past `maxHorizonDays`
+// The bound is the deployment's own booking horizon, not a fixed cap — a fixed cap would force a
+// consumer to chunk-and-merge availability requests, which nothing here should require. Nothing
+// bookable exists past `maxHorizonDays`
 // (core/occupancy.ts filters those slots out anyway), so a request may span the whole window and no
 // more. The span is still bounded BEFORE enumerating (zero-padded keys compare lexicographically),
 // so an adversarial multi-century range fails fast instead of allocating one key per day.
@@ -161,10 +161,10 @@ function availabilityInput(request: Request, context: ReservaContext): Availabil
   const service = resolveService(context.config, serviceSlug);
   assertSupportedPartySize(service, quantity);
   try {
-    // Plan 018 (design decision 3): the party size must price under every pickup id the service's
-    // own pricing rows declare — derived like resolvedPriceTableFor, not the old literal
-    // default/custom pair, which a service with declared location.pickupOptions need not use at
-    // all. Plan 023: a location-less rule's `pickup` is undefined, normalized to null (the same key
+    // The party size must price under every pickup id the service's
+    // own pricing rows declare — derived like resolvedPriceTableFor, not a fixed
+    // default/custom pair, since a service with declared location.pickupOptions need not use one.
+    // A location-less rule's `pickup` is undefined, normalized to null (the same key
     // priceFor expects for such a service).
     for (const pickup of new Set(service.pricing.map((row) => row.pickup ?? null))) {
       priceFor(service, quantity, pickup);
@@ -175,7 +175,7 @@ function availabilityInput(request: Request, context: ReservaContext): Availabil
   return { quantity, dates, service };
 }
 
-// Plan 027 (design decision 4): scarcity leaves the library as a structured number, never a
+// Scarcity leaves the library as a structured number, never a
 // rendered string, and the exact count is published only inside the scarce band — at or below
 // `limitedThreshold` a consumer gets the number it needs to say "only N left" (the copy keys are
 // exported: SLOT_STATUS_MESSAGE_KEYS, src/ui/messages.ts), and above it the field is null so a
@@ -261,7 +261,7 @@ export function handleAvailability(request: Request, context: ReservaContext): P
     if (availabilityCache) {
       // Built from exactly the four availabilityInput validates, in fixed order — not the raw
       // request URL — so a junk query parameter (nonce, cache-buster, tracking param) can't mint a
-      // fresh cache entry that bypasses and bloats the 60s public cache (audit finding #11). Reading
+      // fresh cache entry that bypasses and bloats the 60s public cache. Reading
       // these again (rather than threading them out of AvailabilityInput) is safe: availabilityInput
       // above already validated them, so this is a lossless re-read of the exact strings that
       // validated cleanly, not a second, divergent parse.

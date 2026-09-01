@@ -1,6 +1,6 @@
 // Verifies the *published artifact*, not the repository: everything else (unit tests, workers
 // tests, the smoke-site build, e2e) exercises `../../src/index.ts` or a spawned repo-root script
-// directly, so a `files`/`exports`/`bin` mistake in package.json would ship silently (plan 010).
+// directly, so a `files`/`exports`/`bin` mistake in package.json would ship silently.
 //
 // This packs the real tarball (`bun pm pack`), installs it into a throwaway copy of
 // `tests/pack-fixture/` outside the repo (so nothing here can leak in via hoisted node_modules or
@@ -9,12 +9,12 @@
 //   1. every non-`.astro` `exports` subpath resolves and typechecks under `tsc --noEmit`
 //   2. every `.astro` export resolves and compiles under `astro build` (plain tsc can't parse it)
 //   3. `astro build` succeeds and every injected route pattern appears in the built worker
-//   4. the installed `reserva-migrate` bin applies reserva's packaged migrations (plan 008)
+//   4. the installed `reserva-migrate` bin applies reserva's packaged migrations
 //
-// Two consumers are built from one shared fixture base (plan 028 decision 2): `core-only` installs
-// @reservajs/astro alone and pays through a provider it wrote itself, with the `stripe` SDK absent
-// from its node_modules entirely; `with-stripe` installs both tarballs and wires the official
-// adapter's `stripe(options)` factory.
+// Two consumers are built from one shared fixture base: `core-only` installs @reservajs/astro
+// alone and pays through a provider it wrote itself, with the `stripe` SDK absent from its
+// node_modules entirely; `with-stripe` installs both tarballs and wires the official adapter's
+// `stripe(options)` factory.
 //
 // Run: `bun run test:pack` (also folded into `bun run verify` and CI's `pack` job).
 
@@ -141,9 +141,9 @@ function assertScheduledTemplatePackaged(consumerDir: string): void {
   }
 }
 
-// dist/ is the whole artifact (plan 028 decision 1): the raw `.astro` components and the CSS their
-// relative imports reach must sit inside it, mirroring their source layout, and no TypeScript
-// source may ship beside it — a consumer compiling our sources is exactly what the build removes.
+// dist/ is the whole artifact: the raw `.astro` components and the CSS their relative imports
+// reach must sit inside it, mirroring their source layout, and no TypeScript source may ship
+// beside it — a consumer compiling our sources is exactly what the build removes.
 function assertPackagedLayout(consumerDir: string): void {
   const installedRoot = resolve(consumerDir, 'node_modules/@reservajs/astro');
   for (const relativePath of [
@@ -258,8 +258,8 @@ function astroBuild(consumerDir: string): void {
   }
 }
 
-// Pins plan 008: an installed consumer with no `migrations_dir` must still get reserva's packaged
-// migrations applied, via the `reserva-migrate` bin resolved from node_modules/.bin.
+// An installed consumer with no `migrations_dir` must still get reserva's packaged migrations
+// applied, via the `reserva-migrate` bin resolved from node_modules/.bin.
 function reservaMigrate(consumerDir: string): void {
   const binDir = resolve(consumerDir, 'node_modules/.bin');
   const result = run('bunx', ['reserva-migrate', '--local'], {

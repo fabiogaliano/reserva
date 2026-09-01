@@ -79,7 +79,7 @@ describe('late checkout.session.completed on an already-expired hold (spec §6)'
       status: 'succeeded',
       providerResultId: 'capacity_exceeded',
     });
-    // WP-01 (Fix 2) added this warning so operators get a signal on the accepted oversell path.
+    // This warning gives operators a signal on the accepted oversell path.
     expect(warnings).toContainEqual([
       'confirming expired hold after payment; possible one-slot oversell',
       { bookingId: seeded.id, reference: seeded.reference, startsAt: seeded.startsAt },

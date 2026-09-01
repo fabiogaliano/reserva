@@ -61,7 +61,7 @@ describe('local smoke runtime', () => {
           quantity: 2,
           pickupType: 'default',
           locale: 'en',
-          // Plan 017 (design decision 5): the smoke-site's oldTown service now declares two meeting
+          // The smoke-site's oldTown service declares two meeting
           // points (examples/smoke-site/src/config.ts), so a default-pickup checkout must supply
           // one — see resolveCheckoutMeetingPoint in src/handlers/index.ts.
           meetingPointId: 'fountain',

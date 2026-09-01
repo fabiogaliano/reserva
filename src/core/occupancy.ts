@@ -201,8 +201,6 @@ export function getOccupancyIntervals(options: OccupancyIntervalOptions): Occupa
   return intervals;
 }
 
-export const buildOccupancyIntervals = getOccupancyIntervals;
-
 export function resolveCapacity(defaultCapacity: number, override?: Pick<DayCapacityOverride, 'capacity'> | null): number {
   const value = override ? override.capacity : defaultCapacity;
   return Math.max(0, Math.floor(value));

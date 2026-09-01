@@ -1,4 +1,4 @@
-// Plan 021 (direction doc §3): booking events leave the library through exactly two primitives —
+// Booking events leave the library through exactly two primitives —
 // in-process hooks a consumer registers on the runtime, and signed outbound webhooks declared in
 // config. Both are the same thing to the outbox: a named subscriber whose delivery debt is one row
 // carrying the identity `family`/`name`/`event` and the serialized envelope.
@@ -15,8 +15,6 @@ import { getSecret } from './context.js';
 import { ProviderFailure } from './provider-failure.js';
 import { sideEffectOperationKey, type SideEffectOperationIdentity, type SideEffectOperationRecord, type SideEffectOperationSeed } from './repo.js';
 import { deliverWebhook } from './webhooks.js';
-
-export type BookingEventFamily = 'hook' | 'webhook';
 
 function subscribes(events: readonly BookingEvent[] | undefined, event: BookingEvent): boolean {
   return events === undefined || events.includes(event);
@@ -58,7 +56,7 @@ export function buildBookingEventEnvelope(
   };
 }
 
-// Plan 021 (design decision 3): the snapshot is taken here, once, from the booking as it will exist
+// The snapshot is taken here, once, from the booking as it will exist
 // AFTER the transition this seed rides — not re-read at delivery time. `eventIdPrefix` carries the
 // discriminator-free id so the repository can complete it inside the batch that assigns a
 // reschedule version (see mutationSideEffectInsert).
@@ -110,10 +108,10 @@ export function dispatchNonDurableBookingEvent(
   else void task;
 }
 
-// Plan 021 (design decision 5), the unregistered-name rule: a durable row whose subscriber is no
-// longer (or not yet) registered is a PERMANENT failure, so plan 016's classification abandons it
-// on the spot instead of leaving it pending forever — and the abandonment log says exactly what to
-// register to make it deliver.
+// The unregistered-name rule: a durable row whose subscriber is no
+// longer (or not yet) registered is a PERMANENT failure, so provider-failure classification
+// (src/provider-failure.ts) abandons it on the spot instead of leaving it pending forever — and
+// the abandonment log says exactly what to register to make it deliver.
 function unregisteredSubscriber(identity: SideEffectOperationIdentity): ProviderFailure {
   const what = identity.family === 'hook'
     ? `register a durable booking-event hook named "${identity.name}" on the runtime`

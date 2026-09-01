@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { MetadataField } from '../src/core/config';
 import { createReservaContext } from '../src/context';
 import { handleManage } from '../src/handlers';
-import { renderManagePage } from '../src/components/manage-page';
+import { renderManagePage } from '../src/ui/pages/manage-page';
 import { utcToLocalIso } from '../src/core/time';
 import { booking, config, service } from './fixtures';
 import { fakeRepository, providers } from './fakes';
@@ -65,7 +65,7 @@ describe('GET /manage (spec §11)', () => {
       customerEmail: seeded.customerEmail,
       customerPhone: seeded.customerPhone,
       status: seeded.status,
-      // Plan 017 (design decision 3): this booking has no stored meetingPointId, so bookingSummary
+      // This booking has no stored meetingPointId, so bookingSummary
       // resolves it to the service's single declared point.
       meetingPoint: { label: service.location!.meetingPoints![0]!.label, mapsUrl: service.location!.meetingPoints![0]!.mapsUrl },
     });
@@ -105,7 +105,7 @@ describe('GET /manage (spec §11)', () => {
     expect(removedPayload.booking.meetingPoint).toEqual({ label: 'The Old Dock', mapsUrl: null });
   });
 
-  // Plan 018 (design decision 8): the manage page can't know from the raw id whether an address or
+  // The manage page can't know from the raw id whether an address or
   // meeting point applies, so the summary carries the chosen option's two flags and the renderer
   // gates each fact on them independently.
   describe('pickup option flags (plan 018 design decision 8)', () => {
@@ -151,7 +151,7 @@ describe('GET /manage (spec §11)', () => {
       expect(payload.booking).toMatchObject({ pickupRequiresAddress: true, pickupUsesMeetingPoint: false });
     });
 
-    // Plan 023 (design decision 4): an undeclared stored id falls back to what the row itself
+    // An undeclared stored id falls back to what the row itself
     // proves was collected (pickupAddress/meetingPointId presence), not a guess pinned to the
     // retired default/custom pair.
     it('degrades an undeclared stored id to what the row itself proves was collected', async () => {
@@ -281,7 +281,7 @@ describe('GET /manage (spec §11)', () => {
   });
 });
 
-// Plan 024 (design decision 3): the manage page is BOTH surfaces — "admin booking detail" is the
+// The manage page is BOTH surfaces — "admin booking detail" is the
 // same renderer with role: 'operator', not a separate admin-only render path. XSS payloads must be
 // escaped for both roles since both render the same metadata rows through the same shared helper.
 describe('metadata on the manage page (plan 024)', () => {
@@ -320,7 +320,7 @@ describe('metadata on the manage page (plan 024)', () => {
     expect(operatorHtml).toContain('Vegan');
   });
 
-  // Plan 027 (design decision 6, the empty-value rule): metadata is a collection, so a booking
+  // Metadata is a collection, so a booking
   // with none carries `{}` and `[]` rather than a missing key — a consumer never branches on
   // presence, and the raw values (`metadata`) stay distinct from the rendered rows.
   it('carries empty metadata collections, not missing keys, when the booking has none', async () => {

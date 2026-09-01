@@ -106,10 +106,10 @@ describe('mintAdminCsrfToken / verifyAdminCsrfToken (BK-SEC-001 layer 2: per-ses
     await expect(verifyAdminCsrfToken(context, token, 'ops@example.test', now)).resolves.toBe(false);
   });
 
-  // Plan 025 (design decision 5): a deployment with no `config.admin.access` at all (a custom
-  // `adminAuth`) derives the literal 'custom' instead of an aud — proves it gets genuinely distinct
-  // key material from an Access deployment sharing the same RESERVA_CSRF_SECRET, not an accidental
-  // collision (e.g. both resolving to the empty string).
+  // A deployment with no `config.admin.access` at all (a custom `adminAuth`) derives the literal
+  // 'custom' instead of an aud — proves it gets genuinely distinct key material from an Access
+  // deployment sharing the same RESERVA_CSRF_SECRET, not an accidental collision (e.g. both
+  // resolving to the empty string).
   it('derives a distinct key for a custom (no admin.access) deployment than for an Access deployment sharing the same secret', async () => {
     const customContext = { config: { admin: {} }, secrets };
     const token = await mintAdminCsrfToken(customContext, 'ops@example.test', now);
@@ -132,12 +132,12 @@ describe('mintAdminCsrfToken / verifyAdminCsrfToken (BK-SEC-001 layer 2: per-ses
     await expect(verifyAdminCsrfToken(context, undefined, 'ops@example.test', now)).resolves.toBe(false);
   });
 
-  // [P1 finding] BK-SEC-001 review: the token used to be HMAC'd with accessAud alone whenever
-  // RESERVA_CSRF_SECRET was unset. accessAud is not secret (it's the Access JWT `aud` claim, visible
-  // to anyone who has ever completed an Access login), so that key was forgeable by any attacker who
-  // could read a JWT. This proves a token forged that way — signed using ONLY the (public)
-  // accessAud as the HMAC key — is rejected once a real secret is configured, i.e. the real
-  // verifier's key material is never reducible to public information alone.
+  // The token used to be HMAC'd with accessAud alone whenever RESERVA_CSRF_SECRET was unset.
+  // accessAud is not secret (it's the Access JWT `aud` claim, visible to anyone who has ever
+  // completed an Access login), so that key was forgeable by any attacker who could read a JWT.
+  // This proves a token forged that way — signed using ONLY the (public) accessAud as the HMAC
+  // key — is rejected once a real secret is configured, i.e. the real verifier's key material is
+  // never reducible to public information alone.
   it('is unforgeable from accessAud alone: a token HMAC-signed with only the public accessAud as key is rejected', async () => {
     const forged = await forgeToken(context.config.admin.access.aud, 'ops@example.test', now + ADMIN_CSRF_TOKEN_TTL_MS);
     await expect(verifyAdminCsrfToken(context, forged, 'ops@example.test', now)).resolves.toBe(false);

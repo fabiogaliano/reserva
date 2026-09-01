@@ -41,12 +41,12 @@ export const routeManifest = [
 
 export type ReservaRouteId = (typeof routeManifest)[number]['id'];
 
-// Feature groups a consumer can turn off via `config.routes: { admin, ops, manage }` (plan 025 —
-// moved here from the Astro-only ReservaIntegrationOptions.routes, since admin-auth selection needs
-// the same declared intent). `customer` and `webhook` are absent here on purpose: the booking API
+// Feature groups a consumer can turn off via `config.routes: { admin, ops, manage }` — lives here
+// (not the Astro-only ReservaIntegrationOptions.routes) since admin-auth selection needs
+// the same declared intent. `customer` and `webhook` are absent here on purpose: the booking API
 // is load-bearing, so it is never disableable.
 //
-// Plan 027 (design decision 8): `manage` holds exactly ONE entry — Reserva's server-rendered
+// `manage` holds exactly ONE entry — Reserva's server-rendered
 // /booking/manage page. The manage, cancel and reschedule APIs stay in `customer` precisely so a
 // headless consumer can switch the built-in page off and build its own UI on the same endpoints.
 export interface ReservaRouteGroupFlags {
@@ -128,7 +128,7 @@ const routePrefixSchema = z
   .refine((value) => !value.includes(':'), { message: 'routePrefix must not contain a URL scheme' })
   .refine((value) => !value.includes('//'), { message: 'routePrefix must not contain consecutive slashes' });
 
-// Plan 025 (design decision 3): `routes` moved to ClientConfig (core/config.ts) — this schema now
+// `routes` lives on ClientConfig (core/config.ts) — this schema
 // validates only `routePrefix`, the one remaining Astro-only mounting-detail option.
 const routeOptionsSchema = z.object({
   routePrefix: routePrefixSchema.optional(),

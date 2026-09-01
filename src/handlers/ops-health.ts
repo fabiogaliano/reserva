@@ -3,17 +3,16 @@ import { parseUtcInstant } from '../core/time.js';
 import { accessAllowed } from '../admin-access.js';
 import type { ReservaContext } from '../context.js';
 import { nowIso } from '../context.js';
-import { reservaMigrationStatus } from '../runtime-context.js';
+import { reservaMigrationStatus } from '../schema-check.js';
 import type { SideEffectDebtByFamily } from '../repo.js';
 import { HttpError, json } from '../http.js';
 import { run, withSensitiveHeaders } from './shared.js';
 
-// Plan 027 (design decision 7): the ops group's read surface, restored generically after plan 021
-// deleted the Tourflow feed. One read-only answer to "is this deployment healthy and current?" for
-// an operator — or an agent debugging a deployment — who would otherwise need raw SQL.
+// The ops group's read surface. One read-only answer to "is this deployment healthy and current?"
+// for an operator — or an agent debugging a deployment — who would otherwise need raw SQL.
 //
 // It takes no parameters, returns no booking data, and mutates nothing. If it ever needs to, the
-// design is wrong (the plan's STOP condition): this is a health check, not a query API.
+// design is wrong: this is a health check, not a query API.
 
 function outboxSummary(debt: readonly SideEffectDebtByFamily[], now: string): OpsHealthOutbox {
   let pending = 0;
@@ -40,7 +39,7 @@ function outboxSummary(debt: readonly SideEffectDebtByFamily[], now: string): Op
 export function handleOpsHealth(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
-    // The ops group's shared, fail-closed gate (plan 025) — this route inherits admin auth by
+    // The ops group's shared, fail-closed gate — this route inherits admin auth by
     // consuming it, exactly like every operator endpoint, with no per-route wiring of its own.
     if (!(await accessAllowed(request, context))) throw new HttpError(403, 'forbidden', 'Admin authorization required');
     const now = nowIso(context);

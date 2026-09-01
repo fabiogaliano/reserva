@@ -1,22 +1,21 @@
-// Plan 027 (design decision 8, step 7): `config.routes.manage` switches off Reserva's
-// server-rendered /booking/manage page and NOTHING else. The property under test is a negative one
-// — with the page gone, no library-owned surface may still link to it — so each of the three link
-// producers (email, admin dashboard, the manage entry component) is exercised for real here rather
-// than asserted on the flag alone.
+// `config.routes.manage` switches off Reserva's server-rendered /booking/manage page and NOTHING
+// else. The property under test is a negative one — with the page gone, no library-owned surface
+// may still link to it — so each of the three link producers (email, admin dashboard, the manage
+// entry component) is exercised for real here rather than asserted on the flag alone.
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it, vi } from 'vitest';
 import { createReservaContext } from '../src/context';
 import { handleAdminGet } from '../src/handlers';
 import { reserva } from '../src/integration';
-import { brevoEmail } from '../src/providers/brevo';
+import { brevoEmail } from '../src/providers/email-brevo/index';
 import { requireEnabledRoutePath, resolveRouteConfig } from '../src/routes-manifest';
-import clientConfig from '../examples/client-config';
+import clientConfig from '../examples/minimal/client-config';
 import { booking, config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
 function injectedPatterns(routes: Record<string, unknown>): string[] {
   const injected: Array<Record<string, unknown>> = [];
-  const integration = reserva({ config: { ...clientConfig, routes }, runtimeEntrypoint: './examples/runtime.ts' } as never);
+  const integration = reserva({ config: { ...clientConfig, routes }, runtimeEntrypoint: './examples/minimal/runtime.ts' } as never);
   const hook = integration.hooks['astro:config:setup'];
   if (!hook) throw new Error('setup hook is missing');
   hook({

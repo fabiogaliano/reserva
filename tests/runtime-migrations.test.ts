@@ -1,8 +1,9 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import config from '../examples/client-config';
+import config from '../examples/minimal/client-config';
 import { RESERVA_MIGRATIONS } from '../src/migrations-manifest';
-import { checkReservaMigrationsApplied, defineCloudflareReservaRuntime, type MigrationsQueryable } from '../src/runtime-context';
+import { defineCloudflareReservaRuntime } from '../src/runtime-context';
+import { checkReservaMigrationsApplied, type MigrationsQueryable } from '../src/schema-check';
 
 const payments = {
   createCheckout: async () => ({ url: 'https://checkout.test', sessionRef: 'cs_test' }),
@@ -11,15 +12,14 @@ const payments = {
   refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
 };
 
-// Plan 008: the real column/table/index names the schema fingerprint checks for (see
-// src/runtime-context.ts's REQUIRED_BOOKINGS_COLUMNS and sideEffectOperationsSchemaPresent).
+// The real column/table/index names the schema fingerprint checks for (see
+// src/schema-check.ts's REQUIRED_BOOKINGS_COLUMNS and sideEffectOperationsSchemaPresent).
 // Duplicated here rather than imported since these are the fake's own PRAGMA/sqlite_master
 // response shapes, not the implementation under test.
-// Plan 017: meeting_point_id is 0014's addition to REQUIRED_BOOKINGS_COLUMNS.
-// Plan 018 (design decision 5): migration 0015 removes the pickup_type CHECK (domain moved to
-// config-declared option ids), so a "fully migrated" fake must NOT carry it -- the column itself
-// stays, unconstrained, matching 0015's rebuilt schema.
-// Plan 022: currency/metadata are 0018's additions, and the per-entity sync flags it dropped must
+// meeting_point_id is 0014's addition to REQUIRED_BOOKINGS_COLUMNS. Migration 0015 removes the
+// pickup_type CHECK (domain moved to config-declared option ids), so a "fully migrated" fake must
+// NOT carry it -- the column itself stays, unconstrained, matching 0015's rebuilt schema.
+// currency/metadata are 0018's additions, and the per-entity sync flags it dropped must
 // be absent for a "fully migrated" fake -- the fingerprint reads their presence as the old shape.
 const FINGERPRINT_BOOKINGS_COLUMNS = ['occupancy_units', 'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at', 'reschedule_transition_version', 'meeting_point_id', 'currency', 'metadata'];
 const FINGERPRINT_BOOKINGS_SQL = `CREATE TABLE bookings (
@@ -30,14 +30,14 @@ const FINGERPRINT_BOOKINGS_SQL = `CREATE TABLE bookings (
   cancelled_by TEXT CHECK (cancelled_by IN ('customer','operator') OR cancelled_by IS NULL)
 )`;
 const FINGERPRINT_PAYMENT_INDEX_SQL = 'CREATE UNIQUE INDEX idx_bookings_payment_ref ON bookings (payment_ref) WHERE payment_ref IS NOT NULL';
-// Plan 016: 'abandoned' is 0013's addition to the `status` CHECK. Plan 021: 0017 replaced `kind`
+// 'abandoned' is 0013's addition to the `status` CHECK. 0017 replaced `kind`
 // with the structured identity columns and their family CHECK — all of it has to be present for a
 // "fully migrated" fake fixture (fingerprintOk: true).
 const FINGERPRINT_SIDE_EFFECT_SQL = "CREATE TABLE side_effect_operations (family TEXT CHECK (family IN ('calendar_create','calendar_delete','email_confirmation','oversell','email','hook','webhook')), status TEXT CHECK (status IN ('pending','in_flight','succeeded','failed','abandoned')))";
-// Plan 020 (design decision 5): failure_started_at/next_attempt_at are 0016's additive columns on
-// side_effect_operations. Plan 021: 0017's identity columns and the serialized event envelope.
+// failure_started_at/next_attempt_at are 0016's additive columns on
+// side_effect_operations. 0017 adds the identity columns and the serialized event envelope.
 const FINGERPRINT_SIDE_EFFECT_COLUMNS = ['family', 'name', 'event', 'discriminator', 'event_payload_json', 'failure_started_at', 'next_attempt_at'];
-// Plan 020 (design decision 7): 0016's byte-preserving refund_operations rebuild widens `status`
+// 0016's byte-preserving refund_operations rebuild widens `status`
 // and appends the execution-lease/backoff columns.
 const FINGERPRINT_REFUND_SQL = "CREATE TABLE refund_operations (status TEXT CHECK (status IN ('requested','in_flight','succeeded','failed','abandoned')))";
 const FINGERPRINT_REFUND_COLUMNS = ['execution_claim_token', 'execution_claim_until', 'attempt_count', 'attempted_at', 'failure_started_at', 'next_attempt_at'];
@@ -198,7 +198,7 @@ describe('migration check memoization', () => {
     const db = {
       prepare: (query: string) => ({
         all: async () => {
-          // Schema fingerprint queries (plan 008) always report a fully-migrated schema here --
+          // Schema fingerprint queries always report a fully-migrated schema here --
           // this test is about ledger memoization/retry, not the fingerprint itself.
           if (query.startsWith('PRAGMA table_info(bookings)')) {
             return { results: FINGERPRINT_BOOKINGS_COLUMNS.map((name) => ({ name })) };

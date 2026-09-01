@@ -56,7 +56,7 @@ export const defaultMessages = {
   'widget.pickupDefaultHint': 'Meet us at the starting point',
   'widget.pickupCustom': 'Custom pickup',
   'widget.pickupCustomHint': 'We pick you up at your address',
-  // Plan 017 (design decision 5): legend for the meetingPointId radio group, shown only when a
+  // Legend for the meetingPointId radio group, shown only when a
   // service declares 2+ points — labels themselves are config-provided plain strings, like
   // meetingPoint.label today.
   'widget.meetingPoint': 'Choose a meeting point',
@@ -156,15 +156,15 @@ export const defaultMessages = {
   'admin.remove': 'Remove',
   'admin.search': 'Search',
   'admin.searchPlaceholder': 'Reference, service, pickup…',
-  // Plan 023 (design decision 4): shown instead of the key above when no configured service
+  // Shown instead of the key above when no configured service
   // declares a location module.
   'admin.searchPlaceholderNoPickup': 'Reference, service…',
   'admin.filterStatus': 'Status',
   'admin.all': 'All',
   'admin.apply': 'Apply filters',
   'admin.manage': 'Manage',
-  // BK-SEC-002 (patch-11-r1 LOW 1): shown instead of a manage-link href when the booking's
-  // operatorToken isn't presentable (see isManageableToken, src/providers/brevo.ts) — a
+  // Shown instead of a manage-link href when the booking's
+  // operatorToken isn't presentable (see isManageableToken, src/repo.ts) — a
   // not-yet-backfilled legacy row, or no RESERVA_TOKEN_ENC_KEY configured at all.
   'admin.manageUnavailable': 'Manage link unavailable',
   'admin.results': '{n} bookings',
@@ -233,7 +233,7 @@ export const defaultMessages = {
   'setting.services': 'Services',
   'setting.capacity': 'Concurrent bookings',
   'setting.capacity.hint': 'Applies to dates without a scheduled or day-specific capacity change. Set to 0 to stop availability everywhere.',
-  // Plan 020 (design decision 12/13/14): operator incident cards on the admin page.
+  // Operator incident cards on the admin page.
   'admin.navIncidents': 'Attention required',
   'admin.incidentsTitle': 'Attention required',
   'admin.incidentsHint': 'Bookings where something automatic did not complete. Most clear themselves once the underlying service recovers.',
@@ -263,7 +263,7 @@ export const defaultMessages = {
 export type ReservaMessageKey = keyof typeof defaultMessages;
 export type ReservaMessages = Record<ReservaMessageKey, string>;
 
-// Plan 027 (design decision 4): the availability API returns structured scarcity, never rendered
+// The availability API returns structured scarcity, never rendered
 // status text — this is the closed set of catalog keys that renders it, exported so a consumer
 // that wants Reserva's own copy reads these (through resolveMessages/formatMessage) instead of
 // inventing English strings the way the first consumer's widget had to. `widget.limited` and
@@ -274,7 +274,7 @@ export const SLOT_STATUS_MESSAGE_KEYS = [
 
 export type SlotStatusMessageKey = (typeof SLOT_STATUS_MESSAGE_KEYS)[number];
 
-// Plan 026 (design decision 4): a generic library must not default to Portuguese. Both real
+// A generic library must not default to Portuguese. Both real
 // consumers (consumer-a, consumer-b) set config.locales.default explicitly, so this only
 // changes behavior for a caller of resolveMessages/the components with no locale argument at all.
 export const defaultLocale = 'en';

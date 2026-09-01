@@ -1,4 +1,4 @@
-// Plan 022 (design decision 2): prices are stored and transported in a currency's *minor* unit
+// Prices are stored and transported in a currency's *minor* unit
 // (`Booking.priceMinor`), so every place that renders or divides an amount needs to know how many
 // minor units make one major unit. That is a property of ISO 4217, not of any payment provider —
 // the core owns it, and a provider adapter narrows it to whatever set that provider supports.

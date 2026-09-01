@@ -14,14 +14,14 @@ import { HttpError, json, requestJson, requireInteger, requireString, tokenBytes
 import { assertSupportedPartySize, calendarEventsForWindow } from './availability.js';
 import { run } from './shared.js';
 
-// Plan 023 (design decision 3): a service with no location module has no pickup axis to validate
+// A service with no location module has no pickup axis to validate
 // against, so the checkout body must not carry pickupType/meetingPointId at all — the 400 names
 // what to remove rather than guessing at a value. A location-ful service validates the supplied
 // value against its own declared option ids (via pickupOptionFor); the 400 names the valid ids so
 // a client with a stale option list gets an actionable error.
 interface CheckoutLocation { pickupType: PickupType | null; meetingPointId: string | null; meetingPointLabel: string | null }
 
-// Plan 027 (design decision 1 / STOP condition 2): the ONE pickup-axis validation, shared verbatim
+// The ONE pickup-axis validation, shared verbatim
 // by checkout (whose body field is `pickupType`) and quote (whose field is `pickup`) — the field
 // name is a parameter precisely so neither endpoint can grow a second, divergent rule about which
 // pickup ids are acceptable. A location-less service rejects the field outright; a location-ful one
@@ -38,7 +38,7 @@ export function resolvePickupAxis(service: ServiceConfig, value: unknown, field:
   throw new HttpError(400, 'validation_failed', `${field} must be one of: ${validIds.join(', ')}`);
 }
 
-// Plan 027 (design decision 1 / STOP condition 2): the ONE priced-amount resolution. Quote returns
+// The ONE priced-amount resolution. Quote returns
 // exactly this number and checkout charges exactly this number, from the same call, so the two can
 // never disagree for any (service, quantity, pickup).
 export function quotedPriceMinor(service: ServiceConfig, quantity: number, pickup: PickupType | null): number {
@@ -50,19 +50,19 @@ export function quotedPriceMinor(service: ServiceConfig, quantity: number, picku
   }
 }
 
-// Plan 017 (design decision 2): meetingPointId is optional on the wire but the RESOLVED id is
+// meetingPointId is optional on the wire but the RESOLVED id is
 // always what gets stored, so downstream rendering (bookingSummary/confirmationSummary, admin,
 // providers) never has to branch on "absent" — only ever on a stored id that's since been
 // removed from config (meetingPointForBooking's fallback).
 //
-// Plan 018 (design decision 6): required onto the chosen option's usesMeetingPoint rather than
+// Required onto the chosen option's usesMeetingPoint rather than
 // `pickupType === 'default'` — Maze's "custom drop-off" option still starts at a meeting point
 // (usesMeetingPoint: true) even though it also collects an address, so it must still require the
 // choice on a multi-point service; an option with usesMeetingPoint: false accepts-but-doesn't-require
-// a supplied id, exactly like 'custom' did before this plan. `pickupType` here has already been
+// a supplied id. `pickupType` here has already been
 // validated by parsePickup against this same service, so the option is always declared.
 //
-// Plan 023 (design decision 1): a location-ful service need not declare any meeting points at all
+// A location-ful service need not declare any meeting points at all
 // (every pickup option can have usesMeetingPoint: false) — that resolves to { id: null, label:
 // null } rather than throwing, since resolveMeetingPoint's "declares no meeting points" error is
 // reserved for a genuinely invalid request (a supplied meetingPointId with none to match).
@@ -83,7 +83,7 @@ function resolveCheckoutMeetingPoint(service: ServiceConfig, pickupType: PickupT
   return resolveMeetingPoint(service);
 }
 
-// Plan 023 (design decision 3): the checkout body must not carry pickupType/meetingPointId for a
+// The checkout body must not carry pickupType/meetingPointId for a
 // location-less service — rejecting them here (rather than silently ignoring) means a client that
 // still sends stale fields (e.g. after an operator drops a service's location module) gets an
 // actionable 400 instead of a booking that silently discarded its input.
@@ -97,15 +97,15 @@ function resolveCheckoutLocation(service: ServiceConfig, body: Record<string, un
   return { pickupType, meetingPointId: meetingPoint.id, meetingPointLabel: meetingPoint.label };
 }
 
-// Plan 024 (design decision 2): the whole 8 KB cap is on the SERIALIZED result, checked once after
+// The whole 8 KB cap is on the SERIALIZED result, checked once after
 // every field has been validated/coerced — a per-field maxLength (text only) bounds individual
 // values, but the object as a whole still needs its own ceiling.
 const METADATA_MAX_SERIALIZED_BYTES = 8 * 1024;
 const DEFAULT_METADATA_TEXT_MAX_LENGTH = 500;
 
-// Plan 024 (design decision 2): strict coercion — no `"true"` -> boolean, no `"5"` -> number.
+// Strict coercion — no `"true"` -> boolean, no `"5"` -> number.
 // Every throw names the offending key, its declared type, and the violated constraint, so the
-// caller can correct the request from the envelope alone (direction doc §8, remediating errors).
+// caller can correct the request from the envelope alone.
 function coerceMetadataValue(field: MetadataField, raw: unknown): string | number | boolean {
   if (field.type === 'text') {
     if (typeof raw !== 'string') throw new HttpError(400, 'validation_failed', `metadata.${field.key} must be a string (declared type: text)`);
@@ -128,10 +128,10 @@ function coerceMetadataValue(field: MetadataField, raw: unknown): string | numbe
   return raw;
 }
 
-// Plan 024 (design decision 2): unknown keys rejected, `required` enforced, strict type coercion,
+// Unknown keys rejected, `required` enforced, strict type coercion,
 // the whole serialized result capped at 8 KB, and a service with no declaration rejects any
 // non-empty metadata object — every branch names what was wrong and what to send instead. Returns
-// null (not `{}`) for "nothing to store", matching every pre-024 row and repo.ts's own
+// null (not `{}`) for "nothing to store", matching every existing row and repo.ts's own
 // serializeBookingMetadata symmetry.
 function validateCheckoutMetadata(service: ServiceConfig, serviceSlug: string, raw: unknown): Record<string, unknown> | null {
   const value = raw === undefined ? {} : raw;
@@ -238,13 +238,13 @@ export function handleCheckout(request: Request, context: ReservaContext): Promi
     if (!context.config.services[serviceSlug]) throw new HttpError(400, 'validation_failed', 'Unknown service');
     const start = requireString(body.start, 'start');
     const quantity = requireInteger(body.quantity, 'quantity');
-    // Plan 018 (design decision 6): resolveService is a cheap in-memory lookup (already needed below
+    // resolveService is a cheap in-memory lookup (already needed below
     // for assertSupportedPartySize), so it's pulled forward here rather than duplicated — parsePickup
     // needs the service itself to validate pickupType against its declared option ids.
     const service = resolveService(context.config, serviceSlug);
     const location = resolveCheckoutLocation(service, body);
     const metadata = validateCheckoutMetadata(service, serviceSlug, body.metadata);
-    // Plan 027 (design decision 5): a bare or regional variant tag negotiates onto a supported
+    // A bare or regional variant tag negotiates onto a supported
     // locale (`pt` -> `pt-PT`) instead of being rejected; only what the deployment actually
     // supports is ever stored on the booking, so emails and pages have a catalog for it.
     const locale = resolveLocale(context.config.locales, requireString(body.locale, 'locale'));
@@ -257,7 +257,7 @@ export function handleCheckout(request: Request, context: ReservaContext): Promi
     const referenceExists = async (candidateReference: string): Promise<boolean> =>
       (await context.repo.getBookingByReference(candidateReference)) !== null;
     let sequence = await context.repo.countReferencesForYear(prefix) + 1;
-    // BK-CAP-001 / AR-001: checkSlot above is only a fast-path pre-check (read-then-write TOCTOU
+    // checkSlot above is only a fast-path pre-check (read-then-write TOCTOU
     // — two concurrent checkouts can both pass it for the same last unit). insertHoldWithCapacity
     // is the authority: it re-evaluates occupied-units-in-interval + requested <= capacity inside
     // the same atomic INSERT ... SELECT ... WHERE as the write itself, so only one concurrent
@@ -270,7 +270,7 @@ export function handleCheckout(request: Request, context: ReservaContext): Promi
       const reference = await generateUniqueReference(context.config.business.shortCode, year, sequence, referenceExists);
       try {
         const holdLimit = context.config.booking.maxHoldsPerIp;
-        // BK-SEC-002: expiry counts from the service's end, not from creation, so the link keeps
+        // Expiry counts from the service's end, not from creation, so the link keeps
         // working through the whole pre-service period plus a post-service grace window — see
         // ClientConfig.booking.tokenExpiryDays (src/core/config.ts).
         const tokenExpiryDays = context.config.booking.tokenExpiryDays ?? DEFAULT_TOKEN_EXPIRY_DAYS;
@@ -302,14 +302,14 @@ export function handleCheckout(request: Request, context: ReservaContext): Promi
     }
     if (!booking) throw new Error('Unable to create booking hold');
     try {
-      // BK-PAY-002: the idempotency key createCheckout derives is scoped to this hold, not this
+      // The idempotency key createCheckout derives is scoped to this hold, not this
       // request, so it's fine to expire the hold below on any failure here (a provider rejection, a
       // missing checkout URL, or the updateBooking write) rather than distinguish them. If the
       // *whole* POST is retried by the client after a 5xx, this path mints a fresh hold (and thus a
       // fresh key) rather than reusing this one; that's fine because the idempotency key only needs
       // to prevent a duplicate payable session per hold, not across holds — this hold's now-expired
       // row and any session the provider did create for it still resolve via the late-webhook
-      // backfill path (getBookingBySessionRef / metadata.bookingId), same as before this fix.
+      // backfill path (getBookingBySessionRef / metadata.bookingId).
       const checkout = await context.providers.payments.createCheckout(booking, context.config, context.routeConfig.paths);
       await context.repo.updateBooking(booking.id, { paymentSessionRef: checkout.sessionRef, updatedAt: nowIso(context) });
       return json<CheckoutResponse>({ checkoutUrl: checkout.url, bookingId: booking.id, reference: booking.reference }, 201);

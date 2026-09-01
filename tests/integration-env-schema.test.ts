@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { reserva } from '../src/integration';
-import config from '../examples/client-config';
+import config from '../examples/minimal/client-config';
 
 function updateConfigCalls(options: Record<string, unknown>): Array<Record<string, unknown>> {
   const calls: Array<Record<string, unknown>> = [];
@@ -27,7 +27,7 @@ function envSchemaFrom(calls: Array<Record<string, unknown>>): Record<string, un
   return env?.schema;
 }
 
-const baseOptions = { config, runtimeEntrypoint: './examples/runtime.ts' };
+const baseOptions = { config, runtimeEntrypoint: './examples/minimal/runtime.ts' };
 
 describe('reserva() astro:env schema contribution', () => {
   it('declares every provider secret as an optional server secret string field by default', () => {

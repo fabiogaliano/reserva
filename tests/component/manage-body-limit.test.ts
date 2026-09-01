@@ -1,5 +1,5 @@
-// Plan 013 item C (audit finding #10): src/routes/booking/manage.ts's POST read
-// request.formData() unbounded. This proves the real Astro route entrypoint (not just the
+// src/routes/booking/manage.ts's POST used to read request.formData() unbounded. This proves
+// the real Astro route entrypoint (not just the
 // requestFormData helper it now calls, covered generically in tests/http-body-limits.test.ts)
 // rejects an oversized form body with 413 before ever reaching token/action parsing. Needs the
 // component Vite pipeline (see vitest.component.config.ts) because createRouteContext resolves

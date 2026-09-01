@@ -13,10 +13,8 @@ test('customer can cancel a booking within the cutoff, a cancellation email land
   await page.goto(manageUrl.pathname + manageUrl.search);
   await expect(page.locator('h1')).toContainText(reference);
 
-  // Click the 'Cancel booking' summary to open the disclosure
   await page.getByText('Cancel booking').click();
 
-  // Click the actual cancel button
   await page.getByRole('button', { name: 'Yes, cancel this booking' }).click();
 
   // The customer is redirected to the manage page, which now rejects their revoked token — this
@@ -40,12 +38,12 @@ test('customer can cancel a booking within the cutoff, a cancellation email land
   expect(await revoked.json()).toEqual(await garbage.json());
 });
 
-// Plan 013 item A (audit finding #3): the manage page loads same-origin CSS/JS
+// The manage page loads same-origin CSS/JS
 // (src/ui/layout.ts), so under the old `Referrer-Policy: same-origin` every asset request carried
 // the full manage page URL -- including the live customer token in its query string -- into
 // `Referer`. `strict-origin` still lets same-origin subresource requests through (unlike
 // `no-referrer`, which nulls Origin on this page's own form POSTs and broke Astro's checkOrigin --
-// see the plan-007 comment on the cancel test above) but trims Referer to the origin alone.
+// see the comment on the cancel test above) but trims Referer to the origin alone.
 test('manage page asset requests do not leak the token in their Referer header', async ({ page }) => {
   const { outboxEntry } = await createBooking(page, { service: TOUR, quantity: 2 });
   const manageUrl = new URL(outboxEntry.customerManageUrl);

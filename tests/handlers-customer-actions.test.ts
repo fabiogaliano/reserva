@@ -64,7 +64,7 @@ describe('POST /cancel (customer, spec §11)', () => {
     expect(emails).toEqual(['booking.cancelled_by_customer']);
   });
 
-  // BK-SEC-002: a successful cancel now revokes the customer's cancel_token (migrations/
+  // A successful cancel now revokes the customer's cancel_token (migrations/
   // 0009_token_hashing.sql — cancel_token_revoked_at), since a cancelled booking's link has no
   // further legitimate customer use. That changes what a same-token retry sees: it can no longer
   // re-authenticate at all, so it gets 403 forbidden (the same denial an unknown token gets, per
@@ -465,7 +465,7 @@ describe('POST /reschedule (customer, spec §11)', () => {
     await expect(response.json()).resolves.toMatchObject({ error: { code: 'invalid_transition' } });
   });
 
-  // BK-SEC-002 (patch-11-r1 MEDIUM 2): tokens_expire_at must track the booking's CURRENT endsAt,
+  // tokens_expire_at must track the booking's CURRENT endsAt,
   // not whatever it was at checkout — otherwise a reschedule that moves a booking out drops its
   // manage link's expiry before the (new, later) service date, and one moved in leaves an
   // over-long window relative to the new (earlier) end. repo.tokenState mirrors the DB-side

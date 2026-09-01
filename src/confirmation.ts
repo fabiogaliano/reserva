@@ -28,10 +28,9 @@ import {
   type SideEffectOperationStatus,
 } from './repo.js';
 
-// Plan 021 (design decision 4): which rows are CONFIRMATION debt drained under the confirmation
+// Which rows are CONFIRMATION debt drained under the confirmation
 // lease (executeOperation). Everything else — including a durable hook/webhook row for
-// booking.confirmed — is claimed through the row's own attempted_at lease, exactly as the v1
-// confirmation ops row was (plan 011 design decision 3).
+// booking.confirmed — is claimed through the row's own attempted_at lease.
 export function isConfirmationSideEffectOperation(operation: SideEffectOperationIdentity): boolean {
   if (operation.family === 'calendar_create' || operation.family === 'email_confirmation' || operation.family === 'oversell') return true;
   return operation.family === 'email' && operation.event === 'booking.confirmed';
@@ -46,9 +45,9 @@ function isConfirmationEventOperation(operation: SideEffectOperationIdentity): b
   return (operation.family === 'hook' || operation.family === 'webhook') && operation.event === 'booking.confirmed';
 }
 
-// Plan 016 (design decision 6): the single "still worth attempting" predicate shared by both
+// The single "still worth attempting" predicate shared by both
 // drains (executeOperation below, runOwedMutationSideEffects) and handleStatus's fulfillment
-// check (src/handlers/index.ts) — 'succeeded' and 'abandoned' are both terminal; everything else
+// check (src/handlers/status-manage.ts) — 'succeeded' and 'abandoned' are both terminal; everything else
 // (pending/in_flight/failed) is actionable.
 export function isActionableSideEffectStatus(status: SideEffectOperationStatus): boolean {
   return status !== 'succeeded' && status !== 'abandoned';
@@ -61,13 +60,13 @@ export interface AttemptOutcome {
   reason: 'permanent_failure' | 'max_attempts_exceeded' | undefined;
 }
 
-// Plan 016 (design decisions 1/4): classifies a just-caught provider error against the attempt
+// Classifies a just-caught provider error against the attempt
 // NUMBER that just ran (1-based — the claim that preceded this call already incremented
 // attempt_count, so `attemptNumber` is that new count) into the row's next status. A permanent
 // failure (classifyProviderError says not retryable) abandons immediately, regardless of attempt
 // number; a retryable failure abandons only once it has exhausted SIDE_EFFECT_MAX_ATTEMPTS
 // attempts; otherwise it stays 'failed' for a later touch to retry.
-// Exported (plan 020) so src/refund-executor.ts's scheduled-attempt path classifies a refund
+// Exported so src/refund-executor.ts's scheduled-attempt path classifies a refund
 // failure with the exact same permanent-vs-exhausted rule side-effect operations already use,
 // rather than a second, potentially-drifting copy of the same decision.
 export function classifyAttemptOutcome(attemptNumber: number, error: unknown): AttemptOutcome {
@@ -87,10 +86,10 @@ export function classifyAttemptOutcome(attemptNumber: number, error: unknown): A
   return { status: 'failed', error: message, statusCode: classification.status, reason: undefined };
 }
 
-// Plan 016 (design decision 7): the one operator signal this scoped plan ships — a structured
-// error-level log, no customer-visible state and no admin UI (see docs/plans/016's "Current
-// state": there is no existing read surface for side-effect-operation rows to extend).
-// Plan 021: `operation` is the built display string (never parsed back), and `error` carries the
+// The one operator signal this ships — a structured
+// error-level log, no customer-visible state and no admin UI (there is no existing read surface
+// for side-effect-operation rows to extend).
+// `operation` is the built display string (never parsed back), and `error` carries the
 // remediating message — for an unregistered hook/webhook name that message is the only place a
 // deployment learns which registration is missing.
 function logAbandonment(context: ReservaContext, input: {
@@ -174,14 +173,14 @@ async function resolveOperation(
   if (!await context.repo.resolveSideEffectOperation(input)) throw new ConfirmationInProgressError();
 }
 
-// Plan 012 (design decision 1/6): which recipient a split confirmation-path email row targets, or
+// Which recipient a split confirmation-path email row targets, or
 // undefined for the unsplit shapes (calendar_create/email_confirmation).
 function confirmationEmailRecipient(operation: SideEffectOperationIdentity): EmailRecipientRole | undefined {
   if (operation.family !== 'email') return undefined;
   return operation.name === 'customer' || operation.name === 'owner' ? operation.name : undefined;
 }
 
-// Plan 012 (design decision 1/6): dispatches to the right provider call for a confirmation-path
+// Dispatches to the right provider call for a confirmation-path
 // row — calendar_create unchanged, the legacy combined email_confirmation row still calls send()
 // (both recipients in one call, content unchanged), and a split row calls sendToRecipient for
 // exactly the one recipient its kind encodes, so an owner-recipient failure can never re-trigger
@@ -226,7 +225,7 @@ async function executeOperation(
   } catch (error) {
     if (error instanceof ConfirmationInProgressError) throw error;
     const outcome = classifyAttemptOutcome(attemptNumber, error);
-    // Plan 020 (design decision 5): deliberately does NOT set next_attempt_at here. This same
+    // Deliberately does NOT set next_attempt_at here. This same
     // drain path (executeOperation) is what an HTTP request touching the booking already uses to
     // retry immediately — see tests/confirmation-outbox.test.ts and friends, which pin an
     // immediate same-tick retry recovering a failed row. A real backoff window here would block
@@ -248,7 +247,7 @@ async function executeOperation(
         status: outcome.statusCode, attemptCount: attemptNumber, reason: outcome.reason ?? 'permanent_failure',
         error: outcome.error,
       });
-      // Plan 016 (design decision 5): terminal means deliberately stopped retrying — never throw
+      // Terminal means deliberately stopped retrying — never throw
       // back to the payment webhook/`/status`, unlike the still-retryable 'failed' case below.
       return;
     }
@@ -288,7 +287,7 @@ async function confirmBookingFromPaymentUnlocked(
         oversold = true;
       }
     }
-    // Plan 021 (design decision 3): the envelope each subscriber will receive is serialized from
+    // The envelope each subscriber will receive is serialized from
     // the booking as this transition will leave it, and inserted in the transition's own batch —
     // so `occurredAt` and the snapshot's `updatedAt` are the same instant by construction, and a
     // later mutation can never rewrite what this occurrence said.
@@ -350,7 +349,7 @@ async function confirmBookingFromPaymentUnlocked(
   current = await context.repo.getBookingById(current.id) ?? current;
   if (shouldDispatchConfirmation) {
     dispatchNonDurableBookingEvent(context, 'booking.confirmed', current, current.updatedAt);
-    // Plan 011 (design decision 3), generalized: detached first attempt — claim/deliver/resolve
+    // Detached first attempt — claim/deliver/resolve
     // each subscriber's row via waitUntil so this response path never waits on an external
     // endpoint; a later booking-touching request (runOwedMutationSideEffects below) retries a
     // failed or stale claim durably.
@@ -381,8 +380,8 @@ async function confirmBookingWithLease(
   );
   if (!acquired) {
     const current = await context.repo.getBookingById(booking.id) ?? booking;
-    // Plan 022: the booking row no longer carries sync flags — "nothing left to do" is read off the
-    // outbox rows themselves, which is where that state has actually lived since plan 011. A
+    // The booking row no longer carries sync flags — "nothing left to do" is read off the
+    // outbox rows themselves, which is where that state actually lives. A
     // confirmed booking with no confirmation rows at all is a legacy one that still needs the
     // repair path, so it keeps waiting on the lease rather than returning as if it were settled.
     if (current.status === 'confirmed' && await confirmationFullySettled(context, current.id)) return current;
@@ -418,7 +417,7 @@ export async function confirmBookingFromPayment(
   }
 }
 
-// Plan 012 (design decision 1): provider-derived — a confirmation's email rows only ever split
+// Provider-derived — a confirmation's email rows only ever split
 // into per-recipient debt when the current provider actually implements BOTH recipientsForEvent
 // and sendToRecipient (so each recipient can be retried independently); a provider with only
 // send() keeps the single combined email_confirmation row.
@@ -428,7 +427,7 @@ function confirmationEmailRecipients(context: ReservaContext): EmailRecipientRol
   return email.recipientsForEvent('booking.confirmed');
 }
 
-// Plan 011 (design decision 3/4), generalized to every durable subscriber: claims, delivers, and
+// Claims, delivers, and
 // resolves each booking.confirmed subscriber row through its OWN row lease — never the confirmation
 // lease, which the caller may already have released by the time this runs detached. With the v1
 // per-provider sync flag gone, the row transition is the single atomic record of delivery.
@@ -440,7 +439,7 @@ async function runConfirmationEventSideEffects(context: ReservaContext, booking:
   }
 }
 
-// Plan 011 (design decision 3): the detached first attempt, scheduled right after the rows are
+// The detached first attempt, scheduled right after the rows are
 // minted, so the confirming request never waits on an external endpoint.
 function detach(context: ReservaContext, task: Promise<void>): void {
   if (context.waitUntil) context.waitUntil(task);
@@ -451,7 +450,7 @@ function scheduleConfirmationEventDelivery(context: ReservaContext, booking: Boo
   detach(context, runConfirmationEventSideEffects(context, booking));
 }
 
-// Plan 021: payment.dispute_created is the one emittable event that is NOT a booking transition —
+// payment.dispute_created is the one emittable event that is NOT a booking transition —
 // the occurrence belongs to Stripe, so there is no CAS to record the rows inside. The row itself is
 // the record, keyed by the payment event id as its discriminator: a Stripe redelivery of the same
 // dispute conflicts with the existing row instead of minting a second delivery, and two genuinely
@@ -466,10 +465,10 @@ export async function dispatchDisputeEvent(context: ReservaContext, booking: Boo
   dispatchNonDurableBookingEvent(context, 'payment.dispute_created', booking, now);
 }
 
-// Plan 021 (design decision 4): a confirmed booking still owes fulfillment when a registered
+// A confirmed booking still owes fulfillment when a registered
 // durable subscriber has no row at all — the lazy-repair case a legacy deployment hits after
 // registering a hook. Derived from the rows plus the current registration, never from an entity
-// flag (direction doc invariant 2).
+// flag.
 export function missingConfirmationEventOperations(
   context: ReservaContext,
   operations: readonly SideEffectOperationRecord[],
@@ -478,7 +477,7 @@ export function missingConfirmationEventOperations(
     .some((identity) => !operations.some((operation) => sameSideEffectOperation(operation, identity)));
 }
 
-// Plan 021 (design decision 1/2): the durable rows one mutation owes — the email provider's, plus
+// The durable rows one mutation owes — the email provider's, plus
 // one per durable hook/webhook subscribed to this event. `snapshot` is the booking AS THE
 // TRANSITION WILL LEAVE IT, because the event envelope is serialized here and never rebuilt.
 // Terminal events need no discriminator (each happens once per booking); reschedule rows receive
@@ -530,7 +529,7 @@ interface MutationSideEffectAttempt {
   run: () => Promise<void>;
 }
 
-// Plan 021 (design decision 5): reconstructs a runnable attempt from the row's identity COLUMNS —
+// Reconstructs a runnable attempt from the row's identity COLUMNS —
 // no string is split, and no positional convention decides what a segment means. Returning null
 // means "the thing that would run this is not configured": the row is left actionable for a later
 // request. A hook/webhook row is the deliberate exception — an unregistered name is a permanent
@@ -588,7 +587,7 @@ async function runMutationSideEffect(
     });
   } catch (error) {
     const outcome = classifyAttemptOutcome(attemptNumber, error);
-    // Plan 020 (design decision 5): see the matching comment in executeOperation above — this
+    // See the matching comment in executeOperation above — this
     // drain also runs from an HTTP-driven retry, so next_attempt_at is deliberately left unset.
     await context.repo.resolveMutationSideEffectOperation({
       bookingId: booking.id, identity: operation, status: outcome.status, claimedAt: attemptedAt,
@@ -608,15 +607,14 @@ async function runMutationSideEffect(
   }
 }
 
-// BK-SIDE-001 (handoff 13) HIGH-1(b): the request-driven drain. Lists this booking's side-effect
+// The request-driven drain. Lists this booking's side-effect
 // operations and claims->runs->resolves every actionable row that is not confirmation-lease debt
 // (those drain through executeOperation/handleStatus's needsFulfillment instead). Called from every
 // mutation handler AFTER its own transition (so newly-recorded rows get their first attempt
 // immediately) AND from every place a booking is loaded for a mutation-adjacent request —
 // idempotent short-circuits, handleManage, handleStatus — so rows left behind by a dead isolate
 // (crashed between claim and resolve, or between record and attempt) still get delivered on a LATER
-// request. Plan 021: this now covers the booking.confirmed subscriber rows too, which v1's single
-// ops row needed a dedicated drain for.
+// request. This also covers the booking.confirmed subscriber rows.
 export async function runOwedMutationSideEffects(context: ReservaContext, booking: Booking): Promise<void> {
   const operations = await context.repo.listSideEffectOperations(booking.id);
   for (const operation of operations) {
@@ -655,16 +653,15 @@ export async function runScheduledSideEffectOperation(
   await runMutationSideEffect(context, booking, operation);
 }
 
-// Plan 020 (design decision 13): the admin "Try again" action's result — 'nothing_to_retry' covers
+// The admin "Try again" action's result — 'nothing_to_retry' covers
 // every reason a claim didn't happen (already succeeded, the row doesn't exist, a concurrent
 // claimant already holds it, or the provider is no longer configured) without conflating them with
-// 'not_retryable', which is reserved for an operation this function refuses to ever retry (STOP
-// condition: "a safe one-shot retry cannot be implemented for an operation type... do not label an
-// unsafe action safe" — 'oversell' is a permanent marker, not a retryable operation at all;
-// decision 13: "Oversell cards expose manual handling only").
+// 'not_retryable', which is reserved for an operation this function refuses to ever retry: a safe
+// one-shot retry cannot be implemented for an operation type — 'oversell' is a permanent marker,
+// not a retryable operation at all; oversell cards expose manual handling only.
 export type SideEffectRetryOutcome = 'succeeded' | 'failed' | 'nothing_to_retry' | 'lease_unavailable' | 'not_retryable';
 
-// Plan 020 (design decision 13): the admin "Try again" action's one-shot leased retry. Deliberately
+// The admin "Try again" action's one-shot leased retry. Deliberately
 // reuses this file's own claim -> run -> resolve logic (runConfirmationOperation for
 // confirmation-lease rows, attemptForOperation for every other row) rather than a second,
 // hand-rolled dispatch table — the exact same call an ordinary drain would have made, just claimed
@@ -748,7 +745,7 @@ export async function dispatchMutation(
   booking: Booking,
 ): Promise<void> {
   // The outbox rows this dispatch owes were already recorded atomically by the transition method
-  // that produced `booking` (HIGH-1(a) — see transitionToCancelled/transitionToNoShow/
+  // that produced `booking` (see transitionToCancelled/transitionToNoShow/
   // transitionReschedule/rescheduleWithCapacity in src/repo.ts), so there is nothing left to record here: draining runs
   // every owed row (the ones this transition just recorded, plus any older stragglers) through the
   // same claim/run/resolve path a later request's drain would use.

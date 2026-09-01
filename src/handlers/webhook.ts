@@ -54,8 +54,8 @@ export function handlePaymentWebhook(request: Request, context: ReservaContext):
           const timestamp = nowIso(context);
           // Reconcile the durable operation record regardless of which side (this webhook or an
           // operator's own claim) ends up owning the booking's cancelled_by — the payment provider
-          // is the source of truth for whether the money moved, so its refund id/amount wins here
-          // (BK-REFUND-001). Upsert rather than claim: a dashboard-initiated refund has no prior
+          // is the source of truth for whether the money moved, so its refund id/amount wins here.
+          // Upsert rather than claim: a dashboard-initiated refund has no prior
           // claim to race against.
           const refund = {
             id: crypto.randomUUID(),
@@ -88,7 +88,7 @@ export function handlePaymentWebhook(request: Request, context: ReservaContext):
             }
           } else {
             await context.repo.reconcileStripeRefundOperation(refund);
-            // BK-SIDE-001 (handoff 13): idempotent redelivery of an already-cancelled booking —
+            // Idempotent redelivery of an already-cancelled booking —
             // still a booking-touching request, so drain any rows a prior delivery left owed
             // (e.g. the isolate died between this same webhook's earlier CAS win and its attempt).
             await runOwedMutationSideEffects(context, booking);

@@ -6,7 +6,7 @@ import { handleCheckout } from '../src/handlers';
 import { config, service } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
-// Plan 024 (design decision 2): checkout is the whole validation boundary for consumer-declared
+// Checkout is the whole validation boundary for consumer-declared
 // metadata — unknown keys rejected, required enforced, strict type coercion (no "true" -> boolean),
 // the whole serialized object capped at 8 KB, and a declared-less service rejects non-empty
 // metadata. Every rejection is a remediating 400 (direction doc §8): it names the offending key,

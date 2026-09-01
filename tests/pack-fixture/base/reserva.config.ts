@@ -1,6 +1,6 @@
 // Minimal but fully valid ClientConfig, imported through the package's real "." and "./core"
 // exports subpaths (not a relative ../../src import) — this fixture exists to prove those subpaths
-// resolve and typecheck as an installed consumer sees them (plan 010).
+// resolve and typecheck as an installed consumer sees them.
 import type { ClientConfig } from '@reservajs/astro';
 import type { ServiceConfig } from '@reservajs/astro/core';
 
@@ -45,7 +45,7 @@ export default {
     calendarMaxStaleSeconds: 900,
   },
   locales: { supported: ['en'], default: 'en' },
-  // Plan 021: a packed consumer declares outbound webhooks in config; the secret is read from the
+  // A packed consumer declares outbound webhooks in config; the secret is read from the
   // binding named here, which the runtime must also list in secretBindings.
   webhooks: [{ name: 'operations', url: 'https://ops.example.test/reserva', secretBinding: 'OPERATIONS_WEBHOOK_SECRET' }],
   legal: { termsUrl: 'https://fixture.example.test/terms' },

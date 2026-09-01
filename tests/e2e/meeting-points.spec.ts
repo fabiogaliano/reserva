@@ -1,11 +1,11 @@
 import { test, expect } from '@playwright/test';
 import { createBooking } from './helpers';
 
-// Plan 017 (design decision 5): the smoke-site's oldTown service now declares two free meeting
+// The smoke-site's oldTown service declares two free meeting
 // points (examples/smoke-site/src/config.ts) instead of the single-point shorthand. These prove
 // the SECOND point survives the whole path — widget selection, checkout, storage, and rendering
 // back on the confirmation page — not just that "a" point round-trips (which the first-checked
-// default already covered before this plan, and every other e2e spec that books oldTown still
+// default already covered, and every other e2e spec that books oldTown still
 // exercises unchanged, since the first point stays pre-checked).
 
 test('booking the second meeting point carries its label through checkout to the confirmation page', async ({ page }) => {
@@ -32,7 +32,7 @@ test('custom pickup hides and disables the meeting-point group, and the checkout
   await expect(points.first()).toBeChecked();
 
   await page.locator('input[name="pickupType"][value="custom"]').check();
-  // hidden, not just visually collapsed (see the plan-014-style CSS trap this guards against in
+  // hidden, not just visually collapsed (see the CSS trap this guards against in
   // src/ui/components.css) — and its radios disabled, which is what actually drops them from the
   // submitted FormData below.
   await expect(group).toBeHidden();

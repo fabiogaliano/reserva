@@ -3,7 +3,7 @@ import type { APIContext, APIRoute } from 'astro';
 import { nowIso } from '../../../../../src/context';
 import { createRouteContext } from '../../../../../src/routes/route-context';
 
-// Dev-only test seam (plan 020, step 8): seeds an 'oversell' incident directly, in exactly the
+// Dev-only test seam: seeds an 'oversell' incident directly, in exactly the
 // shape src/reconciliation.ts's reportUnreportedOversellMarkers persists (bookingId,
 // sourceType='oversell', action='oversell', severity='action_required'). Reproducing a genuine
 // oversell (an expired hold confirmed after payment past the capacity guard) end-to-end in the
@@ -13,8 +13,8 @@ import { createRouteContext } from '../../../../../src/routes/route-context';
 // reserva site — see outbox.json.ts's header comment for the same convention.
 export const POST: APIRoute = async ({ request, locals }: APIContext) => {
   const context = await createRouteContext({ request, locals });
-  // Callers hold the customer-visible reference, not the internal id (the feed endpoint that
-  // once exposed ids was removed by plan 021) — resolve it server-side where the repo lives.
+  // Callers hold the customer-visible reference, not the internal id — resolve it server-side
+  // where the repo lives.
   const body = await request.json() as { reference?: unknown };
   const reference = typeof body.reference === 'string' ? body.reference : undefined;
   if (!reference) return new Response('reference is required', { status: 400 });

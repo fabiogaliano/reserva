@@ -1,6 +1,6 @@
-// BK-SEC-001: admin mutations (src/handlers/index.ts handleAdminPost) previously gated only on
-// Cloudflare Access (WHO), with no defense against a cross-origin page auto-submitting a mutation
-// using an operator's live Access session — practical exploitability there depends entirely on the
+// Admin mutations (src/handlers/admin.ts handleAdminPost) are gated on
+// Cloudflare Access (WHO), which alone is no defense against a cross-origin page auto-submitting a
+// mutation using an operator's live Access session — practical exploitability there depends entirely on the
 // Access application cookie's SameSite setting, which is a Cloudflare dashboard setting this repo
 // cannot enforce (see README "Admin access and booking tokens" for the recommendation to set it to
 // Lax/Strict). Two independent layers, belt and braces:
@@ -52,24 +52,22 @@ async function hmacSign(secret: string, message: string): Promise<string> {
   return base64UrlEncode(new Uint8Array(signature));
 }
 
-// Plan 025 (design decision 5): the domain-separation input switched from `config.admin.accessAud`
-// alone to a stable derivation of whichever admin auth strategy is actually configured — the Access
-// application's Audience tag when `config.admin.access` is set, or the literal 'custom' otherwise,
-// so a deployment using a custom `adminAuth` still gets a distinct key from an Access deployment
-// sharing the same RESERVA_CSRF_SECRET. Neither value is secret: `aud` appears in the `aud` claim of
-// every Access-issued JWT and in checked-in config, and 'custom' is a fixed literal — an attacker
-// does not need to compromise anything to learn either. An earlier version of this function used
-// accessAud as the HMAC key on its own whenever RESERVA_CSRF_SECRET was unset, which made the
-// "signed" token forgeable by anyone who knew the deployment's accessAud (i.e. effectively
-// everyone), defeating layer 2 while looking like a defense. This derivation is only ever mixed into
-// the key alongside a real secret below, for cheap extra domain separation — never as a substitute
-// for one.
+// The domain-separation input is a stable derivation of whichever admin auth strategy is actually
+// configured — the Access application's Audience tag when `config.admin.access` is set, or the
+// literal 'custom' otherwise, so a deployment using a custom `adminAuth` still gets a distinct key
+// from an Access deployment sharing the same RESERVA_CSRF_SECRET. Neither value is secret: `aud`
+// appears in the `aud` claim of every Access-issued JWT and in checked-in config, and 'custom' is a
+// fixed literal — an attacker does not need to compromise anything to learn either. Using accessAud
+// as the HMAC key on its own whenever RESERVA_CSRF_SECRET is unset would make the "signed" token
+// forgeable by anyone who knew the deployment's accessAud (i.e. effectively everyone), defeating
+// layer 2 while looking like a defense. This derivation is only ever mixed into the key alongside a
+// real secret below, for cheap extra domain separation — never as a substitute for one.
 function csrfDomainSeparator(context: AdminCsrfContext): string {
   return context.config.admin.access?.aud ?? 'custom';
 }
 
 // No other genuinely-secret value is reachable here. Checked at the mint/verify call sites
-// (handleAdminGet/handleAdminPost in src/handlers/index.ts, both fed by ReservaContext):
+// (handleAdminGet/handleAdminPost in src/handlers/admin.ts, both fed by ReservaContext):
 //   - Stripe's secretKey/webhookSecret are constructor options passed straight into StripeProvider
 //     (src/providers/stripe.ts) — they never surface on ReservaContext or ClientConfig, so they are
 //     not reachable from here without reaching into a specific payment provider's internals (which
@@ -101,7 +99,7 @@ function isCsrfPayload(value: unknown): value is CsrfPayload {
 //
 // Returns undefined when no real secret is configured (see csrfSecret above) — the token layer is
 // then inert: handleAdminGet still renders the form (with no/empty token field, see
-// src/handlers/index.ts) and relies on layer 1 (adminOriginAllowed) alone. RESERVA_CSRF_SECRET must
+// src/handlers/admin.ts) and relies on layer 1 (adminOriginAllowed) alone. RESERVA_CSRF_SECRET must
 // be set for layer 2 to actually run.
 export async function mintAdminCsrfToken(context: AdminCsrfContext, sub: string, now: number): Promise<string | undefined> {
   const secret = await csrfSecret(context);
@@ -141,7 +139,7 @@ export async function verifyAdminCsrfToken(context: AdminCsrfContext, token: str
   return constantTimeEqual(payload.sub, sub);
 }
 
-// Layer 1 (BK-SEC-001): Fetch-Metadata / Origin enforcement, wired only to admin mutation routes.
+// Layer 1: Fetch-Metadata / Origin enforcement, wired only to admin mutation routes.
 export function adminOriginAllowed(request: Request): boolean {
   const secFetchSite = request.headers.get('sec-fetch-site');
   if (secFetchSite !== null) {

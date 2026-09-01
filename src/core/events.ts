@@ -3,7 +3,7 @@ import type { Booking, WireBooking } from './booking.js';
 import type { CalEvent } from './occupancy.js';
 import type { ReservaResolvedRouteConfig } from '../routes-manifest.js';
 
-// Plan 021 (design decision 1): the closed set of emittable booking events, exported as a runtime
+// The closed set of emittable booking events, exported as a runtime
 // VALUE (not only a type) so a consumer — or an agent reading the package — can enumerate every
 // case, and so hook/webhook `events` filters can be validated against it at startup instead of
 // failing silently on a typo. `BookingEvent` derives from it, which is what keeps the two from
@@ -40,7 +40,7 @@ export interface PaymentCustomerDetails {
   pickupAddress?: string | null;
 }
 
-// Plan 022 (design decision 7): the closed set of payment events Reserva reacts to, exported as a
+// The closed set of payment events Reserva reacts to, exported as a
 // runtime VALUE so a provider author (or an agent) can enumerate every case an adapter has to map
 // its vendor's event names onto. A provider that parses an event outside this set returns its own
 // vendor string and Reserva ignores it, which is why `type` stays open.
@@ -65,7 +65,7 @@ export interface PaymentEventParsed extends PaymentCustomerDetails {
   paymentStatus?: 'paid' | 'unpaid' | 'no_payment_required' | string;
   // The provider's own id for the refund a 'refunded' event describes, when its payload carries one
   // — lets the webhook branch record which refund actually moved the money, not just that a refund
-  // happened (BK-REFUND-001).
+  // happened.
   refundRef?: string;
   paid?: boolean;
   raw?: unknown;
@@ -83,13 +83,13 @@ export interface SessionStatus extends PaymentCustomerDetails {
 
 export type EmailBookingEvent = Exclude<BookingEvent, 'payment.dispute_created'>;
 
-// BK-SIDE-001 (handoff 13): who a given event's email goes to. Kept generic here (not
+// Who a given event's email goes to. Kept generic here (not
 // Brevo-specific) so the mutation dispatcher (src/confirmation.ts) can ask any provider which
 // recipients apply without depending on a concrete implementation's template config.
 export type EmailRecipientRole = 'customer' | 'owner';
 
 export interface EmailProvider {
-  // Plan 027 (design decision 8): the whole resolved route config, not just its paths — an email
+  // The whole resolved route config, not just its paths — an email
   // template is a link producer, and `routes.manage: false` means the built-in manage page doesn't
   // exist, so a renderer needs `groups.manage` to decide whether the manage button is a live link
   // or a dead one. (PaymentProvider stays paths-only: it never links into an optional page.)
@@ -99,7 +99,7 @@ export interface EmailProvider {
     config: ClientConfig,
     routeConfig?: ReservaResolvedRouteConfig,
   ): Promise<void>;
-  // Optional per-recipient split (BK-SIDE-001): a provider that implements both of these lets the
+  // Optional per-recipient split: a provider that implements both of these lets the
   // mutation dispatcher record + retry each recipient as its own durable outbox operation, so an
   // owner-send failure can never cause a retry to re-send the customer's already-delivered
   // message. A provider without them falls back to `send` as a single, unsplit operation — still
@@ -123,7 +123,7 @@ export interface CalendarProvider {
   deleteEvent(eventId: string): Promise<void>;
 }
 
-// Plan 022 (design decision 7): provider-neutral by construction — no name here belongs to any one
+// Provider-neutral by construction — no name here belongs to any one
 // payment vendor. Reserva ships and tests exactly one implementation (Stripe), but a community
 // adapter implements this same interface from its own package, using only the exported core types
 // and helpers. Amounts are always minor units of the booking's own currency (core/currency.ts); a
@@ -151,7 +151,7 @@ export function isBookingEvent(value: string): value is BookingEvent {
   return (BOOKING_EVENTS as readonly string[]).includes(value);
 }
 
-// Plan 021 (design decision 1): a subscriber's `events` filter is checked against the catalog at
+// A subscriber's `events` filter is checked against the catalog at
 // startup, and the rejection lists the whole valid vocabulary — an agent wiring a hook learns every
 // event name from the error alone, without reading source.
 export function unknownBookingEventsMessage(event: string): string {
@@ -176,10 +176,10 @@ export function validateBookingEventHooks(hooks: readonly BookingEventHook[]): v
   }
 }
 
-// Plan 020 (design decision 10): the independent alert channel to the central technical operator.
+// The independent alert channel to the central technical operator.
 // Deliberately narrow — exactly these seven fields, reference/operation metadata only. Excludes
 // booking/customer ids, names, contact details, addresses, raw provider bodies, session ids, and
-// manage tokens (see docs/plans/020's privacy constraint). `action`/`severity` mirror the
+// manage tokens. `action`/`severity` mirror the
 // operational-incident domain (src/repo.ts OperationalIncidentAction/-Severity) so the alert and
 // the admin card the operator opens from `adminUrl` always describe the same thing.
 export interface OperationalAlert {
@@ -192,14 +192,14 @@ export interface OperationalAlert {
   adminUrl: string;
 }
 
-// Plan 020 (design decision 11): durable delivery (claim/attempt/backoff) is the reconciler's job,
+// Durable delivery (claim/attempt/backoff) is the reconciler's job,
 // not this sink's — send() is a single best-effort attempt; a thrown error just means "not
 // delivered this attempt", picked up again by the next eligible alert-claim pass.
 export interface OperationalAlertSink {
   send(alert: OperationalAlert): Promise<void>;
 }
 
-// Plan 021 (design decision 3): the versioned envelope every durable booking event is delivered
+// The versioned envelope every durable booking event is delivered
 // in. `apiVersion` is an integer consumers dispatch shape on; `id` is stable across retries so
 // they can deduplicate on it; the booking payload comes from the single toWireBooking projection,
 // so pushed and pulled shapes cannot fork. Serialized once, when the occurrence happens — it is
@@ -214,7 +214,7 @@ export interface BookingEventEnvelope {
   data: { booking: WireBooking };
 }
 
-// Plan 021 (design decision 1/2): hook and webhook names share this domain because outbox rows
+// Hook and webhook names share this domain because outbox rows
 // distinguish them by their `family` column, not by a qualified string key.
 export const BOOKING_EVENT_SUBSCRIBER_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
 
@@ -226,7 +226,7 @@ export interface BookingEventHookContext {
   config: ClientConfig;
 }
 
-// Plan 021 (design decision 1): an in-process listener. `durable: false` (the default) fires
+// An in-process listener. `durable: false` (the default) fires
 // post-commit and is never retried; `durable: true` gets an outbox row per subscribed event and
 // rides the existing claim/attempt/abandon machinery. The handler receives the wire projection —
 // the same snapshot a webhook subscriber gets — so durability never changes an event's meaning.

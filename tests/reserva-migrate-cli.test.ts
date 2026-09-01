@@ -276,7 +276,7 @@ describe('reserva-migrate CLI', () => {
   });
 });
 
-// Plan 008: the CLI must tell Wrangler where reserva's packaged migrations live -- previously it
+// The CLI must tell Wrangler where reserva's packaged migrations live -- previously it
 // only forwarded the consumer's own `--config`, so a consumer with no `migrations_dir` got nothing
 // applied (or, worse, applied a colliding directory of the consumer's own). Since Wrangler has no
 // `--migrations-dir` flag, the mechanism writes a derived config with only the selected entry's
@@ -364,7 +364,7 @@ migrations_table = "custom_migrations"
   });
 });
 
-// Plan 008 step 4: the derived config is a temp file, not part of the consumer's repo -- it must
+// The derived config is a temp file, not part of the consumer's repo -- it must
 // never survive the invocation, whether wrangler succeeds or fails, and concurrent invocations
 // (e.g. two CI jobs) must never race on the same filename.
 describe('reserva-migrate derived config cleanup (plan 008)', () => {
@@ -395,7 +395,7 @@ describe('reserva-migrate derived config cleanup (plan 008)', () => {
   });
 });
 
-// Plan 008: the CLI must tell Wrangler where reserva's packaged migrations live -- previously it
+// The CLI must tell Wrangler where reserva's packaged migrations live -- previously it
 // only forwarded the consumer's own `--config`, so a consumer with no `migrations_dir` got nothing
 // applied. This proves the fix against REAL wrangler (not the arg-capturing stub above): Wrangler
 // has no `--migrations-dir` flag, so this is the mechanism's load-bearing assumption -- Wrangler

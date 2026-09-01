@@ -40,9 +40,8 @@ export function resolvedPriceTableFor(service: Pick<ServiceConfig, 'pricing'>): 
   // can never silently diverge from the server's canonicalized resolution.
   const canonicalPricing = [...service.pricing].sort((a, b) => a.maxQuantity - b.maxQuantity);
   const highest = Math.max(...canonicalPricing.map((row) => row.maxQuantity), 0);
-  // Plan 023 (design decision 2): the key set is each row's own `pickup` (or '' for a
-  // location-less row), in first-occurrence order — no more pinning 'default'/'custom' first, since
-  // that existed only for byte-identity with the removed pre-018 widget markup.
+  // The key set is each row's own `pickup` (or '' for a location-less row), in first-occurrence
+  // order — not a fixed 'default'/'custom' pinning.
   const keys = Array.from(new Set(canonicalPricing.map((row) => row.pickup ?? '')));
   const table: ResolvedPriceTable = {};
   for (const key of keys) table[key] = [];
@@ -58,12 +57,9 @@ export function priceForService(config: ClientConfig, serviceSlug: string, quant
   return priceFor(resolveService(config, serviceSlug), quantity, pickup);
 }
 
-export const resolvePrice = priceFor;
-export const getPrice = priceFor;
-
 export function pricingCombinations(service: ServiceConfig): Array<{ quantity: number; pickup: PickupType | null; priceMinor: number }> {
   const highest = Math.max(...service.pricing.map((row) => row.maxQuantity), 0);
-  // Plan 023 (design decision 2): same key-set derivation and ordering as resolvedPriceTableFor.
+  // Same key-set derivation and ordering as resolvedPriceTableFor.
   const keys = Array.from(new Set(service.pricing.map((row) => row.pickup ?? '')));
   const result: Array<{ quantity: number; pickup: PickupType | null; priceMinor: number }> = [];
   for (let quantity = 1; quantity <= highest; quantity += 1) {

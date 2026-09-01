@@ -1,9 +1,9 @@
-import type { ManageBooking } from '../core/api.js';
-import { escapeHtml } from '../http.js';
-import { formatDateTime, formatPrice } from '../ui/format.js';
-import { factList, pageShell, statusBadge, themeToggle } from '../ui/layout.js';
-import { defaultLocale, formatMessage, resolveMessages, type ReservaMessages } from '../ui/messages.js';
-import type { ThemePreference } from '../ui/theme.js';
+import type { ManageBooking } from '../../core/api.js';
+import { escapeHtml } from '../../http.js';
+import { formatDateTime, formatPrice } from '../format.js';
+import { factList, pageShell, statusBadge, themeToggle } from '../layout.js';
+import { defaultLocale, formatMessage, resolveMessages, type ReservaMessages } from '../messages.js';
+import type { ThemePreference } from '../theme.js';
 
 export interface ManagePageOptions {
   messages?: ReservaMessages;
@@ -32,7 +32,7 @@ export interface ManagePageOptions {
   };
 }
 
-// Plan 027 (design decision 2): the manage payload's shape has one declaration — the exported
+// The manage payload's shape has one declaration — the exported
 // `ManageBooking` wire type — and this renderer reads a Partial of it rather than restating the
 // fields. Partial because the page also renders for a direct caller's hand-built payload (and for
 // the error page's empty object), where every field may be missing.
@@ -70,7 +70,7 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
   if (typeof booking.priceMinor === 'number' && options.currency) {
     facts.push([messages['common.price'], escapeHtml(formatPrice(booking.priceMinor, locale, options.currency))]);
   }
-  // Plan 018 (design decision 8): both facts key off the chosen option's flags, independently — a
+  // Both facts key off the chosen option's flags, independently — a
   // both-flags option (Maze's custom drop-off) shows its address AND its meeting point. When a
   // direct caller's payload predates the flags, fall back to the pre-018 behavior: address only
   // for the literal 'custom' id, meeting point whenever one resolved.
@@ -97,7 +97,7 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
       : '';
     facts.push([messages['common.meetingPoint'], `${escapeHtml(booking.meetingPoint.label)}${maps}`]);
   }
-  // Plan 024 (design decision 3): boolean -> the app's existing yes/no copy pair (admin.on/off,
+  // Boolean -> the app's existing yes/no copy pair (admin.on/off,
   // reused rather than inventing a second one); everything else renders as its plain string form.
   // Every value is attacker-controlled free text for `text` fields, so it goes through escapeHtml
   // like every other fact here.

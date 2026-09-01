@@ -1,8 +1,8 @@
 ---
-// Plan 023 (design decision 1, step 6): exercises a service with no location module at all —
-// quantity-tier pricing only, no pickupType/meetingPointId at any point in the funnel. Since plan
-// 027 the widget learns that from the catalog (`location: null`) rather than from a
-// pickupOptions={[]} prop, so the absence is the deployment's answer, not the page's.
+// Exercises a service with no location module at all — quantity-tier pricing only, no
+// pickupType/meetingPointId at any point in the funnel. The widget learns that from the catalog
+// (`location: null`) rather than from a pickupOptions={[]} prop, so the absence is the
+// deployment's answer, not the page's.
 import BookingWidget from '../components/BookingWidget.astro';
 import config from '../config';
 

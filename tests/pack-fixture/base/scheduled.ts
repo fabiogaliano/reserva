@@ -1,10 +1,10 @@
-// Plan 020 (step 7/8): the consumer-owned custom Worker entrypoint for the scheduled reconciliation
-// sweep — a small, SEPARATE Worker script (its own wrangler config, its own `main`) rather than a
-// wrapper around the Astro adapter's generated entry. @astrojs/cloudflare 14's build always
-// regenerates its own redirected wrangler config with `main` forced to its own compiled entry (see
-// examples/smoke-site/worker/README.md for the investigation) — patching that generated file would
+// The consumer-owned custom Worker entrypoint for the scheduled reconciliation sweep — a small,
+// SEPARATE Worker script (its own wrangler config, its own `main`) rather than a wrapper around
+// the Astro adapter's generated entry. @astrojs/cloudflare 14's build always
+// regenerates its own redirected wrangler config with `main` forced to its own compiled
+// entry — patching that generated file would
 // be re-fought on every build and risks silently losing the adapter's injected routes/static
-// assets/bindings (the exact STOP condition this plan calls out). A standalone cron Worker sharing
+// assets/bindings. A standalone cron Worker sharing
 // the same RESERVA_DB D1 binding avoids the adapter entirely: the site's own entrypoint (and every
 // route/asset/binding it injects) is never touched.
 //

@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test';
 import { createBooking } from './helpers';
 
-// Plan 024 (done criteria): riverCruise (examples/smoke-site/src/config.ts) declares two metadata
+// riverCruise (examples/smoke-site/src/config.ts) declares two metadata
 // fields — a required `text` field and a `select` field. The widget renders no input for either
-// (no editing surface beyond checkout — plan 024 decision 4), so this spec injects the field onto
+// (no editing surface beyond checkout), so this spec injects the field onto
 // the checkout request the widget already sends, the same way any non-widget checkout consumer
 // would. Proves the whole funnel: checkout validation -> D1 -> confirmation page -> both manage-
-// page roles (customer and operator, the same renderer — plan 024 decision 3), with every value
+// page roles (customer and operator, the same renderer), with every value
 // HTML-escaped.
 
 const XSS_PAYLOAD = '<script>window.__bkMetadataXss = true;</script>"><img src=x onerror=alert(1)>';
@@ -38,7 +38,7 @@ test('consumer-declared metadata survives checkout, renders labeled on confirmat
   await expect(page.locator('.bk-facts')).toContainText('Window seat');
   expect(await page.content()).not.toContain(XSS_PAYLOAD);
 
-  // Operator manage page — this IS the admin "booking detail" surface (plan 024 decision 3): no
+  // Operator manage page — this IS the admin "booking detail" surface: no
   // separate admin renderer, the role toggles inside the same manage page.
   const operatorManageUrl = new URL(outboxEntry.operatorManageUrl);
   await page.goto(operatorManageUrl.pathname + operatorManageUrl.search);

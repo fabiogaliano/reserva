@@ -3,9 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import smokeRuntime from '../../examples/smoke-site/src/runtime';
 import { handleCheckout, handleManage, handleStatus } from '../../src/handlers';
 
-// Plan 024 (step 4): the workers-level end-to-end proof — real D1, the real smoke runtime, and
+// The workers-level end-to-end proof — real D1, the real smoke runtime, and
 // riverCruise's real declared metadata fields (examples/smoke-site/src/config.ts: a required
-// `text` field and a `select` field, plan 024's done criteria) — that consumer-declared metadata
+// `text` field and a `select` field) — that consumer-declared metadata
 // survives checkout -> D1 -> confirmation (self-healed through /status) -> both manage-page roles.
 // The webhook envelope's raw passthrough and the email renderer's labeled rows are proven at unit
 // level (tests/booking-events.test.ts, tests/providers-email.test.ts) against real signing/

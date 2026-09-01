@@ -57,8 +57,8 @@ describe('core settings', () => {
       'booking.minNoticeHours': 'not-json{',
       'booking.maxHorizonDays': '"twelve"',
       'booking.holdMinutes': '-3',
-      // Plan 022 (design decision 1): payments.methods was retired to the Stripe provider's own
-      // options, so a row left behind by an older deployment is just an unknown key now.
+      // payments.methods was retired to the Stripe provider's own options, so a row left behind
+      // by an older deployment is just an unknown key now.
       'payments.methods': JSON.stringify(['bitcoin']),
       'legal.termsUrl': JSON.stringify('javascript:alert(1)'),
       'booking.limitedThreshold': '1',
@@ -115,7 +115,7 @@ describe('merge-then-validate backstop (BK-CONFIG-001)', () => {
   // A row that fails its own SettingKind bound (e.g. holdMinutes=0) never reaches
   // mergeAndValidateSettings's validateConfig call in the first place — applySettingOverrides
   // silently drops it first (decodeStoredValue), same as the load path. Because the holdMinutes
-  // kind is now aligned exactly with validateConfig's rule (task 2), there's no gap left for
+  // kind is now aligned exactly with validateConfig's rule, there's no gap left for
   // mergeAndValidateSettings itself to catch on a single field — its own throw path is only
   // reachable via a genuine cross-field rule (see the 'cross-field' cases below), which is exactly
   // the class of bug it's a backstop against. Save-time rejection of a bad holdMinutes therefore

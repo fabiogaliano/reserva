@@ -1,16 +1,15 @@
 #!/usr/bin/env bun
-// Plan 020 (steps 8/9): proves the *real* scheduled() dispatch path — not a direct
-// runReconciliation() function call — recovers owed side-effect debt and resolves an already-open
-// operator incident, against the standalone cron Worker template (examples/smoke-site/worker/) and
-// its isolated D1, the same way `bun run cron:dev`+`bun run cron:trigger` do interactively.
+// Proves the *real* scheduled() dispatch path — not a direct runReconciliation() function call —
+// recovers owed side-effect debt and resolves an already-open operator incident, against the
+// standalone cron Worker template (examples/smoke-site/worker/) and its isolated D1, the same way
+// `bun run cron:dev`+`bun run cron:trigger` do interactively.
 //
 // Mechanism: `wrangler dev --test-scheduled` exposes `GET /__scheduled`, Wrangler's own local
 // route for triggering a Worker's scheduled() handler (see
 // node_modules/wrangler/wrangler-dist/cli.js's `testScheduled` wiring) — this is the boundary
-// local workerd actually supports for scheduled events; there is no Astro-preview equivalent (see
-// docs/plans/020-autonomous-reconciliation-operator-incidents.md's STOP conditions), which is why
-// this exercises the cron Worker directly with `wrangler dev` rather than trying to route the
-// trigger through `astro preview`.
+// local workerd actually supports for scheduled events; there is no Astro-preview equivalent,
+// which is why this exercises the cron Worker directly with `wrangler dev` rather than trying to
+// route the trigger through `astro preview`.
 //
 // Fixture shape: a confirmed booking with one calendar_create row already recorded as `failed`
 // (attempt 2, past both its backoff window and the ten-minute delayed-incident threshold) and an
@@ -120,8 +119,8 @@ async function assertRecovered(): Promise<void> {
   try {
     const db = proxy.env.RESERVA_DB as unknown as D1Database;
     const id = 'smoke-scheduled-recovery';
-    // Plan 022: the retired bookings.calendar_synced flag is gone; the event id the recovery wrote
-    // is the record that the calendar entry now exists, alongside the row's own 'succeeded' status.
+    // The event id the recovery wrote is the record that the calendar entry now exists, alongside
+    // the row's own 'succeeded' status.
     const operation = await db.prepare('SELECT side_effect_operations.status AS status, bookings.calendar_event_id AS calendar_event_id FROM side_effect_operations JOIN bookings ON bookings.id = side_effect_operations.booking_id WHERE side_effect_operations.booking_id = ? AND side_effect_operations.family = ?').bind(id, 'calendar_create').first<{ status: string; calendar_event_id: string | null }>();
     if (!operation) throw new Error('side_effect_operations row disappeared');
     if (operation.status !== 'succeeded') throw new Error(`expected the real scheduled() dispatch to redrive the owed calendar_create row to 'succeeded', got '${operation.status}'`);

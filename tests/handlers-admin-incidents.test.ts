@@ -42,10 +42,10 @@ function seedSideEffect(repo: FakeRepository, bookingId: string, identity: SideE
   });
 }
 
-// Plan 020 (design decision 12/13): the admin "Attention required" section — the GET render pulls
-// open/resolved incidents into the page, and the two CSRF-protected POST actions (Try again / I
-// handled this manually) dispatch to the right executor per source type without ever falsifying
-// the underlying booking/side-effect/refund row.
+// The admin "Attention required" section — the GET render pulls open/resolved incidents into the
+// page, and the two CSRF-protected POST actions (Try again / I handled this manually) dispatch to
+// the right executor per source type without ever falsifying the underlying booking/side-effect/
+// refund row.
 describe('admin incidents (plan 020 design decisions 12-14)', () => {
   it('does not render the incident section before any incident activity exists', async () => {
     const context = createReservaContext({
@@ -134,7 +134,7 @@ describe('admin incidents (plan 020 design decisions 12-14)', () => {
     expect(response.headers.get('location')).toContain('saved=incident-retried');
     expect(response.headers.get('location')).toContain('#bk-incidents');
     expect(calendarCalls).toBe(1);
-    // Plan 022: the calendar event id the retry wrote IS the record that the event exists.
+    // The calendar event id the retry wrote IS the record that the event exists.
     expect(repo.rows.get(seeded.id)?.calendarEventId).toBe('cal_retry');
   });
 

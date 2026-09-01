@@ -88,7 +88,7 @@ describe('Reserva handlers', () => {
     const retried = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), context);
     expect(retried.status).toBe(200);
     expect(repo.rows.get(seeded.id)).toMatchObject({ status: 'confirmed' });
-    // Plan 022: both confirmation rows succeeded is the whole record that the retry delivered.
+    // Both confirmation rows succeeded is the whole record that the retry delivered.
     expect(sideEffectOperation(repo, seeded.id, { family: 'calendar_create' })).toMatchObject({ status: 'succeeded' });
     expect(sideEffectOperation(repo, seeded.id, { family: 'email_confirmation' })).toMatchObject({ status: 'succeeded' });
   });
@@ -182,7 +182,7 @@ describe('Reserva handlers', () => {
     expect(calendarCreates).toBe(0);
   });
 
-  // Plan 021: a dispute is not a booking transition, so its durable row is written directly and
+  // A dispute is not a booking transition, so its durable row is written directly and
   // drained detached — the webhook response must not wait for a slow subscriber.
   it('reports Stripe disputes through waitUntil without delaying the webhook response', async () => {
     const seeded = booking({ id: 'b-dispute', paymentRef: 'pi_dispute' });
@@ -249,7 +249,7 @@ describe('Reserva handlers', () => {
 
     const response = await handleAvailability(new Request('https://example.test/api/booking/availability?service=vintage&quantity=2&from=1000-01-01&to=9999-12-31'), context);
     expect(response.status).toBe(400);
-    // Plan 027 (design decision 3): the bound is now the deployment's own maxHorizonDays (180 in
+    // The bound is the deployment's own maxHorizonDays (180 in
     // the fixture), and the message names the config key so a caller can correct the request.
     await expect(response.json()).resolves.toMatchObject({
       error: { code: 'validation_failed', message: 'Date range cannot exceed the booking horizon of 180 days (config.booking.maxHorizonDays); request a narrower range' },
@@ -276,8 +276,8 @@ describe('Reserva handlers', () => {
 
   it('recovers from 11 consecutive reference collisions — beyond the old retry cap of 8 — without changing the reference format', async () => {
     const repo = fakeRepository();
-    // BK-CAP-001: handleCheckout now writes through insertHoldWithCapacity (the atomic
-    // capacity-guarded INSERT), not the old unconditional insertHold — hook that entry point so
+    // handleCheckout writes through insertHoldWithCapacity (the atomic
+    // capacity-guarded INSERT), not an unconditional insertHold — hook that entry point so
     // this still exercises the real retry loop instead of silently no-op-ing.
     const realInsertHold = repo.insertHoldWithCapacity;
     let insertAttempts = 0;
@@ -365,7 +365,7 @@ describe('Reserva handlers', () => {
   });
 });
 
-// Plan 017 (design decision 2): checkout's meetingPointId field — required only for a
+// checkout's meetingPointId field — required only for a
 // multi-point service's default (free) pickup; validated against the declared set whenever supplied
 // (including for a custom pickup); the resolved id is always what gets stored.
 describe('checkout meetingPointId (plan 017 design decision 2)', () => {
@@ -439,7 +439,7 @@ describe('checkout meetingPointId (plan 017 design decision 2)', () => {
   });
 });
 
-// Plan 018 (design decision 6): parsePickup validates pickupType against the service's own declared
+// parsePickup validates pickupType against the service's own declared
 // option ids (via pickupOptionFor) instead of a fixed 'default'/'custom' enum, and the
 // meetingPointId requirement re-keys onto the chosen option's usesMeetingPoint instead of
 // `pickupType === 'default'` — Maze's "custom drop-off" still starts at a meeting point even though
@@ -516,7 +516,7 @@ describe('checkout pickupType (plan 018 design decision 6)', () => {
     expect(repo.rows.get(bookingId)).toMatchObject({ pickupType: 'custom', priceMinor: 12000 });
   });
 
-  // Plan 023: DEFAULT_PICKUP_OPTIONS injection (and its pinned error message) is gone — every
+  // DEFAULT_PICKUP_OPTIONS injection (and its pinned error message) is gone — every
   // location-ful service now declares its own options explicitly, so an invalid or missing
   // pickupType always gets the generic "must be one of" / "is required" wording.
   it('names the declared ids for an invalid pickupType, and reports missing separately', async () => {

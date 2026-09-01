@@ -7,7 +7,7 @@ import {
   handleOperatorNoShow,
   handleOperatorReschedule,
 } from '../../handlers/index.js';
-import { renderManageErrorPage, renderManagePage, type ManagePageOptions } from '../../components/manage-page.js';
+import { renderManageErrorPage, renderManagePage, type ManagePageOptions } from '../../ui/pages/manage-page.js';
 import { nowIso } from '../../context.js';
 import { resolveLocale } from '../../core/locale.js';
 import { localDateKey, localDateTimeToUtcIso, parseUtcInstant } from '../../core/time.js';
@@ -41,7 +41,7 @@ export async function GET({ request, locals }: APIContext): Promise<Response> {
   if (!response.headers.get('content-type')?.includes('application/json')) return response;
   const payload = await response.json() as Record<string, unknown>;
   const booking = payload.booking && typeof payload.booking === 'object' ? payload.booking as Record<string, unknown> : {};
-  // Plan 027 (design decision 5): the booking's own stored locale wins (it was negotiated at
+  // The booking's own stored locale wins (it was negotiated at
   // checkout); the error page, which has no booking, negotiates the `?locale=` hint instead of
   // trusting it verbatim.
   const locale = typeof booking.locale === 'string'
@@ -78,7 +78,7 @@ export async function GET({ request, locals }: APIContext): Promise<Response> {
       new Date(parseUtcInstant(now).getTime() + context.config.booking.maxHorizonDays * 86_400_000).toISOString(),
       timezone,
     );
-    // Plan 027 (design decision 3): the availability endpoint now bounds a request by the same
+    // The availability endpoint now bounds a request by the same
     // maxHorizonDays this end is derived from, so the reschedule picker asks for the whole horizon
     // instead of clamping to the retired 62-day cap.
     const to = horizonEnd;

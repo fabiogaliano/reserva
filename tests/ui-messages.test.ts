@@ -15,9 +15,8 @@ describe('bundled UI messages', () => {
     }
   });
 
-  // Plan 026 (design decision 4): a generic library must not default to Portuguese — both real
-  // consumers set config.locales.default explicitly, so this only affects a caller supplying no
-  // locale at all.
+  // A generic library must not default to Portuguese — both real consumers set
+  // config.locales.default explicitly, so this only affects a caller supplying no locale at all.
   it('uses English by default and keeps European Portuguese selectable', () => {
     expect(defaultLocale).toBe('en');
     expect(resolveMessages(undefined, undefined)['widget.title']).toBe('Book now');

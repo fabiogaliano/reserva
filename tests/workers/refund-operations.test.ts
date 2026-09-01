@@ -41,7 +41,7 @@ async function seedConfirmed(id: string): Promise<void> {
   expect(confirmed).toMatchObject({ status: 'confirmed' });
 }
 
-// BK-REFUND-001: claimRefundOperation is the compare-and-set primitive that makes a booking's
+// claimRefundOperation is the compare-and-set primitive that makes a booking's
 // refund decision race-proof. D1 processes every statement serially on a single-threaded Durable
 // Object (see repo-cas-transitions.test.ts's header comment), so UNIQUE(booking_id) plus the
 // WHERE NOT EXISTS conditional insert is a true claim under real concurrent writers, not just in
@@ -171,7 +171,7 @@ describe('refund_operations concurrent claim uniqueness on real D1', () => {
     expect(stored).toMatchObject({ id: 'op-upsert-non-regress', paymentIntent: `pi_${id}`, choice: 'full', status: 'succeeded', stripeRefundId: 're_original', amountCents: 12000, error: null });
   });
 
-  // BK-REFUND-001 finding #5: resolveRefundOperation must be non-regressing against real D1 — a
+  // resolveRefundOperation must be non-regressing against real D1 — a
   // succeeded row (e.g. already recorded by the charge.refunded webhook) can never be downgraded
   // to 'failed' or have its refund id/amount cleared by a later, stale operator-side attempt.
   it('authoritative Stripe data corrects an earlier none/succeeded audit row', async () => {
@@ -192,7 +192,7 @@ describe('refund_operations concurrent claim uniqueness on real D1', () => {
     });
   });
 
-  // BK-REFUND-001: once a row is full/succeeded, it is the terminal, authoritative statement of
+  // Once a row is full/succeeded, it is the terminal, authoritative statement of
   // what Stripe did — stale/failed data reaching reconcileStripeRefundOperation afterwards (a
   // late-arriving duplicate webhook, a stale operator retry) must never regress it, and repeating
   // the SAME authoritative reconciliation must be a true no-op against real D1.

@@ -1,6 +1,6 @@
 import { isApiErrorCode, type ApiErrorCode, type ApiErrorEnvelope } from './core/api.js';
 
-// Plan 027 (design decision 2): `code` is the closed API_ERROR_CODES union, not a free string — a
+// `code` is the closed API_ERROR_CODES union, not a free string — a
 // code that isn't in the catalog no longer compiles, which is what lets a consumer switch
 // exhaustively on failure causes.
 export class HttpError extends Error {
@@ -38,14 +38,10 @@ export function errorResponse(error: unknown): Response {
   return json<ApiErrorEnvelope>({ error: { code: 'internal_error', message: 'An unexpected error occurred' } }, 500);
 }
 
-export function badRequest(code: ApiErrorCode, message: string): never {
-  throw new HttpError(400, code, message);
-}
-
-// Hardening sweep (audit finding #10): nothing in src/ bounded a request body before this — public
-// JSON endpoints, both form-POST entrypoints, and the buffered payment webhook body all read
-// request.json()/formData()/text() unbounded. One limit per traffic class, chosen for the largest
-// legitimate payload each entrypoint actually receives.
+// One limit per traffic class, chosen for the largest
+// legitimate payload each entrypoint actually receives — public JSON endpoints, both form-POST
+// entrypoints, and the buffered payment webhook body all read request.json()/formData()/text()
+// through these bounds.
 export const JSON_BODY_LIMIT_BYTES = 32 * 1024;
 export const FORM_BODY_LIMIT_BYTES = 256 * 1024;
 export const PAYMENT_WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024;
@@ -137,7 +133,7 @@ export function tokenBytes(length = 32): string {
   return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
 }
 
-// BK-SEC-002: one-way digest used to hash manage/operator tokens at rest (src/repo.ts) so a D1
+// One-way digest used to hash manage/operator tokens at rest (src/repo.ts) so a D1
 // dump no longer contains a usable credential. Unsalted SHA-256 is appropriate here specifically
 // because the input is always a 256-bit crypto.getRandomValues token (tokenBytes above), never a
 // low-entropy secret like a password — there is no dictionary/rainbow-table attack to defend

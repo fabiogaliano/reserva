@@ -1,9 +1,9 @@
-// Plan 016 (audit finding #12, scoped): migrations/0013_side_effect_operations_abandoned.sql
-// rebuilds side_effect_operations the same way 0010/0011/0012 already do (rename -> create ->
-// INSERT...SELECT -> drop — see tests/workers/migration-0012-preservation.test.ts, which this
-// mirrors), plus a one-time upgrade conversion: any pre-existing nonterminal row already at or
-// over the new attempt cap becomes 'abandoned' with a bounded max-attempts error, so no capped
-// pending, failed, or stale in_flight row is left invisible to the claim predicates.
+// migrations/0013_side_effect_operations_abandoned.sql rebuilds side_effect_operations the same way
+// 0010/0011/0012 already do (rename -> create -> INSERT...SELECT -> drop — see
+// tests/workers/migration-0012-preservation.test.ts, which this mirrors), plus a one-time upgrade
+// conversion: any pre-existing nonterminal row already at or over the new attempt cap becomes
+// 'abandoned' with a bounded max-attempts error, so no capped pending, failed, or stale in_flight row
+// is left invisible to the claim predicates.
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
@@ -16,12 +16,12 @@ interface TestEnv {
 const bindings = env as unknown as TestEnv;
 const db = bindings.RESERVA_DB;
 
-// Plan 017 (design decision 3): repo.insertHold now always writes meeting_point_id/-label
-// (migration 0014), so it can't seed the FK-parent rows below against this test's deliberately
-// pre-0013 schema. Only these FK-parent rows need to exist at all (nothing here asserts on their
-// own columns) -- a raw INSERT covering just the columns 0001_init.sql guarantees NOT NULL,
-// present since before every migration this suite ever slices before, decouples this
-// historical-schema test from the CURRENT repo.ts column list going forward.
+// repo.insertHold now always writes meeting_point_id/-label (migration 0014), so it can't seed the
+// FK-parent rows below against this test's deliberately pre-0013 schema. Only these FK-parent rows
+// need to exist at all (nothing here asserts on their own columns) -- a raw INSERT covering just the
+// columns 0001_init.sql guarantees NOT NULL, present since before every migration this suite ever
+// slices before, decouples this historical-schema test from the CURRENT repo.ts column list going
+// forward.
 async function seedBooking(id: string): Promise<void> {
   await db.prepare(
     `INSERT INTO bookings (id, reference, tour_slug, people, pickup_type, starts_at, ends_at, locale, price_cents, status, cancel_token, operator_token, created_at, updated_at)
@@ -82,10 +82,9 @@ describe('migration 0013 rebuild preserves every legacy outbox row and converts 
       }
     }
 
-    // The upgrade-conversion case (design decision 3): a 'pending' and a 'failed' row already at
-    // the cap must become 'abandoned', gaining resolved_at (COALESCE'd from any existing resolved_at
-    // or updated_at) and a bounded max-attempts error, while attempt_count/created_at/attempted_at
-    // are left untouched.
+    // The upgrade-conversion case: a 'pending' and a 'failed' row already at the cap must become
+    // 'abandoned', gaining resolved_at (COALESCE'd from any existing resolved_at or updated_at) and a
+    // bounded max-attempts error, while attempt_count/created_at/attempted_at are left untouched.
     const cappedPending = {
       bookingId: 'migration0013-capped-pending', kind: 'email:booking.confirmed', status: 'pending',
       providerResultId: null, attemptCount: 10, attemptedAt: '2026-07-21T09:00:00.000Z',

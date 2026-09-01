@@ -8,8 +8,8 @@ import { fakeRepository, providers } from './fakes';
 
 const clock = () => new Date('2026-08-14T10:00:00.000Z');
 
-// Plan 020 (design decision 7): attemptRefund's `claim` branch is exercised only by the scheduled
-// reconciler (not yet wired — step 5), so these are the first tests to reach it. The `claim`-less
+// attemptRefund's `claim` branch is exercised only by the scheduled
+// reconciler, so these are the first tests to reach it. The `claim`-less
 // branch (the HTTP path) is already exhaustively covered end to end through
 // tests/handlers-operator.test.ts and friends, unchanged by this extraction.
 describe('attemptRefund with an execution claim (the scheduled-reconciler branch)', () => {

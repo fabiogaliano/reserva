@@ -1,4 +1,4 @@
-// Plan 021 (design decision 3): the signature contract is verified with the Standard Webhooks
+// The signature contract is verified with the Standard Webhooks
 // spec's own library as an INDEPENDENT implementation — this suite never re-derives the HMAC with
 // the same code under test, so a drift in either direction (wrong signing string, wrong header
 // names, wrong key decoding) fails here.

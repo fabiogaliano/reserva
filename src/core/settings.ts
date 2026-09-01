@@ -236,7 +236,7 @@ export class SettingsMergeError extends Error {
   }
 }
 
-// Save-path backstop (BK-CONFIG-001): a SettingDefinition's kind bounds a field on its own, but
+// Save-path backstop: a SettingDefinition's kind bounds a field on its own, but
 // only validateConfig knows the cross-field and service-level rules (e.g. locales.default must be in
 // locales.supported), so the section being saved is merged over every OTHER currently stored
 // override plus the file config and re-validated as a whole before anything is written. Throws

@@ -1,6 +1,5 @@
-/* Styling for this example's booking widget. It left the library with the component (plan 028):
-   Reserva ships no customer booking funnel, so the widget and its CSS are yours to own and rebrand
-   — the --bk-* tokens below are the seam. */
+/* Styling for this example's booking widget. Reserva ships no customer booking funnel, so the
+   widget and its CSS are yours to own and rebrand — the --bk-* tokens below are the seam. */
 
 .bk-widget {
   /* Linear-style tokens: indigo accent, cool neutrals, hairline borders. Prefers Inter when the

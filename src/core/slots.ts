@@ -27,8 +27,6 @@ export function scheduleForDate(service: ServiceConfig, date: string, timezone: 
   return service.schedule.find((rule) => rule.days.includes(weekday) && matchesSeason(rule, date));
 }
 
-export const getScheduleForDate = scheduleForDate;
-
 export function generateSlots(service: ServiceConfig, date: string, timezone: string): GeneratedSlot[] {
   const rule = scheduleForDate(service, date, timezone);
   if (!rule) return [];
@@ -59,6 +57,5 @@ export function generateSlots(service: ServiceConfig, date: string, timezone: st
   return slots;
 }
 
-export const slotsForDate = generateSlots;
 export const generateSlotStarts = (service: ServiceConfig, date: string, timezone: string): string[] =>
   generateSlots(service, date, timezone).map((slot) => slot.start);

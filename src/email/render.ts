@@ -2,7 +2,7 @@ import type { Booking } from '../core/booking.js';
 import { meetingPointForBooking, metadataRowsForBooking, pickupPresentationFor, type ClientConfig } from '../core/config.js';
 import { toMajorUnits } from '../core/currency.js';
 import type { EmailBookingEvent, EmailRecipientRole } from '../core/events.js';
-// Plan 024 (design decision 3): boolean metadata reuses the app's one existing yes/no copy pair
+// Boolean metadata reuses the app's one existing yes/no copy pair
 // (admin.on/off) instead of inventing a second one in this renderer's own English/Portuguese
 // catalogs, the only cross-import from src/ui/ in this module, kept to that single pair.
 import { resolveMessages } from '../ui/messages.js';
@@ -81,17 +81,17 @@ function buildModel(context: EmailTemplateContext): EmailModel {
   const rawValues: Record<string, string> = {
     serviceTitle, when, customerName, reference: booking.reference,
     quantity: String(booking.quantity), guestsWord, startsAtLocal: context.startsAtLocal,
-    // Plan 026 (design decision 3): the refund-timing sentence is a copy key so a consumer can
+    // The refund-timing sentence is a copy key so a consumer can
     // override it with a concrete promise; interpolated like every other placeholder rather than
     // hardcoded into the cancellation leads themselves.
     refundTiming: copy('refund.timing'),
   };
   const htmlValues = Object.fromEntries(Object.entries(rawValues).map(([key, value]) => [key, escapeHtml(value)]));
 
-  // Plan 017 (design decision 4/7): per-booking meeting-point resolution — a removed id falls back
-  // to the booking's stored label snapshot with no maps link. Plan 018 (design decision 8): the
+  // Per-booking meeting-point resolution — a removed id falls back
+  // to the booking's stored label snapshot with no maps link. The
   // requiresAddress/usesMeetingPoint gates are independent, so an option declaring both renders
-  // both the collected address and the meeting-point row. Plan 023 (design decision 4): gated on
+  // both the collected address and the meeting-point row. Gated on
   // the row's own data first — a location-less booking gets neither row at all.
   const presentation = service ? pickupPresentationFor(service, booking) : null;
   const resolvedPoint = service && presentation ? meetingPointForBooking(service, booking.meetingPointId ?? null, booking.meetingPointLabel ?? null) : null;
@@ -114,7 +114,7 @@ function buildModel(context: EmailTemplateContext): EmailModel {
     });
   }
 
-  // Plan 024 (design decision 3): the same metadataRowsForBooking projection the manage/
+  // The same metadataRowsForBooking projection the manage/
   // confirmation payloads use, turned into card rows here since this renderer builds its own HTML
   // rather than delegating to a shared page renderer. Boolean -> the app's one existing yes/no
   // copy pair; everything else its plain string form. Every value is attacker-controlled free text

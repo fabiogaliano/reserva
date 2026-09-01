@@ -7,12 +7,12 @@ import { createBookingRepository } from '../../src/repo';
 import { defineCloudflareReservaRuntime, type ReservaProviders } from '../../src/runtime';
 import { booking as bookingFixture, config as baseConfig } from '../fixtures';
 
-// Plan 026 step 5: a from-scratch, non-Brevo transport that imports `renderDefaultEmail` through
+// A from-scratch, non-Brevo transport that imports `renderDefaultEmail` through
 // `@reservajs/astro/email` (`../../src/email` resolves the exact same module a consumer's
 // `@reservajs/astro/email` specifier resolves to), overrides exactly one event, and delegates
 // every other event -- including the one this test round-trips through a real confirmation
 // against real D1 -- to the shipped default template. Proves the public seam is enough to build a
-// working provider without touching src/providers/brevo.ts at all.
+// working provider without touching src/providers/email-brevo/index.ts at all.
 
 interface TestEnv { RESERVA_DB: D1Database }
 const db = (env as unknown as TestEnv).RESERVA_DB;

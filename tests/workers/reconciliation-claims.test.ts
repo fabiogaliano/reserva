@@ -42,7 +42,7 @@ async function seedConfirmed(id: string): Promise<void> {
   expect(confirmed).toMatchObject({ status: 'confirmed' });
 }
 
-// Plan 020 (design decision 7): claimRefundExecution is the shared refund executor's own atomic
+// claimRefundExecution is the shared refund executor's own atomic
 // claim, mirroring claimRefundOperation's real-D1 concurrency proof — exactly one of several
 // concurrent scheduled-reconciler passes (or an HTTP request racing the cron) may claim a given
 // refund_operations row's execution slot at a time.
@@ -109,7 +109,7 @@ describe('claimRefundExecution / claimRefundExecutionForRetry concurrent claim u
   });
 });
 
-// Plan 020 (design decision 5): claimSideEffectOperationForRetry / claimMutationSideEffectOperationForRetry
+// claimSideEffectOperationForRetry / claimMutationSideEffectOperationForRetry
 // are the admin bypass for side-effect outbox rows — this proves the bypass and the ordinary
 // next_attempt_at gate against real D1, not just the in-memory fake.
 describe('side-effect operation backoff gating and retry bypass on real D1', () => {
@@ -137,7 +137,7 @@ describe('side-effect operation backoff gating and retry bypass on real D1', () 
   });
 });
 
-// Plan 020 (design decision 11): claimIncidentAlert is the alert-delivery lease for an open,
+// claimIncidentAlert is the alert-delivery lease for an open,
 // undelivered revision, with its own claim/backoff window. Resolved revisions are obsolete and a
 // later reopen increments alert_revision before becoming eligible again.
 describe('operational_incidents alert claim concurrency and lifecycle on real D1', () => {

@@ -4,7 +4,7 @@ import cloudflare from '@astrojs/cloudflare';
 import reserva from '../../src/index.ts';
 import config from './src/config';
 
-// e2e-dev-server.ts sets RESERVA_E2E_PERSIST and scripts/smoke-preview-test.ts (plan 015) sets
+// e2e-dev-server.ts sets RESERVA_E2E_PERSIST and scripts/smoke-preview-test.ts sets
 // RESERVA_PREVIEW_PERSIST, so each isolated probe reads/writes its own D1 state dir instead of
 // `.wrangler/state` — the same directory the interactive `bun run demo` command uses, which
 // neither probe should ever reset. Resolved against this config file (not process.cwd()) so it

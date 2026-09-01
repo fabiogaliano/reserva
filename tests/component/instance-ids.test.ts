@@ -1,5 +1,5 @@
-// Plan 014 item A: two instances of any exported component used to render duplicate
-// `id`/`aria-labelledby` pairs (a hardcoded literal id). Renders each exported component twice and
+// Two instances of any exported component used to render duplicate `id`/`aria-labelledby` pairs
+// (a hardcoded literal id). Renders each exported component twice and
 // proves each instance's label id is unique and its own `aria-labelledby` resolves to its own id,
 // not the sibling's — the actual defect a duplicate hardcoded id produces (ambiguous labelling,
 // and a shared `id` is invalid HTML).

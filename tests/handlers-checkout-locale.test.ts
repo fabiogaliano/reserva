@@ -1,4 +1,4 @@
-// Plan 027 (design decision 5 / step 5): checkout is a locale-bearing entrypoint, so it negotiates
+// Checkout is a locale-bearing entrypoint, so it negotiates
 // the requested tag instead of rejecting anything that isn't declared verbatim. What matters is
 // what gets STORED on the booking: every later surface (emails, manage page, confirmation) resolves
 // its copy from that value, so it must always be one of the deployment's supported locales.

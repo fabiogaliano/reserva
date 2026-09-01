@@ -1,8 +1,8 @@
-// Plan 025: proves the whole admin surface — the admin dashboard (GET/POST) and the operator
-// action endpoints — works end to end against real D1 with a fully custom, non-Access `adminAuth`.
-// Done criteria: "a workers test proves the whole admin surface works with no cloudflareaccess.com
-// string anywhere in its config" — configWithoutAccess below drops `admin.access` entirely, and the
-// header-token fake never references Cloudflare Access at all.
+// Proves the whole admin surface — the admin dashboard (GET/POST) and the operator action
+// endpoints — works end to end against real D1 with a fully custom, non-Access `adminAuth`. Done
+// criteria: "a workers test proves the whole admin surface works with no cloudflareaccess.com
+// string anywhere in its config" — configWithoutAccess below drops `admin.access` entirely, and
+// the header-token fake never references Cloudflare Access at all.
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { AdminIdentity } from '../../src/access';

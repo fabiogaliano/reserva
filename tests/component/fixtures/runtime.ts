@@ -4,7 +4,7 @@ import type { ReservaContextInput } from '../../../src/context';
 import { fakeRepository, providers } from '../../fakes';
 import { config } from '../../fixtures';
 
-// Plan 009 component-render test fixture (tests/component/admin-dashboard.test.ts). Wired into a
+// Component-render test fixture (tests/component/admin-dashboard.test.ts). Wired into a
 // single Vite/Astro config (vitest.component.config.ts) as the reserva integration's
 // runtimeEntrypoint, so `virtual:reserva/runtime` resolves for AdminDashboard.astro's frontmatter
 // exactly as it would in a real consumer build. One fixture backs every test case: the request

@@ -9,10 +9,9 @@ const TOUR = 'oldTown';
 // seams does not, so every POST to one needs it set explicitly.
 const DEV_POST_HEADERS = { origin: 'http://localhost:4399' };
 
-// Plan 020 (steps 6/8, done criteria "covered in Playwright"): the admin "Attention required"
-// cards and their two CSRF-protected actions, rendered and clicked through a real browser — not
-// just asserted against server-rendered HTML strings (see tests/handlers-admin-incidents.test.ts
-// for that level).
+// The admin "Attention required" cards and their two CSRF-protected actions, rendered and clicked
+// through a real browser — not just asserted against server-rendered HTML strings (see
+// tests/handlers-admin-incidents.test.ts for that level).
 //
 // This suite runs against `astro dev` (playwright.config.ts's webServer), which has no Cron
 // Trigger and cannot dispatch a real scheduled() event the way scripts/smoke-scheduled-test.ts's
@@ -51,7 +50,7 @@ test('a one-shot provider failure opens an incident, "Try again" resolves it, a 
   expect(retryAlert, 'retry-target alert').toBeTruthy();
   expect(manualAlert, 'manual-target alert').toBeTruthy();
   expect(oversellAlert, 'oversell-target alert').toBeTruthy();
-  // Design decision 10: exactly these seven fields, no PII (no bookingId/customer name/email).
+  // Exactly these seven fields, no PII (no bookingId/customer name/email).
   for (const alert of [retryAlert, manualAlert, oversellAlert]) {
     expect(Object.keys(alert).sort()).toEqual(
       ['action', 'adminUrl', 'attemptCount', 'firstDetectedAt', 'incidentId', 'reference', 'severity'].sort(),
@@ -70,7 +69,7 @@ test('a one-shot provider failure opens an incident, "Try again" resolves it, a 
   // --- The admin page renders the three cards.
   await page.goto('/booking/admin');
   const pageText = await page.locator('#bk-incidents').innerText();
-  // Design decision 12: never the internal word "abandoned" anywhere in the section.
+  // Never the internal word "abandoned" anywhere in the section.
   expect(pageText.toLowerCase()).not.toContain('abandoned');
 
   const retryCard = page.locator('.bk-incident-card', { hasText: retryTarget.reference });
@@ -87,8 +86,8 @@ test('a one-shot provider failure opens an incident, "Try again" resolves it, a 
 
   // --- "Try again" on the retry-target card: the smoke calendar provider now succeeds (the
   // forced failure was one-shot), so the underlying row recovers immediately. The incident itself
-  // only re-resolves on the next reconciliation pass (design decision 9: automatic resolution is
-  // a re-scan concern, same as a real cron tick after an operator-triggered retry) — a second
+  // only re-resolves on the next reconciliation pass (automatic resolution is a re-scan concern,
+  // same as a real cron tick after an operator-triggered retry) — a second
   // /dev/reconcile.json call stands in for that next tick.
   await retryCard.getByRole('button', { name: 'Try again' }).click();
   await expect(page.locator('#bk-incidents')).toContainText('Retry attempted');

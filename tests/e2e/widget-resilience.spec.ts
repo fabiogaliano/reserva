@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-// Plan 014 item B: BookingWidget.astro rendered its form `hidden` with only a <noscript> fallback,
+// BookingWidget.astro rendered its form `hidden` with only a <noscript> fallback,
 // and `form.hidden = false` ran *before* readData(form) (a JSON.parse that can throw) inside an
 // uncaught top-level loop. JavaScript enabled but blocked or throwing meant the visitor saw neither
 // the form nor a contact fallback — a widget that silently vanished.
@@ -18,7 +18,7 @@ test('aborting the widget module load keeps the default fallback visible instead
   await expect(form).toBeHidden();
 });
 
-// Plan 027 (design decision 6): initialization now awaits the catalog before binding listeners, so
+// Initialization now awaits the catalog before binding listeners, so
 // the "reveal only after every step succeeded" guarantee above has a new way to fail — a
 // deployment that can't answer for itself must leave the contact fallback up, not a form whose
 // pickup options were never rendered.

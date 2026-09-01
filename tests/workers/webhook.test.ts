@@ -2,12 +2,12 @@ import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test'
 import { env } from 'cloudflare:workers';
 import Stripe from 'stripe';
 import { beforeEach, describe, expect, it } from 'vitest';
-import config from '../../examples/client-config';
+import config from '../../examples/minimal/client-config';
 import type { Booking } from '../../src/core/booking';
 import { createBookingRepository, sideEffectOperationKey, type SideEffectOperationRecord } from '../../src/repo';
 import worker, { WEBHOOK_SECRET, calendarEvents, emailOutbox, hookOutbox, resetWebhookWorkerOutboxes } from './worker';
 
-// Plan 015 (audit finding #16): the money path -- a signed checkout.session.completed reaching
+// The money path -- a signed checkout.session.completed reaching
 // the webhook route and confirming a booking with durable side effects -- was never proven
 // assembled. Every request below goes through the real worker (./worker.ts): real
 // defineCloudflareReservaRuntime, the real Stripe adapter doing real HMAC signature verification
@@ -153,7 +153,7 @@ describe('signed Stripe webhook through the assembled worker + real D1', () => {
     const tamperedResponse = await dispatch(webhookRequest(tamperedPayload, signature));
     expect(tamperedResponse.status).toBe(400);
 
-    // Sanity check (done criteria): an entirely unsigned request must fail too -- proving there is
+    // Sanity check: an entirely unsigned request must fail too -- proving there is
     // no bypass path that skips verification when a caller simply omits the header.
     const unsignedResponse = await dispatch(webhookRequest(payload, null));
     expect(unsignedResponse.status).toBe(400);

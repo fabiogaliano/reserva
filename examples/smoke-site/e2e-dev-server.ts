@@ -27,7 +27,7 @@ if (!persistDir) throw new Error('e2e-dev-server.ts requires RESERVA_E2E_PERSIST
 
 // Fresh per run: wrangler and @cloudflare/vite-plugin both nest the actual sqlite state under
 // <dir>/v3, so removing the whole isolated dir guarantees migrations replay against an empty
-// database every run — this is the reset the two-consecutive-runs check in the plan verifies.
+// database every run — this is the reset the two-consecutive-runs check verifies.
 rmSync(new URL(persistDir, import.meta.url), { recursive: true, force: true });
 
 const migrateResult = spawnSync(

@@ -1,11 +1,11 @@
 import { test, expect } from '@playwright/test';
 
-// Plan 014 item C (audit finding #13): loadAvailability (BookingWidget.astro) is fired from
-// initial load, every party-size change, retry click, and post-checkout failure, with no
-// AbortController and no generation check — every resolved fetch unconditionally overwrote the
-// calendar/slot UI. An older response settling late (e.g. a slow network hiccup) could overwrite a
-// newer party-size's already-rendered slots, and the user would then hit an avoidable checkout 409
-// against a slot the UI no longer actually reflects.
+// loadAvailability (BookingWidget.astro) is fired from initial load, every party-size change,
+// retry click, and post-checkout failure, with no AbortController and no generation check — every
+// resolved fetch unconditionally overwrote the calendar/slot UI. An older response settling late
+// (e.g. a slow network hiccup) could overwrite a newer party-size's already-rendered slots, and
+// the user would then hit an avoidable checkout 409 against a slot the UI no longer actually
+// reflects.
 //
 // Mocks the availability endpoint with distinguishable fake slots per party size (rather than
 // relying on the fixture's real capacity happening to differ between party sizes) so "which
@@ -38,8 +38,7 @@ test('a stale availability response cannot overwrite a newer party-size selectio
   await expect(page.locator('.bkw-slot-time').first()).toHaveText('09:00');
 
   // Switch to 2 (the request this test holds open) and, before it resolves, switch to 3 (resolves
-  // immediately) — the exact race the plan's decision requires both belts (abort + generation) to
-  // survive.
+  // immediately) — the exact race both belts (abort + generation) must survive.
   await page.getByLabel('How many people?').selectOption('2');
   await page.getByLabel('How many people?').selectOption('3');
   await expect(page.locator('.bkw-slot-time').first()).toHaveText('14:00');

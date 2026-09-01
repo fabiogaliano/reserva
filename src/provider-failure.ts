@@ -1,9 +1,8 @@
-// Plan 016 (audit finding #12, scoped): internal-only provider failure classification. Never
-// re-exported by src/index.ts, src/providers/index.ts, or src/core/index.ts — the audit's full
-// finding (an EXPORTED cross-provider error contract with adapter contract tests) was explicitly
-// rejected/deferred (see docs/plans/README.md's rejected-findings list). This module exists solely
-// to feed the outbox attempt cap (src/confirmation.ts): "was this failure worth retrying, and what
-// HTTP status (if any) should the abandonment log carry".
+// Internal-only provider failure classification. Never
+// re-exported by src/index.ts, src/providers/index.ts, or src/core/index.ts — an EXPORTED
+// cross-provider error contract with adapter contract tests was considered and rejected. This
+// module exists solely to feed the outbox attempt cap (src/confirmation.ts): "was this failure
+// worth retrying, and what HTTP status (if any) should the abandonment log carry".
 
 const MAX_MESSAGE_CHARS = 500;
 
@@ -15,7 +14,7 @@ export interface ProviderFailureInit {
   message: string;
 }
 
-// Default HTTP retryability policy (plan 016 decision 1): 408 (timeout), 425 (too early), and 429
+// Default HTTP retryability policy: 408 (timeout), 425 (too early), and 429
 // (rate limited), plus every 5xx, are transient — worth another attempt. Every other 4xx (401,
 // 403, 404, 422, ...) is a permanent rejection of this exact request; retrying it unchanged would
 // never succeed. A missing status (a non-HTTP throw — a network TypeError, a DNS failure, a
@@ -30,8 +29,8 @@ export function isRetryableStatus(status: number | undefined): boolean {
 // The internal base a classified provider failure extends. The two adapters with an existing
 // EXPORTED error class (BrevoResponseError, WebhookResponseError) extend this directly, so
 // `instanceof BrevoResponseError`/`instanceof WebhookResponseError` and their `.status` property
-// keep working unchanged for existing consumers (design decision 2: "existing public class names
-// can extend the internal base where compatibility requires them").
+// keep working unchanged for existing consumers — an existing public class name may extend the
+// internal base where compatibility requires it.
 export class ProviderFailure extends Error {
   readonly status: number | undefined;
   readonly retryable: boolean;

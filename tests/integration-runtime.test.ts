@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import config from '../examples/client-config';
+import config from '../examples/minimal/client-config';
 import { defineCloudflareReservaRuntime, getCache, getEnv } from '../src/runtime-context';
 import { RESERVA_MIGRATIONS } from '../src/migrations-manifest';
 
@@ -15,8 +15,8 @@ describe('Cloudflare runtime helpers', () => {
   it('reads injected test bindings without exposing env on context', async () => {
     // Needs a `prepare` function so it passes the D1 shape check `defineCloudflareReservaRuntime` runs at
     // context-creation time, and `.all()` must resolve reserva's own migrations (ledger) plus a
-    // matching schema fingerprint (plan 008) so the isolate-time schema check (also run at context
-    // creation) doesn't reject this fake as an unmigrated/colliding database.
+    // matching schema fingerprint so the isolate-time schema check (also run at context creation)
+    // doesn't reject this fake as an unmigrated/colliding database.
     const db = {
       prepare: (query: string) => ({
         all: async () => {

@@ -4,9 +4,9 @@ import type { CalEvent } from '../../src/core/occupancy';
 import { handlePaymentWebhook } from '../../src/handlers';
 import { stripe } from '@reservajs/stripe';
 import { defineCloudflareReservaRuntime, type ReservaProviders } from '../../src/runtime';
-import config from '../../examples/client-config';
+import config from '../../examples/minimal/client-config';
 
-// Plan 015: this is `main` in wrangler.test.jsonc -- a real worker entrypoint that assembles the
+// This is `main` in wrangler.test.jsonc -- a real worker entrypoint that assembles the
 // production stack (defineCloudflareReservaRuntime against the real D1 binding, a real
 // the real Stripe adapter doing real HMAC signature verification) and dispatches the exact production route
 // to handlePaymentWebhook, so tests/workers/webhook.test.ts exercises runtime + handler + D1
@@ -18,7 +18,7 @@ const STRIPE_TEST_SECRET_KEY = 'sk_test_reserva_worker';
 
 // In-memory outboxes the test file asserts against and resets between cases -- module-scoped
 // (rather than per-request) because this worker's provider instances are constructed once, same as
-// examples/runtime.ts's documented pattern (README "Runtime module": per-request construction is a
+// examples/minimal/runtime.ts's documented pattern (README "Runtime module": per-request construction is a
 // consumer choice, not a requirement).
 export const calendarEvents = new Map<string, CalEvent>();
 export const emailOutbox: Array<{ event: string; bookingId: string }> = [];
@@ -55,7 +55,7 @@ const providers: ReservaProviders = {
   },
 };
 
-// Plan 021: a durable hook, so its delivery rides the same outbox row (and the same D1 batch as the
+// A durable hook, so its delivery rides the same outbox row (and the same D1 batch as the
 // confirmation) the production stack uses for a webhook subscriber.
 const hooks: BookingEventHook[] = [{
   name: 'ops',

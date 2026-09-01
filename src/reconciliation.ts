@@ -33,7 +33,7 @@ import {
   type SideEffectOperationRecord,
 } from './repo.js';
 
-// Plan 020 (design decision 4): default/hard-capped bounded page sizes for one invocation.
+// Default/hard-capped bounded page sizes for one invocation.
 const DEFAULT_SOURCE_LIMIT = 10;
 const HARD_SOURCE_LIMIT = 50;
 const DEFAULT_ALERT_LIMIT = 25;
@@ -117,13 +117,13 @@ async function applyIncidentProjection(
   }
 }
 
-// Plan 021: the ledger key for a side-effect row, built from its identity columns — the TypeScript
+// The ledger key for a side-effect row, built from its identity columns — the TypeScript
 // twin of src/repo.ts's sideEffectSourceKeySql and migration 0017's re-keying expression.
 export function sideEffectIncidentSourceKey(operation: SideEffectOperationRecord): string {
   return `${operation.bookingId}:${sideEffectOperationKey(operation)}`;
 }
 
-// Plan 020 (design decision 6): a side-effect row's incident signal — 'abandoned' is immediately
+// A side-effect row's incident signal — 'abandoned' is immediately
 // action_required (a permanent or tenth-attempt failure); a still-retrying 'failed' row only
 // signals once its uninterrupted failure_started_at has been due for ten minutes; anything else
 // (pending/in_flight/succeeded) reports no current debt.
@@ -148,8 +148,8 @@ async function projectSideEffectIncidentsForBooking(context: ReservaContext, tal
   }
 }
 
-// Plan 020 (design decision 6): "refund failures ... open an action-required incident
-// immediately" — no ten-minute delay gate, unlike side-effect delivery failures.
+// Refund failures open an action-required incident
+// immediately — no ten-minute delay gate, unlike side-effect delivery failures.
 function refundSignal(operation: RefundOperationRecord, booking: Booking | null): IncidentSourceSignal {
   const detected = operation.status === 'failed' || operation.status === 'abandoned'
     || (operation.status !== 'succeeded' && booking?.status !== 'cancelled');
@@ -189,7 +189,7 @@ export async function reprojectIncidentAfterAdminRetry(
   else await projectRefundIncidentForBooking(context, tally, bookingId);
 }
 
-// Plan 020 (design decision 3/6): oversell markers are permanent (never retried) and always
+// Oversell markers are permanent (never retried) and always
 // action_required the first time they're observed unreported — listUnreportedOversellMarkers
 // already excludes markers with an existing incident row, so this is always a fresh 'open'.
 async function reportUnreportedOversellMarkers(context: ReservaContext, tally: IncidentTally, limit: number): Promise<void> {
@@ -337,7 +337,7 @@ async function referenceForBooking(context: ReservaContext, bookingId: string): 
   return booking?.reference ?? bookingId;
 }
 
-// Plan 020 (design decision 4): the one entry point a scheduled event (or a manual admin-triggered
+// The one entry point a scheduled event (or a manual admin-triggered
 // sweep) calls. Bounded and resumable — a partial run (hitting a page limit, or one candidate
 // erroring) is safe; the next invocation picks up remaining debt via the same candidate queries.
 export async function runReconciliation(context: ReservaContext, options: ReconciliationOptions = {}): Promise<ReconciliationSummary> {

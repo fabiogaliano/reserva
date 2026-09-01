@@ -10,7 +10,7 @@ export function withSensitiveHeaders(response: Response): Response {
   return response;
 }
 
-// BK-SEC-001: the successful admin POST redirects already set Cache-Control: no-store, but a
+// The successful admin POST redirects already set Cache-Control: no-store, but a
 // thrown HttpError (bad origin, invalid/expired CSRF token, bad Access, validation failure, ...)
 // went through plain errorResponse (src/http.ts), which sets no cache-control at all — a shared
 // cache could then serve a stale admin error page. Scoped to admin POST only: the public booking

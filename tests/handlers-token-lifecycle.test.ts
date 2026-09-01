@@ -5,7 +5,7 @@ import { handleCustomerCancel, handleManage } from '../src/handlers';
 import { booking, config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
-// BK-SEC-002: manage-token hashing, expiry, and revocation. These cover the security properties
+// Manage-token hashing, expiry, and revocation. These cover the security properties
 // the old plaintext-column design didn't have — an expired or revoked token denied identically to
 // an unknown one (no oracle), the stored representation not itself being a usable credential, and
 // the compatibility fallback for rows written before this feature landed. Existing valid-token

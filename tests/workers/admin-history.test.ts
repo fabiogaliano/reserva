@@ -6,11 +6,11 @@ interface TestEnv {
   RESERVA_DB: D1Database;
 }
 
-// Plan 005: real-D1 coverage for admin_change_history, the durable actor-attributed record every
-// settings/capacity write produces atomically with the change itself. tests/repo.test.ts proves the
-// mechanism (exactly one db.batch() call per mutating method, structurally, against a counting
-// fake); this proves the mechanism's real-D1 effect — the change and its history rows actually land
-// together, and listAdminChangeHistory reads them back most-recent-first.
+// Real-D1 coverage for admin_change_history, the durable actor-attributed record every
+// settings/capacity write produces atomically with the change itself. tests/repo.test.ts proves
+// the mechanism (exactly one db.batch() call per mutating method, structurally, against a counting
+// fake); this proves the mechanism's real-D1 effect — the change and its history rows actually
+// land together, and listAdminChangeHistory reads them back most-recent-first.
 const db = (env as unknown as TestEnv).RESERVA_DB;
 const repo = createBookingRepository(db);
 

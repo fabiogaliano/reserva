@@ -1,25 +1,25 @@
-// Plan 008 (audit finding #6): checkReservaMigrationsApplied's filename ledger alone is fooled by
+// checkReservaMigrationsApplied's filename ledger alone is fooled by
 // a consumer migration that happens to reuse one of reserva's filenames without ever running
 // reserva's SQL. These tests prove the schema fingerprint added on top of the ledger catches
 // exactly that, against real D1 -- a real, fully migrated schema passes; a forged ledger over a
 // bare schema fails distinctly; and a real schema stopped before the LATEST side_effect_operations
-// rebuild (0013, plan 016) with a colliding ledger row for it also fails distinctly (not silently
+// rebuild (0013) with a colliding ledger row for it also fails distinctly (not silently
 // passing on 0008-0012 alone).
 //
-// Plan 016: this third scenario used to target a collision on 0012 specifically. It must target
+// This third scenario used to target a collision on 0012 specifically. It must target
 // the CURRENT latest side_effect_operations rebuild instead, because every later full-table
 // rebuild (0013's ALTER TABLE RENAME -> CREATE TABLE -> INSERT...SELECT, same shape as 0012's own
 // rebuild) unconditionally re-establishes the FULL target `kind` CHECK regardless of whether an
 // earlier rebuild in the chain (like 0012) actually ran for real -- so once 0013 exists, a
 // 0012-specific collision test can no longer fail even with the schema fingerprint working
-// correctly. sideEffectOperationsSchemaPresent (src/runtime-context.ts) now also checks for 0013's
+// correctly. sideEffectOperationsSchemaPresent (src/schema-check.ts) now also checks for 0013's
 // 'abandoned' status, keeping this detector accurate for the actual latest rebuild.
 //
-// Plan 017 (design decision 6): 0014 adds two plain additive `bookings` columns rather than
+// 0014 adds two plain additive `bookings` columns rather than
 // rebuilding a table, so it's covered the same way as 0008-0010's columns (REQUIRED_BOOKINGS_COLUMNS
-// in src/runtime-context.ts), not by sideEffectOperationsSchemaPresent's rebuild-shape checks.
+// in src/schema-check.ts), not by sideEffectOperationsSchemaPresent's rebuild-shape checks.
 //
-// Plan 018 (design decision 5): 0015 rebuilds `bookings` again, this time REMOVING the pickup_type
+// 0015 rebuilds `bookings` again, this time REMOVING the pickup_type
 // CHECK (domain moved to config-declared option ids). bookingsSchemaPresent now asserts its ABSENCE
 // instead of its presence -- a schema stopped before 0015 still has the old CHECK, so a colliding
 // "0015" ledger row must fail the same way every other rebuild-collision scenario here does.
@@ -39,7 +39,7 @@ import { env } from 'cloudflare:workers';
 import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { RESERVA_MIGRATIONS } from '../../src/migrations-manifest';
-import { checkReservaMigrationsApplied } from '../../src/runtime-context';
+import { checkReservaMigrationsApplied } from '../../src/schema-check';
 
 interface TestEnv {
   RESERVA_DB: D1Database;
@@ -81,10 +81,10 @@ describe('checkReservaMigrationsApplied schema fingerprint against real D1', () 
 
   it('fails distinctly when a real schema stopped before 0013 has a colliding "0013" ledger row', async () => {
     await resetSchema();
-    // 0015 must be excluded (and faked) here too -- plan 018's 0015 also rebuilds
+    // 0015 must be excluded (and faked) here too -- 0015 also rebuilds
     // side_effect_operations (see the file header above), so a REAL 0015 run would otherwise
     // reestablish 'abandoned' on its own and mask the faked 0013 collision this test targets.
-    // Plan 022: 0018 rebuilds side_effect_operations too (its FK follows the bookings rebuild), so
+    // 0018 rebuilds side_effect_operations too (its FK follows the bookings rebuild), so
     // it masks a faked 0013 for exactly the same reason 0015 does — exclude and fake it as well.
     const before0013 = bindings.TEST_MIGRATIONS.filter((migration) =>
       migration.name !== '0013_side_effect_operations_abandoned.sql' && migration.name !== '0015_pickup_options.sql'
@@ -107,7 +107,7 @@ describe('checkReservaMigrationsApplied schema fingerprint against real D1', () 
     // 0015 must be excluded (and faked) here too -- it rebuilds `bookings` itself and would
     // otherwise reestablish every one of 0011's CHECKs and the partial index on its own, masking
     // the faked 0011 collision this test targets (same reasoning as the 0013 test above).
-    // Plan 022: 0018 rebuilds `bookings` as well, so it masks a faked 0011 the same way 0015 does.
+    // 0018 rebuilds `bookings` as well, so it masks a faked 0011 the same way 0015 does.
     const without0011 = bindings.TEST_MIGRATIONS.filter((migration) =>
       migration.name !== '0011_schema_constraints.sql' && migration.name !== '0015_pickup_options.sql'
       && migration.name !== '0018_v2_domain_rename.sql');
@@ -122,16 +122,16 @@ describe('checkReservaMigrationsApplied schema fingerprint against real D1', () 
     await expect(checkReservaMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
   });
 
-  // Plan 017 (design decision 6): a consumer migration reusing the '0014_meeting_points.sql'
+  // A consumer migration reusing the '0014_meeting_points.sql'
   // filename without ever running reserva's ALTER TABLE would otherwise satisfy the ledger while
   // leaving `bookings` without meeting_point_id/meeting_point_label -- REQUIRED_BOOKINGS_COLUMNS
-  // (src/runtime-context.ts) must catch that collision the same way it already does for 0008-0010.
+  // (src/schema-check.ts) must catch that collision the same way it already does for 0008-0010.
   it('fails distinctly when a real schema stopped before 0014 has a colliding "0014" ledger row', async () => {
     await resetSchema();
-    // Plan 018: 0015's own INSERT...SELECT reads meeting_point_id/meeting_point_label, so it
+    // 0015's own INSERT...SELECT reads meeting_point_id/meeting_point_label, so it
     // cannot run for real against a schema where 0014 never really applied -- it must be excluded
     // (and faked) here too, structurally, not just to preserve this test's original intent.
-    // Plan 022: 0018's INSERT...SELECT reads meeting_point_id too, so it cannot run here either.
+    // 0018's INSERT...SELECT reads meeting_point_id too, so it cannot run here either.
     const before0014 = bindings.TEST_MIGRATIONS.filter((migration) =>
       migration.name !== '0014_meeting_points.sql' && migration.name !== '0015_pickup_options.sql'
       && migration.name !== '0018_v2_domain_rename.sql');
@@ -144,13 +144,13 @@ describe('checkReservaMigrationsApplied schema fingerprint against real D1', () 
     await expect(checkReservaMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
   });
 
-  // Plan 018 (design decision 5): a consumer migration reusing the '0015_pickup_options.sql'
+  // A consumer migration reusing the '0015_pickup_options.sql'
   // filename without ever running reserva's rebuild would satisfy the ledger while `bookings` still
   // carries 0011's pickup_type CHECK -- bookingsSchemaPresent's negative assertion (it must NOT find
   // that CHECK) must catch this the same way the positive-presence checks catch every other collision.
   it('fails distinctly when a real schema stopped before 0015 has a colliding "0015" ledger row (old pickup_type CHECK still present)', async () => {
     await resetSchema();
-    // Plan 022: 0018 rebuilds `bookings` without the old pickup_type CHECK, which would mask the
+    // 0018 rebuilds `bookings` without the old pickup_type CHECK, which would mask the
     // very absence this scenario targets.
     const before0015 = bindings.TEST_MIGRATIONS.filter((migration) =>
       migration.name !== '0015_pickup_options.sql' && migration.name !== '0018_v2_domain_rename.sql');
@@ -163,7 +163,7 @@ describe('checkReservaMigrationsApplied schema fingerprint against real D1', () 
     await expect(checkReservaMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
   });
 
-  // Plan 020 (design decision 7): a consumer migration reusing the '0016_...sql' filename without
+  // A consumer migration reusing the '0016_...sql' filename without
   // ever running reserva's refund_operations rebuild / operational_incidents CREATE would satisfy
   // the ledger while the widened status CHECK, execution-lease columns, and the incident table are
   // all still absent — refundOperationsSchemaPresent/operationalIncidentsSchemaPresent must catch
@@ -172,7 +172,7 @@ describe('checkReservaMigrationsApplied schema fingerprint against real D1', () 
     await resetSchema();
     // 0017 must be excluded (and faked) too: its rebuild carries 0016's backoff columns forward, so
     // it cannot even execute against a schema where 0016 never really ran.
-    // Plan 022: 0018 rebuilds operational_incidents, so it cannot execute where 0016 never created it.
+    // 0018 rebuilds operational_incidents, so it cannot execute where 0016 never created it.
     const before0016 = bindings.TEST_MIGRATIONS.filter((migration) =>
       migration.name !== '0016_operational_reconciliation.sql' && migration.name !== '0017_side_effect_operation_identity.sql'
       && migration.name !== '0018_v2_domain_rename.sql');
@@ -185,13 +185,13 @@ describe('checkReservaMigrationsApplied schema fingerprint against real D1', () 
     await expect(checkReservaMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
   });
 
-  // Plan 021: a consumer migration reusing the '0017_...sql' filename without ever running
+  // A consumer migration reusing the '0017_...sql' filename without ever running
   // reserva's identity rebuild leaves the whole outbox addressed by the retired `kind` column —
   // every enqueue and every claim would fail at runtime, so sideEffectOperationsSchemaPresent has
   // to catch it here instead.
   it('fails distinctly when a real schema stopped before 0017 has a colliding "0017" ledger row', async () => {
     await resetSchema();
-    // Plan 022: 0018's side_effect_operations copy reads the identity columns 0017 introduces.
+    // 0018's side_effect_operations copy reads the identity columns 0017 introduces.
     const before0017 = bindings.TEST_MIGRATIONS.filter((migration) =>
       migration.name !== '0017_side_effect_operation_identity.sql' && migration.name !== '0018_v2_domain_rename.sql');
     await applyD1Migrations(db, before0017, 'd1_migrations');
@@ -203,7 +203,7 @@ describe('checkReservaMigrationsApplied schema fingerprint against real D1', () 
     await expect(checkReservaMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
   });
 
-  // Plan 022: a consumer migration reusing '0018_v2_domain_rename.sql' without running reserva's
+  // A consumer migration reusing '0018_v2_domain_rename.sql' without running reserva's
   // rebuild leaves `bookings` on the pre-v2 shape — tour_slug/people/price_cents and the sync flags
   // still there, currency absent. Every read in src/repo.ts would fail on the first request, so
   // bookingsSchemaPresent's REMOVED_BOOKINGS_COLUMNS assertion has to catch the collision here.

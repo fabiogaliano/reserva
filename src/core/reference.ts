@@ -28,8 +28,6 @@ export function formatReference(shortCode: string, year: number, sequence: numbe
   return `${shortCode.toUpperCase()}-${year}-${String(sequence).padStart(3, '0')}`;
 }
 
-export const formatBookingReference = formatReference;
-
 export function generateReference(
   shortCode: string,
   yearOrDate: number | string | Date,

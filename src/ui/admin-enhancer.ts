@@ -6,7 +6,7 @@
 // reduced-motion-aware scrolling, plus a one-month pager, instant in-page day selection, and a day
 // panel listing the selected day's bookings from the JSON island.
 //
-// Plan 014 item D: the "To date" field stays visible (not hidden) in enhanced mode — a contiguous
+// The "To date" field stays visible (not hidden) in enhanced mode — a contiguous
 // selection (pointer or keyboard) syncs it, and typing into either date field updates the enhanced
 // selection right back, so pointer, keyboard, and the native inputs can never drift from each
 // other. A scattered (non-contiguous) selection travels as repeated hidden date fields with toDate
@@ -176,8 +176,8 @@ export const adminEnhancerJs = `(() => {
       const status = document.createElement('span');
       status.className = 'bk-badge' + (row.sc ? ' bk-badge--' + row.sc : '');
       status.textContent = row.s;
-      // BK-SEC-002: row.u is only present when the server found a presentable operator token
-      // (src/handlers/index.ts manageLinkHref) -- otherwise render plain text, never a link that
+      // row.u is only present when the server found a presentable operator token
+      // (src/ui/pages/admin-page.ts manageLinkHref) -- otherwise render plain text, never a link that
       // would 403 the instant it's clicked.
       let manage;
       if (row.u) {

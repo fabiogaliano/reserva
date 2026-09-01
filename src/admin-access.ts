@@ -1,9 +1,9 @@
-// Extracted from src/handlers/index.ts (plan 009) so `AdminDashboard.astro` can run the same admin
-// auth check the built-in admin route uses instead of duplicating it in two places. Plan 025
-// promoted the underlying check from a Cloudflare-Access-specific boolean/claims hook to the
-// generic `adminAuth` port (src/context.ts) — this is the one shared, fail-closed gate every
-// admin/ops handler consumes, never per-route wiring, so a route added later in either protected
-// group (e.g. plan 027's ops-health endpoint) inherits it automatically.
+// So `AdminDashboard.astro` can run the same admin auth check the built-in admin route
+// (src/handlers/admin.ts) uses instead of duplicating it in two places. The underlying check is
+// the generic `adminAuth` port (src/context.ts), not a Cloudflare-Access-specific boolean/claims
+// hook — this is the one shared, fail-closed gate every admin/ops handler consumes, never
+// per-route wiring, so a route added later in either protected group (e.g. the ops-health
+// endpoint) inherits it automatically.
 import type { AdminIdentity } from './access.js';
 import type { ReservaContext } from './context.js';
 

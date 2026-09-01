@@ -11,11 +11,11 @@ export interface Booking {
   serviceSlug: string;
   quantity: number;
   // The valid id set lives in ServiceConfig.pickupOptions (core/config.ts), per service — neither the
-  // DB nor this type can enumerate it. NULL is the location-less booking plan 023 introduces: a
+  // DB nor this type can enumerate it. NULL is the location-less booking: a
   // service that declares no location options stores nothing here rather than a sentinel id.
   pickupType: PickupType | null;
   pickupAddress: string | null;
-  // Plan 017 (design decision 3): the resolved meeting point chosen at checkout, when the service
+  // The resolved meeting point chosen at checkout, when the service
   // declares more than one. label is a point-in-time snapshot, used only as a fallback when the id
   // is no longer declared in config (see migrations/0014_meeting_points.sql). Both null for
   // pre-0014 rows.
@@ -36,7 +36,8 @@ export interface Booking {
   paymentSessionRef: string | null;
   paymentRef: string | null;
   calendarEventId: string | null;
-  // Plan 024 declares and validates the consumer's own fields; plan 022 only carries the column.
+  // The consumer's own fields are declared and validated via ServiceConfig.metadataFields
+  // (core/config.ts); this column only carries the value.
   metadata: Record<string, unknown> | null;
   cancelToken: string;
   operatorToken: string;
@@ -49,8 +50,8 @@ export interface Booking {
 
 export type BookingPatch = Partial<Omit<Booking, 'id' | 'reference' | 'status'>>;
 
-// Plan 021 (design decision 3): the ONE public projection of a booking. Webhook envelopes, durable
-// in-process hooks, and (from plan 027) the status/manage wire types all read through this, so a
+// The ONE public projection of a booking. Webhook envelopes, durable
+// in-process hooks, and the status/manage wire types all read through this, so a
 // pushed booking and a pulled booking can never describe the same row differently. Built field by
 // field rather than by spreading `booking`, so a future column can't leak a token, a payment
 // reference, or an internal sync flag into a consumer's payload by accident. `updatedAt` is part of
@@ -76,9 +77,9 @@ export interface WireBooking {
   status: BookingStatus;
   cancelledBy: CancellationActor | null;
   rescheduledFrom: string | null;
-  // Plan 024 (design decision 3): the raw consumer-declared record, never the labeled rows read
-  // surfaces render — a wire consumer gets values, not display labels. Follows the wave's
-  // empty-value rule (collections are `{}`/`[]`, optional modules are `null`): metadata is a
+  // The raw consumer-declared record, never the labeled rows read
+  // surfaces render — a wire consumer gets values, not display labels. Follows the
+  // empty-value convention (collections are `{}`/`[]`, optional modules are `null`): metadata is a
   // collection, so an absent value is `{}`, never `null`.
   metadata: Record<string, unknown>;
   createdAt: string;

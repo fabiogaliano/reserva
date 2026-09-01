@@ -1,4 +1,4 @@
-// Plan 020: pure functions shared by the reconciliation engine (src/reconciliation.ts), the
+// Pure functions shared by the reconciliation engine (src/reconciliation.ts), the
 // confirmation/mutation drains (src/confirmation.ts), and the shared refund executor
 // (src/refund-executor.ts). Kept dependency-free (no D1, no context) so every boundary/threshold
 // here is unit-testable without a fake repository or real workerd.
@@ -11,8 +11,8 @@ import type {
   SideEffectOperationIdentity,
 } from './repo.js';
 
-// Plan 020 (design decision 5): "Cron runs every five minutes, but retryable failures set
-// next_attempt_at using 5, 10, 20, 40, then 60 minutes capped at 60 for later attempts." Indexed by
+// Cron runs every five minutes, but retryable failures set
+// next_attempt_at using 5, 10, 20, 40, then 60 minutes capped at 60 for later attempts. Indexed by
 // (attemptNumber - 1); attempts past the schedule's length reuse the last (60-minute) value.
 export const RETRY_BACKOFF_MINUTES = [5, 10, 20, 40, 60] as const;
 
@@ -25,8 +25,8 @@ export function computeNextAttemptAt(now: Date, attemptNumber: number): string {
   return new Date(now.getTime() + minutes * 60_000).toISOString();
 }
 
-// Plan 020 (design decision 6): "retryable delivery failures open an incident when their
-// uninterrupted failure_started_at is at least ten minutes old, while retries continue."
+// Retryable delivery failures open an incident when their
+// uninterrupted failure_started_at is at least ten minutes old, while retries continue.
 export const INCIDENT_DELAY_THRESHOLD_MS = 10 * 60_000;
 
 export function isDelayIncidentDue(failureStartedAtIso: string, nowIso: string): boolean {
@@ -41,8 +41,8 @@ export function isEligibleForAutomaticClaim(nextAttemptAtIso: string | null, now
   return nextAttemptAtIso === null || nextAttemptAtIso <= nowIso;
 }
 
-// Plan 020 (design decision 8): maps a side-effect outbox row onto the owner-facing action bucket
-// an incident/alert reports. Plan 021: read off the identity COLUMNS, never a parsed kind string.
+// Maps a side-effect outbox row onto the owner-facing action bucket
+// an incident/alert reports, read off the identity COLUMNS, never a parsed kind string.
 // 'oversell' rows are scanned separately (they're markers, not retryable debt — see
 // src/reconciliation.ts) but still classify here for completeness.
 export function actionForSideEffectOperation(operation: SideEffectOperationIdentity): OperationalIncidentAction {
@@ -57,7 +57,7 @@ export function actionForSideEffectOperation(operation: SideEffectOperationIdent
   }
 }
 
-// Plan 020 (design decision 12): the owner-facing card title. Never the internal word "abandoned".
+// The owner-facing card title. Never the internal word "abandoned".
 export function ownerFacingIncidentTitle(action: OperationalIncidentAction): string {
   switch (action) {
     case 'confirmation_email': return 'Confirmation email not delivered';
@@ -103,10 +103,10 @@ export type IncidentProjection =
   // The source cleared (succeeded) while an incident was open — decision 6/9: automatic resolution.
   | { action: 'resolve-automatic' };
 
-// Plan 020 (design decision 9): "repeated scans update one incident. Escalation from delayed to
-// final increments its alert revision... A manually resolved incident stays resolved while the
+// Repeated scans update one incident. Escalation from delayed to
+// final increments its alert revision. A manually resolved incident stays resolved while the
 // source fingerprint is unchanged; a new source transition can reopen it. Automatic source success
-// resolves it." Pure decision function — the caller (src/reconciliation.ts) performs the actual
+// resolves it. Pure decision function — the caller (src/reconciliation.ts) performs the actual
 // upsert/resolve against the repository.
 export function projectIncident(signal: IncidentSourceSignal, existing: ExistingIncidentSignal | null): IncidentProjection {
   if (!signal.detected) {
@@ -122,7 +122,7 @@ export function projectIncident(signal: IncidentSourceSignal, existing: Existing
   return { action: 'update', escalate };
 }
 
-// Plan 020 (design decision 10): the alert payload is exactly these seven fields — built through
+// The alert payload is exactly these seven fields — built through
 // this one function (never an object spread) so a future caller can't accidentally widen it with a
 // PII-bearing field.
 export function buildOperationalAlert(input: {

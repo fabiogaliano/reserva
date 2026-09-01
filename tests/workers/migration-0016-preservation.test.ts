@@ -1,10 +1,10 @@
-// Plan 020 (design decisions 5, 7, 8): migrations/0016_operational_reconciliation.sql is additive
+// migrations/0016_operational_reconciliation.sql is additive
 // for side_effect_operations (two nullable columns + a new index) and for the brand-new
 // operational_incidents table, but rebuilds refund_operations the same rename -> create ->
 // INSERT...SELECT -> drop pattern as 0011/0012/0013/0015 (see 0011's header) to widen its `status`
 // CHECK. This proves every existing refund_operations row/column/constraint survives that rebuild
 // byte-for-byte, that the additive side_effect_operations columns/index land without disturbing
-// its existing CHECK/index/FK, and that operational_incidents enforces the decision-8 CHECKs/unique
+// its existing CHECK/index/FK, and that operational_incidents enforces its CHECKs and unique
 // constraint.
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
@@ -158,7 +158,6 @@ describe('migration 0016 preserves refund_operations byte-for-byte, adds backoff
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind('inc-1', 'bk-1', 'side_effect', 'bk-1:calendar_create', 'calendar', 'open', 'delayed', '2026-07-28T00:00:00.000Z', '2026-07-28T00:00:00.000Z', '2026-07-28T00:00:00.000Z').run(),
     ).resolves.toBeDefined();
-    // alert_revision defaults to 1 (decision 8).
     await expect(
       db.prepare('SELECT alert_revision, alerted_revision, alert_attempt_count FROM operational_incidents WHERE id = ?').bind('inc-1').all(),
     ).resolves.toMatchObject({ results: [{ alert_revision: 1, alerted_revision: 0, alert_attempt_count: 0 }] });

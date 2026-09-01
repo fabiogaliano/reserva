@@ -15,8 +15,8 @@ import { handleCheckout } from '../../../src/handlers';
 import { booking, config, service } from '../../../tests/fixtures';
 import { fakeRepository, providers } from '../../../tests/fakes';
 
-// Plan 018 (design decision 7): a Maze-shaped four-option service, built inline — fixtures.ts stays
-// the two-option default/custom service so every other suite's byte-identical assertions keep holding.
+// A Maze-shaped four-option service, built inline — fixtures.ts stays the two-option
+// default/custom service so every other suite's byte-identical assertions keep holding.
 const mazeTour: ServiceConfig = {
   ...service,
   location: {
@@ -103,8 +103,8 @@ describe('stripe() adapter', () => {
     const { client, sessions } = makeClient();
     const provider = stripe({
       secretKey: 'sk_test', webhookSecret: 'whsec_test', client,
-      // Plan 022 (design decision 1): the method list is the Stripe adapter's own option now, not
-      // core config — passed here so this contract test still covers a multi-method session.
+      // The method list is the Stripe adapter's own option, not core config — passed here so
+      // this contract test still covers a multi-method session.
       paymentMethods: ['card', 'mb_way'],
       now: () => new Date('2026-01-01T00:00:00.000Z'),
       getServiceName: (b) => `Vintage service (${b.locale})`,
@@ -118,7 +118,7 @@ describe('stripe() adapter', () => {
       payment_intent_data: { metadata: { bookingId: 'booking-1' } },
       custom_fields: [{ key: 'pickup_address', label: { type: 'custom', custom: 'Pickup address' }, type: 'text' }],
       line_items: [{ quantity: 1, price_data: { currency: 'eur', unit_amount: 12000, product_data: { name: 'Vintage service (en)' } } }],
-      // BK-PAY-002: every checkout.sessions.create call carries a deterministic idempotency key.
+      // Every checkout.sessions.create call carries a deterministic idempotency key.
     }), { idempotencyKey: 'reserva-checkout-booking-1' });
   });
 
@@ -134,9 +134,9 @@ describe('stripe() adapter', () => {
     );
   });
 
-  // BK-CONFIG-001: expiresInMinutes = max(30, holdMinutes - 5), so holdMinutes at its validateConfig
-  // upper bound (1440) must still leave expires_at strictly below Stripe's 24h-from-creation cap —
-  // the 5-minute margin is the whole point of capping holdMinutes at 1440 rather than 1445.
+  // expiresInMinutes = max(30, holdMinutes - 5), so holdMinutes at its validateConfig upper bound
+  // (1440) must still leave expires_at strictly below Stripe's 24h-from-creation cap — the
+  // 5-minute margin is the whole point of capping holdMinutes at 1440 rather than 1445.
   it('keeps expires_at strictly below now + 24h when holdMinutes is at its 1440 upper bound', async () => {
     const { client, sessions } = makeClient();
     const now = new Date('2026-01-01T00:00:00.000Z');
@@ -169,10 +169,10 @@ describe('stripe() adapter', () => {
     expect(sessions.create).toHaveBeenCalledWith(expect.not.objectContaining({ custom_fields: expect.anything() }), expect.anything());
   });
 
-  // Plan 018 (design decision 7): the custom_fields gate is keyed on the service's declared
-  // requiresAddress flag, not the literal id 'custom' — any id a service marks requiresAddress
-  // collects the same 'pickup_address' field, and an id that doesn't never does, even though
-  // neither is named 'default' or 'custom'.
+  // The custom_fields gate is keyed on the service's declared requiresAddress flag, not the
+  // literal id 'custom' — any id a service marks requiresAddress collects the same
+  // 'pickup_address' field, and an id that doesn't never does, even though neither is named
+  // 'default' or 'custom'.
   it('collects pickup_address for any declared option with requiresAddress, not just the id "custom"', async () => {
     const { client, sessions } = makeClient();
     const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
@@ -276,10 +276,10 @@ describe('stripe() adapter', () => {
     expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 100 });
   });
 
-  // BK-REFUND-001 (finding #6): Stripe replays a cached idempotent result *including* error
-  // responses, even a cached 500 unrelated to refunds by message — so gating reconciliation on an
-  // "already refunded" message match (the pre-fix behaviour) misses exactly the caveat-(b)
-  // scenario this test drives: a generic/opaque error whose underlying refund actually succeeded.
+  // Stripe replays a cached idempotent result *including* error responses, even a cached 500
+  // unrelated to refunds by message — so gating reconciliation on an "already refunded" message
+  // match misses exactly the caveat-(b) scenario this test drives: a generic/opaque error whose
+  // underlying refund actually succeeded.
   it('reconciles a replayed cached error via refunds.list even when the error message does not mention a refund', async () => {
     const client = {
       checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
@@ -475,10 +475,10 @@ describe('stripe() adapter', () => {
     expect(client.webhooks.constructEventAsync).toHaveBeenCalledWith('{"raw":true}', 't=1,v1=x', 'whsec_test', 300, expect.anything());
   });
 
-  // Plan 013 item C (audit finding #10): parseWebhook buffered request.text() unbounded. A body
-  // whose declared Content-Length already exceeds the 1 MB webhook limit must 413 ahead of
-  // signature verification -- not get collapsed into the generic invalid_payment_signature error
-  // the surrounding try/catch maps everything else to (the STOP condition this item calls out).
+  // parseWebhook buffered request.text() unbounded. A body whose declared Content-Length already
+  // exceeds the 1 MB webhook limit must 413 ahead of signature verification -- not get collapsed
+  // into the generic invalid_payment_signature error the surrounding try/catch maps everything
+  // else to.
   it('rejects an oversized webhook body with 413 before attempting signature verification', async () => {
     const { client } = makeClient();
     const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
@@ -493,11 +493,11 @@ describe('stripe() adapter', () => {
   });
 });
 
-// BK-PAY-002: a lost checkout.sessions.create response used to make handleCheckout expire the
-// hold and let the client retry into a second, orphaned Stripe session for the same intent-to-
-// book. These tests pin the fix: a deterministic per-hold idempotency key, a retry-once that
-// reuses byte-identical params (so Stripe replays instead of 409ing), and unchanged expire-on-
-// error behavior for rejections a retry could never turn into a success.
+// A lost checkout.sessions.create response used to make handleCheckout expire the hold and let
+// the client retry into a second, orphaned Stripe session for the same intent-to-book. These
+// tests pin the fix: a deterministic per-hold idempotency key, a retry-once that reuses
+// byte-identical params (so Stripe replays instead of 409ing), and unchanged expire-on-error
+// behavior for rejections a retry could never turn into a success.
 describe('Checkout idempotency (BK-PAY-002)', () => {
   const checkoutRequest = (start = '2026-06-15T08:00:00.000Z') => new Request('https://example.test/api/booking/checkout', {
     method: 'POST',
@@ -653,8 +653,7 @@ describe('Checkout idempotency (BK-PAY-002)', () => {
   });
 });
 
-// Plan 022 (design decision 7): the limits that used to live in core's validateConfig, checked
-// where they actually apply — the adapter that has to honour them.
+// Stripe's own limits, checked where they actually apply — the adapter that has to honour them.
 describe('stripe() validateConfig', () => {
   const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client: makeClient().client });
 

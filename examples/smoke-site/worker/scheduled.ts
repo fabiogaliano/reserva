@@ -1,5 +1,5 @@
-// Plan 020 (step 7): the scheduled reconciliation sweep, as a small, SEPARATE Worker script
-// rather than a wrapper around the Astro adapter's own generated entrypoint.
+// The scheduled reconciliation sweep, as a small, SEPARATE Worker script rather than a wrapper
+// around the Astro adapter's own generated entrypoint.
 //
 // Why separate: @astrojs/cloudflare 14's build (`astro build`) always writes its own redirected
 // wrangler config (`dist/server/wrangler.json`, picked up automatically via
@@ -8,7 +8,7 @@
 // config would be silently overwritten on the next build. Wrapping `entry.mjs` after the fact was
 // considered and rejected: it would have to be re-applied by a bespoke post-build step on every
 // deploy, and any mistake in that step risks losing the adapter's injected routes, static assets,
-// or bindings — exactly the failure this plan's STOP conditions call out. A standalone cron Worker
+// or bindings. A standalone cron Worker
 // that only shares the RESERVA_DB D1 binding (see ./wrangler.jsonc) never touches the site's own
 // entrypoint at all, so the site's HTTP serving cannot regress by construction.
 //

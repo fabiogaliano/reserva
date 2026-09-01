@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
-import config from '../../examples/client-config';
+import config from '../../examples/minimal/client-config';
 import { defineCloudflareReservaRuntime } from '../../src/runtime-context';
 
 const payments = {

@@ -144,7 +144,7 @@ describe('D1 booking repository', () => {
     await db.prepare('DROP TRIGGER fail_confirmation_outbox').run();
   });
 
-  // Plan 011: proves the optional subscriber row shares confirmWithSideEffectOperations' one D1
+  // Proves the optional subscriber row shares confirmWithSideEffectOperations' one D1
   // batch just like calendar_create/email_confirmation above — a failure inserting ONLY the
   // hook row (the other two rows would insert cleanly on their own) must still roll back the
   // whole batch, leaving the booking unconfirmed and no partial rows behind.
@@ -187,7 +187,7 @@ describe('D1 booking repository', () => {
     await db.prepare('DROP TRIGGER fail_hook_outbox').run();
   });
 
-  // Plan 012: proves the split confirmation-path email rows share confirmWithSideEffectOperations'
+  // Proves the split confirmation-path email rows share confirmWithSideEffectOperations'
   // one D1 batch too — a failure inserting just the owner recipient's row (the customer row and
   // calendar_create would insert cleanly on their own) must still roll back the whole batch,
   // leaving the booking unconfirmed and no partial rows behind.
@@ -238,8 +238,7 @@ describe('D1 booking repository', () => {
     await expect(repo.getDayOverride('2026-08-01')).resolves.toBeNull();
   });
 
-  // Plan 017 (design decision 3): migrations/0014_meeting_points.sql's two nullable columns,
-  // against real D1.
+  // migrations/0014_meeting_points.sql's two nullable columns, against real D1.
   describe('meeting point columns (migration 0014)', () => {
     it('round-trips meeting_point_id/meeting_point_label through insertHoldWithCapacity when set', async () => {
       const created = await repo.insertHoldWithCapacity({
@@ -293,7 +292,7 @@ describe('D1 booking repository', () => {
     });
   });
 
-  // Plan 018 (design decision 4): migration 0015 removed the pickup_type CHECK (domain moved to
+  // Migration 0015 removed the pickup_type CHECK (domain moved to
   // config-declared option ids, ServiceConfig.pickupOptions) -- this is the row the old CHECK
   // (pickup_type IN ('default','custom')) would have rejected, round-tripped through the real
   // application write/read paths, not just a raw SQL INSERT (see tests/workers/schema-constraints.test.ts
@@ -311,7 +310,7 @@ describe('D1 booking repository', () => {
     await expect(repo.getBookingById(created.id)).resolves.toMatchObject({ pickupType: 'custom_both' });
   });
 
-  // Plan 018 (design decision 4): with the SQL CHECK gone, SQLite happily stores pickup_type = ''
+  // With the SQL CHECK gone, SQLite happily stores pickup_type = ''
   // (e.g. a hand-restored row) -- mapBooking's read-time floor must reject it, since an empty id
   // is undeclarable under every possible config.
   it('rejects a stored empty-string pickup_type at read time (InvalidBookingRowError)', async () => {
@@ -326,7 +325,7 @@ describe('D1 booking repository', () => {
     await expect(repo.getBookingById('booking-pickup-empty')).rejects.toThrow(/pickup_type must be a non-empty string/);
   });
 
-  // Plan 022 (design decision 3): migration 0018 makes pickup_type nullable so plan 023's
+  // Migration 0018 makes pickup_type nullable so the
   // location-less service can store "no pickup at all" as NULL rather than a sentinel id. The
   // read-time floor must let NULL through untouched (it is a declared state, not a corrupt row),
   // which is the one case the empty-string rejection above must NOT be widened to cover.
@@ -342,7 +341,6 @@ describe('D1 booking repository', () => {
     await expect(repo.getBookingById('booking-pickup-null')).resolves.toMatchObject({ pickupType: null });
   });
 
-  // BK-SEC-002: manage-token hashing, expiry, and revocation, against real SQLite (D1).
   describe('token hashing, expiry, and revocation (BK-SEC-002)', () => {
     // A second repository instance bound to the SAME D1 database but with RESERVA_TOKEN_ENC_KEY
     // configured, so these tests can exercise the full "encrypt at insert, decrypt at read" round
@@ -442,7 +440,7 @@ describe('D1 booking repository', () => {
       await expect(encRepo.getBookingByCancelToken('legacy-cancel-token', '2026-07-21T10:00:01.000Z')).resolves.toMatchObject({ id: created.id, cancelToken: 'legacy-cancel-token' });
     });
 
-    // patch-11-r1 MEDIUM 1: migrations/0009_token_hashing.sql's ADD COLUMN statements alone leave
+    // migrations/0009_token_hashing.sql's ADD COLUMN statements alone leave
     // cancel_token_revoked_at NULL on every pre-existing row regardless of status, so a booking
     // that was ALREADY cancelled/no_show before this migration ran would otherwise keep a live
     // customer manage link forever (null hash -> the compat fallback in getBookingByCancelToken
@@ -504,7 +502,7 @@ describe('D1 booking repository', () => {
       await expect(repo.getBookingByCancelToken('legacy-active-cancel-token', now)).resolves.toMatchObject({ id: 'booking-legacy-active-1' });
     });
 
-    // patch-11-r1 MEDIUM 2: tokens_expire_at must move with the booking on reschedule (both
+    // tokens_expire_at must move with the booking on reschedule (both
     // repo entry points — rescheduleWithCapacity, the one src/handlers/index.ts actually calls,
     // and transitionReschedule, exercised directly by tests/workers/repo-cas-transitions.test.ts)
     // — otherwise a booking moved later could have its manage link expire before the rescheduled
@@ -588,7 +586,7 @@ describe('D1 booking repository', () => {
       await expect(readExpiry()).resolves.toBe(newExpiry);
     });
 
-    // patch-11-r1 LOW 2: strengthens the dump-non-usability property beyond the cancel-token-only,
+    // Strengthens the dump-non-usability property beyond the cancel-token-only,
     // hash-only checks above — for BOTH token families, every stored representation (hash,
     // placeholder, ciphertext) must be rejected by BOTH lookup methods, not just its "own" one.
     it('a dumped row never authenticates via its own hash, placeholder, or encrypted blob — for either token family, against either lookup method', async () => {
@@ -764,7 +762,7 @@ describe('mutation side-effect outbox on real D1', () => {
     await db.prepare('DROP TRIGGER fail_mutation_outbox').run();
   });
 
-  // Plan 017 (design decision 3): repo.insertHold now always writes meeting_point_id/-label
+  // repo.insertHold now always writes meeting_point_id/-label
   // (migration 0014), so it cannot seed the FK-parent booking rows below against this test's
   // deliberately pre-0010 schema. Only these FK-parent rows need to exist at all (nothing here
   // asserts on their own columns) -- a raw INSERT covering just the columns 0001_init.sql

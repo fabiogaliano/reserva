@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { createBooking } from './helpers';
 
-// Plan 023 (design decisions 1-5, step 5): riverCruise (examples/smoke-site/src/config.ts) declares
+// riverCruise (examples/smoke-site/src/config.ts) declares
 // no location module at all — quantity-tier pricing only. Proves the whole funnel (widget ->
 // checkout -> D1 -> confirmation -> admin) never surfaces a pickup/meeting-point axis for it, and
 // that checkout still rejects a client that tries to send one anyway.
@@ -13,10 +13,10 @@ test('booking a service with no location module carries no pickup/meeting-point 
       checkoutBody = JSON.parse(request.postData() ?? '{}');
     }
   });
-  // Plan 024 (done criteria): riverCruise also declares a required text metadata field — the
-  // widget renders no input for it (no editing surface beyond checkout), so this satisfies it the
-  // same way every other test that isn't specifically about metadata does: inject a minimal valid
-  // value onto the request the widget already sends, rather than growing the widget itself.
+  // riverCruise also declares a required text metadata field — the
+  // widget renders no input for it (no editing surface beyond checkout), so this test satisfies that
+  // requirement the same way every other test that isn't specifically about metadata does: inject a
+  // minimal valid value onto the request the widget already sends, rather than growing the widget itself.
   await page.route('**/api/booking/checkout', async (route) => {
     const body = JSON.parse(route.request().postData() ?? '{}');
     body.metadata = { dietary_notes: 'n/a' };
@@ -27,12 +27,11 @@ test('booking a service with no location module carries no pickup/meeting-point 
   expect(reference).toBeTruthy();
 
   // The widget renders no pickupType radios at all for this service, so the submitted checkout
-  // body never carries the fields (design decision 3).
+  // body never carries the fields.
   expect(checkoutBody).not.toHaveProperty('pickupType');
   expect(checkoutBody).not.toHaveProperty('meetingPointId');
 
   await expect(page.locator('.bk-badge--ok')).toBeVisible();
-  // No pickup/meeting-point row on the confirmation page's facts list.
   await expect(page.locator('.bk-facts')).not.toContainText('Pickup');
   await expect(page.locator('.bk-facts')).not.toContainText('Meeting point');
 
@@ -41,12 +40,12 @@ test('booking a service with no location module carries no pickup/meeting-point 
   await page.goto('/booking/admin');
   const row = page.locator('tr', { hasText: reference });
   await expect(row).toBeVisible();
-  // The pickup sub-label column stays empty for a location-less booking (design decision 4).
+  // The pickup sub-label column stays empty for a location-less booking.
   const pickupCell = row.locator('td').nth(3);
   await expect(pickupCell).toHaveText('');
 });
 
-// Plan 023 (design decision 3): checkout rejects pickupType/meetingPointId for a location-less
+// Checkout rejects pickupType/meetingPointId for a location-less
 // service even if a client sends them anyway — the widget is not the enforcement boundary.
 test('checkout rejects a pickupType field for a location-less service', async ({ request }) => {
   const from = new Date().toISOString().slice(0, 10);

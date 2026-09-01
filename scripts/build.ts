@@ -11,7 +11,11 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-// Every non-TypeScript file a published entrypoint reaches, as `src/` path -> `dist/` path.
+// The non-TypeScript files no TypeScript source *imports*, as `src/` path -> `dist/` path. A JSON
+// file reached by a real import (src/ui/locales/*.json, via messages.ts) is already resolved and
+// emitted into dist/ by tsc under resolveJsonModule — adding a new locale needs nothing here; only
+// a file tsc never sees in the module graph (an `.astro` component the consumer compiles, a
+// stylesheet linked by URL) belongs in this list.
 const RAW_ASSETS = [
   'components/ManageBooking.astro',
   'components/AdminDashboard.astro',

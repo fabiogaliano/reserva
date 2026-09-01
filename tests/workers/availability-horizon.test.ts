@@ -1,4 +1,4 @@
-// Plan 027 (design decision 3 / step 4): the load check for raising the availability cap. The old
+// The load check for raising the availability cap. The old
 // fixed 62-day limit is why the first consumer chunk-and-merged its requests; removing it is only
 // safe if a full-horizon request actually completes inside a Worker. This runs the real handler in
 // workerd against real D1, over a 365-day horizon with a year of bookings seeded across it.
@@ -26,7 +26,7 @@ const horizonConfig = {
 };
 
 // Cloudflare Access stays configured (baseConfig's admin.access) — this test only drives the
-// public availability endpoint, and plan 025 allows exactly one admin auth path.
+// public availability endpoint, and only one admin auth path is allowed.
 const runtime = defineCloudflareReservaRuntime(horizonConfig, {
   providers: providers(),
   secretBindings: ['RESERVA_OPERATOR_SECRET'],
@@ -94,8 +94,8 @@ describe('full-horizon availability (plan 027 design decision 3)', () => {
 
     // A soft ceiling, not a benchmark: it exists so a future change that makes this request
     // quadratic fails here instead of on a consumer's Worker. Measured at ~0.5s wall clock in this
-    // pool when the cap change landed (366 days x 7 slots/day against 50 confirmed bookings), which
-    // is why plan 027's optional internal chunking was not needed.
+    // pool (366 days x 7 slots/day against 50 confirmed bookings), which is why optional internal
+    // chunking was not needed.
     expect(elapsedMs).toBeLessThan(10_000);
   });
 

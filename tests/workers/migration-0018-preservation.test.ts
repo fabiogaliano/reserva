@@ -1,4 +1,4 @@
-// Plan 022 (design decision 1): migrations/0018_v2_domain_rename.sql is the wave's one and only
+// migrations/0018_v2_domain_rename.sql is the wave's one and only
 // `bookings` rebuild — it renames five columns, drops five, adds two, relaxes pickup_type to
 // nullable, and re-keys two settings rows. Because it recreates the whole table (and both its FK
 // children), a dropped or mismapped column would silently lose production data, so this proves,
@@ -186,8 +186,8 @@ describe('migration 0018 rebuilds bookings for the v2 domain without losing a ro
     await expect(db.prepare('SELECT COUNT(*) AS n FROM bookings WHERE metadata IS NOT NULL').all())
       .resolves.toMatchObject({ results: [{ n: 0 }] });
 
-    // pickup_type is nullable now: the plan-023 location-less service can store NULL. A NOT NULL
-    // column would reject this outright.
+    // pickup_type is nullable now: the location-less service can store NULL. A NOT NULL column
+    // would reject this outright.
     await expect(
       db.prepare(
         `INSERT INTO bookings (id, reference, service_slug, quantity, pickup_type, starts_at, ends_at, locale, price_minor, currency, status, cancel_token, operator_token, created_at, updated_at)

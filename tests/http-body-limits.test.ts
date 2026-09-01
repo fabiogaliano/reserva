@@ -1,10 +1,10 @@
-// Plan 013 item C (audit finding #10): nothing in src/ bounded a request body before this —
-// requestJson called request.json() unbounded, handleAdminPost and src/routes/booking/manage.ts
-// called request.formData() unbounded, and the Stripe webhook buffered request.text() unbounded.
-// These prove the shared bounded reader behind requestJson/requestFormData/requestText: an
-// under-limit body still works exactly as before, a valid Content-Length that already overshoots
-// rejects before a single byte is read off the wire, and a body that lies about its length (or
-// omits Content-Length entirely) is still caught mid-stream once the real byte count overshoots.
+// Nothing in src/ bounded a request body before this — requestJson called request.json()
+// unbounded, handleAdminPost and src/routes/booking/manage.ts called request.formData()
+// unbounded, and the Stripe webhook buffered request.text() unbounded. These prove the shared
+// bounded reader behind requestJson/requestFormData/requestText: an under-limit body still works
+// exactly as before, a valid Content-Length that already overshoots rejects before a single byte
+// is read off the wire, and a body that lies about its length (or omits Content-Length entirely)
+// is still caught mid-stream once the real byte count overshoots.
 import { describe, expect, it } from 'vitest';
 import { FORM_BODY_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES, requestFormData, requestJson, requestText, PAYMENT_WEBHOOK_BODY_LIMIT_BYTES } from '../src/http';
 

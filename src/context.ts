@@ -36,9 +36,9 @@ export interface ReservaLogger {
   error?(message: string, data?: Record<string, unknown>): void;
 }
 
-// Plan 025 (design decision 1): the one admin auth port shape, shared verbatim by
+// The one admin auth port shape, shared verbatim by
 // ReservaContext.adminAuth and CloudflareReservaRuntimeOptions.adminAuth (runtime-context.ts) —
-// "one shared declaration," not a duplicated custom-auth marker. `context` is the already-built
+// one shared declaration, not a duplicated custom-auth marker. `context` is the already-built
 // ReservaContext, so a custom implementation can read `context.secrets`/`context.config` without
 // bindings plumbing of its own.
 export type AdminAuth = (request: Request, context: ReservaContext) => Promise<AdminIdentity | null>;
@@ -56,11 +56,11 @@ export interface ReservaContext {
   secrets?: SecretLookup;
   clock: ReservaClock;
   logger: ReservaLogger;
-  // Plan 021 (design decision 1): in-process booking-event listeners registered by the consumer's
+  // In-process booking-event listeners registered by the consumer's
   // runtime module. Validated (names, uniqueness, subscribed events) when the context is built, so
   // a typo fails at startup rather than by silently never firing.
   hooks?: readonly BookingEventHook[];
-  // Plan 025: the admin auth port. `null` means unauthorized. Cloudflare Access is the default
+  // The admin auth port. `null` means unauthorized. Cloudflare Access is the default
   // implementation (cloudflareAccessAdminAuth, src/access.ts), auto-wired by
   // defineCloudflareReservaRuntime only when `config.admin.access` is configured; a consumer
   // registers a custom strategy by passing this exact function shape as `adminAuth` to the runtime
@@ -106,7 +106,7 @@ export function createReservaContext(input: ReservaContextInput): ReservaContext
   return {
     ...input,
     config: validateConfig(input.config),
-    // BK-SEC-002: threads the same secrets accessor the rest of ReservaContext uses through to
+    // Threads the same secrets accessor the rest of ReservaContext uses through to
     // the repo, so it can resolve the optional RESERVA_TOKEN_ENC_KEY (src/repo.ts) — repo.ts
     // can't import SecretLookup from here (this module already imports createBookingRepository
     // from repo.ts, and the reverse import would be circular).
@@ -118,6 +118,13 @@ export function createReservaContext(input: ReservaContextInput): ReservaContext
     routeConfig: input.routeConfig ?? defaultRouteConfig,
   };
 }
+
+// The shared-secret alternative to a per-booking operator token on the operator endpoints. Declared
+// in the astro:env schema (src/integration.ts) and read through the same SecretLookup every other
+// secret uses; a deployment must still list it in the runtime's `secretBindings`. It lives beside
+// SecretLookup rather than in the handler that checks it, so the runtime layer can default
+// `secretBindings` to it without importing a request handler.
+export const OPERATOR_SECRET_NAME = 'RESERVA_OPERATOR_SECRET';
 
 export async function getSecret(context: ReservaContext, name: string): Promise<string | undefined> {
   return context.secrets ? context.secrets(name) : undefined;

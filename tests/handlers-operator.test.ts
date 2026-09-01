@@ -515,7 +515,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     // the post-Stripe resolve write failed — the caller sees a plain error, not a false 'failed'.
     expect(first.status).toBeGreaterThanOrEqual(500);
     expect(repo.rows.get(seeded.id)?.status).toBe('cancelled');
-    // Finding #4: a Stripe-success-then-D1-write-failure must never be recorded as a Stripe
+    // A Stripe-success-then-D1-write-failure must never be recorded as a Stripe
     // failure — the row stays 'requested', never 'failed'.
     expect(repo.refundOperations.get(seeded.id)?.status).toBe('requested');
     expect(idempotencyKeys).toHaveLength(1);
@@ -529,10 +529,10 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     expect(idempotencyKeys).toEqual(['reserva-refund-pi_post_stripe_crash', 'reserva-refund-pi_post_stripe_crash']);
   });
 
-  // BK-REFUND-001 (audit requirement 5): the handler must forward the booking's full expected
-  // price as the second argument to payments.refund() so the provider can reject partial-amount
-  // reconciliations. Without this, a stale or unrelated historical Stripe refund with a different
-  // amount could satisfy reconciliation even though the customer still owes money.
+  // The handler must forward the booking's full expected price as the second argument to
+  // payments.refund() so the provider can reject partial-amount reconciliations. Without this, a
+  // stale or unrelated historical Stripe refund with a different amount could satisfy
+  // reconciliation even though the customer still owes money.
   it('passes the booking\'s priceMinor as the expectedAmountCents argument to payments.refund()', async () => {
     const seeded = booking({ id: 'b-op-cancel-expected-amount', paymentRef: 'pi_expected_amount' });
     const repo = fakeRepository([seeded]);
@@ -715,7 +715,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     expect(repo.refundOperations.get(seeded.id)).toMatchObject({ status: 'succeeded', stripeRefundId: 're_webhook_won', amountCents: seeded.priceMinor });
   });
 
-  // BK-REFUND-001: Stripe is the source of truth for whether money moved — a charge.refunded
+  // Stripe is the source of truth for whether money moved — a charge.refunded
   // webhook arriving after an operator recorded refund='none' (e.g. a dashboard-initiated refund
   // Reserva didn't drive) must correct that row rather than leave it stating no refund happened.
   it('an authoritative charge.refunded webhook corrects an earlier none/succeeded refund row on an already-cancelled booking, and a follow-up operator refund=full request is idempotent', async () => {
@@ -760,7 +760,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     expect(refunds).toBe(0);
   });
 
-  // src/handlers/index.ts:507-508 — a partial refund (amountRefunded < amountCaptured) never
+  // A partial refund (amountRefunded < amountCaptured) never
   // cancels the booking or touches the refund-operation row; it only logs. This pins that guard
   // against silently overwriting an existing (unrelated) operation record too.
   it('a partial-refund webhook does not rewrite an existing refund operation row or cancel the booking', async () => {
@@ -811,7 +811,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
       await winnerResolved;
       return realGetBookingById(id);
     };
-    // BK-SEC-002: getBookingByOperatorToken now hashes the presented token (a genuine async
+    // getBookingByOperatorToken now hashes the presented token (a genuine async
     // WebCrypto op, unlike the old synchronous in-memory find()), so the two concurrent requests'
     // initial token lookups no longer reliably resolve in lockstep before either can progress.
     // The "loser" can now reach the claim race by EITHER of two valid, already-existing paths
@@ -844,7 +844,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
       db: {} as D1Database,
       repo,
       clock,
-      // BK-SEC-002 (continued from the comment above): with the loser now reachable via either
+      // With the loser now reachable via either
       // branch, a genuine race can put both the winner's own resolvePendingRefund call and the
       // loser's re-check within a hair of each other, so this mock can no longer assume it is
       // called at most once — it now models Stripe's real idempotency-key behavior instead (same

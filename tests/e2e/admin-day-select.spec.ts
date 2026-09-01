@@ -24,14 +24,14 @@ async function closedOn(page: Page, date: string): Promise<boolean> {
   return day?.status === 'closed' && day?.slots.length === 0;
 }
 
-// Plan 014 item D (audit finding #14): the enhanced admin day calendar replaced the no-JS "To
-// date" range field with undocumented Shift/Ctrl/Cmd-click selection, hid the always-native range
-// input, and gave selected cells only a CSS class — no aria-pressed/role, no live-region
-// announcement, and single-selection-only aria-current. This proves the accessible replacement:
-// button semantics + aria-pressed on cells, a role="status" title announcing the count, the
-// visible "To date" field staying in sync with a contiguous pointer selection, and a scattered
-// selection correctly avoiding the "To date" shape (finding #14's actual bug: a scattered
-// selection must never be describable as a contiguous range).
+// The enhanced admin day calendar replaced the no-JS "To date" range field with undocumented
+// Shift/Ctrl/Cmd-click selection, hid the always-native range input, and gave selected cells only
+// a CSS class — no aria-pressed/role, no live-region announcement, and single-selection-only
+// aria-current. This proves the accessible replacement: button semantics + aria-pressed on cells,
+// a role="status" title announcing the count, the visible "To date" field staying in sync with a
+// contiguous pointer selection, and a scattered selection correctly avoiding the "To date" shape
+// (the actual bug this guards against: a scattered selection must never be describable as a
+// contiguous range).
 
 test('a contiguous 3-day pointer selection gets button semantics, aria-pressed, live-region copy, and matching visible inputs, and closes all three days', async ({ page }) => {
   const day1 = format(addDays(new Date(), 60), 'yyyy-MM-dd');
@@ -57,8 +57,8 @@ test('a contiguous 3-day pointer selection gets button semantics, aria-pressed, 
   const overrideForm = page.locator('#bk-override');
   await expect(overrideForm.locator('input[name="date"]')).toHaveValue(day1);
   await expect(overrideForm.locator('input[name="toDate"]')).toHaveValue(day3);
-  // Contiguous shape: date+toDate only, no repeated hidden date fields (the STOP condition this
-  // item's decision guards against — the two shapes must never both be populated).
+  // Contiguous shape: date+toDate only, no repeated hidden date fields — the two shapes must
+  // never both be populated.
   await expect(overrideForm.locator('input[data-reserva-extra-date]')).toHaveCount(0);
 
   await overrideForm.getByRole('button', { name: 'Close 3 days' }).click();

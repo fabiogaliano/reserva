@@ -4,9 +4,8 @@ import { defaultCapacityForDate, occupancyFor, type CapacityDefault } from '../.
 import { enumerateDateKeys, localDateKey, utcToLocalIso } from '../../core/time.js';
 import type { ReservaContext } from '../../context.js';
 import { escapeHtml } from '../../http.js';
-import { isManageableToken } from '../../providers/brevo.js';
 import { ownerFacingIncidentTitle } from '../../reconciliation-helpers.js';
-import type { OperationalIncidentRecord } from '../../repo.js';
+import { isManageableToken, type OperationalIncidentRecord } from '../../repo.js';
 import type { ReservaResolvedRouteConfig } from '../../routes-manifest.js';
 import { cssAssetHref, jsAssetHref } from '../asset-hrefs.js';
 import { formatDateTime, formatDayDate, formatPrice } from '../format.js';
@@ -45,7 +44,7 @@ function adminSectionNav(messages: ReturnType<typeof resolveMessages>, hasIncide
     + `<div class="bk-section-nav-links">${links}</div></nav>`;
 }
 
-// Plan 017 (design decision 4) / Plan 018 (design decision 8): the meeting-point label the
+// The meeting-point label the
 // bookings-table row actually displays — '' when the row shows none. Shared by the row renderer
 // and the search haystack so search can only ever match visible text: only an option that starts
 // at a meeting point surfaces a choice, and only when the service declares more than one (a
@@ -76,12 +75,12 @@ export function matchesAdminFilters(booking: Booking, filters: AdminFilters, con
   return true;
 }
 
-// BK-SEC-002 (patch-11-r1 LOW 1): shared by every admin manage-link render site below (the
+// Shared by every admin manage-link render site below (the
 // bookings table, the day-detail island, and its server-rendered fallback) — never build an href
-// from a token that isn't presentable (see isManageableToken, src/providers/brevo.ts: a
+// from a token that isn't presentable (see isManageableToken, src/repo.ts: a
 // `nohash:`-prefixed placeholder, meaning no decryptable blob exists to regenerate the real link
 // from). null tells each call site to render the "unavailable" fallback instead of a dead link.
-// Plan 027 (design decision 8): also null when the built-in manage page is switched off
+// Also null when the built-in manage page is switched off
 // (config.routes.manage: false) — that route isn't mounted, so every call site must render its
 // existing "unavailable" state rather than a dead link. The whole resolved route config is the
 // argument, not just the path, so the flag and the path can never be read from different places.
@@ -90,14 +89,14 @@ export function manageLinkHref(routeConfig: ReservaResolvedRouteConfig, token: s
   return isManageableToken(token) ? `${routeConfig.paths.managePage}?token=${encodeURIComponent(token)}` : null;
 }
 
-// Plan 020 (design decision 12): relative "how long ago" phrasing for a card's first-detected
+// Relative "how long ago" phrasing for a card's first-detected
 // timestamp — plain locale date/time is precise but doesn't read as urgency the way "since" does,
 // and this is the one place on the admin page that needs it.
 function formatIncidentSince(iso: string, locale: string, timezone: string): string {
   return formatDateTime(utcToLocalIso(iso, timezone), locale, timezone);
 }
 
-// Plan 020 (design decisions 12/13/14): the "Attention required" section — open incident cards
+// The "Attention required" section — open incident cards
 // (already sorted action-required-then-delayed-then-oldest by listOpenIncidents), each with a
 // collapsed technical-details disclosure and two CSRF-protected actions (retry, manual resolve),
 // plus a 30-day counts line and a short recently-resolved history distinguishing automatic from
@@ -218,10 +217,10 @@ export function adminPage(
       : '';
     const quantity = formatMessage(booking.quantity === 1 ? messages['widget.person'] : messages['widget.quantityCount'], { n: booking.quantity });
     const price = formatPrice(booking.priceMinor, locale, context.config.business.currency);
-    // Plan 018 (design decision 8): resolveService throws for a renamed/removed serviceSlug (see
-    // adminMeetingPointLabel above) — degrade option to undefined rather than 500 the row; every
-    // gate below then falls back to the pre-018 pickupType-keyed check, so a legacy default/custom
-    // booking (or a booking whose service disappeared) renders exactly as it did before this plan.
+    // resolveService throws for a renamed/removed serviceSlug (see
+    // adminMeetingPointSubLabel above) — degrade option to undefined rather than 500 the row; every
+    // gate below then falls back to the pickupType-keyed check ('default'/'custom' literal ids), so
+    // a legacy or service-disappeared booking still renders a pickup label.
     let rowTour: ServiceConfig | undefined;
     try {
       rowTour = resolveService(context.config, booking.serviceSlug);
@@ -229,11 +228,10 @@ export function adminPage(
       rowTour = undefined;
     }
     const option = rowTour ? pickupOptionFor(rowTour, booking.pickupType) : undefined;
-    // Plan 023 (design decision 4): gate on the row's own data, not config — a location-less
+    // Gate on the row's own data, not config — a location-less
     // booking (pickupType null) renders no pickup cell content at all. A non-null pickupType keeps
     // the pre-023 fallback chain: a declared option's own label, else the message-catalog key for
-    // the 'default'/'custom' ids (unchanged copy for every config that predates this plan), else
-    // the raw id verbatim for a declared-but-uncataloged one.
+    // the 'default'/'custom' ids, else the raw id verbatim for a declared-but-uncataloged one.
     const pickupLabel = booking.pickupType === null
       ? ''
       : option?.label
@@ -368,8 +366,8 @@ export function adminPage(
   const filterActions = `<div class="bk-filter-actions"><button type="submit" class="bk-btn bk-btn--secondary">${escapeHtml(messages['admin.apply'])}</button>`
     + (filters.q || filters.status ? `<a class="bk-filter-clear" href="${escapeHtml(clearHref)}">${escapeHtml(messages['admin.clearFilters'])}</a>` : '')
     + `</div>`;
-  // Plan 023 (design decision 4): a deployment where no service declares a location module drops
-  // the "pickup" mention from the search hint — the key mechanism only; final copy is plan 026's.
+  // A deployment where no service declares a location module drops
+  // the "pickup" mention from the search hint.
   const hasLocationService = Object.values(context.config.services).some((candidate) => candidate.location);
   const searchPlaceholder = hasLocationService ? messages['admin.searchPlaceholder'] : messages['admin.searchPlaceholderNoPickup'];
   const filterForm = `<form method="get" class="bk-filters" role="search">`
@@ -402,7 +400,7 @@ export function adminPage(
   for (const [date, list] of bookingsByDate) {
     daySummaries[date] = [...list].sort(byStart).map((entry) => {
       const tone = statusToneOf(entry.status);
-      // BK-SEC-002 (patch-11-r1 LOW 1): omitted (not a dead-link href) when the token isn't
+      // Omitted (not a dead-link href) when the token isn't
       // presentable — admin-enhancer.ts renders the "unavailable" fallback when `u` is absent.
       const manageHref = manageLinkHref(context.routeConfig, entry.operatorToken);
       return {

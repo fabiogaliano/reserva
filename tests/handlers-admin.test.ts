@@ -12,9 +12,9 @@ const CSRF_NOW = clock().getTime();
 const ADMIN_URL = 'https://example.test/api/booking/admin';
 const ADMIN_ORIGIN = 'https://example.test';
 // Every admin context built in this file configures a RESERVA_CSRF_SECRET via `secrets`, so CSRF
-// layer 2 is active (src/admin-csrf.ts requires a real secret to sign/verify a token at all — see
-// BK-SEC-001 finding 1 — otherwise mint returns undefined and verify no-ops). Without this fixture,
-// every "invalid/expired/foreign token -> 403" assertion below would trivially pass for the wrong
+// layer 2 is active (src/admin-csrf.ts requires a real secret to sign/verify a token at all —
+// otherwise mint returns undefined and verify no-ops). Without this fixture, every
+// "invalid/expired/foreign token -> 403" assertion below would trivially pass for the wrong
 // reason (layer 2 disabled), not because the guard actually rejected the token.
 const CSRF_TEST_SECRET = 'handlers-admin-test-secret';
 const csrfSecrets = async (name: string) => (name === 'RESERVA_CSRF_SECRET' ? CSRF_TEST_SECRET : undefined);
@@ -27,7 +27,6 @@ async function mintTestCsrfToken(sub: string, at: number): Promise<string> {
   return token;
 }
 
-// Mint the default valid same-origin token once.
 const DEFAULT_CSRF_TOKEN = await mintTestCsrfToken('', CSRF_NOW);
 
 function adminGetRequest(): Request {
@@ -36,10 +35,10 @@ function adminGetRequest(): Request {
 
 interface AdminPostOptions {
   // Defaults to same-origin Fetch-Metadata headers; pass {} or foreign values to exercise the
-  // origin guard (BK-SEC-001 layer 1).
+  // origin guard.
   headers?: HeadersInit;
-  // Defaults to a valid token bound to sub=''; pass null to omit the field entirely (BK-SEC-001
-  // layer 2's "missing token" case).
+  // Defaults to a valid token bound to sub=''; pass null to omit the field entirely (the CSRF
+  // token layer's "missing token" case).
   csrfToken?: string | null;
 }
 
@@ -54,11 +53,10 @@ function adminPostRequest(fields: Record<string, string> | Array<[string, string
   });
 }
 
-// Plan 013 item C (audit finding #10): handleAdminPost read request.formData() unbounded. This
-// proves the real wiring (not just the requestFormData helper, covered generically in
-// tests/http-body-limits.test.ts) rejects an oversized declared Content-Length with 413 — and
-// does so ahead of/independent from the CSRF check, since the body must be read before csrf_token
-// can even be extracted from the form.
+// handleAdminPost read request.formData() unbounded. This proves the real wiring (not just the
+// requestFormData helper, covered generically in tests/http-body-limits.test.ts) rejects an
+// oversized declared Content-Length with 413 — and does so ahead of/independent from the CSRF
+// check, since the body must be read before csrf_token can even be extracted from the form.
 describe('request body size limit (audit finding #10)', () => {
   it('rejects an admin POST whose declared Content-Length exceeds the 256 KB form limit with 413', async () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
@@ -197,11 +195,11 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
     expect(body).not.toContain(second.cancelToken);
   });
 
-  // BK-SEC-002 (patch-11-r1 LOW 1): a `nohash:`-prefixed operatorToken (src/repo.ts
-  // placeholderToken) is what a real, DB-loaded booking looks like when there's no decryptable
-  // blob to regenerate its link from (no RESERVA_TOKEN_ENC_KEY configured, or a not-yet-backfilled
-  // legacy row) — the admin table and the day-detail JSON island must never render a link built
-  // from it, since it would 403 the instant an operator clicked it.
+  // A `nohash:`-prefixed operatorToken (src/repo.ts placeholderToken) is what a real, DB-loaded
+  // booking looks like when there's no decryptable blob to regenerate its link from (no
+  // RESERVA_TOKEN_ENC_KEY configured, or a not-yet-backfilled legacy row) — the admin table and the
+  // day-detail JSON island must never render a link built from it, since it would 403 the instant an
+  // operator clicked it.
   it('omits the manage link (never a dead href) for a booking whose operator token is not presentable', async () => {
     const seeded = booking({
       id: 'b-admin-nohash', reference: 'LVT-2026-210', startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
@@ -227,9 +225,9 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
     expect(response.headers.get('referrer-policy')).toBe('same-origin');
   });
 
-  // BK-CAP-002: the day calendar must show capacity units consumed, not a raw booking-row count — a
-  // single 5-person booking on the fixture service (occupancyFor: quantity > 4 ? 2 : 1) needs two
-  // vehicles, so a day with just this one booking is already at the fixture's default capacity (2).
+  // The day calendar must show capacity units consumed, not a raw booking-row count — a single
+  // 5-person booking on the fixture service (occupancyFor: quantity > 4 ? 2 : 1) needs two vehicles,
+  // so a day with just this one booking is already at the fixture's default capacity (2).
   it('renders the day cell in capacity units, not booking count, for a multi-unit booking', async () => {
     const multiUnit = booking({
       id: 'b-admin-multiunit', reference: 'LVT-2026-300', quantity: 5,
@@ -246,9 +244,9 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
     expect(body).not.toMatch(/bk-day-load">1\/2</);
   });
 
-  // Plan 017 (design decision 4): the meeting-point sub-line only renders for a default pickup on
-  // a service that actually declares more than one point — mirrors the existing pickupAddress sub-
-  // line pattern, and search must match what the row displays.
+  // The meeting-point sub-line only renders for a default pickup on a service that actually
+  // declares more than one point — mirrors the existing pickupAddress sub-line pattern, and search
+  // must match what the row displays.
   describe('meeting-point sub-line + search (plan 017)', () => {
     const points = [
       { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
@@ -293,10 +291,10 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
   });
 });
 
-// Plan 018 (design decision 8): the pickup-cell label re-keys off the service's declared option,
-// falling back through option?.label -> the message-catalog key for 'default'/'custom' -> the raw
-// id, and the requiresAddress/usesMeetingPoint sub-line gates re-key the same way the checkout
-// meeting-point requirement does (decision 6).
+// The pickup-cell label re-keys off the service's declared option, falling back through
+// option?.label -> the message-catalog key for 'default'/'custom' -> the raw id, and the
+// requiresAddress/usesMeetingPoint sub-line gates re-key the same way the checkout meeting-point
+// requirement does.
 describe('pickup option label + sub-lines (plan 018 design decision 8)', () => {
   const points = [
     { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
@@ -533,9 +531,9 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     await expect(invalid.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('capacity.default') } });
   });
 
-  // BK-CONFIG-001: the holdMinutes kind declares max: 1440 (core/settings.ts); the rendered input
-  // must carry it as an HTML max= constraint, mirroring min=, so a value like 1441 is rejected
-  // client-side too — not just at parseSettingForm/mergeAndValidateSettings.
+  // The holdMinutes kind declares max: 1440 (core/settings.ts); the rendered input must carry it
+  // as an HTML max= constraint, mirroring min=, so a value like 1441 is rejected client-side too —
+  // not just at parseSettingForm/mergeAndValidateSettings.
   it('renders min and max attributes on the holdMinutes number input', async () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminGet(settingsGetRequest(), context);
@@ -613,8 +611,8 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     expect(unknown.status).toBe(400);
   });
 
-  // BK-CONFIG-001: holdMinutes outside [35, 1440] must be unsaveable, not just clamped elsewhere
-  // (a value below 35 lets the Stripe hold outlive the D1 hold; above 1440 breaks checkout entirely).
+  // holdMinutes outside [35, 1440] must be unsaveable, not just clamped elsewhere (a value below 35
+  // lets the Stripe hold outlive the D1 hold; above 1440 breaks checkout entirely).
   function policyFields(overrides: Record<string, string> = {}): Record<string, string> {
     return {
       action: 'settings-save',
@@ -637,7 +635,7 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     const bad = await handleAdminPost(adminPostRequest(policyFields({ 'booking.holdMinutes': '0' })), context);
     expect(bad.status).toBe(400);
     // The message names the offending field (parseSettingForm's `${key}: ...` shape) — see the
-    // field-attribution finding below for the mergeAndValidateSettings/SettingsMergeError case.
+    // field-attribution test below for the mergeAndValidateSettings/SettingsMergeError case.
     await expect(bad.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('booking.holdMinutes') } });
     expect(repo.settings.size).toBe(0);
 
@@ -646,15 +644,15 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     expect(repo.settings.get('booking.holdMinutes')).toBe('40');
   });
 
-  // [P2 finding 1] handleAdminPost has no "re-render the page with field errors" convention for
-  // ANY admin action (day overrides, capacity defaults, settings) — every action uniformly throws
-  // HttpError and the client gets a JSON error body, never an HTML re-render. That's the
-  // established convention this repo uses, so mapping SettingsMergeError to HttpError(400, ...) is
-  // consistent with it; the bar to clear is that the message names which field(s) failed.
-  // SettingsMergeError's constructor already formats `path.join('.'): message` per issue, so the
-  // HttpError message an operator sees is field-attributed. This exercises that via a genuinely
-  // cross-field validateConfig rejection (see core-settings.test.ts for why locales is the only
-  // reachable one), reaching mergeAndValidateSettings — not just a single field's SettingKind bound.
+  // handleAdminPost has no "re-render the page with field errors" convention for ANY admin action
+  // (day overrides, capacity defaults, settings) — every action uniformly throws HttpError and the
+  // client gets a JSON error body, never an HTML re-render. That's the established convention this
+  // repo uses, so mapping SettingsMergeError to HttpError(400, ...) is consistent with it; the bar
+  // to clear is that the message names which field(s) failed. SettingsMergeError's constructor
+  // already formats `path.join('.'): message` per issue, so the HttpError message an operator sees
+  // is field-attributed. This exercises that via a genuinely cross-field validateConfig rejection
+  // (see core-settings.test.ts for why locales is the only reachable one), reaching
+  // mergeAndValidateSettings — not just a single field's SettingKind bound.
   it('field-attributes a mergeAndValidateSettings cross-field rejection in the HttpError message', async () => {
     const repo = fakeRepository();
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
@@ -817,11 +815,11 @@ describe('BK-SEC-001: admin mutation origin + CSRF guard (src/admin-csrf.ts)', (
     expect(response.headers.get('cache-control')).toBe('no-store');
   });
 
-  // [P2 finding 3] Only the successful 303 redirects set no-store; a 4xx/5xx admin POST response
-  // went through plain errorResponse (src/http.ts), which sets no cache-control header at all, so a
-  // shared cache could serve a stale/sensitive admin error page. runAdminPost (src/handlers/index.ts)
-  // now sets no-store on every admin POST response, success or error. Covers the guard's own 403 as
-  // the concrete example, but the fix is applied to the whole error path, not this one status code.
+  // Only the successful 303 redirects set no-store; a 4xx/5xx admin POST response went through
+  // plain errorResponse (src/http.ts), which sets no cache-control header at all, so a shared cache
+  // could serve a stale/sensitive admin error page. runAdminPost (src/handlers/index.ts) now sets
+  // no-store on every admin POST response, success or error. Covers the guard's own 403 as the
+  // concrete example, but the fix is applied to the whole error path, not this one status code.
   it('sets Cache-Control: no-store on an admin POST that 403s (cross-origin, no mutation)', async () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'clear' }, {
@@ -839,12 +837,12 @@ describe('BK-SEC-001: admin mutation origin + CSRF guard (src/admin-csrf.ts)', (
   });
 });
 
-// [P1 finding 1 fix] BK-SEC-001: when no RESERVA_CSRF_SECRET is configured, src/admin-csrf.ts takes
-// the token layer offline rather than fall back to a forgeable key (see admin-csrf.test.ts for the
-// unit-level proof). These are the end-to-end equivalents: no context in this block passes `secrets`,
-// so mintAdminCsrfToken returns undefined (the rendered form gets an empty token field) and
-// verifyAdminCsrfToken is a no-op — the whole scenario the finding describes. Layer 1 (the origin
-// guard) is unconditional and must still fully gate the route on its own in this mode.
+// When no RESERVA_CSRF_SECRET is configured, src/admin-csrf.ts takes the token layer offline
+// rather than fall back to a forgeable key (see admin-csrf.test.ts for the unit-level proof).
+// These are the end-to-end equivalents: no context in this block passes `secrets`, so
+// mintAdminCsrfToken returns undefined (the rendered form gets an empty token field) and
+// verifyAdminCsrfToken is a no-op. The origin guard is unconditional and must still fully gate the
+// route on its own in this mode.
 describe('BK-SEC-001: admin CSRF layer 2 without RESERVA_CSRF_SECRET (layer 1 alone still blocks the attack)', () => {
   it('a same-origin admin POST succeeds with no csrf_token at all when no secret is configured', async () => {
     const repo = fakeRepository();
@@ -881,10 +879,10 @@ describe('BK-SEC-001: admin CSRF layer 2 without RESERVA_CSRF_SECRET (layer 1 al
   });
 });
 
-// Plan 005: every settings/capacity write records who changed it, atomically with the change
-// itself (src/repo.ts). These tests exercise the actor-threading in handleAdminPost specifically —
-// the atomicity guarantee (one db.batch() call per mutating method) is proven at the repo unit
-// level in tests/repo.test.ts, which exercises the real createBookingRepository implementation.
+// Every settings/capacity write records who changed it, atomically with the change itself
+// (src/repo.ts). These tests exercise the actor-threading in handleAdminPost specifically — the
+// atomicity guarantee (one db.batch() call per mutating method) is proven at the repo unit level
+// in tests/repo.test.ts, which exercises the real createBookingRepository implementation.
 describe('plan 005: admin_change_history (actor-attributed, batch-atomic settings/capacity audit)', () => {
   it('settings-save records one history row per changed key with the Access subject as actor and the serialized value', async () => {
     const repo = fakeRepository();

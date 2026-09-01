@@ -34,7 +34,7 @@ export const englishEmailCopy: Record<string, string> = {
   'pickup.pending': 'Custom pickup address pending',
   'contact.lead.whatsapp': 'Questions? Just reply to this email, or call / WhatsApp us:',
   'contact.lead.plain': 'Questions? Just reply to this email, or call us:',
-  // Plan 026 (design decision 3): a neutral default a consumer can override with a concrete
+  // A neutral default a consumer can override with a concrete
   // turnaround promise via config.emails.messages — the library has no business making a timing
   // guarantee on any operator's behalf.
   'refund.timing': 'Refunds are returned to your original payment method.',

@@ -5,7 +5,7 @@ import type { ClientConfig } from '../src/core/config';
 import { renderDefaultEmail, type EmailRenderer, type EmailTemplateContext } from '../src/email';
 import { booking, config } from './fixtures';
 
-// Plan 026 step 5: renderer-level tests exercising the public seam directly, distinct from
+// Renderer-level tests exercising the public seam directly, distinct from
 // tests/providers-email.test.ts's Brevo-transport-level coverage (HTTP posting, address routing,
 // error classification).
 

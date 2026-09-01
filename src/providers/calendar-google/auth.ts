@@ -159,7 +159,7 @@ function cacheKeyFor(options: GoogleAuthOptions, values: ReturnType<typeof crede
   return options.cacheKey ?? `${tokenUrl}|${scope}|${values.serviceAccountEmail}|${values.impersonateEmail}|${values.serviceAccountPrivateKey}`;
 }
 
-// Plan 016 (design decision 2): a structured ProviderFailure (status in hand, from the response
+// A structured ProviderFailure (status in hand, from the response
 // itself) rather than a plain Error whose status only ever lived in the message text — a bad
 // service-account credential (401) must classify as permanent, not retry forever through the
 // outbox attempt cap (src/confirmation.ts).
@@ -171,8 +171,6 @@ async function responseError(response: Response, operation: string): Promise<Err
 export function clearGoogleTokenCache(): void {
   tokenCache.clear();
 }
-
-export const clearGoogleAuthCache = clearGoogleTokenCache;
 
 export class GoogleServiceAccountAuth {
   readonly serviceAccountEmail: string;
@@ -258,20 +256,13 @@ export class GoogleServiceAccountAuth {
   }
 }
 
-export const GoogleAuth = GoogleServiceAccountAuth;
-export const GoogleServiceAccountAuthenticator = GoogleServiceAccountAuth;
-
 export function createGoogleServiceAccountAuth(options: GoogleAuthOptions): GoogleServiceAccountAuth {
   return new GoogleServiceAccountAuth(options);
 }
 
-export const createGoogleAuth = createGoogleServiceAccountAuth;
-
 export async function getGoogleAccessToken(options: GoogleAuthOptions): Promise<string> {
   return new GoogleServiceAccountAuth(options).getAccessToken();
 }
-
-export const getAccessToken = getGoogleAccessToken;
 
 export function createGoogleServiceAccountJwt(
   options: GoogleAuthOptions,

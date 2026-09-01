@@ -1,4 +1,4 @@
-// Plan 027 (design decision 5): locale negotiation belongs to the library, not to every consumer.
+// Locale negotiation belongs to the library, not to every consumer.
 // The first consumer shipped its own `'pt'` -> `'pt-PT'` shim because a bare language tag — which
 // is what a browser's `navigator.language`, an `Accept-Language` header, or a URL segment usually
 // carries — matched nothing in `locales.supported` and was rejected outright.

@@ -1,4 +1,4 @@
-// Plan 027 (design decision 1, step 7): the anti-drift guarantee. The quote endpoint exists
+// The anti-drift guarantee. The quote endpoint exists
 // because the first consumer had to reimplement the pricing matrix client-side; the only thing
 // that makes it safe is that it prices through the SAME code path checkout charges through. These
 // tests assert that over a real (service x quantity x pickup) matrix by running both endpoints and
@@ -12,7 +12,7 @@ import { handleCheckout, handleQuote } from '../src/handlers';
 import { config, service } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
-// A second, location-less service (plan 023) so the matrix covers both pricing axes: quantity
+// A second, location-less service so the matrix covers both pricing axes: quantity
 // tiers alone, and quantity tiers x declared pickup ids.
 const cruise: ServiceConfig = {
   durationMin: 60,
@@ -87,7 +87,7 @@ describe('POST /api/booking/quote (plan 027 design decision 1)', () => {
   it('returns the tier price and the deployment currency, nothing else', async () => {
     const response = await quote({ serviceSlug: 'vintage', quantity: 5, pickup: 'custom' });
     expect(response.status).toBe(200);
-    // No breakdown field (design decision 1): flat totals only.
+    // No breakdown field: flat totals only.
     await expect(response.json()).resolves.toEqual({ priceMinor: 20000, currency: 'eur' });
   });
 
@@ -100,7 +100,7 @@ describe('POST /api/booking/quote (plan 027 design decision 1)', () => {
     expect(unknown.status).toBe(400);
     await expect(unknown.json()).resolves.toMatchObject({ error: { message: 'pickup must be one of: default, custom' } });
 
-    // Location-less service: the field must not be sent at all (plan 023 decision 3).
+    // Location-less service: the field must not be sent at all.
     const unexpected = await quote({ serviceSlug: 'cruise', quantity: 2, pickup: 'default' });
     expect(unexpected.status).toBe(400);
     await expect(unexpected.json()).resolves.toMatchObject({ error: { message: 'This service has no location module; do not send pickup' } });

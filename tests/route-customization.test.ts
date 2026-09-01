@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { reserva, virtualConfigId } from '../src/integration';
 import { createReservaContext } from '../src/context';
 import { handleAdminGet } from '../src/handlers';
-import { renderManagePage } from '../src/components/manage-page';
+import { renderManagePage } from '../src/ui/pages/manage-page';
 import {
   normalizeRoutePrefix,
   requireEnabledRoutePath,
@@ -11,7 +11,7 @@ import {
   routeManifest,
   validateRouteOptions,
 } from '../src/routes-manifest';
-import config from '../examples/client-config';
+import config from '../examples/minimal/client-config';
 import { booking } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
@@ -37,7 +37,7 @@ function setup(options: Record<string, unknown>) {
   return { routes, viteConfig };
 }
 
-const baseOptions = { config, runtimeEntrypoint: './examples/runtime.ts' };
+const baseOptions = { config, runtimeEntrypoint: './examples/minimal/runtime.ts' };
 
 describe('normalizeRoutePrefix', () => {
   it.each([
@@ -122,9 +122,9 @@ describe('route table generation (astro:config:setup)', () => {
     expect(routes.map((route) => route.pattern)).toEqual(routeManifest.map((entry) => `/en${entry.pattern}`));
   });
 
-  // Plan 025 (design decision 3): routes.admin/routes.ops now live on `config.routes`, not on
-  // ReservaIntegrationOptions — the integration reads the same validated config the runtime factory
-  // reads for admin-auth selection, instead of two independently-settable options.
+  // routes.admin/routes.ops live on `config.routes`, not on ReservaIntegrationOptions — the
+  // integration reads the same validated config the runtime factory reads for admin-auth
+  // selection, instead of two independently-settable options.
   it('config.routes: { ops: false } omits every operator route and nothing else', () => {
     const { routes } = setup({ ...baseOptions, config: { ...config, routes: { ops: false } } });
     const patterns = routes.map((route) => route.pattern);

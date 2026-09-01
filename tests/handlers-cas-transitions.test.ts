@@ -13,7 +13,7 @@ import { booking, config } from './fixtures';
 import { sideEffectOperationKey, type SideEffectOperationIdentity } from '../src/repo';
 import { fakeRepository, providers, sideEffectOperation } from './fakes';
 
-// BK-DATA-001: every status-changing handler now writes through a compare-and-set repo
+// Every status-changing handler now writes through a compare-and-set repo
 // method. These tests force the exact race the CAS closes — a concurrent transition lands
 // between the handler's in-memory read and its DB write — by hooking the fake repo's
 // transition method to mutate the row (as if a racing request won) right before the real
@@ -126,7 +126,7 @@ describe('stale compare-and-set transitions', () => {
   it('a reschedule that loses a race to a concurrent cancel gets 409 instead of moving the row', async () => {
     const seeded = booking({ id: 'b-reschedule-vs-cancel', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z' });
     const repo = fakeRepository([seeded]);
-    // BK-CAP-001: rescheduleWithToken now writes through rescheduleWithCapacity (the atomic
+    // rescheduleWithToken now writes through rescheduleWithCapacity (the atomic
     // capacity-guarded UPDATE), not the old unconditional transitionReschedule — hook that entry
     // point so this still exercises the real CAS instead of silently no-op-ing.
     const realTransition = repo.rescheduleWithCapacity;
@@ -151,7 +151,7 @@ describe('stale compare-and-set transitions', () => {
     // stale-transition test per converted handler, and the operator one wasn't covered yet.
     const seeded = booking({ id: 'b-op-reschedule-vs-cancel', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z' });
     const repo = fakeRepository([seeded]);
-    // BK-CAP-001: see the customer-reschedule-vs-cancel test above — hook the atomic
+    // See the customer-reschedule-vs-cancel test above — hook the atomic
     // rescheduleWithCapacity entry point rescheduleWithToken now actually writes through.
     const realTransition = repo.rescheduleWithCapacity;
     repo.rescheduleWithCapacity = async (id, input) => {
@@ -172,7 +172,7 @@ describe('stale compare-and-set transitions', () => {
   it('a reschedule that loses a race to a concurrent reschedule gets 409 slot_unavailable instead of clobbering the winner', async () => {
     const seeded = booking({ id: 'b-reschedule-vs-reschedule', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z' });
     const repo = fakeRepository([seeded]);
-    // BK-CAP-001: see the reschedule-vs-cancel test above — hook the atomic
+    // See the reschedule-vs-cancel test above — hook the atomic
     // rescheduleWithCapacity entry point rescheduleWithToken now actually writes through.
     const realTransition = repo.rescheduleWithCapacity;
     repo.rescheduleWithCapacity = async (id, input) => {

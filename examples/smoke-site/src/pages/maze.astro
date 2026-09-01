@@ -1,11 +1,11 @@
 ---
 // Exercises a real four-option, non-additive-priced service with two meeting points
 // (mazeRiverside in ../config.ts) end-to-end: a declared option's usesMeetingPoint gating a real
-// multi-point group (plan 019 design decision 5), and per-combination pricing (plan 018).
+// multi-point group, and per-combination pricing.
 //
-// Plan 027 (design decisions 1 and 6): the page passes none of that — no pickup options, no
-// meeting points, no price table. The widget reads them from the deployment's catalog and quote
-// endpoints, so this fixture proves those endpoints describe the service correctly in a browser.
+// The page passes none of that — no pickup options, no meeting points, no price table. The
+// widget reads them from the deployment's catalog and quote endpoints, so this fixture proves
+// those endpoints describe the service correctly in a browser.
 import BookingWidget from '../components/BookingWidget.astro';
 import config from '../config';
 

@@ -6,15 +6,13 @@ test('Full happy path: book and manage as customer', async ({ page }) => {
 
   expect(reference).toBeTruthy();
 
-  // The confirmation page should show confirmed state
   await expect(page.locator('.bk-badge--ok')).toBeVisible();
 
-  // Outbox should have the confirmation email
   expect(outboxEntry.event).toBe('booking.confirmed');
   expect(outboxEntry.reference).toBe(reference);
   expect(outboxEntry.customerManageUrl).toBeTruthy();
 
-  // Open manage page in customer role (extract path since outbox uses absolute url with default config port)
+  // Extract the path since the outbox carries an absolute url with the default config port.
   const manageUrl = new URL(outboxEntry.customerManageUrl);
   await page.goto(manageUrl.pathname + manageUrl.search);
   await expect(page.locator('h1')).toContainText(reference);

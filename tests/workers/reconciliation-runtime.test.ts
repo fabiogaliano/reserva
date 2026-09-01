@@ -41,7 +41,7 @@ async function seedConfirmed(id: string): Promise<void> {
   await context.repo.transitionToConfirmed(id, { expectedStatusIn: ['hold'], paymentRef: `pi_${id}`, updatedAt: '2026-07-21T10:01:00.000Z' });
 }
 
-// Plan 020 (design decision 1-2): proves runReconciliation's real end-to-end pipeline — expired
+// Proves runReconciliation's real end-to-end pipeline — expired
 // hold sweep, resuming a stuck refund through the real claim, and incident persistence — against
 // real workerd/D1, not just the in-memory fake exercised by tests/reconciliation.test.ts.
 describe('runReconciliation against real D1', () => {
@@ -84,9 +84,9 @@ describe('runReconciliation against real D1', () => {
     await expect(context.repo.getRefundOperationByBookingId(id)).resolves.toMatchObject({ status: 'succeeded', stripeRefundId: 're_recon_d1' });
   });
 
-  // Plan 020 (design decision 5, scheduled-side only — see src/reconciliation.ts's header comment):
-  // proves the scan-time backoff gate (isDueForScheduledRetry) against a real D1-stored
-  // attempt_count/attempted_at, not just the in-memory fake in tests/reconciliation.test.ts.
+  // Scheduled-side only (see src/reconciliation.ts's header comment) — proves the scan-time
+  // backoff gate (isDueForScheduledRetry) against a real D1-stored attempt_count/attempted_at,
+  // not just the in-memory fake in tests/reconciliation.test.ts.
   it('skips a still-backed-off failed side-effect row and retries it once its window has elapsed, against real D1', async () => {
     const id = 'recon-d1-backoff';
     await seedConfirmed(id);

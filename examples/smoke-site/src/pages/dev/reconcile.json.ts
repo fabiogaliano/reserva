@@ -3,7 +3,7 @@ import type { APIContext, APIRoute } from 'astro';
 import { runReconciliation } from '../../../../../src/runtime';
 import { createRouteContext } from '../../../../../src/routes/route-context';
 
-// Dev-only test seam (plan 020, step 8): the e2e suite runs against `astro dev`
+// Dev-only test seam: the e2e suite runs against `astro dev`
 // (playwright.config.ts's webServer), which has no Cron Trigger and cannot dispatch a real
 // scheduled() event the way scripts/smoke-scheduled-test.ts's standalone cron Worker does (see
 // that script's header comment for why local workerd's /__scheduled route is the only supported

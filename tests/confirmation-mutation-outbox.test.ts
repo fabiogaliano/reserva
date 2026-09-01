@@ -29,7 +29,7 @@ function providersWithoutEmail(overrides: Omit<Partial<ReservaProviders>, 'email
   return configured;
 }
 
-// A durable hook is the plan-021 replacement for v1's ops sink: its delivery debt is an outbox row
+// A durable hook is the replacement for v1's ops sink: its delivery debt is an outbox row
 // claimed, retried, and abandoned exactly like an email row's.
 function durableHook(name: string, handler: BookingEventHook['handler']): BookingEventHook {
   return { name, durable: true, handler };

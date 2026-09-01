@@ -38,7 +38,7 @@ function capturingLogger(): { logger: ReservaLogger; errors: Array<[string, Reco
   };
 }
 
-// Plan 016 (audit finding #12, scoped): outbox rows stop being retried forever once a provider
+// Outbox rows stop being retried forever once a provider
 // failure is classified permanent, or a retryable failure has exhausted the attempt cap.
 describe('outbox permanent-failure classification and attempt cap (plan 016)', () => {
   it('abandons a confirmation-path row after one permanent (401) failure, never claims it again, logs exactly once, and never returns a retryable webhook response', async () => {
@@ -53,7 +53,7 @@ describe('outbox permanent-failure classification and attempt cap (plan 016)', (
       providers: paidWebhookProviders(seeded.id, 'cs_abandon_401', {
         email: { send: async () => { emailCalls += 1; throw new ProviderFailure({ status: 401, message: 'Unauthorized' }); } },
       }),
-      // A non-durable hook is the plan-021 replacement for v1's analytics sink: fire-and-forget,
+      // A non-durable hook is the replacement for v1's analytics sink: fire-and-forget,
       // still fired exactly once per occurrence and never re-fired by a redelivery.
       hooks: [{ name: 'analytics', handler: async () => { hookCalls += 1; } }],
     });

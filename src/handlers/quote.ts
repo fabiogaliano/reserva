@@ -5,9 +5,7 @@ import { HttpError, json, requestJson, requireInteger, requireString } from '../
 import { quotedPriceMinor, resolvePickupAxis } from './checkout.js';
 import { run } from './shared.js';
 
-// Plan 027 (design decision 1): the pricing authority a headless consumer renders from. Before it
-// existed, the first consumer's widget reimplemented the whole pricing matrix client-side behind a
-// comment warning that "any drift means the customer pays a different price than shown".
+// The pricing authority a headless consumer renders from.
 //
 // It cannot drift by construction: the pickup axis is validated by the same `resolvePickupAxis` and
 // the amount comes from the same `quotedPriceMinor` that `handleCheckout` charges through (see

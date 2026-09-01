@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ClientConfig, ServiceConfig } from '../src/core/config';
-import { BrevoResponseError, brevoEmail, BREVO_TRANSACTIONAL_EMAIL_URL } from '../src/providers/brevo';
-import { calendarInviteOnly } from '../src/providers/noop';
+import { BrevoResponseError, brevoEmail, BREVO_TRANSACTIONAL_EMAIL_URL } from '../src/providers/email-brevo/index';
+import { emailNone } from '../src/providers/email-none/index';
 import { booking, config, service } from './fixtures';
 import { resolveRouteConfig } from '../src/routes-manifest';
 
-// Plan 017 (design decision 4): a canonical (post-validateConfig-shaped) multi-point service, built
-// inline per the plan's "don't edit shared fixture files" rule — fixtures.ts stays a single-point
-// service so every other suite's byte-identical assertions keep holding.
+// A canonical (post-validateConfig-shaped) multi-point service, built inline per the "don't edit
+// shared fixture files" rule — fixtures.ts stays a single-point service so every other suite's
+// byte-identical assertions keep holding.
 const multiPointTour: ServiceConfig = {
   ...service,
   location: {
@@ -20,8 +20,8 @@ const multiPointTour: ServiceConfig = {
 };
 const multiPointConfig: ClientConfig = { ...config, services: { vintage: multiPointTour } };
 
-// Plan 018 (design decision 8): a declared option with BOTH requiresAddress and usesMeetingPoint
-// (Maze's combined custom pickup+drop-off) — built inline per the same "don't touch fixtures.ts" rule.
+// A declared option with BOTH requiresAddress and usesMeetingPoint (Maze's combined custom
+// pickup+drop-off) — built inline per the same "don't touch fixtures.ts" rule.
 const bothFlagsTour: ServiceConfig = {
   ...multiPointTour,
   location: {
@@ -96,7 +96,7 @@ describe('email providers', () => {
   });
 
   it('is a safe no-op when email is intentionally disabled', async () => {
-    await expect(calendarInviteOnly().send('booking.confirmed', booking(), config)).resolves.toBeUndefined();
+    await expect(emailNone().send('booking.confirmed', booking(), config)).resolves.toBeUndefined();
   });
 
   it('reports the configured recipient roles and sends exactly one guarded recipient message', async () => {
@@ -140,9 +140,8 @@ describe('email providers', () => {
     expect(caught.status).toBe(503);
     expect(caught.message).toContain('x'.repeat(200));
     expect(caught.message).not.toContain('x'.repeat(201));
-    // Plan 016 (design decision 2): a 5xx is transient (retryable); the outbox attempt cap
-    // (src/confirmation.ts) reads this off any thrown BrevoResponseError without parsing status
-    // out of the message.
+    // A 5xx is transient (retryable); the outbox attempt cap (src/confirmation.ts) reads this
+    // off any thrown BrevoResponseError without parsing status out of the message.
     expect(caught.retryable).toBe(true);
   });
 
@@ -161,11 +160,11 @@ describe('email providers', () => {
     expect(caught.retryable).toBe(false);
   });
 
-  // BK-SEC-002 (patch-11-r1 LOW 1): a `nohash:`-prefixed token (src/repo.ts placeholderToken) is
-  // what a DB-loaded booking's cancelToken/operatorToken looks like when there's no decryptable
-  // blob to regenerate the real link from (no RESERVA_TOKEN_ENC_KEY, or a not-yet-backfilled
-  // legacy row). Rendering it into a link would produce an href that 403s the instant it's
-  // clicked; the manage-link paragraph should be omitted instead.
+  // A `nohash:`-prefixed token (src/repo.ts placeholderToken) is what a DB-loaded booking's
+  // cancelToken/operatorToken looks like when there's no decryptable blob to regenerate the real
+  // link from (no RESERVA_TOKEN_ENC_KEY, or a not-yet-backfilled legacy row). Rendering it into a
+  // link would produce an href that 403s the instant it's clicked; the manage-link paragraph
+  // should be omitted instead.
   it('omits the manage-link paragraph entirely (never renders a dead href) when a token is not presentable', async () => {
     const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
     const provider = brevoEmail({ apiKey: 'key', fetch: request });
@@ -184,9 +183,9 @@ describe('email providers', () => {
     expect(customerHtml.htmlContent).toContain('Ada Lovelace');
   });
 
-  // Plan 017 (design decision 4/7): the label/maps link now resolve per booking (chosen meeting
-  // point id) instead of always reading the service's single `meetingPoint` — the template variable
-  // names stay {pickupDetails}/{pickupMapLink} (decision 7).
+  // The label/maps link now resolve per booking (chosen meeting point id) instead of always
+  // reading the service's single `meetingPoint` — the template variable names stay
+  // {pickupDetails}/{pickupMapLink}.
   it('renders the label and maps link for the meeting point the booking chose on a multi-point service', async () => {
     const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
     const provider = brevoEmail({ apiKey: 'key', fetch: request });
@@ -215,8 +214,8 @@ describe('email providers', () => {
     expect(body.htmlContent).not.toContain('maps.google.com');
   });
 
-  // Plan 018 (design decision 8): a non-default declared option that only collects an address
-  // (requiresAddress: true, usesMeetingPoint: false) — pickupDetails is the address, no maps link.
+  // A non-default declared option that only collects an address (requiresAddress: true,
+  // usesMeetingPoint: false) — pickupDetails is the address, no maps link.
   it('renders the collected address for a non-default option id with requiresAddress and no maps link', async () => {
     const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
     const provider = brevoEmail({ apiKey: 'key', fetch: request });
@@ -230,9 +229,9 @@ describe('email providers', () => {
     expect(body.htmlContent).not.toContain('Open map');
   });
 
-  // Plan 018 (design decision 8): an option with BOTH flags (Maze's combined custom pickup +
-  // drop-off) renders both — the collected address AND the chosen meeting point's maps link,
-  // since the two gates (requiresAddress, usesMeetingPoint) are independent, not exclusive.
+  // An option with BOTH flags (Maze's combined custom pickup + drop-off) renders both — the
+  // collected address AND the chosen meeting point's maps link, since the two gates
+  // (requiresAddress, usesMeetingPoint) are independent, not exclusive.
   it('renders both the address and the meeting-point maps link for an option with both flags', async () => {
     const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
     const provider = brevoEmail({ apiKey: 'key', fetch: request });
@@ -248,9 +247,9 @@ describe('email providers', () => {
     expect(body.htmlContent).toContain('Open map');
   });
 
-  // Plan 017 done criterion: an existing single-point `meetingPoint` config renders byte-identical
-  // output — no meetingPointId/-Label on the booking resolves to the service's one declared point,
-  // same as before this plan.
+  // An existing single-point `meetingPoint` config renders byte-identical output — no
+  // meetingPointId/-Label on the booking resolves to the service's one declared point, same as
+  // before.
   it('renders the single declared meeting point unchanged for a single-point service', async () => {
     const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
     const provider = brevoEmail({ apiKey: 'key', fetch: request });
@@ -282,9 +281,9 @@ describe('email providers', () => {
     expect(ownerHtml.htmlContent).toContain('&quot;&gt;&lt;script&gt;');
   });
 
-  // Plan 024 (design decision 3): the third read surface — labeled metadata rows on both the
-  // customer and owner cards, boolean rendered as the app's one existing yes/no copy pair
-  // (admin.on/off), and a hostile text-field value escaped exactly like every other card row.
+  // The third read surface — labeled metadata rows on both the customer and owner cards, boolean
+  // rendered as the app's one existing yes/no copy pair (admin.on/off), and a hostile text-field
+  // value escaped exactly like every other card row.
   describe('metadata rows', () => {
     const dietaryField = { key: 'dietary_notes', label: 'Dietary notes', type: 'text' as const };
     const vegetarianField = { key: 'vegetarian', label: 'Vegetarian', type: 'boolean' as const };

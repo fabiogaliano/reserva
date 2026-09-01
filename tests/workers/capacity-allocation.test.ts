@@ -9,7 +9,7 @@ interface TestEnv {
   RESERVA_DB: D1Database;
 }
 
-// BK-CAP-001 / AR-001 (handoff 05): the decisive layer for the atomic capacity guard —
+// This is the decisive layer for the atomic capacity guard —
 // insertHoldWithCapacity / rescheduleWithCapacity run as single conditional statements, so their
 // atomicity claim only means something proven against the real D1 binding (a fake repo's
 // "atomicity" is just "no await between check and write", which doesn't exercise the actual SQL).
@@ -17,10 +17,9 @@ interface TestEnv {
 // Each race below follows repo-cas-transitions.test.ts's own established pattern for proving
 // atomicity against real D1: two conflicting writes applied in a concrete order, asserting the
 // loser reports no change (null/unchanged row) rather than relying on Promise.all — D1 processes
-// every statement serially in its own implicit transaction (see the handoff's D1 concurrency FAQ
-// citation), so a fixed ordering already proves "at most one winner" for either interleaving;
-// running both orderings (where the pair is genuinely symmetric) covers whichever request reaches
-// D1 first in production.
+// every statement serially in its own implicit transaction, so a fixed ordering already proves
+// "at most one winner" for either interleaving; running both orderings (where the pair is
+// genuinely symmetric) covers whichever request reaches D1 first in production.
 const db = (env as unknown as TestEnv).RESERVA_DB;
 const repo = createBookingRepository(db);
 
@@ -189,7 +188,7 @@ describe('atomic capacity allocation against real D1 (BK-CAP-001 / AR-001)', () 
     // The reschedule's own atomic guard resolved capacity at the moment IT ran (still 2), so it
     // correctly succeeds -- a later override is a forward-looking capacity change, not a retroactive
     // eviction of an already-confirmed booking (oversell repair for pre-existing rows is out of
-    // scope per the handoff). What the override DOES do is bind on every write from that point on,
+    // scope). What the override DOES do is bind on every write from that point on,
     // which the final insertHoldWithCapacity call below confirms.
     it('the reschedule commits first (capacity is still 2 when it runs): it succeeds, and the override that lands right after does not retroactively evict it but still governs the next write', async () => {
       await seed();
@@ -207,8 +206,8 @@ describe('atomic capacity allocation against real D1 (BK-CAP-001 / AR-001)', () 
   });
 
   describe('occupancy-units parity: the SQL guard must agree with core/occupancy.ts for multi-unit parties', () => {
-    // occupancyFor(service, 5) is 2 (tests/fixtures.ts: quantity > 4 costs 2 units), matching the
-    // handoff's own example for exercising multi-unit accounting.
+    // occupancyFor(service, 5) is 2 (tests/fixtures.ts: quantity > 4 costs 2 units), which is what
+    // exercises multi-unit accounting here.
     it('rejects a request that would push a multi-unit party over capacity, exactly where maxConcurrentOccupancy says it must', async () => {
       await seedConfirmed('multi-unit', TARGET_START, TARGET_END, 5, 2);
 
@@ -239,7 +238,7 @@ describe('atomic capacity allocation against real D1 (BK-CAP-001 / AR-001)', () 
     // single point in the window is 1, not 2. A SUM-of-overlaps guard double-counts both
     // neighbors (1 + 1 = 2) and wrongly rejects a 1-unit request against capacity 2; the correct
     // guard must agree with maxConcurrentOccupancy (1) and accept (1 + 1 <= 2). This is the exact
-    // shape the handoff's own example describes (bookings at 10:00 and 12:00, request at 11:00).
+    // shape a SUM-of-overlaps guard gets wrong (bookings at 10:00 and 12:00, request at 11:00).
     const NEIGHBOR_A_START = '2026-08-10T10:00:00.000Z';
     const NEIGHBOR_A_END = '2026-08-10T11:00:00.000Z'; // occupancy window [10:00, 11:30) after +30 turnaround
     const NEIGHBOR_B_START = '2026-08-10T12:00:00.000Z';

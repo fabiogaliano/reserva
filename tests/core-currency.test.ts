@@ -10,11 +10,10 @@ import { formatPrice } from '../src/ui/format';
 import { config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
-// Plan 022 (design decision 2): prices are stored in a currency's MINOR unit, and before this plan
-// every renderer divided by a hard-coded 100. For a zero-decimal currency like JPY the minor unit IS
-// the major unit, so that division showed ¥12,000 as ¥120 — the whole point of routing every
-// division through minorUnitFactor. These tests follow one non-EUR, zero-decimal price all the way
-// from config validation to what the customer actually reads.
+// Prices are stored in a currency's MINOR unit. For a zero-decimal currency like JPY the minor
+// unit IS the major unit, so dividing by a hard-coded 100 shows ¥12,000 as ¥120 — the whole
+// point of routing every division through minorUnitFactor. These tests follow one non-EUR,
+// zero-decimal price all the way from config validation to what the customer actually reads.
 function configIn(currency: string) {
   return validateConfig({ ...config, business: { ...config.business, currency } });
 }
@@ -55,7 +54,7 @@ describe('currency plumbing (plan 022 design decision 2)', () => {
   });
 
   it('formats a zero-decimal price as whole units, not one-hundredth of it', () => {
-    // 12000 minor units is ¥12,000 — the pre-plan `/ 100` would have rendered ¥120.
+    // 12000 minor units is ¥12,000 — a hard-coded `/ 100` would have rendered ¥120.
     expect(formatPrice(12000, 'en', 'jpy')).toBe('¥12,000');
     expect(formatPrice(12000, 'en', 'eur')).toBe('€120.00');
     expect(toMajorUnits(12000, 'jpy')).toBe(12000);
@@ -98,7 +97,7 @@ describe('currency plumbing (plan 022 design decision 2)', () => {
   });
 
   it('rejects a currency the Stripe adapter cannot present, without touching core validation', () => {
-    // Core accepts any ISO code; the vendor limit belongs to the adapter (design decision 7).
+    // Core accepts any ISO code; the vendor limit belongs to the adapter.
     expect(() => configIn('kpw')).not.toThrow();
     const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client: stripeClient().client });
     expect(() => provider.validateConfig!(configIn('kpw'))).toThrow(/business\.currency/);

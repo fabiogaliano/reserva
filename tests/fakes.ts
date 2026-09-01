@@ -31,7 +31,7 @@ import {
 } from '../src/repo';
 import { booking } from './fixtures';
 
-// BK-SEC-002: mirrors the DB-side token columns. `tokenState` retains presented values for
+// Mirrors the DB-side token columns. `tokenState` retains presented values for
 // hash lookup and, when configured, the fake encryption/decryption path on hydrated reads.
 interface FakeTokenState {
   cancelToken: string;
@@ -71,7 +71,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
   // Mirrors day_overrides / capacity_defaults (src/repo.ts:1425-1458): date/from_date -> row.
   const dayOverrides = new Map<string, { capacity: number; reason: string | null }>();
   const capacityDefaults = new Map<string, { capacity: number; reason: string | null }>();
-  // Plan 005: mirrors admin_change_history — appended in the same order the real db.batch() would
+  // Mirrors admin_change_history — appended in the same order the real db.batch() would
   // insert its rows, so a test can assert ordering the same way listAdminChangeHistory does.
   const adminChangeHistory: AdminChangeHistoryEntry[] = [];
   let nextAdminChangeHistoryId = 1;
@@ -108,13 +108,13 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
   // Keyed by booking_id, mirroring the real table's UNIQUE(booking_id) constraint.
   const refundOperations = new Map<string, RefundOperationRecord>();
   const sideEffectOperations = new Map<string, SideEffectOperationRecord>();
-  // Plan 020: keyed by (source_type, source_key), mirroring the real table's
+  // Keyed by (source_type, source_key), mirroring the real table's
   // UNIQUE(source_type, source_key) constraint; the alert-claim methods are addressed by id, so
   // those look the row up by scanning values (this fake never holds enough rows for that to matter).
   const operationalIncidents = new Map<string, OperationalIncidentRecord>();
   const incidentKey = (sourceType: string, sourceKey: string) => `${sourceType}:${sourceKey}`;
   const rescheduleTransitionVersions = new Map(seed.map((item) => [item.id, 0]));
-  // Plan 021: the same rendering src/reconciliation.ts's sideEffectIncidentSourceKey builds, so a
+  // The same rendering src/reconciliation.ts's sideEffectIncidentSourceKey builds, so a
   // fake incident's source_key still addresses its row (mirrors the real table's identity index).
   const sideEffectKey = (bookingId: string, identity: SideEffectOperationIdentity) =>
     `${bookingId}:${sideEffectOperationKey(identity)}`;
@@ -136,7 +136,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       failureStartedAt: null, nextAttemptAt: null, ...overrides,
     });
   };
-  // BK-SIDE-001 (handoff 13) HIGH-1(a): mirrors src/repo.ts's mutationSideEffectInsert — called
+  // Mirrors src/repo.ts's mutationSideEffectInsert — called
   // by transitionToCancelled/transitionToNoShow/rescheduleWithCapacity below ONLY after each has
   // already confirmed its own CAS won (the real repo's atomicity guarantee, reproduced here by
   // simple call ordering rather than SQL, since the fake has no concurrent writers to race), and
@@ -144,7 +144,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
   // mutation instance resumes its row instead of duplicating or clobbering it.
   const recordMutationSeeds = (bookingId: string, seeds: SideEffectOperationSeed[] | undefined, now: string, rescheduleVersion?: number) => {
     for (const seed of seeds ?? []) {
-      // Plan 021: mirrors the repository's json_set of '$.id' inside the winning batch — the
+      // Mirrors the repository's json_set of '$.id' inside the winning batch — the
       // reschedule version is only knowable here, and the stored envelope must already carry it.
       const discriminator = rescheduleVersion === undefined ? (seed.discriminator ?? null) : String(rescheduleVersion);
       const identity = { ...identityOf(seed), discriminator };
@@ -171,7 +171,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       throw new DuplicatePaymentRefError(paymentIntent);
     }
   };
-  // patch-05-r1 Fix 2: reuse the REAL getOccupancyIntervals/maxConcurrentOccupancy (src/core/
+  // Reuses the REAL getOccupancyIntervals/maxConcurrentOccupancy (src/core/
   // occupancy.ts) instead of a hand-rolled SUM-of-overlaps calc that could silently drift from
   // src/repo.ts's own NOT-EXISTS max-concurrency guard (see the Fix 1 comment there). Each row's
   // already-resolved occupancy_ends_at/occupancy_units (tracked in `occupancyMeta`, falling back
@@ -192,7 +192,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     };
   };
   // Max-concurrent occupancy in [targetStart, targetEnd) — the same semantic src/repo.ts's guard
-  // now evaluates via NOT EXISTS (patch-05-r1 Fix 1), not the sum of every overlapping booking.
+  // now evaluates via NOT EXISTS, not the sum of every overlapping booking.
   const maxConcurrentInInterval = (targetStart: string, targetEnd: string, now: string, excludeId?: string): number => {
     const intervals = getOccupancyIntervals({
       bookings: [...rows.values()].map(toOccupancyBooking),
@@ -261,7 +261,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       const item = find((candidate) => candidate.paymentRef === paymentRef);
       return item ? hydrateBooking(item) : null;
     },
-    // BK-SEC-002: mirrors src/repo.ts's hash-first lookup with a guarded legacy-plaintext
+    // Mirrors src/repo.ts's hash-first lookup with a guarded legacy-plaintext
     // fallback + lazy backfill. now gates tokensExpireAt, and (cancel token only) presence of
     // cancelTokenRevokedAt, exactly the same way the real repo's WHERE clause does — an expired
     // or revoked token returns null, indistinguishable from an unknown one.
@@ -327,7 +327,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       const created: Booking = { ...booking(), ...input, pickupAddress: null, customerName: null, customerEmail: null, customerPhone: null, status: 'hold', paymentSessionRef: null, paymentRef: null, calendarEventId: null, cancelledAt: null, cancelledBy: null, rescheduledFrom: null };
       const stored = storeTokens(created);
       rows.set(stored.id, stored);
-      // BK-SEC-002: a newly created row is hash-backed from the start (never "legacy"), mirroring
+      // A newly created row is hash-backed from the start (never "legacy"), mirroring
       // src/repo.ts's insertHold/insertHoldWithCapacity, which write only a hash.
       tokenState.set(stored.id, {
         cancelToken: input.cancelToken,
@@ -343,7 +343,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     // Mirrors src/repo.ts's insertHoldWithCapacity: the hold-ip cap still throws
     // HoldLimitExceededError, but a capacity loss returns null instead.
     //
-    // patch-05-r1 Fix 2: the async capacity resolution runs FIRST (its own await is fine — no
+    // The async capacity resolution runs FIRST (its own await is fine — no
     // reader has touched `rows`/`holdIps` yet, so nothing here is order-sensitive to it). Every
     // read of `rows`/`holdIps`/`occupancyMeta` that the decision depends on, the decision itself,
     // and the write are then one synchronous block with NO await in between, so a concurrent call
@@ -351,7 +351,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     // capacity in the single WHERE of one INSERT statement).
     insertHoldWithCapacity: async (input) => {
       // Computed alongside capacity (both awaits, both independent of rows/holdIps/occupancyMeta)
-      // so the decide+write block below stays the single synchronous block Fix 2 above requires.
+      // so the decide+write block below stays the single synchronous block the comment above requires.
       const [capacity, cancelTokenHash, operatorTokenHash] = await Promise.all([
         resolveCapacityFake(input.localDate, input.defaultCapacity),
         sha256Base64Url(input.cancelToken),
@@ -372,7 +372,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       const stored = storeTokens(created);
       rows.set(stored.id, stored);
       occupancyMeta.set(stored.id, { units: input.occupancyUnits, endsAt: input.occupancyEndsAt });
-      // BK-SEC-002: see the identical comment in insertHold above.
+      // See the identical comment in insertHold above.
       tokenState.set(stored.id, {
         cancelToken: input.cancelToken,
         operatorToken: input.operatorToken,
@@ -402,12 +402,12 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       if (input.expectedStartsAt !== undefined && current.startsAt !== input.expectedStartsAt) return null;
       const updated: Booking = { ...current, status: 'cancelled', cancelledAt: input.cancelledAt, cancelledBy: input.cancelledBy, updatedAt: input.updatedAt };
       rows.set(id, updated);
-      // BK-SEC-002: mirrors src/repo.ts's COALESCE(cancel_token_revoked_at, ?) — a cancelled
+      // Mirrors src/repo.ts's COALESCE(cancel_token_revoked_at, ?) — a cancelled
       // booking's customer link is revoked; the operator token is left alone (see
       // migrations/0009_token_hashing.sql).
       const state = tokenState.get(id);
       if (state && state.cancelTokenRevokedAt === null) state.cancelTokenRevokedAt = input.cancelledAt;
-      // BK-SIDE-001 (handoff 13): only reached once the CAS above has already confirmed this
+      // Only reached once the CAS above has already confirmed this
       // transition applies — see recordMutationKinds's doc comment.
       recordMutationSeeds(id, input.mutationSideEffects, input.updatedAt);
       return hydrateBooking(updated);
@@ -445,9 +445,9 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       const updated: Booking = { ...current, ...defined, status: 'confirmed', holdExpiresAt: null, updatedAt };
       rows.set(id, updated);
       insertOperation(id, { family: 'calendar_create' }, updatedAt);
-      // Plan 012 (design decision 1/2): split rows (one per recipient) when the caller resolved a
-      // split-capable provider; otherwise the single legacy combined row, unchanged from before
-      // this plan. This is a brand-new confirmation, so no row of either shape can already exist
+      // Split rows (one per recipient) when the caller resolved a
+      // split-capable provider; otherwise the single legacy combined row, unchanged from before.
+      // This is a brand-new confirmation, so no row of either shape can already exist
       // (mirrors src/repo.ts's confirmWithSideEffectOperations comment).
       const emailIdentities: SideEffectOperationIdentity[] = emailRecipients && emailRecipients.length > 0
         ? emailRecipients.map((recipient) => ({ family: 'email', name: recipient, event: 'booking.confirmed' }))
@@ -458,7 +458,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
           status: 'succeeded', providerResultId: 'capacity_exceeded', resolvedAt: updatedAt,
         });
       }
-      // Plan 021 (design decision 4): mirrors src/repo.ts — each subscriber's row is created in the
+      // Mirrors src/repo.ts — each subscriber's row is created in the
       // same "transaction" (here: the same synchronous call) as the status transition.
       for (const seed of eventSeeds ?? []) insertOperation(id, seed, updatedAt, { eventPayloadJson: seed.eventPayloadJson });
       return hydrateBooking(updated);
@@ -484,7 +484,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       if (rows.get(id)?.status !== 'confirmed' || leases.get(id)?.token !== leaseToken) return;
       const booking = rows.get(id);
       if (!booking) return;
-      // Plan 022: the retired calendar_synced flag's information now lives in calendar_event_id
+      // The retired calendar_synced flag's information now lives in calendar_event_id
       // (an id is only ever written once the provider accepted the event) — mirrors src/repo.ts.
       const calendarSucceeded = booking.calendarEventId !== null;
       insertOperation(id, { family: 'calendar_create' }, now, {
@@ -492,11 +492,11 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         providerResultId: booking.calendarEventId,
         resolvedAt: calendarSucceeded ? now : null,
       });
-      // Plan 012 (design decision 1/2/3): same split-vs-combined choice
+      // Same split-vs-combined choice
       // confirmWithSideEffectOperations makes for a brand-new confirmation, applied here for
       // legacy repair. A split row is only ever inserted when no legacy combined
       // email_confirmation row already exists for this booking — mirrors src/repo.ts's
-      // NOT EXISTS guard (design decision 3).
+      // NOT EXISTS guard.
       const emailIdentities: SideEffectOperationIdentity[] = emailRecipients && emailRecipients.length > 0
         ? emailRecipients.map((recipient) => ({ family: 'email', name: recipient, event: 'booking.confirmed' }))
         : [{ family: 'email_confirmation' }];
@@ -504,13 +504,13 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       const skipSplit = emailRecipients && emailRecipients.length > 0 && combinedRowExists;
       if (!skipSplit) {
         for (const identity of emailIdentities) {
-          // Plan 022: migration 0018 materialized every already-sent confirmation email as a
+          // Migration 0018 materialized every already-sent confirmation email as a
           // succeeded row before dropping email_synced, so a booking with no row here has
           // genuinely never been emailed — mirrors src/repo.ts.
           insertOperation(id, identity, now, {});
         }
       }
-      // Plan 021 (design decision 4): the legacy-repair path for a subscriber registered after
+      // The legacy-repair path for a subscriber registered after
       // this booking was confirmed — always 'pending', because the row's own status is the only
       // record of whether that subscriber has been told.
       for (const seed of eventSeeds ?? []) insertOperation(id, seed, now, { eventPayloadJson: seed.eventPayloadJson });
@@ -524,10 +524,10 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     recordMutationSideEffectOperations: async (bookingId, seeds, now) => {
       recordMutationSeeds(bookingId, seeds, now);
     },
-    // Plan 016 (design decision 4): 'abandoned' is terminal (never reclaimed, mirroring
+    // 'abandoned' is terminal (never reclaimed, mirroring
     // src/repo.ts's status NOT IN ('succeeded', 'abandoned')), and attempt_count is capped the
     // same way src/repo.ts's claim SQL binds SIDE_EFFECT_MAX_ATTEMPTS.
-    // Plan 020 (design decision 5): additionally requires next_attempt_at to be null or <= now.
+    // Additionally requires next_attempt_at to be null or <= now.
     claimSideEffectOperation: async (bookingId, identity, leaseToken, attemptedAt) => {
       const key = sideEffectKey(bookingId, identity);
       const current = sideEffectOperations.get(key);
@@ -541,7 +541,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       });
       return attemptNumber;
     },
-    // Plan 020 (design decision 5): the admin retry bypass — ignores next_attempt_at and the
+    // The admin retry bypass — ignores next_attempt_at and the
     // attempt-count cap, but still requires lease ownership and a non-succeeded row.
     claimSideEffectOperationForRetry: async (bookingId, identity, leaseToken, attemptedAt) => {
       const key = sideEffectKey(bookingId, identity);
@@ -554,7 +554,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       });
       return attemptNumber;
     },
-    // Plan 012 (design decision 5): mirrors src/repo.ts's aggregate resolve — calendar_synced
+    // Mirrors src/repo.ts's aggregate resolve — calendar_synced
     // still flips directly off this resolve's own outcome (calendar_create is always exactly one
     // row), but email_synced is recomputed from the CURRENT (post-write) applicable set: the
     // legacy combined row when one exists for this booking, otherwise every split row. Becomes
@@ -580,10 +580,10 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       rows.set(input.bookingId, { ...current, updatedAt: input.resolvedAt });
       return true;
     },
-    // Plan 016 (design decision 4): 'abandoned' already falls outside pending/failed/reclaimable-
+    // 'abandoned' already falls outside pending/failed/reclaimable-
     // in_flight above, unchanged — attempt_count >= SIDE_EFFECT_MAX_ATTEMPTS is the explicit
     // belt-and-braces guard, mirroring src/repo.ts's claim SQL.
-    // Plan 020 (design decision 5): additionally requires next_attempt_at to be null or <= now.
+    // Additionally requires next_attempt_at to be null or <= now.
     claimMutationSideEffectOperation: async (bookingId, identity, attemptedAt) => {
       const key = sideEffectKey(bookingId, identity);
       const current = sideEffectOperations.get(key);
@@ -601,7 +601,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       });
       return attemptNumber;
     },
-    // Plan 020 (design decision 5): the admin retry bypass — ignores next_attempt_at and the
+    // The admin retry bypass — ignores next_attempt_at and the
     // attempt-count cap, but still refuses a live (non-stale) in_flight lease.
     claimMutationSideEffectOperationForRetry: async (bookingId, identity, attemptedAt) => {
       const key = sideEffectKey(bookingId, identity);
@@ -639,7 +639,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       const version = (rescheduleTransitionVersions.get(id) ?? 0) + 1;
       rescheduleTransitionVersions.set(id, version);
       recordMutationSeeds(id, input.mutationSideEffects, input.updatedAt, version);
-      // patch-11-r1 MEDIUM 2: mirrors src/repo.ts's COALESCE(?, tokens_expire_at) — the real
+      // Mirrors src/repo.ts's COALESCE(?, tokens_expire_at) — the real
       // repo binds `input.tokensExpireAt ?? null`, so both an omitted field and an explicit null
       // fall through to COALESCE's "keep the existing value" branch; only a real string moves it.
       const state = tokenState.get(id);
@@ -649,10 +649,10 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     // Mirrors src/repo.ts's rescheduleWithCapacity: transitionReschedule's CAS plus the same
     // max-concurrency capacity guard as insertHoldWithCapacity, excluding this booking's own id
     // from the occupancy calc so a move within a window it already occupies isn't counted
-    // against itself. patch-05-r1 Fix 3: occupancy_units is now re-asserted (self-healing a
+    // against itself. occupancy_units is now re-asserted (self-healing a
     // legacy NULL row), matching src/repo.ts.
     //
-    // patch-05-r1 Fix 2 (atomicity): the CAS pre-check used to read `current` BEFORE the
+    // Atomicity: the CAS pre-check used to read `current` BEFORE the
     // `await resolveCapacityFake`, so two concurrent reschedules of the SAME booking could both
     // capture the pre-write row, both pass the stale CAS check, and the loser would then
     // unconditionally clobber the winner's write once its own await resumed. Resolving capacity
@@ -668,7 +668,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       const updated: Booking = { ...current, startsAt: input.startsAt, endsAt: input.endsAt, rescheduledFrom: input.rescheduledFrom, updatedAt: input.updatedAt };
       rows.set(id, updated);
       occupancyMeta.set(id, { units: input.occupancyUnits, endsAt: input.occupancyEndsAt });
-      // patch-11-r1 MEDIUM 2: see the identical comment in transitionReschedule above.
+      // See the identical comment in transitionReschedule above.
       const state = tokenState.get(id);
       if (state && input.tokensExpireAt != null) state.tokensExpireAt = input.tokensExpireAt;
       const version = (rescheduleTransitionVersions.get(id) ?? 0) + 1;
@@ -704,7 +704,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     // Mirrors src/repo.ts:1441-1443.
     deleteDayOverride: async (date) => { dayOverrides.delete(date); },
     // Bounded by handleAdminPost's 366-day cap (a year of daily overrides), so a plain db.batch()
-    // (mirrored here as a plain loop) never risks D1's per-batch statement limit. Plan 005: one
+    // (mirrored here as a plain loop) never risks D1's per-batch statement limit. One
     // history entry per date, pushed in the same order the real batch's statements would run.
     upsertDayOverrides: async (dates, capacity, reason, audit) => {
       const value = JSON.stringify({ capacity, reason });
@@ -828,7 +828,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       });
     },
 
-    // ---- Plan 020: autonomous reconciliation ------------------------------------------------
+    // ---- Autonomous reconciliation -----------------------------------------------------------
 
     // Mirrors src/repo.ts's single-row lease: claimable from 'requested'/'failed' (never
     // 'succeeded'/'abandoned'), or a stale 'in_flight' row, gated by next_attempt_at and the same
@@ -927,7 +927,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       })
       .sort((a, b) => a.lastDetectedAt.localeCompare(b.lastDetectedAt) || a.id.localeCompare(b.id))
       .slice(0, limit),
-    // Plan 020 (design decision 3/6): 'oversell' rows are permanent markers, so the candidate set
+    // 'oversell' rows are permanent markers, so the candidate set
     // is simply "no incident row has ever been opened for this marker yet".
     listUnreportedOversellMarkers: async (limit) => {
       const markers = [...sideEffectOperations.values()]
@@ -984,7 +984,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       });
       return true;
     },
-    // Plan 020 (design decision 14): open cards sort action-required before delayed, then oldest first.
+    // Open cards sort action-required before delayed, then oldest first.
     listOpenIncidents: async (limit) => [...operationalIncidents.values()]
       .filter((incident) => incident.status === 'open')
       .sort((a, b) => {
@@ -1005,7 +1005,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       };
     },
     countOpenIncidents: async () => [...operationalIncidents.values()].filter((incident) => incident.status === 'open').length,
-    // Plan 027 (design decision 7): the same grouping the D1 implementation does in SQL — every
+    // The same grouping the D1 implementation does in SQL — every
     // unsettled row counts as debt, abandoned rows counted separately, oldest pending first seen.
     countSideEffectDebtByFamily: async () => {
       const byFamily = new Map<SideEffectFamily, { family: SideEffectFamily; pending: number; abandoned: number; oldestPendingAt: string | null }>();
@@ -1023,7 +1023,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       return [...byFamily.values()].sort((a, b) => a.family.localeCompare(b.family));
     },
 
-    // Plan 020 (design decision 11): alert delivery's own claim/attempt/backoff, independent of the
+    // Alert delivery's own claim/attempt/backoff, independent of the
     // incident's own detection state — mirrors claimRefundExecution's single-row-lease shape.
     listAlertCandidateIds: async (now, limit) => [...operationalIncidents.values()]
       .filter((incident) => incident.status === 'open' && incident.alertedRevision < incident.alertRevision
@@ -1063,8 +1063,8 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
 
 // Records the idempotency key and expected amount each refund() call would carry (mirroring
 // the Stripe adapter's own deterministic `reserva-refund-<paymentRef>` derivation) so tests can
-// assert a retried refund reuses the same key instead of minting a fresh one per attempt
-// (BK-REFUND-001 F10), and that callers forward the booking's full expected amount. `resultFor`
+// assert a retried refund reuses the same key instead of minting a fresh one per attempt,
+// and that callers forward the booking's full expected amount. `resultFor`
 // lets a test control the returned refund ref/amount, or throw to simulate a provider-side failure.
 export function fakeRefundTracker(
   resultFor: (paymentRef: string, callNumber: number) => { refundRef: string; amountMinor: number } = (paymentRef) => ({ refundRef: `re_${paymentRef}`, amountMinor: 0 }),
@@ -1084,7 +1084,7 @@ export function fakeRefundTracker(
 
 export type FakeRepository = ReturnType<typeof fakeRepository>;
 
-// Plan 021: tests address an outbox row by its identity columns, never by a hand-built key string —
+// Tests address an outbox row by its identity columns, never by a hand-built key string —
 // the same rule src/ follows, so a test can't encode a key shape the repository doesn't produce.
 export function seedSideEffectOperation(
   repo: FakeRepository,
@@ -1116,7 +1116,7 @@ export function seedSideEffectOperation(
   return row;
 }
 
-// Plan 022: the retired calendarSynced/emailSynced flags were how a fixture said "this booking's
+// The retired calendarSynced/emailSynced flags were how a fixture said "this booking's
 // confirmation was already delivered". Migration 0018 turned every such flag into the succeeded
 // outbox row it described, so a fixture says it the same way now — and the repair path in
 // handlers/status-manage.ts sees a booking with nothing left owed instead of a legacy row to heal.

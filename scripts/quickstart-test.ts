@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Plan 028 step 5: proves the README's quickstart is a working set of instructions, not prose.
+// Proves the README's quickstart is a working set of instructions, not prose.
 // The four files it shows are EXTRACTED FROM README.md at run time (never copied into this script),
 // written into a fresh directory outside the repository, installed against the packed tarballs, and
 // then driven through a real booking to confirmation. If the quickstart drifts from the library,

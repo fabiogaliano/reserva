@@ -14,7 +14,7 @@ beforeEach(async () => {
   await db.prepare('DELETE FROM refund_operations').run();
 });
 
-// BK-DATA-001 pairwise interleavings against real D1: each test seeds one booking, applies
+// Pairwise interleavings against real D1: each test seeds one booking, applies
 // two conflicting transitions in a concrete order, and asserts the loser's CAS reports no
 // change (null) and none of its fields leak into the row the winner committed. D1 runs every
 // statement in its own implicit transaction on a single-threaded, serially-processing Durable
@@ -132,7 +132,7 @@ describe('BK-DATA-001 pairwise CAS interleavings on real D1', () => {
     expect(final?.startsAt).toBe(original.startsAt);
   });
 
-  // This is the case finding 2 fixes: without the expectedStartsAt guard on
+  // Without the expectedStartsAt guard on
   // transitionToCancelled, a stale cancel (still holding the pre-reschedule starts_at) would
   // match on status alone and win here too, writing a cancellation decision (refund/notice)
   // computed against a starts_at the row no longer has. With the guard, the reschedule's own
@@ -199,7 +199,7 @@ describe('BK-DATA-001 pairwise CAS interleavings on real D1', () => {
     expect(final?.status === 'no_show' && final?.cancelledBy !== null).toBe(false);
   });
 
-  // This is the case finding 1 fixes: a refund arriving after an operator has already marked
+  // A refund arriving after an operator has already marked
   // the booking no_show must not resurrect/overwrite that terminal state. Pre-fix, the
   // webhook's expectedStatusIn included 'no_show', so this refund would have won and clobbered
   // the row with status='cancelled' — losing the no-show record entirely. Post-fix, 'no_show'

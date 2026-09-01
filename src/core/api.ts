@@ -1,9 +1,9 @@
-// Plan 027 (design decision 2): the HTTP contract, in one place. Every handler response type and
+// The HTTP contract, in one place. Every handler response type and
 // the error envelope live here and are exported from `@reservajs/astro/core`, so a consumer types
 // its client against the same declarations the handlers return instead of re-declaring them (the
 // first consumer's ReservaClient.ts re-declared all of them, which is what let them drift).
 //
-// Rules this file follows (direction doc §8):
+// Rules this file follows:
 // - one truth per fact: booking-bearing payloads are expressed in terms of `WireBooking`, the one
 //   public booking projection (core/booking.ts), never as a parallel field list;
 // - closed exported vocabularies: `API_ERROR_CODES` is a runtime array, and every other closed set
@@ -13,16 +13,16 @@
 import type { WireBooking } from './booking.js';
 import type { MetadataField } from './config.js';
 // Type-only (erased at build time): the ops-health payload reports outbox debt per operation
-// family, and that family set is plan 021's `SIDE_EFFECT_FAMILIES` in src/repo.ts. Importing the
+// family, and that family set is `SIDE_EFFECT_FAMILIES` in src/repo.ts. Importing the
 // derived type keeps the catalog single-sourced there rather than restating it here; nothing in
 // this module depends on the repository at runtime.
 import type { SideEffectFamily } from '../repo.js';
 
-// Plan 027 (design decision 2): the closed set of `error.code` values every Reserva API failure
+// The closed set of `error.code` values every Reserva API failure
 // can carry — one runtime array, with the union derived from it and `HttpError` (src/http.ts)
 // typed against that union, so an unlisted code is a compile error rather than a surprise string
 // a consumer's switch never handles. Growing it is deliberate: add one member here and the union,
-// the throw sites, and plan 028's generated docs follow. Do not add an enum, a parallel union, a
+// the throw sites, and the generated docs follow. Do not add an enum, a parallel union, a
 // description map, or a schema for the same set.
 export const API_ERROR_CODES = [
   // Request shape: the body/query failed validation, exceeded a body limit, or used a method the
@@ -73,7 +73,7 @@ export interface ApiErrorEnvelope {
 // GET /api/booking/availability
 // ---------------------------------------------------------------------------
 
-// Plan 027 (design decision 4): scarcity is structured, never a rendered string. `remaining` is how
+// Scarcity is structured, never a rendered string. `remaining` is how
 // many further bookings of the requested quantity still fit, and it is `null` whenever that number
 // is above `limitedThreshold` — exact capacity is deployment-private, so only the scarce end of the
 // range is published. Slots that fit nothing are omitted entirely (bookable-slots-only semantics),
@@ -106,7 +106,7 @@ export interface AvailabilityResponse {
 // POST /api/booking/quote
 // ---------------------------------------------------------------------------
 
-// Plan 027 (design decision 1): the pricing authority. `pickup` is required for a service that
+// The pricing authority. `pickup` is required for a service that
 // declares a location module and rejected for one that doesn't — the same rule (and the same code
 // path) checkout applies to its own `pickupType` field.
 export interface QuoteRequest {
@@ -133,10 +133,10 @@ export interface CheckoutRequest {
   start: string;
   quantity: number;
   locale: string;
-  // Location module (plan 023): both rejected outright for a service that declares no location.
+  // Location module: both rejected outright for a service that declares no location.
   pickupType?: string;
   meetingPointId?: string;
-  // Consumer-declared fields (plan 024), validated against the service's own declarations.
+  // Consumer-declared fields, validated against the service's own declarations.
   metadata?: Record<string, unknown>;
 }
 
@@ -193,7 +193,7 @@ export interface ManageBooking extends Pick<
 > {
   start: string;
   end: string;
-  // Plan 023's always-present-nullable convention: `null` for a booking with no location data.
+  // Always-present-nullable convention: `null` for a booking with no location data.
   pickupRequiresAddress: boolean | null;
   pickupUsesMeetingPoint: boolean | null;
   meetingPoint: WireMeetingPoint | null;
@@ -265,7 +265,7 @@ export interface CatalogMetadataField {
   maxLength: number | null;
 }
 
-// Plan 027 (design decision 6): the rendering contract — everything a consumer must know before a
+// The rendering contract — everything a consumer must know before a
 // date is chosen. Deliberately absent: `turnaroundMin`, the raw schedule, pricing rules, capacity,
 // and occupancy. Exact money is the quote endpoint's answer; bookable times and scarcity are
 // availability's, behind `limitedThreshold`.
@@ -293,7 +293,7 @@ export interface OpsHealthSchema {
   // Bundled migrations whose filenames are absent from the D1 migrations ledger.
   missingMigrations: string[];
   // Whether the live schema matches what Reserva's migrations produce — false with no missing
-  // migration means a filename collision with the consumer's own migrations (see plan 008).
+  // migration means a filename collision with the consumer's own migrations.
   fingerprintOk: boolean;
   // The remediating message when `ok` is false; `null` when healthy.
   detail: string | null;

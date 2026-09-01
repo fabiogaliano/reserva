@@ -1,5 +1,5 @@
-// BookingWidget.astro is the example site's own Astro SFC (plan 028: no booking funnel ships in the
-// library). Its rendered markup is asserted against the real compiler
+// BookingWidget.astro is the example site's own Astro SFC — no booking funnel ships in the
+// library. Its rendered markup is asserted against the real compiler
 // in tests/component/booking-widget-catalog.test.ts, and its browser behavior end-to-end in
 // tests/e2e; what's left here are the source-level properties neither harness can observe — that
 // the client bundle contains no pricing or scarcity rule of its own — plus the message-catalog and
@@ -15,9 +15,9 @@ const widgetCssPath = resolve(import.meta.dirname, '..', 'examples/smoke-site/sr
 const widgetCssSource = readFileSync(widgetCssPath, 'utf8');
 
 describe('BookingWidget.astro carries no server-owned rule of its own (plan 027)', () => {
-  // Plan 027 (design decision 1): the drift this deletes is the one that makes a customer pay a
-  // different price than the one they were shown, so the guarantee is the *absence* of any local
-  // price computation — a positive test of the quote call can't prove a second path isn't there.
+  // The drift this deletes is the one that makes a customer pay a different price than the one
+  // they were shown, so the guarantee is the *absence* of any local price computation — a
+  // positive test of the quote call can't prove a second path isn't there.
   it('computes no price: no price table, no currency default, no pricing import', () => {
     expect(widgetSource).not.toContain('resolvedPriceTableFor');
     expect(widgetSource).not.toContain('ResolvedPriceTable');
@@ -28,9 +28,9 @@ describe('BookingWidget.astro carries no server-owned rule of its own (plan 027)
     expect(widgetSource).toContain('toMajorUnits(result.priceMinor, result.currency)');
   });
 
-  // Plan 027 (design decision 4): the server gates the exact count against the deployment's
-  // limitedThreshold and publishes `remaining: number | null`, so the widget renders the hint on
-  // nullness alone and holds no threshold at all.
+  // The server gates the exact count against the deployment's limitedThreshold and publishes
+  // `remaining: number | null`, so the widget renders the hint on nullness alone and holds no
+  // threshold at all.
   it('applies no scarcity threshold of its own', () => {
     expect(widgetSource).toContain('if (slot.remaining !== null)');
     expect(widgetSource).not.toMatch(/^(?!\s*\/\/).*limitedThreshold/m);
@@ -38,9 +38,9 @@ describe('BookingWidget.astro carries no server-owned rule of its own (plan 027)
     expect(widgetSource).not.toContain('remainingBookings');
   });
 
-  // Plan 027 (design decision 6): pickup ids, labels, hints and the usesMeetingPoint flag are the
-  // deployment's answer now — a hardcoded default/custom pair here is exactly the folklore the
-  // catalog endpoint exists to delete.
+  // Pickup ids, labels, hints and the usesMeetingPoint flag are the deployment's answer now — a
+  // hardcoded default/custom pair here is exactly the folklore the catalog endpoint exists to
+  // delete.
   it('hardcodes no service, pickup, or meeting-point table', () => {
     expect(widgetSource).not.toContain("'default', 'custom'");
     expect(widgetSource).not.toContain('pickupCopy');
@@ -48,9 +48,9 @@ describe('BookingWidget.astro carries no server-owned rule of its own (plan 027)
     expect(widgetSource).toContain('function renderLocation(');
   });
 
-  // Plan 027 (design decision 2): the widget is the library's own reference consumer, so it reads
-  // the exported wire types rather than re-declaring response shapes locally — the exact
-  // duplication the first consumer had to do.
+  // The widget is the library's own reference consumer, so it reads the exported wire types
+  // rather than re-declaring response shapes locally — the exact duplication the first consumer
+  // had to do.
   it('types every response against the exported wire types', () => {
     expect(widgetSource).toMatch(/import type \{[\s\S]*?\} from '(\.\.\/)+src\/core\/index';/);
     expect(widgetSource).not.toMatch(/interface Availability(Slot|Day|Response) \{/);
@@ -71,9 +71,9 @@ describe('BookingWidget.astro (BK-UI-001: no-JS degradation)', () => {
     expect(widgetSource).toContain('contactPhone');
   });
 
-  // Plan 027: init is asynchronous now (it awaits the catalog before binding listeners), so the
-  // reveal must still happen only after every step succeeded — a rejected init leaves the
-  // fallback, with its contact details, in place.
+  // Init is asynchronous (it awaits the catalog before binding listeners), so the reveal must
+  // still happen only after every step succeeded — a rejected init leaves the fallback, with its
+  // contact details, in place.
   it('reveals the form only after the awaited init resolves, and keeps the fallback up when it rejects', () => {
     expect(widgetSource).toMatch(/await loadCatalog\(form, data\);/);
     expect(widgetSource).toMatch(/void initInstance\([\s\S]*?\)\.catch\(/);

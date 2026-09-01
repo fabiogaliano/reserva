@@ -1,5 +1,5 @@
-// Plan 027 (design decisions 1 and 6, step 7): the widget stopped being configured with copies of
-// the deployment's own facts. It used to take `pricing`, `pickupOptions`, `pickupTypes`,
+// The widget stopped being configured with copies of the deployment's own facts. It used to
+// take `pricing`, `pickupOptions`, `pickupTypes`,
 // `meetingPoints`, `currency` and `limitedThreshold` props and render a price table into its data
 // island; it now reads the service's location axes from the catalog endpoint and every price from
 // the quote endpoint. What this file pins is the half of that a server render can prove: nothing
@@ -75,8 +75,7 @@ describe('BookingWidget.astro is catalog- and quote-driven (plan 027)', () => {
     expect(portuguese.i18n.pickup).not.toBe(i18n.pickup);
   });
 
-  // Plan 026 (design decision 4): defaultLocale flipped pt-PT -> en — a generic library must not
-  // default to Portuguese.
+  // defaultLocale flipped pt-PT -> en — a generic library must not default to Portuguese.
   it('renders English when no locale is supplied', async () => {
     const html = await render({ serviceSlug: 'oldTown', availabilityFrom: '2026-01-01', availabilityTo: '2026-01-02' });
     expect(html).toContain('aria-label="Book now"');

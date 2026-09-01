@@ -59,12 +59,12 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       end: utcToLocalIso(seeded.endsAt, config.business.timezone),
       quantity: seeded.quantity,
       priceMinor: seeded.priceMinor,
-      // Plan 017 (design decision 3): this booking has no stored meetingPointId, so
+      // This booking has no stored meetingPointId, so
       // confirmationSummary resolves it to the service's single declared point.
       meetingPoint: { label: service.location!.meetingPoints![0]!.label, mapsUrl: service.location!.meetingPoints![0]!.mapsUrl },
       locale: seeded.locale,
     });
-    // Plan 027 (design decision 2): the status payload is a Pick of the one WireBooking
+    // The status payload is a Pick of the one WireBooking
     // projection plus presentation, and every key is always present (null when empty) — this list
     // is the leak guard: no ids, no tokens, no customer contact details.
     expect(Object.keys(payload.booking).sort()).toEqual([
@@ -102,7 +102,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       meetingPointId: 'no-longer-declared', meetingPointLabel: 'The Old Dock',
     });
     const multiPointRepo = fakeRepository([chosenSecond, removedId]);
-    // Plan 022: both fixtures are long-since-confirmed bookings. Their succeeded confirmation rows
+    // Both fixtures are long-since-confirmed bookings. Their succeeded confirmation rows
     // are what says so now that the sync flags are gone, so /status renders them rather than
     // treating them as legacy rows owed a repair.
     seedSettledConfirmation(multiPointRepo, chosenSecond.id);
@@ -155,7 +155,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
 
     function mazeContext(seed: ReturnType<typeof booking>[]) {
       const repo = fakeRepository(seed);
-      // Plan 022: see the multi-point test above — succeeded confirmation rows are how a fixture
+      // See the multi-point test above — succeeded confirmation rows are how a fixture
       // now says "already delivered".
       for (const row of seed) seedSettledConfirmation(repo, row.id);
       return createReservaContext({ config: mazeConfig, db: {} as D1Database, repo, clock, providers: providers() });
@@ -170,7 +170,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       });
       const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_pickup_false'), mazeContext([seeded]));
       const payload = await response.json() as { booking: Record<string, unknown> };
-      // Plan 027: present-as-null rather than absent, so a consumer never branches on key presence.
+      // Present-as-null rather than absent, so a consumer never branches on key presence.
       expect(payload.booking.meetingPoint).toBeNull();
       expect(payload.booking).not.toHaveProperty('pickupAddress');
       expect(Object.keys(payload.booking).sort()).toEqual(['currency', 'end', 'locale', 'meetingPoint', 'metadataRows', 'priceMinor', 'quantity', 'reference', 'serviceSlug', 'start']);
@@ -306,7 +306,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     expect(calendarCreates).toBe(1);
     expect(emails).toBe(1);
     expect(repo.rows.get(seeded.id)).toMatchObject({ status: 'confirmed' });
-    // Plan 022: delivery state lives only in the outbox rows now — that both are succeeded is the
+    // Delivery state lives only in the outbox rows now — that both are succeeded is the
     // whole record that the calendar event and the confirmation email actually went out.
     expect(sideEffectOperation(repo, seeded.id, { family: 'calendar_create' })).toMatchObject({ status: 'succeeded' });
     expect(sideEffectOperation(repo, seeded.id, { family: 'email_confirmation' })).toMatchObject({ status: 'succeeded' });

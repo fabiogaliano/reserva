@@ -1,6 +1,6 @@
-// Plan 027 (design decision 7, step 7): the ops-health endpoint against real D1 — a migrated
+// Tests the ops-health endpoint against real D1 — a migrated
 // schema, real outbox debt, and a real open incident, read through the same runtime a deployment
-// uses. The aggregate is SQL (a GROUP BY over plan 021's `family` column), so a fake repository
+// uses. The aggregate is SQL (a GROUP BY over the `family` column), so a fake repository
 // would prove nothing about it.
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it } from 'vitest';

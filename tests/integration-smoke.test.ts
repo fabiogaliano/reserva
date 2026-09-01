@@ -14,7 +14,7 @@ describe('Astro smoke fixture', () => {
     for (const path of ['/api/booking/availability', '/api/booking/checkout', '/api/booking/webhooks/payment', '/booking/admin', '/booking/manage', '/booking-confirmation']) {
       expect(manifest).toContain(`"route": "${path}"`);
     }
-    // Plan 022: the vendor-named webhook path is retired, not aliased — a build that still emits it
+    // The vendor-named webhook path is retired, not aliased — a build that still emits it
     // would leave two entry points for the same signed payload.
     expect(manifest).not.toContain('"route": "/api/booking/webhooks/stripe"');
   });

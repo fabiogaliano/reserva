@@ -2,9 +2,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { reserva, virtualRuntimeId } from '../src/integration';
-import config from '../examples/client-config';
+import config from '../examples/minimal/client-config';
 
-function setup(options: Record<string, unknown> = { config, runtimeEntrypoint: './examples/runtime.ts' }) {
+function setup(options: Record<string, unknown> = { config, runtimeEntrypoint: './examples/minimal/runtime.ts' }) {
   const routes: Array<Record<string, unknown>> = [];
   // astro:config:setup calls updateConfig once per concern (vite plugin, env schema); merge every
   // call into one view rather than keeping only the last, matching Astro's own accumulating behavior.
@@ -49,10 +49,10 @@ describe('Astro integration entry', () => {
     for (const route of routes) expect(existsSync(String(route.entrypoint))).toBe(true);
   });
 
-  // Plan 015 (decision 2): tests/workers/webhook.test.ts proves handlePaymentWebhook's own behavior
-  // against a hand-written worker entrypoint, honestly, without pretending that worker IS the
-  // generated Astro route -- this pins the other half, that the generated route's entrypoint really
-  // is the exact one-line handlePaymentWebhook delegation src/routes/api/booking/webhooks/payment.ts
+  // tests/workers/webhook.test.ts proves handlePaymentWebhook's own behavior against a
+  // hand-written worker entrypoint, honestly, without pretending that worker IS the generated
+  // Astro route -- this pins the other half, that the generated route's entrypoint really is the
+  // exact one-line handlePaymentWebhook delegation src/routes/api/booking/webhooks/payment.ts
   // contains (not just that some file exists at that path, which the assertion above already checks).
   it('pins the generated Stripe webhook route to its one-line handlePaymentWebhook delegation', () => {
     const { routes } = setup();
@@ -70,14 +70,14 @@ describe('Astro integration entry', () => {
     const resolved = plugin.resolveId(virtualRuntimeId);
     expect(resolved).toBe('\0virtual:reserva/runtime');
     const source = plugin.load(resolved as string);
-    expect(source).toContain('examples/runtime.ts');
+    expect(source).toContain('examples/minimal/runtime.ts');
     expect(source).not.toContain('ECT');
   });
 
   it('rejects an invalid config during setup', () => {
     expect(() => setup({
       config: { ...config, booking: { ...config.booking, holdMinutes: 10 } },
-      runtimeEntrypoint: './examples/runtime.ts',
+      runtimeEntrypoint: './examples/minimal/runtime.ts',
     })).toThrow(/holdMinutes/i);
   });
 

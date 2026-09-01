@@ -1,4 +1,4 @@
-// Plan 013 item B (audit finding #11): availabilityInput validates exactly service/quantity/from/to,
+// availabilityInput validates exactly service/quantity/from/to,
 // but the cache key used to be the whole sorted request URL — any extra query parameter (a
 // tracking nonce, cache-buster, etc.) minted a fresh cache entry, bypassing and bloating the 60s
 // public availability cache. The key must be built from the four validated parameters only.

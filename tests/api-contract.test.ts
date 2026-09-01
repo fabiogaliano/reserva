@@ -1,7 +1,6 @@
-// Plan 027 (design decisions 2 / step 7): the wire contract's own guards. These assert the three
-// properties the closed error catalog has to keep for a consumer (or an agent) to switch
-// exhaustively on failures: it exists as a runtime value, it has no duplicate members, and nothing
-// outside it can reach the error envelope.
+// The wire contract's own guards. These assert the three properties the closed error catalog has
+// to keep for a consumer (or an agent) to switch exhaustively on failures: it exists as a runtime
+// value, it has no duplicate members, and nothing outside it can reach the error envelope.
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { API_ERROR_CODES, isApiErrorCode } from '../src/core';
 import type {
@@ -17,8 +16,8 @@ import { errorResponse, HttpError } from '../src/http';
 
 describe('API_ERROR_CODES (plan 027 design decision 2)', () => {
   it('is a runtime array on the public core entrypoint, so docs and consumers can enumerate it', () => {
-    // Imported from '../src/core' (what package.json maps to `@reservajs/astro/core`), not from the
-    // internal module — plan 028 generates the error table from exactly this import.
+    // Imported from '../src/core' (what package.json maps to `@reservajs/astro/core`), not from
+    // the internal module — the generated error-code table is built from exactly this import.
     expect(Array.isArray(API_ERROR_CODES)).toBe(true);
     expect(API_ERROR_CODES.length).toBeGreaterThan(0);
     expect(API_ERROR_CODES.every((code) => typeof code === 'string' && code.length > 0)).toBe(true);

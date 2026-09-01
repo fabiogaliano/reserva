@@ -15,8 +15,8 @@ interface Props {
   serviceSlug: string;
   checkoutEndpoint?: string;
   availabilityEndpoint?: string;
-  // Plan 027 (design decisions 1 and 6): the two endpoints that replaced this component's config
-  // props. The service's pickup options and meeting points come from the deployment's own catalog,
+  // The two endpoints this component's config props resolve to. The service's pickup options and
+  // meeting points come from the deployment's own catalog,
   // and every price shown comes from the quote endpoint — the same code path checkout charges on —
   // so an embed can no longer describe the service differently than the server does.
   catalogEndpoint?: string;
@@ -79,8 +79,7 @@ const scriptData = {
 };
 
 // A full UUID (not a truncated slice or a module-scope counter, which would collide across
-// concurrent renders) so two instances of this component on the same page never share an id —
-// see plan 014 item A.
+// concurrent renders) so two instances of this component on the same page never share an id.
 const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
 ---
 
@@ -151,11 +150,11 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     </label>
   )}
 
-  {/* Plan 027 (design decision 6): the service's location axes are filled in from the catalog by
+  {/* The service's location axes are filled in from the catalog by
       the script below (see renderLocation), the way slots are filled in from availability — a
       location-less service leaves both anchors empty, so the submitted FormData carries no
       pickupType/meetingPointId at all (checkout rejects the fields' mere presence for such a
-      service; plan 023 design decision 3). */}
+      service). */}
   <div data-reserva-pickup-slot></div>
   <div data-reserva-meeting-point-slot></div>
 
@@ -213,9 +212,9 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
 <script>
   import 'cally';
   import { toMajorUnits } from '../../../../src/core/index';
-  // Plan 027 (design decision 2): this example reads the same exported wire types every consumer
-  // does — if a response shape changes without this component following, it fails to compile here
-  // rather than at a customer's browser.
+  // This example reads the same exported wire types every consumer does — if a response shape
+  // changes without this component following, it fails to compile here rather than at a
+  // customer's browser.
   import type {
     ApiErrorEnvelope,
     AvailabilityDay,
@@ -267,9 +266,9 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     if (retry) retry.hidden = true;
   }
 
-  // Plan 027 (design decision 1): the price shown is the price the server quotes, fetched from the
-  // endpoint checkout prices on — the widget no longer carries a price table of its own, so it can
-  // no longer disagree with what the customer is charged. Only the latest request may write to the
+  // The price shown is the price the server quotes, fetched from the endpoint checkout prices on
+  // — the widget carries no price table of its own, so it can never disagree with what the
+  // customer is charged. Only the latest request may write to the
   // DOM: quantity/pickup changes fire in quick succession and an older quote settling last would
   // display a price for a selection the visitor has already changed.
   const quoteState = new WeakMap<HTMLFormElement, number>();
@@ -304,10 +303,9 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     }
   }
 
-  // Plan 027 (design decision 6): the pickup and meeting-point groups are rendered from the
-  // deployment's catalog, so their ids, labels, hints and usesMeetingPoint flags can't drift from
-  // what checkout accepts. A service with no location module (plan 023) leaves both anchors empty:
-  // no pickupType field is submitted at all.
+  // The pickup and meeting-point groups are rendered from the deployment's catalog, so their ids,
+  // labels, hints and usesMeetingPoint flags can't drift from what checkout accepts. A service
+  // with no location module leaves both anchors empty: no pickupType field is submitted at all.
   function pickupBody(label: string, hint: string | null): HTMLSpanElement {
     const body = document.createElement('span');
     body.className = 'bkw-pickup-body';
@@ -371,8 +369,8 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
         usesMeetingPoint: option.usesMeetingPoint,
       }))));
     }
-    // Plan 017 (design decision 5): 0-1 declared points render nothing — there is nothing for the
-    // visitor to choose, and the server resolves the single point itself.
+    // 0-1 declared points render nothing — there is nothing for the visitor to choose, and the
+    // server resolves the single point itself.
     if (pointSlot && meetingPoints.length >= 2) {
       const group = radioGroup(data.i18n.meetingPoint ?? '', 'meetingPointId', meetingPoints.map((point) => ({
         value: point.id,
@@ -384,8 +382,8 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     }
   }
 
-  // Plan 017 (design decision 5) / Plan 018 (design decision 9): hides AND disables the
-  // meeting-point group while the selected pickup option doesn't use one — disabling (not just
+  // Hides AND disables the meeting-point group while the selected pickup option doesn't use
+  // one — disabling (not just
   // hiding) is what actually drops its radios from FormData, which is what the submit handler
   // below relies on to omit meetingPointId rather than send it empty. No-ops when the group isn't
   // rendered at all (0-1 declared points).
@@ -458,9 +456,8 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
       time.className = 'bkw-slot-time';
       time.textContent = slot.start.slice(11, 16);
       label.append(input, time);
-      // Plan 027 (design decision 4): the server gates the exact count against the deployment's
-      // own limitedThreshold, so a non-null `remaining` IS the scarce case — the widget no longer
-      // re-applies a threshold of its own.
+      // The server gates the exact count against the deployment's own limitedThreshold, so a
+      // non-null `remaining` IS the scarce case — the widget re-applies no threshold of its own.
       if (slot.remaining !== null) {
         const hint = document.createElement('span');
         hint.className = 'bkw-slot-hint';
@@ -592,14 +589,14 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
         quantity: Number(formData.get('quantity')),
         locale: String(formData.get('locale') ?? ''),
       };
-      // Plan 023 (design decision 3): a location-less service renders no pickupType field at all
-      // (see renderLocation above) — omit it from the payload rather than sending an empty
-      // string, which checkout now rejects as a present-but-unsupported field.
+      // A location-less service renders no pickupType field at all (see renderLocation above) —
+      // omit it from the payload rather than sending an empty string, which checkout rejects as a
+      // present-but-unsupported field.
       const pickupType = formData.get('pickupType');
       if (pickupType !== null) payload.pickupType = String(pickupType);
-      // Plan 017 (design decision 5): a disabled meeting-point group (pickupType 'custom', or no
-      // such group at all for a single-point service) naturally drops out of FormData — follow that
-      // rather than sending an empty string the server would reject as an unknown id.
+      // A disabled meeting-point group (pickupType 'custom', or no such group at all for a
+      // single-point service) naturally drops out of FormData — follow that rather than sending
+      // an empty string the server would reject as an unknown id.
       const meetingPointId = formData.get('meetingPointId');
       if (meetingPointId !== null) payload.meetingPointId = String(meetingPointId);
       const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');

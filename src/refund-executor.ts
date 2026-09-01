@@ -1,7 +1,7 @@
-// Plan 020 (design decision 7): the one refund executor both the operator HTTP path
-// (src/handlers/index.ts's resolvePendingRefund) and the scheduled reconciler (src/reconciliation.ts,
-// step 5) call — the Stripe-call-then-resolve core is identical either way, so a fix or a new
-// safeguard here protects both callers at once.
+// The one refund executor both the operator HTTP path (src/handlers/booking-actions.ts's
+// resolvePendingRefund) and the scheduled reconciler (src/reconciliation.ts, step 5) call — the
+// Stripe-call-then-resolve core is identical either way, so a fix or a new safeguard here protects
+// both callers at once.
 //
 // The two callers differ only in HOW they got permission to attempt: the HTTP path relies on the
 // refund-operation's own decision claim (claimRefundOperation, already unique per booking_id) plus
@@ -10,14 +10,14 @@
 // function, and passes that claim's attempt number in so a retryable failure gets a backoff
 // next_attempt_at and a permanent/exhausted failure becomes 'abandoned' (mirroring
 // src/confirmation.ts's classifyAttemptOutcome for side-effect operations). Passing no `attempt`
-// preserves the exact pre-plan-020 HTTP behavior byte-for-byte, including the re-read guard —
-// deliberately NOT gated behind a fresh execution claim there: BK-REFUND-001 finding #4's
-// crash-recovery test (a Stripe success whose D1 write then throws) requires an immediate retry —
-// even on the same clock tick — to re-enter and call Stripe again, which a claim (even a bypass
-// one) with a staleness-gated lease cannot support at zero elapsed time. That is safe only because
-// StripeProvider.refund()'s own idempotency key (not this D1 claim) is what actually prevents a
-// double refund on a repeated Stripe call — the D1 claim exists to avoid redundant/observable
-// double-attempts from the scheduled path, not to gate correctness.
+// preserves the HTTP path's original behavior byte-for-byte, including the re-read guard —
+// deliberately NOT gated behind a fresh execution claim there: a crash-recovery case (a Stripe
+// success whose D1 write then throws) requires an immediate retry — even on the same clock tick —
+// to re-enter and call Stripe again, which a claim (even a bypass one) with a staleness-gated lease
+// cannot support at zero elapsed time. That is safe only because StripeProvider.refund()'s own
+// idempotency key (not this D1 claim) is what actually prevents a double refund on a repeated
+// Stripe call — the D1 claim exists to avoid redundant/observable double-attempts from the
+// scheduled path, not to gate correctness.
 import { classifyAttemptOutcome } from './confirmation.js';
 import type { Booking } from './core/booking.js';
 import type { ReservaContext } from './context.js';

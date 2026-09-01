@@ -7,11 +7,11 @@ import { defineReservaRuntime, defineCloudflareReservaRuntime } from '../src/run
 import { booking, config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
-// Plan 022 (design decision 7): the payment port has to be implementable by someone who has never
-// read src/providers/stripe.ts. This adapter is built ONLY from what @reservajs/astro/core exports
-// (the `PaymentProvider` interface and the PAYMENT_EVENTS catalog) and mentions no Stripe
-// identifier anywhere — if a vendor concept leaked back into the port's types, this file would stop
-// compiling, and the assertions below prove Reserva actually drives a booking through it.
+// The payment port has to be implementable by someone who has never read src/providers/stripe.ts.
+// This adapter is built ONLY from what @reservajs/astro/core exports (the `PaymentProvider`
+// interface and the PAYMENT_EVENTS catalog) and mentions no Stripe identifier anywhere — if a
+// vendor concept leaked back into the port's types, this file would stop compiling, and the
+// assertions below prove Reserva actually drives a booking through it.
 const vendorNeutralPayments: PaymentProvider = {
   async createCheckout(pending) {
     return { url: `https://pay.example/${pending.id}`, sessionRef: `sess_${pending.id}` };
@@ -95,8 +95,8 @@ describe('the payment port is implementable without any vendor knowledge (plan 0
   });
 });
 
-// Plan 022 (design decision 7): a provider's own limits are checked once, while the runtime
-// definition initializes — never per request and never as a surprise on the first real checkout.
+// A provider's own limits are checked once, while the runtime definition initializes — never
+// per request and never as a surprise on the first real checkout.
 describe('a payment provider rejects an incompatible config at runtime-definition time', () => {
   function providerRejecting(currency: string): PaymentProvider {
     return {
@@ -140,10 +140,9 @@ describe('a payment provider rejects an incompatible config at runtime-definitio
   });
 });
 
-// Plan 022 (design decision 1): the retired calendar_synced/email_synced flags used to gate whether
-// a confirmed booking's read paths re-ran fulfillment. With delivery state living only in the
-// outbox rows, /status and the manage page must agree on the same booking and leave a settled
-// confirmation alone.
+// The retired calendar_synced/email_synced flags used to gate whether a confirmed booking's read
+// paths re-ran fulfillment. With delivery state living only in the outbox rows, /status and the
+// manage page must agree on the same booking and leave a settled confirmation alone.
 describe('/status and manage report the same settled confirmation without re-running fulfillment', () => {
   it('reports the same booking facts from both read paths and touches no provider', async () => {
     const seeded = booking({

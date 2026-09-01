@@ -2,14 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ClientConfig, ServiceConfig } from '../src/core/config';
 import type { Booking } from '../src/core/booking';
 import type { EmailBookingEvent } from '../src/core/events';
-import { brevoEmail } from '../src/providers/brevo';
+import { brevoEmail } from '../src/providers/email-brevo/index';
 import { booking, config } from './fixtures';
 
-// Plan 026 (design decision 5, snapshot discipline): captured BEFORE the mechanical extraction of
-// the template system into src/email/ (step 1), then left untouched by that move -- proving it
-// byte-identical -- and only updated deliberately in the same plan's copy-neutralization pass
-// (step 3), where every diff must map to a named decision in
-// docs/plans/v2/026-email-template-extraction.md.
+// Captured BEFORE the mechanical extraction of
+// the template system into src/email/, then left untouched by that move -- proving it
+// byte-identical -- and only updated deliberately, never as an accidental side effect of a refactor.
 const locationLessService: ServiceConfig = {
   durationMin: 90,
   turnaroundMin: 15,

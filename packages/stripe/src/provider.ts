@@ -57,9 +57,9 @@ export interface StripeOptions {
   // unset so the checkout stays name-only, matching prior behaviour.
   productDescription?: string | BookingCallback<string>;
   pickupFieldLabel?: string | BookingCallback<string>;
-  // Plan 022 (design decision 7): payment methods are adapter configuration, not a Reserva setting
-  // — the accepted set is Stripe's, changing it needs a Stripe dashboard capability, and no other
-  // provider shares the vocabulary. Defaults to card-only.
+  // Payment methods are adapter configuration, not a Reserva setting — the accepted set is
+  // Stripe's, changing it needs a Stripe dashboard capability, and no other provider shares the
+  // vocabulary. Defaults to card-only.
   paymentMethods?: StripePaymentMethod[];
   // Stripe rejects consent collection unless the account has a Terms of Service
   // URL in its public business details, which a not-yet-activated test account
@@ -74,8 +74,8 @@ export type StripePaymentMethod = 'card' | 'mb_way';
 const DEFAULT_PAYMENT_METHODS: readonly StripePaymentMethod[] = ['card'];
 
 // Stripe Checkout's own supported `locale` values, and its 24-hour cap on how long a session may
-// stay open. Both left core config with plan 022 (design decision 7): they are this vendor's
-// limits, enforced in validateConfig() below.
+// stay open. Both left core config because they are this vendor's limits, enforced in
+// validateConfig() below.
 export const STRIPE_SUPPORTED_LOCALES = new Set([
   'auto', 'bg', 'cs', 'da', 'de', 'el', 'en', 'en-GB', 'es', 'es-419', 'et',
   'fi', 'fil', 'fr', 'fr-CA', 'he', 'hr', 'hu', 'id', 'it', 'ja', 'ko', 'lt',
@@ -366,9 +366,9 @@ export class StripeProvider implements PaymentProvider {
       success_url: successUrl,
       cancel_url: cancelUrl,
     };
-    // Plan 018 (design decision 7): re-keyed off the service's declared option instead of the fixed
-    // 'custom' id, so any option a service marks requiresAddress collects the field, not just the id
-    // literally named 'custom'. An undeclared stored pickupType (the service's pickupOptions changed
+    // Keyed off the service's declared option instead of a fixed 'custom' id, so any option a
+    // service marks requiresAddress collects the field, not just the id literally named 'custom'.
+    // An undeclared stored pickupType (the service's pickupOptions changed
     // after this booking's hold was created) resolves option to undefined, and `undefined?.` is
     // falsy — the safe degrade is to skip the field rather than guess, since Stripe would otherwise
     // collect an address label for an option the operator no longer recognizes.
@@ -378,8 +378,8 @@ export class StripeProvider implements PaymentProvider {
     if ((this.options.termsOfService ?? 'required') === 'required') {
       params.consent_collection = { terms_of_service: 'required' };
     }
-    // BK-PAY-002: a deterministic key per hold (not per call) so a lost response and a retried
-    // call both land on the same Stripe session instead of minting a second, orphaned one.
+    // A deterministic key per hold (not per call) so a lost response and a retried call both
+    // land on the same Stripe session instead of minting a second, orphaned one.
     const idempotencyKey = `reserva-checkout-${booking.id}`;
     const session = await this.createSession(params, idempotencyKey);
     if (!session.url) throw new Error('Stripe Checkout Session did not include a URL');
@@ -426,8 +426,8 @@ export class StripeProvider implements PaymentProvider {
     return sessionStatusFromStripe(await this.stripe.checkout.sessions.retrieve(sessionRef));
   }
 
-  // Plan 022 (design decision 7): Stripe's own limits, checked once while the runtime definition
-  // initializes (runtime-context.ts) instead of leaking into ClientConfig's schema. Every message
+  // Stripe's own limits, checked once while the runtime definition initializes
+  // (runtime-context.ts) instead of leaking into ClientConfig's schema. Every message
   // names the config path and the fix, so a misconfigured deployment fails to start with something
   // actionable rather than 500ing on the first checkout.
   validateConfig(config: ClientConfig): void {

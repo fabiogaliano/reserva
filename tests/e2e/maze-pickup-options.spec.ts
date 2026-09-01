@@ -2,9 +2,9 @@ import { test, expect } from '@playwright/test';
 import { format } from 'date-fns';
 
 // The deterministic test address the smoke fixture's fake payment session records for any option
-// with requiresAddress: true (examples/smoke-site/src/runtime.ts, SMOKE_TEST_PICKUP_ADDRESS —
-// plan 019 design decision 4). Kept as a literal here rather than imported so this spec doesn't
-// reach into the smoke-site's internals, matching every other e2e spec in this directory.
+// with requiresAddress: true (examples/smoke-site/src/runtime.ts, SMOKE_TEST_PICKUP_ADDRESS).
+// Kept as a literal here rather than imported so this spec doesn't reach into the smoke-site's
+// internals, matching every other e2e spec in this directory.
 const SMOKE_TEST_PICKUP_ADDRESS = '42 Fixture Lane, Testville';
 
 async function bookMaze(page: import('@playwright/test').Page, pickupType: string, meetingPointId?: string) {
@@ -62,11 +62,11 @@ async function bookMaze(page: import('@playwright/test').Page, pickupType: strin
   return { reference, outboxEntry, checkoutBody };
 }
 
-// Plan 018 (design decision 9, step 6) / plan 019 (design decision 6): books the 210 € combined
-// option (custom_both — requiresAddress: true, usesMeetingPoint: false) on the mazeRiverside service
-// (examples/smoke-site/src/config.ts) end-to-end, and follows it all the way to the server-stored
-// confirmation and the protected manage flow — not just a client-computed price and a success
-// badge, which would still pass an accidental server mapping to the 180 € option.
+// Books the 210 € combined option (custom_both — requiresAddress: true, usesMeetingPoint: false)
+// on the mazeRiverside service (examples/smoke-site/src/config.ts) end-to-end, and follows it all
+// the way to the server-stored confirmation and the protected manage flow — not just a
+// client-computed price and a success badge, which would still pass an accidental server mapping
+// to the 180 € option.
 test('booking the 210 € custom pick-up & drop-off option shows the server-stored price and hides the meeting point everywhere', async ({ page, request }) => {
   await page.goto('/maze');
   await page.getByLabel('How many people?').selectOption('2');
@@ -88,9 +88,9 @@ test('booking the 210 € custom pick-up & drop-off option shows the server-stor
   await page.getByRole('radiogroup').getByRole('radio').first().check();
 
   await page.locator('input[name="pickupType"][value="custom_both"]').check();
-  // Plan 027 (design decision 1): this number now comes from POST /api/booking/quote — the widget
-  // has no price table of its own — so seeing 210 here proves the quote endpoint prices the same
-  // combination checkout charges for below.
+  // This number now comes from POST /api/booking/quote — the widget has no price table of its
+  // own — so seeing 210 here proves the quote endpoint prices the same combination checkout
+  // charges for below.
   await expect(page.locator('[data-reserva-price-value]')).toContainText('210');
 
   let checkoutBody: Record<string, unknown> | undefined;
@@ -128,7 +128,7 @@ test('booking the 210 € custom pick-up & drop-off option shows the server-stor
   }).toPass();
 
   // The protected manage flow is the assertion surface for the persisted option, address, and
-  // flags (design decision 3) — not a test-only DB route.
+  // flags — not a test-only DB route.
   const manageUrl = new URL(outboxEntry.operatorManageUrl);
   const token = manageUrl.searchParams.get('token');
   const manageJson = await (await request.get(`/api/booking/manage?token=${encodeURIComponent(token ?? '')}`)).json();
@@ -145,10 +145,10 @@ test('booking the 210 € custom pick-up & drop-off option shows the server-stor
   await expect(page.locator('.bk-facts')).not.toContainText('Maze north gate');
 });
 
-// Plan 019 (design decision 6): custom_dropoff (requiresAddress: true, usesMeetingPoint: true)
-// keeps the meeting-point group live — proves the two axes (pickupOptions, meetingPoints)
-// compose: a declared option can require BOTH an address and a chosen point, and the second
-// (non-default) point survives checkout, D1, confirmation, and the protected manage flow.
+// custom_dropoff (requiresAddress: true, usesMeetingPoint: true) keeps the meeting-point group
+// live — proves the two axes (pickupOptions, meetingPoints) compose: a declared option can
+// require BOTH an address and a chosen point, and the second (non-default) point survives
+// checkout, D1, confirmation, and the protected manage flow.
 test('custom drop-off carries the selected second meeting point and the collected address through checkout, confirmation, and manage', async ({ page, request }) => {
   await page.goto('/maze');
   const group = page.locator('[data-reserva-meeting-points]');
@@ -160,7 +160,7 @@ test('custom drop-off carries the selected second meeting point and the collecte
   expect(checkoutBody).toMatchObject({ meetingPointId: 'gate' });
   expect(reference).toBeTruthy();
 
-  // Confirmation shows the chosen point but never the address (privacy boundary, design decision 1).
+  // Confirmation shows the chosen point but never the address (privacy boundary).
   await expect(page.locator('.bk-facts')).toContainText('Maze north gate');
   await expect(page.locator('.bk-facts')).not.toContainText('Riverside dock');
   await expect(page.locator('.bk-facts')).not.toContainText(SMOKE_TEST_PICKUP_ADDRESS);
@@ -181,10 +181,10 @@ test('custom drop-off carries the selected second meeting point and the collecte
   await expect(page.locator('.bk-facts')).toContainText('Maze north gate');
 });
 
-// Plan 019 (design decision 6): a false usesMeetingPoint option (custom_pickup) hides and disables
-// the meeting-point group and the checkout request omits meetingPointId — the declared-option
-// counterpart to meeting-points.spec.ts's legacy default/custom pair, on a service that also declares
-// real meeting points, so the two axes' interaction is exercised in the same browser test.
+// A false usesMeetingPoint option (custom_pickup) hides and disables the meeting-point group and
+// the checkout request omits meetingPointId — the declared-option counterpart to
+// meeting-points.spec.ts's legacy default/custom pair, on a service that also declares real
+// meeting points, so the two axes' interaction is exercised in the same browser test.
 test('custom pick-up hides and disables the meeting-point group, and the checkout payload omits meetingPointId', async ({ page }) => {
   await page.goto('/maze');
   const group = page.locator('[data-reserva-meeting-points]');

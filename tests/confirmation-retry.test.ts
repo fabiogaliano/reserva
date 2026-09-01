@@ -20,9 +20,9 @@ function seedSideEffect(repo: FakeRepository, bookingId: string, identity: SideE
   });
 }
 
-// Plan 020 (design decision 13): the admin "Try again" action's underlying dispatcher. These tests
+// The admin "Try again" action's underlying dispatcher. These tests
 // exercise src/confirmation.ts's retrySideEffectOperation directly (the admin handler itself is
-// wired in step 6's HTTP layer) — proving each kind bucket's claim -> run -> resolve/dispatch path
+// wired in the HTTP layer) — proving each kind bucket's claim -> run -> resolve/dispatch path
 // and the STOP-condition-driven 'not_retryable' outcome for 'oversell'.
 describe('retrySideEffectOperation', () => {
   it('refuses to retry an oversell marker (STOP condition: no safe one-shot retry for a permanent marker)', async () => {
@@ -124,7 +124,7 @@ describe('retrySideEffectOperation', () => {
     expect(sideEffectOperation(repo, seeded.id, identity)).toMatchObject({ status: 'succeeded', attemptCount: 11 });
   });
 
-  // Plan 021 (design decision 5): an unregistered subscriber is a PERMANENT failure, so even the
+  // An unregistered subscriber is a PERMANENT failure, so even the
   // admin's bypass-everything retry re-abandons the row instead of leaving it forever pending.
   it('re-abandons a durable hook row whose subscriber is no longer registered', async () => {
     const seeded = booking({ id: 'retry-hook-unregistered', status: 'confirmed' });

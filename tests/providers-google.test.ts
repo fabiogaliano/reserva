@@ -5,8 +5,8 @@ import { ProviderFailure } from '../src/provider-failure';
 import { clearGoogleTokenCache, GoogleServiceAccountAuth } from '../src/providers/calendar-google/auth';
 import { GoogleCalendarProvider, mapGoogleCalendarEvent } from '../src/providers/calendar-google/calendar';
 
-// Plan 017 (design decision 4): canonical (post-validateConfig-shaped) multi-point service, built
-// inline — fixtures.ts stays a single-point service for other suites.
+// Canonical (post-validateConfig-shaped) multi-point service, built inline — fixtures.ts stays
+// a single-point service for other suites.
 const multiPointTour: ServiceConfig = {
   ...service,
   location: {
@@ -19,8 +19,8 @@ const multiPointTour: ServiceConfig = {
 };
 const multiPointConfig: ClientConfig = { ...config, services: { vintage: multiPointTour } };
 
-// Plan 018 (design decision 8): a declared option with BOTH requiresAddress and usesMeetingPoint
-// (Maze's combined custom pickup+drop-off) — built inline per the same "don't touch fixtures.ts" rule.
+// A declared option with BOTH requiresAddress and usesMeetingPoint (Maze's combined custom
+// pickup+drop-off) — built inline per the same "don't touch fixtures.ts" rule.
 const bothFlagsTour: ServiceConfig = {
   ...multiPointTour,
   location: {
@@ -116,8 +116,8 @@ describe('Google Calendar provider', () => {
     expect(request.mock.calls[3]?.[1]).toEqual(expect.objectContaining({ method: 'DELETE' }));
   });
 
-  // Plan 017 (design decision 4): the event description's Pickup/maps-URL lines resolve per
-  // booking (chosen meeting point id) instead of always reading the service's single `meetingPoint`.
+  // The event description's Pickup/maps-URL lines resolve per booking (chosen meeting point id)
+  // instead of always reading the service's single `meetingPoint`.
   it('describes the meeting point the booking chose on a multi-point service', async () => {
     const auth = { getAccessToken: async () => 'token' } as GoogleServiceAccountAuth;
     const request = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ id: 'created' }), { headers: { 'content-type': 'application/json' } }));
@@ -143,8 +143,8 @@ describe('Google Calendar provider', () => {
     expect(body).not.toContain('maps.google.com');
   });
 
-  // Plan 018 (design decision 8): a non-default declared option that only collects an address
-  // (requiresAddress: true, usesMeetingPoint: false) — the Pickup line is the address, no maps line.
+  // A non-default declared option that only collects an address (requiresAddress: true,
+  // usesMeetingPoint: false) — the Pickup line is the address, no maps line.
   it('describes the collected address for a non-default option id with requiresAddress and no maps line', async () => {
     const auth = { getAccessToken: async () => 'token' } as GoogleServiceAccountAuth;
     const request = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ id: 'created' }), { headers: { 'content-type': 'application/json' } }));
@@ -157,8 +157,8 @@ describe('Google Calendar provider', () => {
     expect(body).not.toContain('maps.google.com');
   });
 
-  // Plan 018 (design decision 8): an option with BOTH flags (Maze's combined custom pickup +
-  // drop-off) shows both — the address on the Pickup line AND the meeting-point maps URL line.
+  // An option with BOTH flags (Maze's combined custom pickup + drop-off) shows both — the
+  // address on the Pickup line AND the meeting-point maps URL line.
   it('describes both the collected address and the meeting-point maps URL for an option with both flags', async () => {
     const auth = { getAccessToken: async () => 'token' } as GoogleServiceAccountAuth;
     const request = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ id: 'created' }), { headers: { 'content-type': 'application/json' } }));

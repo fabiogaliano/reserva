@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Plan 015 decision 5: proves the BUILT smoke-site output actually serves traffic through the
+// Proves the BUILT smoke-site output actually serves traffic through the
 // pinned @astrojs/cloudflare adapter's `astro preview` entrypoint. The Playwright suite's
 // webServer (examples/smoke-site/e2e-dev-server.ts) only ever runs `astro dev` -- a bug that only
 // manifests in the built worker (a route missing from the compiled manifest, an asset never
