@@ -8,5 +8,6 @@ export {
   handleOperatorReschedule,
 } from './booking-actions';
 export { handleCheckout } from './checkout';
+export { handleQuote } from './quote';
 export { handleManage, handleStatus } from './status-manage';
 export { handlePaymentWebhook } from './webhook';

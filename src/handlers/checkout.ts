@@ -21,11 +21,33 @@ import { run } from './shared';
 // a client with a stale option list gets an actionable error.
 interface CheckoutLocation { pickupType: PickupType | null; meetingPointId: string | null; meetingPointLabel: string | null }
 
-function parsePickup(service: ServiceConfig, value: unknown): PickupType {
+// Plan 027 (design decision 1 / STOP condition 2): the ONE pickup-axis validation, shared verbatim
+// by checkout (whose body field is `pickupType`) and quote (whose field is `pickup`) — the field
+// name is a parameter precisely so neither endpoint can grow a second, divergent rule about which
+// pickup ids are acceptable. A location-less service rejects the field outright; a location-ful one
+// requires an id it actually declares, and the 400 lists them so a client with a stale option list
+// can correct itself.
+export function resolvePickupAxis(service: ServiceConfig, value: unknown, field: string): PickupType | null {
+  if (!service.location) {
+    if (value !== undefined) throw new HttpError(400, 'validation_failed', `This service has no location module; do not send ${field}`);
+    return null;
+  }
   if (typeof value === 'string' && pickupOptionFor(service, value)) return value;
-  const validIds = service.location!.pickupOptions.map((option) => option.id);
-  requireString(value, 'pickupType');
-  throw new HttpError(400, 'validation_failed', `pickupType must be one of: ${validIds.join(', ')}`);
+  const validIds = service.location.pickupOptions.map((option) => option.id);
+  requireString(value, field);
+  throw new HttpError(400, 'validation_failed', `${field} must be one of: ${validIds.join(', ')}`);
+}
+
+// Plan 027 (design decision 1 / STOP condition 2): the ONE priced-amount resolution. Quote returns
+// exactly this number and checkout charges exactly this number, from the same call, so the two can
+// never disagree for any (service, quantity, pickup).
+export function quotedPriceMinor(service: ServiceConfig, quantity: number, pickup: PickupType | null): number {
+  assertSupportedPartySize(service, quantity);
+  try {
+    return priceFor(service, quantity, pickup);
+  } catch {
+    throw new HttpError(400, 'validation_failed', 'No price is configured for this party and pickup type');
+  }
 }
 
 // Plan 017 (design decision 2): meetingPointId is optional on the wire but the RESOLVED id is
@@ -66,12 +88,11 @@ function resolveCheckoutMeetingPoint(service: ServiceConfig, pickupType: PickupT
 // still sends stale fields (e.g. after an operator drops a service's location module) gets an
 // actionable 400 instead of a booking that silently discarded its input.
 function resolveCheckoutLocation(service: ServiceConfig, body: Record<string, unknown>): CheckoutLocation {
-  if (!service.location) {
-    if (body.pickupType !== undefined) throw new HttpError(400, 'validation_failed', 'This service has no location module; do not send pickupType');
+  const pickupType = resolvePickupAxis(service, body.pickupType, 'pickupType');
+  if (pickupType === null) {
     if (body.meetingPointId !== undefined) throw new HttpError(400, 'validation_failed', 'This service has no location module; do not send meetingPointId');
     return { pickupType: null, meetingPointId: null, meetingPointLabel: null };
   }
-  const pickupType = parsePickup(service, body.pickupType);
   const meetingPoint = resolveCheckoutMeetingPoint(service, pickupType, body);
   return { pickupType, meetingPointId: meetingPoint.id, meetingPointLabel: meetingPoint.label };
 }
@@ -229,14 +250,8 @@ export function handleCheckout(request: Request, context: BookkitContext): Promi
     const locale = resolveLocale(context.config.locales, requireString(body.locale, 'locale'));
     const now = nowIso(context);
     await context.repo.sweepExpiredHolds(now);
-    assertSupportedPartySize(service, quantity);
     const candidate = await checkSlot(context, serviceSlug, quantity, start, now);
-    let priceMinor: number;
-    try {
-      priceMinor = priceFor(candidate.service, quantity, location.pickupType);
-    } catch {
-      throw new HttpError(400, 'validation_failed', 'No price is configured for this party and pickup type');
-    }
+    const priceMinor = quotedPriceMinor(candidate.service, quantity, location.pickupType);
     const year = Number(localDateKey(candidate.startsAt, context.config.business.timezone).slice(0, 4));
     const prefix = `${context.config.business.shortCode.toUpperCase()}-${year}-`;
     const referenceExists = async (candidateReference: string): Promise<boolean> =>

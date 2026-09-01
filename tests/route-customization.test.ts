@@ -105,15 +105,15 @@ describe('requireEnabledRoutePath', () => {
 describe('route table generation (astro:config:setup)', () => {
   // Hard requirement: a consumer passing no new options must see the exact same route table as
   // before this feature existed — same patterns, same order.
-  it('no options: default injected route patterns are byte-identical to the current 15', () => {
+  it('no options: default injected route patterns are byte-identical to the current 16', () => {
     const { routes } = setup(baseOptions);
     expect(routes.map((route) => route.pattern)).toEqual(routeManifest.map((entry) => entry.pattern));
-    expect(routes).toHaveLength(15);
+    expect(routes).toHaveLength(16);
   });
 
   it('routePrefix mounts every route under the prefix, in the same order', () => {
     const { routes } = setup({ ...baseOptions, routePrefix: '/en' });
-    expect(routes).toHaveLength(15);
+    expect(routes).toHaveLength(16);
     expect(routes.map((route) => route.pattern)).toEqual(routeManifest.map((entry) => `/en${entry.pattern}`));
   });
 
@@ -128,7 +128,7 @@ describe('route table generation (astro:config:setup)', () => {
   it('config.routes: { ops: false } omits every operator route and nothing else', () => {
     const { routes } = setup({ ...baseOptions, config: { ...config, routes: { ops: false } } });
     const patterns = routes.map((route) => route.pattern);
-    expect(patterns).toHaveLength(12);
+    expect(patterns).toHaveLength(13);
     for (const opsPattern of ['/api/booking/operator/cancel', '/api/booking/operator/reschedule', '/api/booking/operator/no-show']) {
       expect(patterns).not.toContain(opsPattern);
     }
@@ -140,7 +140,7 @@ describe('route table generation (astro:config:setup)', () => {
   it('config.routes: { admin: false } omits only the admin dashboard route', () => {
     const { routes } = setup({ ...baseOptions, config: { ...config, routes: { admin: false } } });
     const patterns = routes.map((route) => route.pattern);
-    expect(patterns).toHaveLength(14);
+    expect(patterns).toHaveLength(15);
     expect(patterns).not.toContain('/booking/admin');
   });
 

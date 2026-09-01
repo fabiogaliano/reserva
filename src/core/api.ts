@@ -112,9 +112,9 @@ export interface AvailabilityResponse {
 export interface QuoteRequest {
   serviceSlug: string;
   quantity: number;
-  pickup?: string | null;
-  // Accepted (and locale-negotiated) so a consumer can quote with the same payload builder it uses
-  // for checkout; a price never varies by locale.
+  pickup?: string;
+  // Accepted so a consumer can quote with the same payload builder it uses for checkout; validated
+  // as a string but otherwise unused, because a price never varies by locale.
   locale?: string;
 }
 

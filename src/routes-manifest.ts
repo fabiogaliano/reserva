@@ -21,6 +21,7 @@ export interface BookkitRouteEntry {
 export const routeManifest = [
   { id: 'availability', group: 'customer', pattern: '/api/booking/availability', entrypoint: './routes/api/booking/availability.ts' },
   { id: 'checkout', group: 'customer', pattern: '/api/booking/checkout', entrypoint: './routes/api/booking/checkout.ts' },
+  { id: 'quote', group: 'customer', pattern: '/api/booking/quote', entrypoint: './routes/api/booking/quote.ts' },
   { id: 'webhooksPayment', group: 'webhook', pattern: '/api/booking/webhooks/payment', entrypoint: './routes/api/booking/webhooks/payment.ts' },
   { id: 'status', group: 'customer', pattern: '/api/booking/status', entrypoint: './routes/api/booking/status.ts' },
   { id: 'manageApi', group: 'customer', pattern: '/api/booking/manage', entrypoint: './routes/api/booking/manage.ts' },
