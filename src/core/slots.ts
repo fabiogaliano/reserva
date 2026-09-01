@@ -1,4 +1,4 @@
-import type { ScheduleRule, TourConfig } from './config';
+import type { ScheduleRule, ServiceConfig } from './config';
 import { addMinutes, localDateAndTimeToUtc, localDateToWeekday, utcToLocalIso } from './time';
 
 export interface GeneratedSlot {
@@ -22,15 +22,15 @@ function matchesSeason(rule: ScheduleRule, date: string): boolean {
   return from <= to ? monthDay >= from && monthDay <= to : monthDay >= from || monthDay <= to;
 }
 
-export function scheduleForDate(tour: TourConfig, date: string, timezone: string): ScheduleRule | undefined {
+export function scheduleForDate(service: ServiceConfig, date: string, timezone: string): ScheduleRule | undefined {
   const weekday = localDateToWeekday(date, timezone);
-  return tour.schedule.find((rule) => rule.days.includes(weekday) && matchesSeason(rule, date));
+  return service.schedule.find((rule) => rule.days.includes(weekday) && matchesSeason(rule, date));
 }
 
 export const getScheduleForDate = scheduleForDate;
 
-export function generateSlots(tour: TourConfig, date: string, timezone: string): GeneratedSlot[] {
-  const rule = scheduleForDate(tour, date, timezone);
+export function generateSlots(service: ServiceConfig, date: string, timezone: string): GeneratedSlot[] {
+  const rule = scheduleForDate(service, date, timezone);
   if (!rule) return [];
   const [firstHour = 0, firstMinute = 0] = rule.firstStart.split(':').map(Number);
   const [lastHour = 0, lastMinute = 0] = rule.lastStart.split(':').map(Number);
@@ -43,7 +43,7 @@ export function generateSlots(tour: TourConfig, date: string, timezone: string):
     const localTime = `${hour}:${minute}`;
     try {
       const utcStartDate = localDateAndTimeToUtc(date, localTime, timezone);
-      const utcEndDate = addMinutes(utcStartDate, tour.durationMin);
+      const utcEndDate = addMinutes(utcStartDate, service.durationMin);
       slots.push({
         start: utcToLocalIso(utcStartDate, timezone),
         end: utcToLocalIso(utcEndDate, timezone),
@@ -60,5 +60,5 @@ export function generateSlots(tour: TourConfig, date: string, timezone: string):
 }
 
 export const slotsForDate = generateSlots;
-export const generateSlotStarts = (tour: TourConfig, date: string, timezone: string): string[] =>
-  generateSlots(tour, date, timezone).map((slot) => slot.start);
+export const generateSlotStarts = (service: ServiceConfig, date: string, timezone: string): string[] =>
+  generateSlots(service, date, timezone).map((slot) => slot.start);

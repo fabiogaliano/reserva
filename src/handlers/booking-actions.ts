@@ -69,8 +69,8 @@ async function rescheduleWithToken(context: BookkitContext, booking: Booking, ne
   const now = nowIso(context);
   if (booking.status !== 'confirmed') throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be rescheduled');
   if (!operator && !canRescheduleBooking(booking, now, context.config.booking.reschedule.cutoffHours, context.config.booking.reschedule.enabled)) throw new HttpError(403, 'past_cutoff', 'The reschedule deadline has passed');
-  const candidate = await checkSlot(context, booking.tourSlug, booking.people, newStart, now, booking.id);
-  const next = rescheduleBooking(booking, candidate.startsAt, candidate.tour.durationMin, now);
+  const candidate = await checkSlot(context, booking.serviceSlug, booking.quantity, newStart, now, booking.id);
+  const next = rescheduleBooking(booking, candidate.startsAt, candidate.service.durationMin, now);
   if (next.startsAt === booking.startsAt && next.endsAt === booking.endsAt) {
     // A prior calendar patch can fail after the transition and notification debt committed. Retrying
     // the same target must repair that patch without minting a second reschedule version or notice.
@@ -81,12 +81,12 @@ async function rescheduleWithToken(context: BookkitContext, booking: Booking, ne
   // concurrent reschedules into the same last unit can both pass it). rescheduleWithCapacity is
   // the authority: it re-evaluates the CAS (status + starts_at) and occupied-units-in-interval +
   // requested <= capacity inside the same atomic UPDATE ... WHERE as the write itself.
-  const occupancyUnits = occupancyFor(candidate.tour, booking.people);
-  const occupancyEndsAt = new Date(parseUtcInstant(next.endsAt).getTime() + candidate.tour.turnaroundMin * 60_000).toISOString();
+  const occupancyUnits = occupancyFor(candidate.service, booking.quantity);
+  const occupancyEndsAt = new Date(parseUtcInstant(next.endsAt).getTime() + candidate.service.turnaroundMin * 60_000).toISOString();
   const localDate = localDateKey(next.startsAt, context.config.business.timezone);
   // BK-SEC-002 (patch-11-r1 MEDIUM 2): recompute from the NEW endsAt, exactly like checkout does
   // from the original endsAt (see handleCheckout above) — otherwise a booking moved later could
-  // have its manage link expire before the rescheduled tour happens, and one moved earlier would
+  // have its manage link expire before the rescheduled service happens, and one moved earlier would
   // keep an over-long window relative to its new end.
   const tokenExpiryDays = context.config.booking.tokenExpiryDays ?? DEFAULT_TOKEN_EXPIRY_DAYS;
   const tokensExpireAt = new Date(parseUtcInstant(next.endsAt).getTime() + tokenExpiryDays * 86_400_000).toISOString();
@@ -99,7 +99,7 @@ async function rescheduleWithToken(context: BookkitContext, booking: Booking, ne
     updatedAt: next.updatedAt,
     now,
     tokensExpireAt,
-    occupancyUnits, occupancyEndsAt, localDate, fleetDefaultCapacity: context.config.fleet.defaultCapacity,
+    occupancyUnits, occupancyEndsAt, localDate, defaultCapacity: context.config.capacity.default,
     mutationSideEffects: mutationSideEffectSeeds(context, 'booking.rescheduled', next, next.updatedAt),
   });
   if (!updated) {
@@ -158,11 +158,11 @@ async function resolvePendingRefund(
   booking: Booking,
   operationId: string,
   choice: RefundChoice,
-  paymentIntent: string | null,
+  paymentRef: string | null,
 ): Promise<void> {
-  const outcome = await attemptRefund(context, booking, operationId, choice, paymentIntent);
-  if (outcome.kind === 'payment_intent_missing') {
-    throw new HttpError(409, 'refund_payment_intent_missing', 'Cannot refund a booking without a Stripe payment intent');
+  const outcome = await attemptRefund(context, booking, operationId, choice, paymentRef);
+  if (outcome.kind === 'payment_ref_missing') {
+    throw new HttpError(409, 'refund_payment_ref_missing', 'Cannot refund a booking without a payment reference');
   }
   if (outcome.kind === 'failed') {
     throw new HttpError(502, 'refund_failed', 'The refund could not be completed; it will be retried');
@@ -183,19 +183,19 @@ async function reconcileCancelledRefund(
   const existing = await context.repo.getRefundOperationByBookingId(booking.id);
   if (!existing) {
     if (refund === 'none') return json({ ok: true });
-    if (booking.stripePaymentIntent === null) {
-      throw new HttpError(409, 'refund_payment_intent_missing', 'Cannot refund a booking without a Stripe payment intent');
+    if (booking.paymentRef === null) {
+      throw new HttpError(409, 'refund_payment_ref_missing', 'Cannot refund a booking without a payment reference');
     }
     const operationId = crypto.randomUUID();
     const claimed = await context.repo.claimRefundOperation({
       id: operationId,
       bookingId: booking.id,
-      paymentIntent: booking.stripePaymentIntent,
+      paymentIntent: booking.paymentRef,
       choice: refund,
       requestedAt: nowIso(context),
     });
     if (claimed) {
-      await resolvePendingRefund(context, booking, operationId, refund, booking.stripePaymentIntent);
+      await resolvePendingRefund(context, booking, operationId, refund, booking.paymentRef);
       return json({ ok: true });
     }
     const concurrent = await context.repo.getRefundOperationByBookingId(booking.id);
@@ -203,7 +203,7 @@ async function reconcileCancelledRefund(
       throw new HttpError(409, 'refund_conflict', 'A different refund decision already won for this booking');
     }
     if (concurrent.status !== 'succeeded') {
-      await resolvePendingRefund(context, booking, concurrent.id, concurrent.choice, concurrent.paymentIntent ?? booking.stripePaymentIntent);
+      await resolvePendingRefund(context, booking, concurrent.id, concurrent.choice, concurrent.paymentIntent ?? booking.paymentRef);
     }
     return json({ ok: true });
   }
@@ -211,7 +211,7 @@ async function reconcileCancelledRefund(
     throw new HttpError(409, 'refund_conflict', 'A different refund decision already won for this booking');
   }
   if (existing.status !== 'succeeded') {
-    await resolvePendingRefund(context, booking, existing.id, existing.choice, existing.paymentIntent ?? booking.stripePaymentIntent ?? null);
+    await resolvePendingRefund(context, booking, existing.id, existing.choice, existing.paymentIntent ?? booking.paymentRef ?? null);
   }
   return json({ ok: true });
 }
@@ -234,7 +234,7 @@ async function completeClaimedOperatorCancellation(
     result.booking,
     operationId,
     refund,
-    result.booking.stripePaymentIntent ?? booking.stripePaymentIntent ?? null,
+    result.booking.paymentRef ?? booking.paymentRef ?? null,
   );
   return json({ ok: true });
 }
@@ -255,10 +255,10 @@ export function handleOperatorCancel(request: Request, context: BookkitContext):
       return reconcileCancelledRefund(context, booking, refund);
     }
     if (booking.status !== 'confirmed') throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
-    if (refund === 'full' && booking.stripePaymentIntent === null) {
+    if (refund === 'full' && booking.paymentRef === null) {
       // Free bookings also use refund='none': requiring an intent for every 'full' choice keeps
       // the durable operation record an honest statement that Stripe money was refunded.
-      throw new HttpError(409, 'refund_payment_intent_missing', 'Cannot refund a booking without a Stripe payment intent');
+      throw new HttpError(409, 'refund_payment_ref_missing', 'Cannot refund a booking without a payment reference');
     }
 
     // Claim-then-act (BK-REFUND-001): the refund decision is durably recorded before Stripe is
@@ -268,7 +268,7 @@ export function handleOperatorCancel(request: Request, context: BookkitContext):
     // ever reached once the booking is confirmed durably cancelled (finding #1).
     const operationId = crypto.randomUUID();
     const claimed = await context.repo.claimRefundOperation({
-      id: operationId, bookingId: booking.id, paymentIntent: booking.stripePaymentIntent ?? null,
+      id: operationId, bookingId: booking.id, paymentIntent: booking.paymentRef ?? null,
       choice: refund, requestedAt: nowIso(context),
     });
     if (!claimed) {
@@ -289,7 +289,7 @@ export function handleOperatorCancel(request: Request, context: BookkitContext):
       // The claim-holder may have won its CAS but not resolved Stripe yet. Never resume its
       // refund until the booking is durably cancelled (finding #1).
       if (fresh?.status !== 'cancelled') throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
-      await resolvePendingRefund(context, booking, existing.id, existing.choice, existing.paymentIntent ?? booking.stripePaymentIntent ?? null);
+      await resolvePendingRefund(context, booking, existing.id, existing.choice, existing.paymentIntent ?? booking.paymentRef ?? null);
       return json({ ok: true });
     }
 

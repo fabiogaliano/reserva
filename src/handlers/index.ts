@@ -9,4 +9,4 @@ export {
 } from './booking-actions';
 export { handleCheckout } from './checkout';
 export { handleManage, handleStatus } from './status-manage';
-export { handleStripeWebhook } from './webhook';
+export { handlePaymentWebhook } from './webhook';

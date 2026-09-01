@@ -44,17 +44,17 @@ function eventToCalEvent(event: GoogleEvent): CalEvent {
   };
 }
 function eventPayload(booking: Booking, config: ClientConfig | undefined, _timezone: string): GoogleEvent {
-  const title = `${booking.reference} — ${booking.tourSlug} — ${booking.people} people`;
-  const tour = config?.tours[booking.tourSlug];
+  const title = `${booking.reference} — ${booking.serviceSlug} — ${booking.quantity} quantity`;
+  const service = config?.services[booking.serviceSlug];
   // Plan 017 (design decision 4): same per-booking resolution as Brevo — a removed meeting point
   // id falls back to the booking's stored label snapshot with no maps link.
-  const resolvedPoint = tour ? meetingPointForBooking(tour, booking.meetingPointId ?? null, booking.meetingPointLabel ?? null) : null;
-  // Plan 018 (design decision 8): re-keyed off the tour's declared option instead of an unconditional
+  const resolvedPoint = service ? meetingPointForBooking(service, booking.meetingPointId ?? null, booking.meetingPointLabel ?? null) : null;
+  // Plan 018 (design decision 8): re-keyed off the service's declared option instead of an unconditional
   // "address if present, else the meeting point" — the two lines are independent gates, so an option
   // declaring BOTH flags (Maze's combined pickup+drop-off) shows the address on the Pickup line AND
-  // the maps URL line. Undefined option (no tour, or a stored pickupType no longer declared) falls
+  // the maps URL line. Undefined option (no service, or a stored pickupType no longer declared) falls
   // back to the exact pre-018 pickupType check.
-  const option = tour ? pickupOptionFor(tour, booking.pickupType) : undefined;
+  const option = service ? pickupOptionFor(service, booking.pickupType) : undefined;
   const requiresAddress = option ? option.requiresAddress : booking.pickupType === 'custom';
   const usesMeetingPoint = option ? option.usesMeetingPoint : booking.pickupType === 'default';
   const pickupLine = requiresAddress
@@ -132,7 +132,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
         try {
           events.push(eventToCalEvent(event));
         } catch {
-          // Calendar records without usable timed bounds cannot consume fleet capacity.
+          // Calendar records without usable timed bounds cannot consume capacity capacity.
         }
       }
       pageToken = body.nextPageToken;

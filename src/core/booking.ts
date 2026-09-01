@@ -8,13 +8,14 @@ export type CancellationActor = 'customer' | 'operator';
 export interface Booking {
   id: string;
   reference: string;
-  tourSlug: string;
-  people: number;
-  // The valid id set lives in TourConfig.pickupOptions (core/config.ts), per tour — neither the
-  // DB nor this type can enumerate it.
-  pickupType: PickupType;
+  serviceSlug: string;
+  quantity: number;
+  // The valid id set lives in ServiceConfig.pickupOptions (core/config.ts), per service — neither the
+  // DB nor this type can enumerate it. NULL is the location-less booking plan 023 introduces: a
+  // service that declares no location options stores nothing here rather than a sentinel id.
+  pickupType: PickupType | null;
   pickupAddress: string | null;
-  // Plan 017 (design decision 3): the resolved meeting point chosen at checkout, when the tour
+  // Plan 017 (design decision 3): the resolved meeting point chosen at checkout, when the service
   // declares more than one. label is a point-in-time snapshot, used only as a fallback when the id
   // is no longer declared in config (see migrations/0014_meeting_points.sql). Both null for
   // pre-0014 rows.
@@ -26,16 +27,17 @@ export interface Booking {
   customerEmail: string | null;
   customerPhone: string | null;
   locale: string;
-  priceCents: number;
+  priceMinor: number;
+  // Lowercase ISO 4217, captured per booking so a currency change in config can never re-denominate
+  // money that was already taken (see core/currency.ts for the minor-unit factor).
+  currency: string;
   status: BookingStatus;
   holdExpiresAt: string | null;
-  stripeSessionId: string | null;
-  stripePaymentIntent: string | null;
+  paymentSessionRef: string | null;
+  paymentRef: string | null;
   calendarEventId: string | null;
-  calendarSynced: boolean;
-  emailSynced: boolean;
-  remindedAt: string | null;
-  reviewRequestedAt: string | null;
+  // Plan 024 declares and validates the consumer's own fields; plan 022 only carries the column.
+  metadata: Record<string, unknown> | null;
   cancelToken: string;
   operatorToken: string;
   cancelledAt: string | null;
@@ -57,9 +59,9 @@ export type BookingPatch = Partial<Omit<Booking, 'id' | 'reference' | 'status'>>
 export interface WireBooking {
   id: string;
   reference: string;
-  tourSlug: string;
-  people: number;
-  pickupType: PickupType;
+  serviceSlug: string;
+  quantity: number;
+  pickupType: PickupType | null;
   pickupAddress: string | null;
   meetingPointId: string | null;
   meetingPointLabel: string | null;
@@ -69,7 +71,8 @@ export interface WireBooking {
   customerEmail: string | null;
   customerPhone: string | null;
   locale: string;
-  priceCents: number;
+  priceMinor: number;
+  currency: string;
   status: BookingStatus;
   cancelledBy: CancellationActor | null;
   rescheduledFrom: string | null;
@@ -81,8 +84,8 @@ export function toWireBooking(booking: Booking): WireBooking {
   return {
     id: booking.id,
     reference: booking.reference,
-    tourSlug: booking.tourSlug,
-    people: booking.people,
+    serviceSlug: booking.serviceSlug,
+    quantity: booking.quantity,
     pickupType: booking.pickupType,
     pickupAddress: booking.pickupAddress,
     meetingPointId: booking.meetingPointId,
@@ -93,7 +96,8 @@ export function toWireBooking(booking: Booking): WireBooking {
     customerEmail: booking.customerEmail,
     customerPhone: booking.customerPhone,
     locale: booking.locale,
-    priceCents: booking.priceCents,
+    priceMinor: booking.priceMinor,
+    currency: booking.currency,
     status: booking.status,
     cancelledBy: booking.cancelledBy,
     rescheduledFrom: booking.rescheduledFrom,

@@ -66,7 +66,7 @@ export async function GET({ request, locals }: APIContext): Promise<Response> {
     });
   }
   payload.token = new URL(request.url).searchParams.get('token') ?? '';
-  if (typeof booking.tourSlug === 'string' && typeof booking.people === 'number') {
+  if (typeof booking.serviceSlug === 'string' && typeof booking.quantity === 'number') {
     const now = nowIso(context);
     const timezone = context.config.business.timezone;
     const from = localDateKey(now, timezone);
@@ -79,8 +79,8 @@ export async function GET({ request, locals }: APIContext): Promise<Response> {
     options.scriptHref = jsAssetHref(context.routeConfig.paths.assetsJs);
     options.availability = {
       endpoint: context.routeConfig.paths.availability,
-      tourSlug: booking.tourSlug,
-      people: booking.people,
+      serviceSlug: booking.serviceSlug,
+      quantity: booking.quantity,
       from,
       to,
     };

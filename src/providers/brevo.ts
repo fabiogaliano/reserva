@@ -1,5 +1,6 @@
 import type { Booking } from '../core/booking';
 import { meetingPointForBooking, pickupOptionFor, type ClientConfig } from '../core/config';
+import { toMajorUnits } from '../core/currency';
 import type { EmailBookingEvent, EmailProvider, EmailRecipientRole } from '../core/events';
 import { ProviderFailure } from '../provider-failure';
 import type { BookkitResolvedRouteConfig } from '../routes-manifest';
@@ -72,28 +73,28 @@ const englishEmailCopy: Record<string, string> = {
   'pickup.pending': 'Custom pickup address pending',
   'contact.lead.whatsapp': 'Questions? Just reply to this email, or call / WhatsApp us:',
   'contact.lead.plain': 'Questions? Just reply to this email, or call us:',
-  'confirmed.customer.subject': 'Booking confirmed: {tourTitle} — {when}',
-  'confirmed.customer.lead': "Your <strong>{tourTitle}</strong> is confirmed — we can't wait to show you around!",
+  'confirmed.customer.subject': 'Booking confirmed: {serviceTitle} — {when}',
+  'confirmed.customer.lead': "Your <strong>{serviceTitle}</strong> is confirmed — we can't wait to show you around!",
   'confirmed.customer.button': 'Manage my booking',
-  'confirmed.owner.subject': 'New booking: {tourTitle} — {when} · {people} {guestsWord}',
-  'confirmed.owner.lead': '<strong>{customerName}</strong> booked <strong>{tourTitle}</strong>.',
+  'confirmed.owner.subject': 'New booking: {serviceTitle} — {when} · {quantity} {guestsWord}',
+  'confirmed.owner.lead': '<strong>{customerName}</strong> booked <strong>{serviceTitle}</strong>.',
   'owner.button': 'Open booking actions',
-  'cancelledByCustomer.customer.subject': 'Booking cancelled: {tourTitle} — {when}',
-  'cancelledByCustomer.customer.lead': 'Your <strong>{tourTitle}</strong> on {when} has been cancelled. If a refund applies, it will reach your account within 5–10 business days.',
-  'cancelledByCustomer.owner.subject': 'Customer cancelled: {tourTitle} — {when}',
-  'cancelledByCustomer.owner.lead': '<strong>{customerName}</strong> cancelled <strong>{tourTitle}</strong>.',
-  'cancelledByOperator.customer.subject': 'Your booking was cancelled: {tourTitle} — {when}',
-  'cancelledByOperator.customer.lead': "We're sorry — your <strong>{tourTitle}</strong> on {when} had to be cancelled. Any payment will be fully refunded within 5–10 business days.",
-  'cancelledByOperator.owner.subject': 'Booking cancelled: {tourTitle} — {when}',
+  'cancelledByCustomer.customer.subject': 'Booking cancelled: {serviceTitle} — {when}',
+  'cancelledByCustomer.customer.lead': 'Your <strong>{serviceTitle}</strong> on {when} has been cancelled. If a refund applies, it will reach your account within 5–10 business days.',
+  'cancelledByCustomer.owner.subject': 'Customer cancelled: {serviceTitle} — {when}',
+  'cancelledByCustomer.owner.lead': '<strong>{customerName}</strong> cancelled <strong>{serviceTitle}</strong>.',
+  'cancelledByOperator.customer.subject': 'Your booking was cancelled: {serviceTitle} — {when}',
+  'cancelledByOperator.customer.lead': "We're sorry — your <strong>{serviceTitle}</strong> on {when} had to be cancelled. Any payment will be fully refunded within 5–10 business days.",
+  'cancelledByOperator.owner.subject': 'Booking cancelled: {serviceTitle} — {when}',
   'cancelledByOperator.owner.lead': 'Booking <strong>{reference}</strong> was cancelled by the operator.',
-  'rescheduled.customer.subject': 'Booking rescheduled: {tourTitle} — {when}',
-  'rescheduled.customer.lead': 'Your <strong>{tourTitle}</strong> has a new date.',
+  'rescheduled.customer.subject': 'Booking rescheduled: {serviceTitle} — {when}',
+  'rescheduled.customer.lead': 'Your <strong>{serviceTitle}</strong> has a new date.',
   'rescheduled.customer.button': 'Manage my booking',
-  'rescheduled.owner.subject': 'Booking rescheduled: {tourTitle} — {when}',
+  'rescheduled.owner.subject': 'Booking rescheduled: {serviceTitle} — {when}',
   'rescheduled.owner.lead': 'Booking <strong>{reference}</strong> is now scheduled for {when}.',
-  'noShow.customer.subject': 'Booking update: {tourTitle} — {when}',
-  'noShow.customer.lead': 'Your booking for <strong>{tourTitle}</strong> on {when} was marked as a no-show. If you think this is a mistake, just reply to this email.',
-  'noShow.owner.subject': 'No-show: {tourTitle} — {when}',
+  'noShow.customer.subject': 'Booking update: {serviceTitle} — {when}',
+  'noShow.customer.lead': 'Your booking for <strong>{serviceTitle}</strong> on {when} was marked as a no-show. If you think this is a mistake, just reply to this email.',
+  'noShow.owner.subject': 'No-show: {serviceTitle} — {when}',
   'noShow.owner.lead': 'Booking <strong>{reference}</strong> was marked as a no-show.',
 };
 
@@ -116,28 +117,28 @@ const portuguesePortugalEmailCopy: Record<string, string> = {
   'pickup.pending': 'Endereço de recolha a confirmar',
   'contact.lead.whatsapp': 'Dúvidas? Responda a este email, ou contacte-nos por telefone / WhatsApp:',
   'contact.lead.plain': 'Dúvidas? Responda a este email, ou ligue-nos:',
-  'confirmed.customer.subject': 'Reserva confirmada: {tourTitle} — {when}',
-  'confirmed.customer.lead': 'A sua reserva de <strong>{tourTitle}</strong> está confirmada — mal podemos esperar por si!',
+  'confirmed.customer.subject': 'Reserva confirmada: {serviceTitle} — {when}',
+  'confirmed.customer.lead': 'A sua reserva de <strong>{serviceTitle}</strong> está confirmada — mal podemos esperar por si!',
   'confirmed.customer.button': 'Gerir a minha reserva',
-  'confirmed.owner.subject': 'Nova reserva: {tourTitle} — {when} · {people} {guestsWord}',
-  'confirmed.owner.lead': '<strong>{customerName}</strong> reservou <strong>{tourTitle}</strong>.',
+  'confirmed.owner.subject': 'Nova reserva: {serviceTitle} — {when} · {quantity} {guestsWord}',
+  'confirmed.owner.lead': '<strong>{customerName}</strong> reservou <strong>{serviceTitle}</strong>.',
   'owner.button': 'Abrir ações da reserva',
-  'cancelledByCustomer.customer.subject': 'Reserva cancelada: {tourTitle} — {when}',
-  'cancelledByCustomer.customer.lead': 'A sua reserva de <strong>{tourTitle}</strong> para {when} foi cancelada. Se houver lugar a reembolso, será creditado na sua conta em 5–10 dias úteis.',
-  'cancelledByCustomer.owner.subject': 'Cancelamento pelo cliente: {tourTitle} — {when}',
-  'cancelledByCustomer.owner.lead': '<strong>{customerName}</strong> cancelou <strong>{tourTitle}</strong>.',
-  'cancelledByOperator.customer.subject': 'A sua reserva foi cancelada: {tourTitle} — {when}',
-  'cancelledByOperator.customer.lead': 'Lamentamos — a sua reserva de <strong>{tourTitle}</strong> para {when} teve de ser cancelada. Qualquer pagamento será totalmente reembolsado em 5–10 dias úteis.',
-  'cancelledByOperator.owner.subject': 'Reserva cancelada: {tourTitle} — {when}',
+  'cancelledByCustomer.customer.subject': 'Reserva cancelada: {serviceTitle} — {when}',
+  'cancelledByCustomer.customer.lead': 'A sua reserva de <strong>{serviceTitle}</strong> para {when} foi cancelada. Se houver lugar a reembolso, será creditado na sua conta em 5–10 dias úteis.',
+  'cancelledByCustomer.owner.subject': 'Cancelamento pelo cliente: {serviceTitle} — {when}',
+  'cancelledByCustomer.owner.lead': '<strong>{customerName}</strong> cancelou <strong>{serviceTitle}</strong>.',
+  'cancelledByOperator.customer.subject': 'A sua reserva foi cancelada: {serviceTitle} — {when}',
+  'cancelledByOperator.customer.lead': 'Lamentamos — a sua reserva de <strong>{serviceTitle}</strong> para {when} teve de ser cancelada. Qualquer pagamento será totalmente reembolsado em 5–10 dias úteis.',
+  'cancelledByOperator.owner.subject': 'Reserva cancelada: {serviceTitle} — {when}',
   'cancelledByOperator.owner.lead': 'A reserva <strong>{reference}</strong> foi cancelada pelo operador.',
-  'rescheduled.customer.subject': 'Reserva alterada: {tourTitle} — {when}',
-  'rescheduled.customer.lead': 'A sua reserva de <strong>{tourTitle}</strong> tem uma nova data.',
+  'rescheduled.customer.subject': 'Reserva alterada: {serviceTitle} — {when}',
+  'rescheduled.customer.lead': 'A sua reserva de <strong>{serviceTitle}</strong> tem uma nova data.',
   'rescheduled.customer.button': 'Gerir a minha reserva',
-  'rescheduled.owner.subject': 'Reserva alterada: {tourTitle} — {when}',
+  'rescheduled.owner.subject': 'Reserva alterada: {serviceTitle} — {when}',
   'rescheduled.owner.lead': 'A reserva <strong>{reference}</strong> está agora marcada para {when}.',
-  'noShow.customer.subject': 'Atualização da reserva: {tourTitle} — {when}',
-  'noShow.customer.lead': 'A sua reserva de <strong>{tourTitle}</strong> para {when} foi marcada como não comparecimento. Se acha que se trata de um erro, responda a este email.',
-  'noShow.owner.subject': 'Não comparecimento: {tourTitle} — {when}',
+  'noShow.customer.subject': 'Atualização da reserva: {serviceTitle} — {when}',
+  'noShow.customer.lead': 'A sua reserva de <strong>{serviceTitle}</strong> para {when} foi marcada como não comparecimento. Se acha que se trata de um erro, responda a este email.',
+  'noShow.owner.subject': 'Não comparecimento: {serviceTitle} — {when}',
   'noShow.owner.lead': 'A reserva <strong>{reference}</strong> foi marcada como não comparecimento.',
 };
 
@@ -215,20 +216,20 @@ function buildModel(context: BrevoEmailTemplateContext): EmailModel {
   const { event, booking, config, locale, recipient } = context;
   const copy = (key: string) => emailString(config, locale, key);
   const eventKey = eventCopyKey[event];
-  const tour = config.tours[booking.tourSlug];
-  const tourTitle = tour?.title ?? booking.tourSlug;
+  const service = config.services[booking.serviceSlug];
+  const serviceTitle = service?.title ?? booking.serviceSlug;
   const formatLocale = formatLocaleFor(locale);
   const timeZone = config.business.timezone;
   const startsAt = new Date(booking.startsAt);
   const time = new Intl.DateTimeFormat(formatLocale, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone }).format(startsAt);
   const when = `${new Intl.DateTimeFormat(formatLocale, { weekday: 'short', day: 'numeric', month: 'short', timeZone }).format(startsAt)}, ${time}`;
   const dateLong = new Intl.DateTimeFormat(formatLocale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone }).format(startsAt);
-  const guestsWord = copy(booking.people === 1 ? 'word.guest' : 'word.guests');
+  const guestsWord = copy(booking.quantity === 1 ? 'word.guest' : 'word.guests');
   const customerName = booking.customerName ?? '';
 
   const rawValues: Record<string, string> = {
-    tourTitle, when, customerName, reference: booking.reference,
-    people: String(booking.people), guestsWord, startsAtLocal: context.startsAtLocal,
+    serviceTitle, when, customerName, reference: booking.reference,
+    quantity: String(booking.quantity), guestsWord, startsAtLocal: context.startsAtLocal,
   };
   const htmlValues = Object.fromEntries(Object.entries(rawValues).map(([key, value]) => [key, escapeHtml(value)]));
 
@@ -236,8 +237,8 @@ function buildModel(context: BrevoEmailTemplateContext): EmailModel {
   // to the booking's stored label snapshot with no maps link. Plan 018 (design decision 8): the
   // requiresAddress/usesMeetingPoint gates are independent, so an option declaring both renders
   // both the collected address and the meeting-point row.
-  const resolvedPoint = tour ? meetingPointForBooking(tour, booking.meetingPointId ?? null, booking.meetingPointLabel ?? null) : null;
-  const option = tour ? pickupOptionFor(tour, booking.pickupType) : undefined;
+  const resolvedPoint = service ? meetingPointForBooking(service, booking.meetingPointId ?? null, booking.meetingPointLabel ?? null) : null;
+  const option = service ? pickupOptionFor(service, booking.pickupType) : undefined;
   const requiresAddress = option ? option.requiresAddress : booking.pickupType === 'custom';
   const usesMeetingPoint = option ? option.usesMeetingPoint : booking.pickupType === 'default';
 
@@ -261,10 +262,10 @@ function buildModel(context: BrevoEmailTemplateContext): EmailModel {
   const leadHtml = `<p style="margin:0 0 26px;font-size:17px;line-height:1.5;">${interpolate(copy(`${eventKey}.${recipient}.lead`), htmlValues)}</p>`;
 
   if (recipient === 'owner') {
-    const price = new Intl.NumberFormat(formatLocale, { style: 'currency', currency: config.business.currency.toUpperCase() }).format(booking.priceCents / 100);
+    const price = new Intl.NumberFormat(formatLocale, { style: 'currency', currency: config.business.currency.toUpperCase() }).format(toMajorUnits(booking.priceMinor, config.business.currency));
     const card: EmailCardRow[] = [
       { label: copy('label.date'), valueHtml: `<strong>${escapeHtml(`${dateLong}, ${time}`)}</strong>`, valueText: `${dateLong}, ${time}` },
-      { label: copy('label.guests'), valueHtml: `<strong>${booking.people}</strong>`, valueText: String(booking.people) },
+      { label: copy('label.guests'), valueHtml: `<strong>${booking.quantity}</strong>`, valueText: String(booking.quantity) },
       { label: copy('label.paid'), valueHtml: `<strong>${escapeHtml(price)}</strong>`, valueText: price },
       ...pickupRows,
       ...(booking.customerEmail ? [{ label: copy('label.email'), valueHtml: `<a href="mailto:${escapeHtml(booking.customerEmail)}" style="color:inherit;">${escapeHtml(booking.customerEmail)}</a>`, valueText: booking.customerEmail }] : []),
@@ -289,7 +290,7 @@ function buildModel(context: BrevoEmailTemplateContext): EmailModel {
     ? [
         { label: copy('label.date'), valueHtml: `<strong>${escapeHtml(dateLong)}</strong>`, valueText: dateLong },
         { label: copy('label.time'), valueHtml: `<strong>${escapeHtml(time)}</strong>`, valueText: time },
-        { label: copy('label.guests'), valueHtml: `<strong>${booking.people}</strong>`, valueText: String(booking.people) },
+        { label: copy('label.guests'), valueHtml: `<strong>${booking.quantity}</strong>`, valueText: String(booking.quantity) },
         ...pickupRows,
       ]
     : [];

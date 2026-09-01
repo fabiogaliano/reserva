@@ -1,4 +1,4 @@
-import type { TourConfig } from './config';
+import type { ServiceConfig } from './config';
 import type { Booking } from './booking';
 import type { GeneratedSlot } from './slots';
 import { addMinutes, compareInstants, parseUtcInstant } from './time';
@@ -38,22 +38,22 @@ export interface OccupancyInterval {
   eventId?: string;
 }
 
-export type OccupancyTour = Pick<TourConfig, 'turnaroundMin' | 'occupancyFor'>;
-export type OccupancyTourResolver = (tourSlug: string) => OccupancyTour | undefined;
-export type OccupancyTourMap = ReadonlyMap<string, OccupancyTour> | Readonly<Record<string, OccupancyTour>>;
+export type OccupancyService = Pick<ServiceConfig, 'turnaroundMin' | 'occupancyFor'>;
+export type OccupancyServiceResolver = (serviceSlug: string) => OccupancyService | undefined;
+export type OccupancyServiceMap = ReadonlyMap<string, OccupancyService> | Readonly<Record<string, OccupancyService>>;
 
-export type OccupancyBooking = Pick<Booking, 'id' | 'status' | 'startsAt' | 'endsAt' | 'holdExpiresAt' | 'people'> & {
+export type OccupancyBooking = Pick<Booking, 'id' | 'status' | 'startsAt' | 'endsAt' | 'holdExpiresAt' | 'quantity'> & {
   calendarEventId?: string | null;
-  tourSlug?: string;
+  serviceSlug?: string;
 };
 
 export interface OccupancyIntervalOptions {
   bookings: readonly OccupancyBooking[];
   calendarEvents?: readonly CalEvent[];
-  tour: OccupancyTour;
-  tours?: OccupancyTourMap;
-  tourResolver?: OccupancyTourResolver;
-  resolveTour?: OccupancyTourResolver;
+  service: OccupancyService;
+  services?: OccupancyServiceMap;
+  serviceResolver?: OccupancyServiceResolver;
+  resolveService?: OccupancyServiceResolver;
   now?: string | Date;
   from?: string | Date;
   to?: string | Date;
@@ -70,14 +70,14 @@ export interface SlotAvailabilityOptions {
 export interface DayAvailabilityOptions {
   date: string;
   timezone: string;
-  tour: TourConfig;
+  service: ServiceConfig;
   capacity: number;
   bookings: readonly OccupancyBooking[];
   calendarEvents?: readonly CalEvent[];
-  tours?: OccupancyTourMap;
-  tourResolver?: OccupancyTourResolver;
-  resolveTour?: OccupancyTourResolver;
-  requestedPeople: number;
+  services?: OccupancyServiceMap;
+  serviceResolver?: OccupancyServiceResolver;
+  resolveService?: OccupancyServiceResolver;
+  requestedQuantity: number;
   now?: string | Date;
   minNoticeHours?: number;
   maxHorizonDays?: number;
@@ -127,28 +127,28 @@ function overlaps(start: string, end: string, windowStart?: string | Date, windo
   return true;
 }
 
-export function occupancyFor(tour: Pick<TourConfig, 'occupancyFor'>, people: number): number {
-  const units = tour.occupancyFor ? tour.occupancyFor(people) : 1;
+export function occupancyFor(service: Pick<ServiceConfig, 'occupancyFor'>, quantity: number): number {
+  const units = service.occupancyFor ? service.occupancyFor(quantity) : 1;
   if (!Number.isInteger(units) || units < 1) throw new RangeError('occupancyFor must return a positive integer');
   return units;
 }
 
-function tourForBooking(booking: OccupancyBooking, options: OccupancyIntervalOptions): OccupancyTour {
-  if (!booking.tourSlug) return options.tour;
-  const resolver = options.tourResolver ?? options.resolveTour;
+function serviceForBooking(booking: OccupancyBooking, options: OccupancyIntervalOptions): OccupancyService {
+  if (!booking.serviceSlug) return options.service;
+  const resolver = options.serviceResolver ?? options.resolveService;
   if (resolver) {
-    const resolved = resolver(booking.tourSlug);
-    if (!resolved) throw new RangeError(`Unknown occupancy tour: ${booking.tourSlug}`);
+    const resolved = resolver(booking.serviceSlug);
+    if (!resolved) throw new RangeError(`Unknown occupancy service: ${booking.serviceSlug}`);
     return resolved;
   }
-  if (options.tours) {
-    const resolved = typeof (options.tours as ReadonlyMap<string, OccupancyTour>).get === 'function'
-      ? (options.tours as ReadonlyMap<string, OccupancyTour>).get(booking.tourSlug)
-      : (options.tours as Readonly<Record<string, OccupancyTour>>)[booking.tourSlug];
-    if (!resolved) throw new RangeError(`Unknown occupancy tour: ${booking.tourSlug}`);
+  if (options.services) {
+    const resolved = typeof (options.services as ReadonlyMap<string, OccupancyService>).get === 'function'
+      ? (options.services as ReadonlyMap<string, OccupancyService>).get(booking.serviceSlug)
+      : (options.services as Readonly<Record<string, OccupancyService>>)[booking.serviceSlug];
+    if (!resolved) throw new RangeError(`Unknown occupancy service: ${booking.serviceSlug}`);
     return resolved;
   }
-  return options.tour;
+  return options.service;
 }
 
 export function getOccupancyIntervals(options: OccupancyIntervalOptions): OccupancyInterval[] {
@@ -161,7 +161,7 @@ export function getOccupancyIntervals(options: OccupancyIntervalOptions): Occupa
   for (const booking of options.bookings) {
     if (seenBookingIds.has(booking.id) || booking.id === options.excludeBookingId || !bookingIsActive(booking, now)) continue;
     seenBookingIds.add(booking.id);
-    const bookingTour = tourForBooking(booking, options);
+    const bookingService = serviceForBooking(booking, options);
     let start: string;
     let end: string;
     try {
@@ -169,13 +169,13 @@ export function getOccupancyIntervals(options: OccupancyIntervalOptions): Occupa
       const endDate = parseUtcInstant(booking.endsAt);
       if (endDate.getTime() <= startDate.getTime()) continue;
       start = startDate.toISOString();
-      end = addMinutes(endDate, bookingTour.turnaroundMin).toISOString();
+      end = addMinutes(endDate, bookingService.turnaroundMin).toISOString();
       if (parseUtcInstant(end).getTime() <= startDate.getTime()) continue;
     } catch {
       continue;
     }
     if (overlaps(start, end, options.from, options.to)) {
-      intervals.push({ start, end, units: occupancyFor(bookingTour, booking.people), source: 'booking', bookingId: booking.id });
+      intervals.push({ start, end, units: occupancyFor(bookingService, booking.quantity), source: 'booking', bookingId: booking.id });
     }
   }
   const seenCalendarEventIds = new Set<string>();
@@ -206,7 +206,7 @@ export function resolveCapacity(defaultCapacity: number, override?: Pick<DayCapa
   return Math.max(0, Math.floor(value));
 }
 
-// A fleet-level default that applies from a date onwards ("a van is out of service starting
+// A capacity-level default that applies from a date onwards ("a van is out of service starting
 // Aug 10"), until superseded by a later entry. Per-day overrides still trump the result.
 export interface CapacityDefault {
   fromDate: string;
@@ -304,11 +304,11 @@ export function slotRemaining(
   return remainingCapacity(options.capacity, options.intervals, slotStart, end);
 }
 
-// How many more bookings of this party size still fit in the remaining fleet units — a slot with
+// How many more bookings of this party size still fit in the remaining capacity units — a slot with
 // 3 units left and a 2-unit party has room for 1 more booking, not 3. occupancyFor always returns
 // a positive integer (it throws otherwise), so this never divides by zero.
-export function remainingBookings(remainingUnits: number, tour: Pick<TourConfig, 'occupancyFor'>, people: number): number {
-  return Math.floor(remainingUnits / occupancyFor(tour, people));
+export function remainingBookings(remainingUnits: number, service: Pick<ServiceConfig, 'occupancyFor'>, quantity: number): number {
+  return Math.floor(remainingUnits / occupancyFor(service, quantity));
 }
 
 function isWithinRequestWindow(slot: GeneratedSlot, options: DayAvailabilityOptions, now: Date): boolean {
@@ -323,7 +323,7 @@ function isWithinRequestWindow(slot: GeneratedSlot, options: DayAvailabilityOpti
 }
 
 export function availabilityForDay(options: DayAvailabilityOptions): DayAvailability {
-  if (resolveCapacity(options.capacity) === 0 || !scheduleForDate(options.tour, options.date, options.timezone)) {
+  if (resolveCapacity(options.capacity) === 0 || !scheduleForDate(options.service, options.date, options.timezone)) {
     return {
       date: options.date,
       status: 'closed',
@@ -336,14 +336,14 @@ export function availabilityForDay(options: DayAvailabilityOptions): DayAvailabi
   const intervals = getOccupancyIntervals({
     bookings: options.bookings,
     ...(options.calendarEvents ? { calendarEvents: options.calendarEvents } : {}),
-    tour: options.tour,
-    ...(options.tours ? { tours: options.tours } : {}),
-    ...(options.tourResolver ? { tourResolver: options.tourResolver } : {}),
-    ...(options.resolveTour ? { resolveTour: options.resolveTour } : {}),
+    service: options.service,
+    ...(options.services ? { services: options.services } : {}),
+    ...(options.serviceResolver ? { serviceResolver: options.serviceResolver } : {}),
+    ...(options.resolveService ? { resolveService: options.resolveService } : {}),
     now,
     ...(options.excludeBookingId ? { excludeBookingId: options.excludeBookingId } : {}),
   });
-  const requestedUnits = occupancyFor(options.tour, options.requestedPeople);
+  const requestedUnits = occupancyFor(options.service, options.requestedQuantity);
   const slots = candidates
     .filter((slot) => isWithinRequestWindow(slot, options, now))
     .map((slot) => ({
@@ -351,24 +351,24 @@ export function availabilityForDay(options: DayAvailabilityOptions): DayAvailabi
       remaining: slotRemaining(slot.utcStart, slot.utcEnd, {
         capacity: options.capacity,
         intervals,
-        turnaroundMin: options.tour.turnaroundMin,
+        turnaroundMin: options.service.turnaroundMin,
       }),
     }))
     .filter(({ slot, remaining }) => isSlotAvailable(slot.utcStart, slot.utcEnd, {
       capacity: options.capacity,
       intervals,
       requestedUnits,
-      turnaroundMin: options.tour.turnaroundMin,
+      turnaroundMin: options.service.turnaroundMin,
     }) && remaining > 0)
     .map(({ slot, remaining }) => ({
       start: slot.start,
       remaining,
-      remainingBookings: remainingBookings(remaining, options.tour, options.requestedPeople),
+      remainingBookings: remainingBookings(remaining, options.service, options.requestedQuantity),
     }));
   const status = slots.length === 0 ? 'full' : slots.length <= options.limitedThreshold ? 'limited' : 'available';
   return { date: options.date, status, slots };
 }
 
 function generateDaySlots(options: DayAvailabilityOptions): GeneratedSlot[] {
-  return generateSlots(options.tour, options.date, options.timezone);
+  return generateSlots(options.service, options.date, options.timezone);
 }

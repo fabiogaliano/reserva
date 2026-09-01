@@ -33,24 +33,19 @@ export function settingsPage(context: BookkitContext, storedRows: Record<string,
   const base = context.baseConfig ?? context.config;
   const sectionTitles: Record<SettingSection, string> = {
     policy: messages['admin.sectionPolicy'],
-    fleet: messages['admin.sectionFleet'],
+    capacity: messages['admin.sectionCapacity'],
     contact: messages['admin.sectionContact'],
-    payments: messages['admin.sectionPayments'],
     legal: messages['admin.sectionLegal'],
   };
   const sectionHints: Record<SettingSection, string> = {
     policy: messages['admin.sectionPolicyHint'],
-    fleet: messages['admin.sectionFleetHint'],
+    capacity: messages['admin.sectionCapacityHint'],
     contact: messages['admin.sectionContactHint'],
-    payments: messages['admin.sectionPaymentsHint'],
     legal: messages['admin.sectionLegalHint'],
   };
-  const methodLabel = (method: string): string =>
-    method === 'card' ? messages['setting.paymentsCard'] : messages['setting.paymentsMbway'];
   const displayValue = (value: SettingValue): string => {
     if (value === null) return messages['admin.none'];
     if (typeof value === 'boolean') return value ? messages['admin.on'] : messages['admin.off'];
-    if (Array.isArray(value)) return value.map(methodLabel).join(', ');
     return String(value);
   };
 
@@ -70,12 +65,6 @@ export function settingsPage(context: BookkitContext, storedRows: Record<string,
     const kind = definition.kind;
     if (kind.type === 'boolean') {
       return `<div class="bk-setting"><label class="bk-switch"><input type="checkbox" name="${escapeHtml(definition.key)}"${effective ? ' checked' : ''}><span>${escapeHtml(label)}</span></label>${help}${modified}</div>`;
-    }
-    if (kind.type === 'methods') {
-      const selected = new Set(effective as string[]);
-      const boxes = (['card', 'mb_way'] as const).map((method) =>
-        `<label class="bk-check"><input type="checkbox" name="${escapeHtml(definition.key)}" value="${method}"${selected.has(method) ? ' checked' : ''}><span>${escapeHtml(methodLabel(method))}</span></label>`).join('');
-      return `<div class="bk-setting"><fieldset class="bk-fieldset"><legend>${escapeHtml(label)}</legend>${boxes}</fieldset>${help}${modified}</div>`;
     }
     const inputType = kind.type === 'int' || kind.type === 'number' ? 'number' : kind.type === 'email' ? 'email' : kind.type === 'url' ? 'url' : 'text';
     const constraints = kind.type === 'int' ? ` min="${kind.min}"${kind.max !== undefined ? ` max="${kind.max}"` : ''} step="1"${kind.optional ? '' : ' required'}`
@@ -114,7 +103,7 @@ export function settingsPage(context: BookkitContext, storedRows: Record<string,
       [messages['setting.locales'], escapeHtml(context.config.locales.supported.join(', '))],
       [messages['setting.shortCode'], escapeHtml(context.config.business.shortCode)],
       [messages['setting.siteUrl'], escapeHtml(context.config.business.url)],
-      [messages['setting.tours'], escapeHtml(Object.keys(context.config.tours).join(', '))],
+      [messages['setting.services'], escapeHtml(Object.keys(context.config.services).join(', '))],
     ])
     + `</section>`;
 

@@ -33,43 +33,51 @@ export interface DomainBookingEvent extends BookingEventPayload {
   booking: Booking;
 }
 
-export interface StripeCustomerDetails {
+export interface PaymentCustomerDetails {
   customerName?: string | null;
   customerEmail?: string | null;
   customerPhone?: string | null;
   pickupAddress?: string | null;
 }
 
-export interface StripeEventParsed extends StripeCustomerDetails {
+// Plan 022 (design decision 7): the closed set of payment events Reserva reacts to, exported as a
+// runtime VALUE so a provider author (or an agent) can enumerate every case an adapter has to map
+// its vendor's event names onto. A provider that parses an event outside this set returns its own
+// vendor string and Reserva ignores it, which is why `type` stays open.
+export const PAYMENT_EVENTS = [
+  'checkout_completed',
+  'checkout_expired',
+  'refunded',
+  'dispute_created',
+] as const;
+
+export type PaymentEvent = (typeof PAYMENT_EVENTS)[number];
+
+export interface PaymentEventParsed extends PaymentCustomerDetails {
   id: string;
-  type:
-    | 'checkout.session.completed'
-    | 'checkout.session.expired'
-    | 'charge.refunded'
-    | 'charge.dispute.created'
-    | string;
+  type: PaymentEvent | (string & {});
   bookingId?: string;
-  sessionId?: string;
-  paymentIntent?: string;
+  sessionRef?: string;
+  paymentRef?: string;
   amountCaptured?: number;
   amountRefunded?: number;
   currency?: string;
   paymentStatus?: 'paid' | 'unpaid' | 'no_payment_required' | string;
-  // The Stripe Refund id for a charge.refunded event, when Stripe's payload includes one (see
-  // stripeEventToParsed) — lets the webhook branch record which refund actually moved the money,
-  // not just that a refund happened (BK-REFUND-001).
-  refundId?: string;
+  // The provider's own id for the refund a 'refunded' event describes, when its payload carries one
+  // — lets the webhook branch record which refund actually moved the money, not just that a refund
+  // happened (BK-REFUND-001).
+  refundRef?: string;
   paid?: boolean;
   raw?: unknown;
 }
 
-export interface SessionStatus extends StripeCustomerDetails {
+export interface SessionStatus extends PaymentCustomerDetails {
   id?: string;
   status: 'open' | 'complete' | 'expired' | string;
   paymentStatus?: 'paid' | 'unpaid' | 'no_payment_required' | string;
   amountTotal?: number;
   currency?: string;
-  paymentIntent?: string | null;
+  paymentRef?: string | null;
   metadata?: Record<string, string>;
 }
 
@@ -111,17 +119,28 @@ export interface CalendarProvider {
   deleteEvent(eventId: string): Promise<void>;
 }
 
+// Plan 022 (design decision 7): provider-neutral by construction — no name here belongs to any one
+// payment vendor. Reserva ships and tests exactly one implementation (Stripe), but a community
+// adapter implements this same interface from its own package, using only the exported core types
+// and helpers. Amounts are always minor units of the booking's own currency (core/currency.ts); a
+// "ref" is whatever opaque identifier the provider uses for that object.
 export interface PaymentProvider {
   createCheckout(
     booking: Booking,
     config: ClientConfig,
     routePaths?: BookkitResolvedRouteConfig['paths'],
-  ): Promise<{ url: string; sessionId: string }>;
-  parseWebhook(request: Request): Promise<StripeEventParsed>;
-  getSession(sessionId: string): Promise<SessionStatus>;
+  ): Promise<{ url: string; sessionRef: string }>;
+  parseWebhook(request: Request): Promise<PaymentEventParsed>;
+  getSession(sessionRef: string): Promise<SessionStatus>;
   // The expected total lets a retry distinguish an incomplete historical partial refund from a
-  // completed full refund; amountCents reports the cumulative total the operation satisfied.
-  refund(paymentIntent: string, expectedAmountCents: number): Promise<{ refundId: string; amountCents: number }>;
+  // completed full refund; amountMinor reports the cumulative total the operation satisfied.
+  refund(paymentRef: string, expectedAmountMinor: number): Promise<{ refundRef: string; amountMinor: number }>;
+  // Optional synchronous config check, invoked exactly once while the runtime definition
+  // initializes (runtime-context.ts) — never per request and never at first checkout. This is where
+  // a provider's OWN limits live (its supported currencies and locales, how long it lets a checkout
+  // session stay open), so core config validation can stay vendor-neutral. Throw with the offending
+  // config path and the fix; the deployment fails before it serves anything.
+  validateConfig?(config: ClientConfig): void;
 }
 
 export function isBookingEvent(value: string): value is BookingEvent {

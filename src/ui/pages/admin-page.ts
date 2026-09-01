@@ -1,5 +1,5 @@
 import type { Booking } from '../../core/booking';
-import { adminLocaleFor, meetingPointForBooking, pickupOptionFor, resolveTour, type TourConfig } from '../../core/config';
+import { adminLocaleFor, meetingPointForBooking, pickupOptionFor, resolveService, type ServiceConfig } from '../../core/config';
 import { defaultCapacityForDate, occupancyFor, type CapacityDefault } from '../../core/occupancy';
 import { enumerateDateKeys, localDateKey, utcToLocalIso } from '../../core/time';
 import type { BookkitContext } from '../../context';
@@ -47,18 +47,18 @@ function adminSectionNav(messages: ReturnType<typeof resolveMessages>, hasIncide
 // Plan 017 (design decision 4) / Plan 018 (design decision 8): the meeting-point label the
 // bookings-table row actually displays — '' when the row shows none. Shared by the row renderer
 // and the search haystack so search can only ever match visible text: only an option that starts
-// at a meeting point surfaces a choice, and only when the tour declares more than one (a
-// single-point tour's sub-line would just repeat what "Meeting point" implies). resolveTour throws
-// for a tourSlug no longer in the live config (renamed/removed since the booking was made) —
+// at a meeting point surfaces a choice, and only when the service declares more than one (a
+// single-point service's sub-line would just repeat what "Meeting point" implies). resolveService throws
+// for a serviceSlug no longer in the live config (renamed/removed since the booking was made) —
 // degrade to no label rather than 500 the whole admin page, the same tolerance the day-calendar
 // unit aggregation below already applies.
 function adminMeetingPointSubLabel(config: BookkitContext['config'], booking: Booking): string {
   try {
-    const tour = resolveTour(config, booking.tourSlug);
-    const option = pickupOptionFor(tour, booking.pickupType);
+    const service = resolveService(config, booking.serviceSlug);
+    const option = pickupOptionFor(service, booking.pickupType);
     const usesMeetingPoint = option ? option.usesMeetingPoint : booking.pickupType === 'default';
-    if (!usesMeetingPoint || (tour.meetingPoints?.length ?? 0) <= 1) return '';
-    return meetingPointForBooking(tour, booking.meetingPointId, booking.meetingPointLabel).label;
+    if (!usesMeetingPoint || (service.meetingPoints?.length ?? 0) <= 1) return '';
+    return meetingPointForBooking(service, booking.meetingPointId, booking.meetingPointLabel).label;
   } catch {
     return '';
   }
@@ -70,7 +70,7 @@ export function matchesAdminFilters(booking: Booking, filters: AdminFilters, con
     const needle = filters.q.toLowerCase();
     // adminMeetingPointSubLabel is exactly what the row displays (it is the renderer's own
     // source), so a hidden meeting point can never make a booking match.
-    const haystack = [booking.reference, booking.tourSlug, booking.pickupType, booking.pickupAddress ?? '', adminMeetingPointSubLabel(config, booking), booking.customerName ?? '', booking.customerEmail ?? ''].join(' ').toLowerCase();
+    const haystack = [booking.reference, booking.serviceSlug, booking.pickupType, booking.pickupAddress ?? '', adminMeetingPointSubLabel(config, booking), booking.customerName ?? '', booking.customerEmail ?? ''].join(' ').toLowerCase();
     if (!haystack.includes(needle)) return false;
   }
   return true;
@@ -212,15 +212,15 @@ export function adminPage(
     const customerSub = booking.customerName && booking.customerEmail
       ? `<span class="bk-sub">${escapeHtml(booking.customerEmail)}</span>`
       : '';
-    const people = formatMessage(booking.people === 1 ? messages['widget.person'] : messages['widget.peopleCount'], { n: booking.people });
-    const price = formatPrice(booking.priceCents, locale, context.config.business.currency);
-    // Plan 018 (design decision 8): resolveTour throws for a renamed/removed tourSlug (see
+    const quantity = formatMessage(booking.quantity === 1 ? messages['widget.person'] : messages['widget.quantityCount'], { n: booking.quantity });
+    const price = formatPrice(booking.priceMinor, locale, context.config.business.currency);
+    // Plan 018 (design decision 8): resolveService throws for a renamed/removed serviceSlug (see
     // adminMeetingPointLabel above) — degrade option to undefined rather than 500 the row; every
     // gate below then falls back to the pre-018 pickupType-keyed check, so a legacy default/custom
-    // booking (or a booking whose tour disappeared) renders exactly as it did before this plan.
-    let rowTour: TourConfig | undefined;
+    // booking (or a booking whose service disappeared) renders exactly as it did before this plan.
+    let rowTour: ServiceConfig | undefined;
     try {
-      rowTour = resolveTour(context.config, booking.tourSlug);
+      rowTour = resolveService(context.config, booking.serviceSlug);
     } catch {
       rowTour = undefined;
     }
@@ -252,7 +252,7 @@ export function adminPage(
     return `<tr>`
       + `<td data-label="${escapeHtml(messages['common.date'])}">${escapeHtml(formatDateTime(utcToLocalIso(booking.startsAt, timezone), locale, timezone))}<span class="bk-sub bk-mono">${escapeHtml(booking.reference)}</span></td>`
       + `<td data-label="${escapeHtml(messages['common.customer'])}"><strong>${escapeHtml(customerPrimary)}</strong>${customerSub}</td>`
-      + `<td data-label="${escapeHtml(messages['common.tour'])}">${escapeHtml(booking.tourSlug)}<span class="bk-sub">${escapeHtml(people)} · ${escapeHtml(price)}</span></td>`
+      + `<td data-label="${escapeHtml(messages['common.service'])}">${escapeHtml(booking.serviceSlug)}<span class="bk-sub">${escapeHtml(quantity)} · ${escapeHtml(price)}</span></td>`
       + `<td data-label="${escapeHtml(messages['common.pickup'])}">${escapeHtml(pickupLabel)}${pickupSub}${meetingPointSub}</td>`
       + `<td data-label="${escapeHtml(messages['common.status'])}">${statusBadge(booking.status, messages)}</td>`
       + `<td class="bk-table-action" data-label="${escapeHtml(messages['admin.manage'])}">${manageCell}</td>`
@@ -267,10 +267,10 @@ export function adminPage(
     if (list) list.push(booking);
     else bookingsByDate.set(date, [booking]);
   }
-  // Fleet units consumed per day, not raw booking-row counts: a single 5-person booking on a
+  // Capacity units consumed per day, not raw booking-row counts: a single 5-person booking on a
   // 4-seat vehicle occupies 2 vans (occupancyFor), and checkout enforces capacity in units, so the
   // admin calendar must count in the same unit or a day can read "1/2" while it is actually full.
-  // resolveTour throws for a tourSlug no longer in the live config (e.g. renamed/removed since the
+  // resolveService throws for a serviceSlug no longer in the live config (e.g. renamed/removed since the
   // booking was made) — unlike a single-booking lookup, this aggregates every booking in the
   // rendered horizon, so one stale row must degrade to counting itself as one unit, not 500 the
   // whole admin calendar.
@@ -278,7 +278,7 @@ export function adminPage(
     date,
     list.reduce((total, b) => {
       try {
-        return total + occupancyFor(resolveTour(context.config, b.tourSlug), b.people);
+        return total + occupancyFor(resolveService(context.config, b.serviceSlug), b.quantity);
       } catch {
         return total + 1;
       }
@@ -286,8 +286,8 @@ export function adminPage(
   ]));
   const formatDayTime = (startsAt: string): string =>
     new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', timeZone: timezone }).format(new Date(startsAt));
-  const peopleText = (people: number): string =>
-    formatMessage(people === 1 ? messages['widget.person'] : messages['widget.peopleCount'], { n: people });
+  const peopleText = (quantity: number): string =>
+    formatMessage(quantity === 1 ? messages['widget.person'] : messages['widget.quantityCount'], { n: quantity });
   // The horizon rendered as month calendar grids instead of a day-per-row list: an operator's
   // mental model of availability is a calendar, and 30 rows collapse into a screenful of cells
   // where only exceptional days carry color. Each day links to the adjust form — still no JS.
@@ -315,16 +315,16 @@ export function adminPage(
       if (filters.status) dayParams.set('status', filters.status);
       dayParams.set('date', date);
       const override = overridesByDate.get(date);
-      const dayDefault = defaultCapacityForDate(date, context.config.fleet.defaultCapacity, capacityDefaults);
+      const dayDefault = defaultCapacityForDate(date, context.config.capacity.default, capacityDefaults);
       const capacity = override?.capacity ?? dayDefault;
       const booked = unitsByDate.get(date) ?? 0;
       const tone = capacity === 0 ? ' bk-day--closed' : override ? ' bk-day--adjusted' : booked > 0 ? ' bk-day--booked' : ' bk-day--quiet';
       if (override || capacity === 0) flagged += 1;
       const selected = date === editDate;
       if (selected) containsSelected = true;
-      // A changed fleet default is the "new normal" — no warning tint, but do show the numbers.
-      // Labelled "units" so this reads unambiguously against fleet capacity, not a booking count.
-      const load = booked > 0 || override || dayDefault !== context.config.fleet.defaultCapacity
+      // A changed capacity default is the "new normal" — no warning tint, but do show the numbers.
+      // Labelled "units" so this reads unambiguously against capacity capacity, not a booking count.
+      const load = booked > 0 || override || dayDefault !== context.config.capacity.default
         ? `<span class="bk-day-load">${escapeHtml(formatMessage(messages['admin.unitsLoad'], { booked, capacity }))}</span>`
         : '';
       const title = override?.reason ? ` title="${escapeHtml(override.reason)}"` : '';
@@ -371,13 +371,13 @@ export function adminPage(
     + filterForm
     + (filtered.length === 0
       ? `<div class="bk-empty-state"><p>${escapeHtml(messages['admin.noBookings'])}</p></div>`
-      : `<div class="bk-table-wrap"><table class="bk-table"><thead><tr><th>${escapeHtml(messages['common.date'])}</th><th>${escapeHtml(messages['common.customer'])}</th><th>${escapeHtml(messages['common.tour'])}</th><th>${escapeHtml(messages['common.pickup'])}</th><th>${escapeHtml(messages['common.status'])}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`)
+      : `<div class="bk-table-wrap"><table class="bk-table"><thead><tr><th>${escapeHtml(messages['common.date'])}</th><th>${escapeHtml(messages['common.customer'])}</th><th>${escapeHtml(messages['common.service'])}</th><th>${escapeHtml(messages['common.pickup'])}</th><th>${escapeHtml(messages['common.status'])}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`)
     + `</section>`;
 
   // Row "Edit" links land here with ?date=…, prefilling the form with that day's current values —
   // the whole edit flow stays plain GET/POST, no script.
   const editOverride = editDate ? overridesByDate.get(editDate) : undefined;
-  const editDefault = defaultCapacityForDate(editDate || fromDate, context.config.fleet.defaultCapacity, capacityDefaults);
+  const editDefault = defaultCapacityForDate(editDate || fromDate, context.config.capacity.default, capacityDefaults);
   // Explicit post-save confirmation inside whichever form was just submitted — the POST redirects
   // back with saved=day|default plus a hash so the operator lands on the form and sees it.
   const savedAlert = (which: string): string => saved === which
@@ -396,7 +396,7 @@ export function adminPage(
       return {
         t: formatDayTime(entry.startsAt),
         c: entry.customerName ?? entry.customerEmail ?? '—',
-        p: peopleText(entry.people),
+        p: peopleText(entry.quantity),
         s: messages[`status.${entry.status}` as keyof typeof messages] ?? entry.status,
         ...(tone ? { sc: tone } : {}),
         ...(manageHref ? { u: manageHref } : {}),
@@ -426,7 +426,7 @@ export function adminPage(
       ? `<a href="${escapeHtml(manageHref)}">${escapeHtml(messages['admin.manage'])}</a>`
       : `<span class="bk-sub">${escapeHtml(messages['admin.manageUnavailable'])}</span>`;
     return `<li><span class="bk-mono">${escapeHtml(formatDayTime(entry.startsAt))}</span> <strong>${escapeHtml(entry.customerName ?? entry.customerEmail ?? '—')}</strong>`
-      + `<span class="bk-sub">${escapeHtml(peopleText(entry.people))}</span>${statusBadge(entry.status, messages)}`
+      + `<span class="bk-sub">${escapeHtml(peopleText(entry.quantity))}</span>${statusBadge(entry.status, messages)}`
       + `${manageMarkup}</li>`;
   };
   const editDayBookings = editDate ? [...bookingsByDate.get(editDate) ?? []].sort(byStart) : [];
@@ -463,14 +463,14 @@ export function adminPage(
     + `<button type="submit" class="bk-btn bk-btn--secondary" name="action" value="clear">${escapeHtml(messages['admin.clear'])}</button>`
     + `</div></form>`;
 
-  // Fleet-level changes ("a van broke down") apply from a date onwards, so operators never
+  // Capacity-level changes ("a van broke down") apply from a date onwards, so operators never
   // click 30 day cells one by one. Each scheduled change can be removed independently.
   const defaultEntries = capacityDefaults.map((entry) =>
     `<li><span>${escapeHtml(formatMessage(messages['admin.defaultEntry'], { n: entry.capacity, date: formatDayDate(entry.fromDate, locale) }))}`
     + (entry.reason ? `<span class="bk-sub">${escapeHtml(entry.reason)}</span>` : '')
     + `</span><form method="post">${csrfField}<input type="hidden" name="date" value="${escapeHtml(entry.fromDate)}">`
     + `<button type="submit" class="bk-btn bk-btn--secondary bk-btn--sm" name="action" value="default-clear">${escapeHtml(messages['admin.remove'])}</button></form></li>`).join('');
-  // The fleet-default form is the rare, high-blast-radius task, so it sits behind a collapsed
+  // The capacity-default form is the rare, high-blast-radius task, so it sits behind a collapsed
   // disclosure — one visible form (the day exception) instead of two near-identical ones. It must
   // be open after its own POST so the saved confirmation is visible; the scheduled-change count in
   // the summary keeps active rules discoverable while collapsed.

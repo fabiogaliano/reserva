@@ -98,7 +98,7 @@ export const manageEnhancerJs = `(() => {
     }
   };
 
-  const query = new URLSearchParams({ tour: ds.tour || '', people: ds.people || '', from: ds.from || '', to: ds.to || '' });
+  const query = new URLSearchParams({ service: ds.service || '', quantity: ds.quantity || '', from: ds.from || '', to: ds.to || '' });
   fetch(ds.endpoint + '?' + query, { cache: 'no-store' })
     .then((response) => response.json().then((payload) => ({ ok: response.ok, payload })))
     .then(({ ok, payload }) => {

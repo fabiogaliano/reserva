@@ -1,4 +1,4 @@
-import { resolveTour } from '../core/config';
+import { resolveService } from '../core/config';
 import { availabilityForDay, capacityForDate, defaultCapacityForDate, type CalEvent } from '../core/occupancy';
 import { priceFor } from '../core/pricing';
 import { generateSlots } from '../core/slots';
@@ -21,13 +21,13 @@ const CALENDAR_FRESH_SECONDS = 60;
 const CALENDAR_STORED_AT_HEADER = 'x-bookkit-calendar-stored-at';
 const calendarReadFlights = new Map<string, Promise<CalEvent[]>>();
 
-function maxPartySize(tour: ReturnType<typeof resolveTour>): number {
-  return Math.max(...tour.pricing.map((rule) => rule.maxPeople));
+function maxPartySize(service: ReturnType<typeof resolveService>): number {
+  return Math.max(...service.pricing.map((rule) => rule.maxQuantity));
 }
 
-export function assertSupportedPartySize(tour: ReturnType<typeof resolveTour>, people: number): void {
-  if (people > maxPartySize(tour)) {
-    throw new HttpError(400, 'validation_failed', `people must not exceed the configured maximum of ${maxPartySize(tour)}`);
+export function assertSupportedPartySize(service: ReturnType<typeof resolveService>, quantity: number): void {
+  if (quantity > maxPartySize(service)) {
+    throw new HttpError(400, 'validation_failed', `quantity must not exceed the configured maximum of ${maxPartySize(service)}`);
   }
 }
 
@@ -138,43 +138,43 @@ export async function calendarEventsForWindow(context: BookkitContext, fromUtc: 
 }
 
 interface AvailabilityInput {
-  people: number;
+  quantity: number;
   dates: string[];
-  tour: ReturnType<typeof resolveTour>;
+  service: ReturnType<typeof resolveService>;
 }
 
 function availabilityInput(request: Request, context: BookkitContext): AvailabilityInput {
   const url = new URL(request.url);
-  const tourSlug = requireString(url.searchParams.get('tour'), 'tour');
-  if (!context.config.tours[tourSlug]) throw new HttpError(400, 'validation_failed', 'Unknown tour');
-  const people = requireInteger(Number(url.searchParams.get('people')), 'people');
+  const serviceSlug = requireString(url.searchParams.get('service'), 'service');
+  if (!context.config.services[serviceSlug]) throw new HttpError(400, 'validation_failed', 'Unknown service');
+  const quantity = requireInteger(Number(url.searchParams.get('quantity')), 'quantity');
   const from = requireString(url.searchParams.get('from'), 'from');
   const to = requireString(url.searchParams.get('to'), 'to');
   const dates = validDateRange(from, to);
-  const tour = resolveTour(context.config, tourSlug);
-  assertSupportedPartySize(tour, people);
+  const service = resolveService(context.config, serviceSlug);
+  assertSupportedPartySize(service, quantity);
   try {
-    // Plan 018 (design decision 3): the party size must price under every pickup id the tour's
+    // Plan 018 (design decision 3): the party size must price under every pickup id the service's
     // own pricing rows declare — derived like resolvedPriceTableFor, not the old literal
-    // default/custom pair, which a tour with declared pickupOptions need not use at all.
-    for (const pickup of new Set(tour.pricing.map((row) => row.pickup))) {
-      priceFor(tour, people, pickup);
+    // default/custom pair, which a service with declared pickupOptions need not use at all.
+    for (const pickup of new Set(service.pricing.map((row) => row.pickup))) {
+      priceFor(service, quantity, pickup);
     }
   } catch {
     throw new HttpError(400, 'validation_failed', 'No price is configured for this party size');
   }
-  return { people, dates, tour };
+  return { quantity, dates, service };
 }
 
 async function availabilityPayload(context: BookkitContext, now: string, input: AvailabilityInput): Promise<{ payload: { timezone: string; limitedThreshold: number; days: unknown[] }; stale: boolean }> {
-  const { people, dates, tour } = input;
+  const { quantity, dates, service } = input;
   const firstDay = dates[0];
   const lastDay = dates[dates.length - 1];
   if (!firstDay || !lastDay) throw new HttpError(400, 'validation_failed', 'Date range is empty');
   const dayAfterLast = addDaysToDateKey(lastDay, 1);
   const horizonStart = parseUtcInstant(localDateTimeToUtcIso(`${firstDay}T00:00`, context.config.business.timezone));
   const horizonEnd = parseUtcInstant(localDateTimeToUtcIso(`${dayAfterLast}T00:00`, context.config.business.timezone));
-  const lookback = Math.max(...Object.values(context.config.tours).map((candidate) => candidate.durationMin + candidate.turnaroundMin), 0);
+  const lookback = Math.max(...Object.values(context.config.services).map((candidate) => candidate.durationMin + candidate.turnaroundMin), 0);
   const bookings = await context.repo.listOccupancyBookings(
     new Date(horizonStart.getTime() - lookback * 60_000).toISOString(),
     horizonEnd.toISOString(),
@@ -189,8 +189,8 @@ async function availabilityPayload(context: BookkitContext, now: string, input: 
   const overridesByDate = new Map(overrides.map((override) => [override.date, override]));
   const capacityDefaults = await context.repo.listCapacityDefaults();
   const days = dates.map((date) => {
-    const capacityInfo = capacityForDate(date, defaultCapacityForDate(date, context.config.fleet.defaultCapacity, capacityDefaults), overridesByDate);
-    if (generateSlots(tour, date, context.config.business.timezone).length === 0) {
+    const capacityInfo = capacityForDate(date, defaultCapacityForDate(date, context.config.capacity.default, capacityDefaults), overridesByDate);
+    if (generateSlots(service, date, context.config.business.timezone).length === 0) {
       return {
         date,
         status: 'closed' as const,
@@ -201,13 +201,13 @@ async function availabilityPayload(context: BookkitContext, now: string, input: 
     return availabilityForDay({
       date,
       timezone: context.config.business.timezone,
-      tour,
+      service,
       capacity: capacityInfo.capacity,
       ...(capacityInfo.closedReason !== undefined ? { closedReason: capacityInfo.closedReason } : {}),
       bookings,
       calendarEvents: calendar.events,
-      tours: context.config.tours,
-      requestedPeople: people,
+      services: context.config.services,
+      requestedQuantity: quantity,
       now,
       minNoticeHours: context.config.booking.minNoticeHours,
       maxHorizonDays: context.config.booking.maxHorizonDays,
@@ -240,7 +240,7 @@ export function handleAvailability(request: Request, context: BookkitContext): P
       const requestParams = new URL(request.url).searchParams;
       const keyUrl = new URL(request.url);
       keyUrl.search = '';
-      for (const name of ['tour', 'people', 'from', 'to']) keyUrl.searchParams.set(name, requestParams.get(name) ?? '');
+      for (const name of ['service', 'quantity', 'from', 'to']) keyUrl.searchParams.set(name, requestParams.get(name) ?? '');
       cacheKey = new Request(keyUrl.toString(), { method: 'GET' });
       const hit = await availabilityCache.match(cacheKey);
       if (hit) return hit;

@@ -1,4 +1,5 @@
 import { z } from 'astro/zod';
+import { CURRENCY_CODE_PATTERN } from './currency';
 import {
   BOOKING_EVENT_SUBSCRIBER_NAME_PATTERN,
   invalidSubscriberNameMessage,
@@ -7,12 +8,11 @@ import {
   type BookingEvent,
 } from './events';
 
-// A plain string because the pickup axis is whatever ids a tour declares in
-// TourConfig.pickupOptions (below), which no static union can enumerate. Kept as a named export
+// A plain string because the pickup axis is whatever ids a service declares in
+// ServiceConfig.pickupOptions (below), which no static union can enumerate. Kept as a named export
 // (rather than inlining `string` everywhere) so call sites read as "the pickup axis" and so a
 // future narrowing wouldn't need to touch every signature again.
 export type PickupType = string;
-export type PaymentMethod = 'card' | 'mb_way';
 
 export interface ScheduleRule {
   from?: string;
@@ -24,9 +24,9 @@ export interface ScheduleRule {
 }
 
 export interface PricingRule {
-  maxPeople: number;
+  maxQuantity: number;
   pickup: PickupType;
-  priceCents: number;
+  priceMinor: number;
 }
 
 export interface MeetingPoint {
@@ -35,7 +35,7 @@ export interface MeetingPoint {
   mapsUrl: string;
 }
 
-// Plan 018 (design decision 1): a tour-declared pickup option — the unit the pricing axis's
+// Plan 018 (design decision 1): a service-declared pickup option — the unit the pricing axis's
 // `pickup` column now points at. `requiresAddress` is what gates Stripe's custom_fields address
 // collection (stripe.ts); `usesMeetingPoint` is what plan 017's meeting-point requirement now
 // re-keys off instead of `pickupType === 'default'`, so an option like Maze's "custom drop-off"
@@ -50,28 +50,28 @@ export interface PickupOption {
   usesMeetingPoint: boolean;
 }
 
-// Plan 018 (design decision 1): the pair every tour behaved as before this plan — injected by
-// validateConfig when a tour declares no pickupOptions, and by pickupOptionFor for raw
-// (never-validated) tours, so both paths agree without either hard-coding the pair twice.
+// Plan 018 (design decision 1): the pair every service behaved as before this plan — injected by
+// validateConfig when a service declares no pickupOptions, and by pickupOptionFor for raw
+// (never-validated) services, so both paths agree without either hard-coding the pair twice.
 export const DEFAULT_PICKUP_OPTIONS: PickupOption[] = [
   { id: 'default', requiresAddress: false, usesMeetingPoint: true },
   { id: 'custom', requiresAddress: true, usesMeetingPoint: false },
 ];
 
-export interface TourConfig {
+export interface ServiceConfig {
   // Customer-facing display name used in emails ("Your Alfama Discovery is confirmed");
-  // absent falls back to the tour slug.
+  // absent falls back to the service slug.
   title?: string;
   durationMin: number;
   turnaroundMin: number;
   schedule: ScheduleRule[];
   pricing: PricingRule[];
-  occupancyFor?: (people: number) => number;
+  occupancyFor?: (quantity: number) => number;
   // Plan 017 (design decision 1): exactly one of meetingPoint (single-point shorthand) or
   // meetingPoints (multi-point) may be declared — validateConfig rejects both/neither and
   // normalizes whichever is given into the canonical meetingPoints array below (clearing the
   // shorthand, so it never survives validation), and every internal reader goes through
-  // resolveMeetingPoint instead of branching on which shape a tour used.
+  // resolveMeetingPoint instead of branching on which shape a service used.
   meetingPoint?: {
     label: string;
     mapsUrl: string;
@@ -97,7 +97,9 @@ export interface ClientConfig {
     shortCode: string;
     url: string;
     timezone: string;
-    currency: 'eur';
+    // Any ISO 4217 alphabetic code, lowercase (see core/currency.ts). Prices are stored in this
+    // currency's minor unit; the configured payment provider validates its own narrower set.
+    currency: string;
     contact: {
       email: string;
       phone: string;
@@ -106,8 +108,8 @@ export interface ClientConfig {
       whatsapp?: string;
     };
   };
-  fleet: {
-    defaultCapacity: number;
+  capacity: {
+    default: number;
   };
   admin: {
     accessTeamDomain: string;
@@ -115,7 +117,7 @@ export interface ClientConfig {
     // Operator copy can differ from the locale used for customer pages, emails, and checkout.
     locale?: string;
   };
-  tours: Record<string, TourConfig>;
+  services: Record<string, ServiceConfig>;
   booking: {
     minNoticeHours: number;
     maxHorizonDays: number;
@@ -129,7 +131,7 @@ export interface ClientConfig {
     calendarMaxStaleSeconds: number;
     maxHoldsPerIp?: number;
     // BK-SEC-002: manage/operator token lifetime, counted from booking end (not creation) so a
-    // link keeps working through the whole pre-tour period plus a post-tour grace window
+    // link keeps working through the whole pre-service period plus a post-service grace window
     // (late reschedules, refund follow-up, review requests). Optional — defaults to
     // DEFAULT_TOKEN_EXPIRY_DAYS below when unset, so existing deployments don't need a config
     // change to pick up expiry.
@@ -138,9 +140,6 @@ export interface ClientConfig {
   locales: {
     supported: string[];
     default: string;
-  };
-  payments: {
-    methods: PaymentMethod[];
   };
   legal: {
     termsUrl: string;
@@ -178,24 +177,12 @@ export interface ClientConfig {
   };
 }
 
-export const stripeSupportedLocales = new Set([
-  'auto', 'bg', 'cs', 'da', 'de', 'el', 'en', 'en-GB', 'es', 'es-419', 'et',
-  'fi', 'fil', 'fr', 'fr-CA', 'he', 'hr', 'hu', 'id', 'it', 'ja', 'ko', 'lt',
-  'lv', 'ms', 'mt', 'nb', 'nl', 'pl', 'pt', 'pt-BR', 'ro', 'ru', 'sk', 'sl',
-  'sv', 'th', 'tr', 'uk', 'vi', 'zh', 'zh-HK', 'zh-TW',
-]);
-
-// Stripe names European Portuguese `pt`, while the rest of Bookkit uses the precise BCP 47 tag.
-export function stripeLocaleFor(locale: string): string {
-  return locale.toLowerCase() === 'pt-pt' ? 'pt' : locale;
-}
-
 export function adminLocaleFor(config: ClientConfig): string {
   return config.admin.locale ?? config.locales.default;
 }
 
 // BK-SEC-002: default for booking.tokenExpiryDays when a deployment doesn't set one — long
-// enough to cover post-tour reschedules/refund disputes/review-request follow-ups without ever
+// enough to cover post-service reschedules/refund disputes/review-request follow-ups without ever
 // being effectively unlimited.
 export const DEFAULT_TOKEN_EXPIRY_DAYS = 60;
 
@@ -223,19 +210,19 @@ const pickupOptionSchema = z.object({
   usesMeetingPoint: z.boolean(),
 });
 
-const tourSchema = z.object({
+const serviceSchema = z.object({
   title: z.string().min(1).optional(),
   durationMin: z.number().int().positive(),
   turnaroundMin: z.number().int().nonnegative(),
   schedule: z.array(scheduleSchema).min(1),
   pricing: z.array(z.object({
-    maxPeople: z.number().int().positive(),
-    // A plain zod enum can't express a per-tour id set, so validateTour checks each row's pickup
-    // against the tour's own declared option ids (default/custom when none are declared).
+    maxQuantity: z.number().int().positive(),
+    // A plain zod enum can't express a per-service id set, so validateService checks each row's pickup
+    // against the service's own declared option ids (default/custom when none are declared).
     pickup: z.string().min(1),
-    priceCents: z.number().int().nonnegative(),
+    priceMinor: z.number().int().nonnegative(),
   })).min(1),
-  occupancyFor: z.custom<(people: number) => number>((value) => typeof value === 'function').optional(),
+  occupancyFor: z.custom<(quantity: number) => number>((value) => typeof value === 'function').optional(),
   meetingPoint: z.object({ label: z.string().min(1), mapsUrl: z.string().url() }).optional(),
   meetingPoints: z.array(z.object({
     id: z.string().min(1),
@@ -251,7 +238,7 @@ export const clientConfigSchema = z.object({
     shortCode: z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,9}$/),
     url: z.string().url(),
     timezone: z.string().min(1),
-    currency: z.literal('eur'),
+    currency: z.string().regex(CURRENCY_CODE_PATTERN, 'must be a lowercase ISO 4217 alphabetic code (e.g. "eur", "jpy")'),
     contact: z.object({
       email: z.string().email(),
       phone: z.string().min(1),
@@ -259,13 +246,13 @@ export const clientConfigSchema = z.object({
       whatsapp: z.string().optional(),
     }),
   }),
-  fleet: z.object({ defaultCapacity: z.number().int().nonnegative() }),
+  capacity: z.object({ default: z.number().int().nonnegative() }),
   admin: z.object({
     accessTeamDomain: z.string().refine(isValidAccessTeamDomain, 'must be an HTTPS Cloudflare Access origin'),
     accessAud: z.string().min(1),
     locale: z.string().min(1).refine(isValidLocale, 'must be a valid BCP 47 locale').optional(),
   }),
-  tours: z.record(z.string(), tourSchema).refine((value) => Object.keys(value).length > 0, 'at least one tour is required'),
+  services: z.record(z.string(), serviceSchema).refine((value) => Object.keys(value).length > 0, 'at least one service is required'),
   booking: z.object({
     minNoticeHours: z.number().nonnegative(),
     maxHorizonDays: z.number().int().positive(),
@@ -281,7 +268,6 @@ export const clientConfigSchema = z.object({
     supported: z.array(z.string().min(1)).min(1),
     default: z.string().min(1),
   }),
-  payments: z.object({ methods: z.array(z.enum(['card', 'mb_way'])).min(1) }),
   legal: z.object({ termsUrl: z.string().url() }),
   webhooks: z.array(z.object({
     name: z.string(),
@@ -350,30 +336,30 @@ function isValidMonthDay(value: string): boolean {
   return probe.getUTCMonth() === month - 1 && probe.getUTCDate() === day;
 }
 
-function validateTour(tour: TourConfig, tourSlug: string, add: (path: (string | number)[], message: string) => void): void {
+function validateService(service: ServiceConfig, serviceSlug: string, add: (path: (string | number)[], message: string) => void): void {
   // Plan 018 (design decision 1): declared pickup option ids are the domain the pricing axis
   // below validates against — absent pickupOptions behaves exactly like the old fixed pair.
-  const pickupOptions = tour.pickupOptions ?? DEFAULT_PICKUP_OPTIONS;
+  const pickupOptions = service.pickupOptions ?? DEFAULT_PICKUP_OPTIONS;
   const pickupOptionIds = pickupOptions.map((option) => option.id);
   const pickupOptionIdSet = new Set(pickupOptionIds);
-  if (tour.pickupOptions) {
+  if (service.pickupOptions) {
     const seenIds = new Set<string>();
-    for (const [index, option] of tour.pickupOptions.entries()) {
+    for (const [index, option] of service.pickupOptions.entries()) {
       if (seenIds.has(option.id)) {
-        add(['tours', tourSlug, 'pickupOptions', index, 'id'], `duplicate pickup option id (${option.id}); ids must be unique within a tour`);
+        add(['services', serviceSlug, 'pickupOptions', index, 'id'], `duplicate pickup option id (${option.id}); ids must be unique within a service`);
       }
       seenIds.add(option.id);
     }
   }
 
   // Plan 018 (design decision 2): the duplicate-breakpoint map is keyed by declared option id
-  // instead of the old two-literal Record, so it scales to however many options a tour declares.
+  // instead of the old two-literal Record, so it scales to however many options a service declares.
   const pricingBreakpoints = new Map<string, Map<number, number>>();
-  for (const [index, rule] of tour.pricing.entries()) {
+  for (const [index, rule] of service.pricing.entries()) {
     if (!pickupOptionIdSet.has(rule.pickup)) {
       add(
-        ['tours', tourSlug, 'pricing', index, 'pickup'],
-        `tour ${tourSlug} pricing rule ${index} references undeclared pickup option ${rule.pickup}; valid pickup option ids: ${pickupOptionIds.join(', ')}`,
+        ['services', serviceSlug, 'pricing', index, 'pickup'],
+        `service ${serviceSlug} pricing rule ${index} references undeclared pickup option ${rule.pickup}; valid pickup option ids: ${pickupOptionIds.join(', ')}`,
       );
       continue;
     }
@@ -382,70 +368,70 @@ function validateTour(tour: TourConfig, tourSlug: string, add: (path: (string | 
       breakpoints = new Map();
       pricingBreakpoints.set(rule.pickup, breakpoints);
     }
-    const previousIndex = breakpoints.get(rule.maxPeople);
+    const previousIndex = breakpoints.get(rule.maxQuantity);
     if (previousIndex !== undefined) {
       add(
-        ['tours', tourSlug, 'pricing', index],
-        `tour ${tourSlug} pricing rule ${index} (pickup=${rule.pickup}, maxPeople=${rule.maxPeople}) duplicates and shadows rule ${previousIndex}; remove or change one breakpoint`,
+        ['services', serviceSlug, 'pricing', index],
+        `service ${serviceSlug} pricing rule ${index} (pickup=${rule.pickup}, maxQuantity=${rule.maxQuantity}) duplicates and shadows rule ${previousIndex}; remove or change one breakpoint`,
       );
     } else {
-      breakpoints.set(rule.maxPeople, index);
+      breakpoints.set(rule.maxQuantity, index);
     }
   }
 
-  for (const [index, rule] of tour.schedule.entries()) {
+  for (const [index, rule] of service.schedule.entries()) {
     if (rule.from && !isValidMonthDay(rule.from)) {
-      add(['tours', tourSlug, 'schedule', index, 'from'], 'must be a valid month-day');
+      add(['services', serviceSlug, 'schedule', index, 'from'], 'must be a valid month-day');
     }
     if (rule.to && !isValidMonthDay(rule.to)) {
-      add(['tours', tourSlug, 'schedule', index, 'to'], 'must be a valid month-day');
+      add(['services', serviceSlug, 'schedule', index, 'to'], 'must be a valid month-day');
     }
     if (rule.firstStart > rule.lastStart) {
-      add(['tours', tourSlug, 'schedule', index], 'firstStart must not be after lastStart');
+      add(['services', serviceSlug, 'schedule', index], 'firstStart must not be after lastStart');
     }
     if (rule.intervalMin > 24 * 60) {
-      add(['tours', tourSlug, 'schedule', index, 'intervalMin'], 'intervalMin must be at most one day');
+      add(['services', serviceSlug, 'schedule', index, 'intervalMin'], 'intervalMin must be at most one day');
     }
   }
 
-  const highest = Math.max(...tour.pricing.map((row) => row.maxPeople));
-  const peopleValues = Array.from({ length: highest }, (_, index) => index + 1);
-  // Plan 018 (design decision 2): iterates the tour's declared option ids instead of the old
+  const highest = Math.max(...service.pricing.map((row) => row.maxQuantity));
+  const quantityValues = Array.from({ length: highest }, (_, index) => index + 1);
+  // Plan 018 (design decision 2): iterates the service's declared option ids instead of the old
   // literal ['default', 'custom'] pair, so a per-id coverage hole is reported for every option a
-  // tour actually declares (Maze's four-option table gets a full coverage set per option, not
+  // service actually declares (Maze's four-option table gets a full coverage set per option, not
   // just two).
-  for (const people of peopleValues) {
+  for (const quantity of quantityValues) {
     for (const pickup of pickupOptionIds) {
-      if (!tour.pricing.some((row) => row.pickup === pickup && people <= row.maxPeople)) {
-        add(['tours', tourSlug, 'pricing'], `missing ${pickup} pricing for people=${people}`);
+      if (!service.pricing.some((row) => row.pickup === pickup && quantity <= row.maxQuantity)) {
+        add(['services', serviceSlug, 'pricing'], `missing ${pickup} pricing for quantity=${quantity}`);
       }
     }
   }
-  if (tour.occupancyFor) {
-    for (const people of peopleValues) {
+  if (service.occupancyFor) {
+    for (const quantity of quantityValues) {
       try {
-        const units = tour.occupancyFor(people);
+        const units = service.occupancyFor(quantity);
         if (!Number.isInteger(units) || units < 1) {
-          add(['tours', tourSlug, 'occupancyFor'], `occupancyFor(${people}) must return a positive integer`);
+          add(['services', serviceSlug, 'occupancyFor'], `occupancyFor(${quantity}) must return a positive integer`);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        add(['tours', tourSlug, 'occupancyFor'], `occupancyFor(${people}) threw: ${message}`);
+        add(['services', serviceSlug, 'occupancyFor'], `occupancyFor(${quantity}) threw: ${message}`);
       }
     }
   }
 
   // Plan 017 (design decision 1): exactly one of meetingPoint/meetingPoints — two sources of
-  // truth for where a tour departs from would let them silently disagree.
-  if (tour.meetingPoint && tour.meetingPoints) {
-    add(['tours', tourSlug], 'declare either meetingPoint or meetingPoints, not both');
-  } else if (!tour.meetingPoint && !tour.meetingPoints) {
-    add(['tours', tourSlug], 'must declare either meetingPoint or meetingPoints');
-  } else if (tour.meetingPoints) {
+  // truth for where a service departs from would let them silently disagree.
+  if (service.meetingPoint && service.meetingPoints) {
+    add(['services', serviceSlug], 'declare either meetingPoint or meetingPoints, not both');
+  } else if (!service.meetingPoint && !service.meetingPoints) {
+    add(['services', serviceSlug], 'must declare either meetingPoint or meetingPoints');
+  } else if (service.meetingPoints) {
     const seenIds = new Set<string>();
-    for (const [index, point] of tour.meetingPoints.entries()) {
+    for (const [index, point] of service.meetingPoints.entries()) {
       if (seenIds.has(point.id)) {
-        add(['tours', tourSlug, 'meetingPoints', index, 'id'], `duplicate meeting point id (${point.id}); ids must be unique within a tour`);
+        add(['services', serviceSlug, 'meetingPoints', index, 'id'], `duplicate meeting point id (${point.id}); ids must be unique within a service`);
       }
       seenIds.add(point.id);
     }
@@ -466,25 +452,23 @@ export function validateConfig(input: unknown): ClientConfig {
   if (!isValidTimezone(config.business.timezone)) {
     add(['business', 'timezone'], 'must be a valid IANA timezone');
   }
+  // Plan 022 (design decision 7): only the floor is a core rule — a hold shorter than the payment
+  // session it guards can expire while that session is still payable, which oversells. Any upper
+  // bound belongs to the payment provider that has to keep the session open, and it enforces it
+  // through PaymentProvider.validateConfig (core/events.ts).
   if (config.booking.holdMinutes < 35) {
-    add(['booking', 'holdMinutes'], 'must be at least 35 minutes');
-  } else if (config.booking.holdMinutes > 1440) {
-    // 1440 (not Stripe's exact 1445min cap) keeps expires_at 5 minutes under Stripe's 24h-from-
-    // creation limit, since expires_at is computed from Bookkit's clock, not Stripe's — a
-    // holdMinutes=1445 session would sit exactly on the edge and fail intermittently under clock
-    // skew (see providers/stripe.ts expiresInMinutes).
-    add(['booking', 'holdMinutes'], 'must be at most 1440 minutes (Stripe checkout sessions cannot stay open longer than 24 hours)');
+    add(['booking', 'holdMinutes'], 'must be at least 35 minutes, so a hold outlives the payment session it guards');
   }
   if (!config.locales.supported.includes(config.locales.default)) {
     add(['locales', 'default'], 'must be included in locales.supported');
   }
   for (const [index, locale] of config.locales.supported.entries()) {
-    if (!stripeSupportedLocales.has(stripeLocaleFor(locale))) {
-      add(['locales', 'supported', index], `locale ${locale} is not supported by Stripe Checkout`);
+    if (!isValidLocale(locale)) {
+      add(['locales', 'supported', index], `locale ${locale} is not a valid BCP 47 locale tag`);
     }
   }
-  for (const [slug, tour] of Object.entries(config.tours)) {
-    validateTour(tour, slug, add);
+  for (const [slug, service] of Object.entries(config.services)) {
+    validateService(service, slug, add);
   }
   // Plan 021 (design decision 1/2): the same closed-vocabulary check hooks get at startup, applied
   // to declared webhook endpoints during config validation — a typo'd event name fails the build
@@ -508,8 +492,8 @@ export function validateConfig(input: unknown): ClientConfig {
     }).safeParse(input);
     if (!result.success) throw result.error;
   }
-  for (const tour of Object.values(config.tours)) {
-    tour.pricing.sort((a, b) => a.maxPeople - b.maxPeople);
+  for (const service of Object.values(config.services)) {
+    service.pricing.sort((a, b) => a.maxQuantity - b.maxQuantity);
     // Plan 017 (design decision 1): canonicalize the meetingPoint shorthand into meetingPoints —
     // the same canonicalize-on-validate move used above for pricing order — so every internal
     // reader only has to handle one shape (via resolveMeetingPoint below). The exactly-one-of
@@ -520,9 +504,9 @@ export function validateConfig(input: unknown): ClientConfig {
     // createBookkitContext (context.ts) on every request, which validates it again — without
     // clearing meetingPoint here, that second pass would see both fields and reject an
     // already-valid config as declaring both.
-    if (!tour.meetingPoints) {
-      tour.meetingPoints = [{ id: 'default', ...tour.meetingPoint! }];
-      delete tour.meetingPoint;
+    if (!service.meetingPoints) {
+      service.meetingPoints = [{ id: 'default', ...service.meetingPoint! }];
+      delete service.meetingPoint;
     }
     // Plan 018 (design decision 1): inject the default option pair the same way meetingPoints'
     // shorthand is canonicalized above — a fresh copy (not the shared DEFAULT_PICKUP_OPTIONS
@@ -531,32 +515,32 @@ export function validateConfig(input: unknown): ClientConfig {
     // the already-validated config leaves it untouched — the same idempotency constraint plan 017
     // discovered for meetingPoints (defineBookkitRuntime validates once at definition,
     // createBookkitContext validates again per request).
-    if (!tour.pickupOptions) {
-      tour.pickupOptions = DEFAULT_PICKUP_OPTIONS.map((option) => ({ ...option }));
+    if (!service.pickupOptions) {
+      service.pickupOptions = DEFAULT_PICKUP_OPTIONS.map((option) => ({ ...option }));
     }
   }
   return config;
 }
 
-export function peopleValuesForTour(tour: TourConfig): number[] {
-  const highest = Math.max(...tour.pricing.map((row) => row.maxPeople), 0);
+export function quantityValuesForService(service: ServiceConfig): number[] {
+  const highest = Math.max(...service.pricing.map((row) => row.maxQuantity), 0);
   return Array.from({ length: highest }, (_, index) => index + 1);
 }
 
-export function resolveTour(config: ClientConfig, tourSlug: string): TourConfig {
-  const tour = config.tours[tourSlug];
-  if (!tour) throw new Error(`Unknown tour: ${tourSlug}`);
-  return tour;
+export function resolveService(config: ClientConfig, serviceSlug: string): ServiceConfig {
+  const service = config.services[serviceSlug];
+  if (!service) throw new Error(`Unknown service: ${serviceSlug}`);
+  return service;
 }
 
 // Plan 017 (design decision 1): id match wins; no id or an unknown id falls back to the first
-// declared point. Tolerant of a raw (never-validated) tour — examples/smoke-site imports config
+// declared point. Tolerant of a raw (never-validated) service — examples/smoke-site imports config
 // directly for the widget (plan 017 STOP condition 2) — by deriving the single point from the
 // meetingPoint shorthand when meetingPoints hasn't been normalized in yet.
-export function resolveMeetingPoint(tour: TourConfig, meetingPointId?: string): MeetingPoint {
-  const points = tour.meetingPoints ?? (tour.meetingPoint ? [{ id: 'default', ...tour.meetingPoint }] : []);
+export function resolveMeetingPoint(service: ServiceConfig, meetingPointId?: string): MeetingPoint {
+  const points = service.meetingPoints ?? (service.meetingPoint ? [{ id: 'default', ...service.meetingPoint }] : []);
   if (points.length === 0) {
-    throw new Error('tour declares no meeting points');
+    throw new Error('service declares no meeting points');
   }
   if (meetingPointId) {
     const match = points.find((point) => point.id === meetingPointId);
@@ -565,17 +549,18 @@ export function resolveMeetingPoint(tour: TourConfig, meetingPointId?: string): 
   return points[0]!;
 }
 
-// Plan 018 (design decision 1): tolerant of a raw (never-validated) tour, the same precedent as
+// Plan 018 (design decision 1): tolerant of a raw (never-validated) service, the same precedent as
 // resolveMeetingPoint/meetingPointForBooking above (plan 017) — examples/smoke-site imports config
 // directly for the widget, never through validateConfig, and the runtime path validates twice
 // (defineBookkitRuntime at definition, createBookkitContext per request), so this must agree with
-// validateConfig's injected default on an un-normalized tour too. Returns undefined for an id the
-// tour hasn't declared (rather than falling back the way resolveMeetingPoint does) — callers
+// validateConfig's injected default on an un-normalized service too. Returns undefined for an id the
+// service hasn't declared (rather than falling back the way resolveMeetingPoint does) — callers
 // each have a different reaction to an undeclared id: stripe's requiresAddress gate, handlers'
 // checkout id validation (400 on undefined), and the admin/widget label fallback all need to know
 // "not declared" is a real, distinct outcome, not silently redirected to the first option.
-export function pickupOptionFor(tour: TourConfig, id: string): PickupOption | undefined {
-  const options = tour.pickupOptions ?? DEFAULT_PICKUP_OPTIONS;
+export function pickupOptionFor(service: ServiceConfig, id: string | null): PickupOption | undefined {
+  if (id === null) return undefined;
+  const options = service.pickupOptions ?? DEFAULT_PICKUP_OPTIONS;
   return options.find((option) => option.id === id);
 }
 
@@ -588,16 +573,16 @@ export function pickupOptionFor(tour: TourConfig, id: string): PickupOption | un
 // than a label without a map. A NULL id is a pre-0014 row and keeps today's behavior (first/only
 // declared point).
 export function meetingPointForBooking(
-  tour: TourConfig,
+  service: ServiceConfig,
   meetingPointId: string | null,
   meetingPointLabel: string | null,
 ): { label: string; mapsUrl: string | null } {
   if (meetingPointId) {
-    const points = tour.meetingPoints ?? (tour.meetingPoint ? [{ id: 'default', ...tour.meetingPoint }] : []);
+    const points = service.meetingPoints ?? (service.meetingPoint ? [{ id: 'default', ...service.meetingPoint }] : []);
     const match = points.find((point) => point.id === meetingPointId);
     if (match) return { label: match.label, mapsUrl: match.mapsUrl };
     return { label: meetingPointLabel ?? meetingPointId, mapsUrl: null };
   }
-  const first = resolveMeetingPoint(tour);
+  const first = resolveMeetingPoint(service);
   return { label: first.label, mapsUrl: first.mapsUrl };
 }

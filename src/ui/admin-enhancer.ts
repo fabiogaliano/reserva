@@ -170,9 +170,9 @@ export const adminEnhancerJs = `(() => {
       time.textContent = row.t;
       const name = document.createElement('strong');
       name.textContent = row.c;
-      const people = document.createElement('span');
-      people.className = 'bk-sub';
-      people.textContent = row.p;
+      const quantity = document.createElement('span');
+      quantity.className = 'bk-sub';
+      quantity.textContent = row.p;
       const status = document.createElement('span');
       status.className = 'bk-badge' + (row.sc ? ' bk-badge--' + row.sc : '');
       status.textContent = row.s;
@@ -189,7 +189,7 @@ export const adminEnhancerJs = `(() => {
         manage.className = 'bk-sub';
         manage.textContent = i18n.manageUnavailable || '';
       }
-      item.append(time, name, people, status, manage);
+      item.append(time, name, quantity, status, manage);
       list.appendChild(item);
     }
     detail.appendChild(list);

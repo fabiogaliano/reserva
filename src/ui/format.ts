@@ -1,3 +1,4 @@
+import { minorUnitDigits, toMajorUnits } from '../core/currency';
 import { parseUtcInstant } from '../core/time';
 
 // Booking summaries carry local ISO strings with an explicit offset, so parsing them yields the
@@ -49,11 +50,12 @@ export function formatDateParts(isoWithOffset: string, locale: string, timezone:
   }
 }
 
-export function formatPrice(cents: number, locale: string, currency: string): string {
+export function formatPrice(amountMinor: number, locale: string, currency: string): string {
+  const major = toMajorUnits(amountMinor, currency);
   try {
-    return new Intl.NumberFormat(locale, { style: 'currency', currency: currency.toUpperCase() }).format(cents / 100);
+    return new Intl.NumberFormat(locale, { style: 'currency', currency: currency.toUpperCase() }).format(major);
   } catch {
-    return `${(cents / 100).toFixed(2)} ${currency.toUpperCase()}`;
+    return `${major.toFixed(minorUnitDigits(currency))} ${currency.toUpperCase()}`;
   }
 }
 

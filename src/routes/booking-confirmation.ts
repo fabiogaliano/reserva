@@ -12,13 +12,13 @@ export const prerender = false;
 
 interface ConfirmedBooking {
   reference?: string;
-  tourSlug?: string;
+  serviceSlug?: string;
   start?: string;
   end?: string;
-  people?: number;
+  quantity?: number;
   pickupType?: string;
   locale?: string;
-  priceCents?: number;
+  priceMinor?: number;
   meetingPoint?: { label?: string; mapsUrl?: string };
 }
 
@@ -32,17 +32,17 @@ function confirmedBody(context: Pick<BookkitContext, 'config'>, messages: Bookki
   const end = typeof booking.end === 'string' ? booking.end : start;
   const meetingLabel = booking.meetingPoint?.label ?? '';
   const mapsUrl = booking.meetingPoint?.mapsUrl ?? '';
-  const peopleLabel = typeof booking.people === 'number'
-    ? formatMessage(messages[booking.people === 1 ? 'widget.person' : 'widget.peopleCount'], { n: booking.people })
-    : String(booking.people ?? '');
+  const quantityLabel = typeof booking.quantity === 'number'
+    ? formatMessage(messages[booking.quantity === 1 ? 'widget.person' : 'widget.quantityCount'], { n: booking.quantity })
+    : String(booking.quantity ?? '');
   // The textual date fact stays alongside the decorative date block (which is aria-hidden), so
   // screen readers and copy-paste get the full spelled-out datetime.
   const facts: Array<[string, string]> = [
     [messages['common.date'], escapeHtml(start ? formatDateTime(start, locale, timezone) : '')],
-    [messages['common.people'], escapeHtml(peopleLabel)],
+    [messages['common.quantity'], escapeHtml(quantityLabel)],
   ];
-  if (typeof booking.priceCents === 'number') {
-    facts.push([messages['common.price'], escapeHtml(formatPrice(booking.priceCents, locale, context.config.business.currency))]);
+  if (typeof booking.priceMinor === 'number') {
+    facts.push([messages['common.price'], escapeHtml(formatPrice(booking.priceMinor, locale, context.config.business.currency))]);
   }
   if (meetingLabel) {
     const maps = mapsUrl ? ` <a href="${escapeHtml(mapsUrl)}" rel="noopener" target="_blank">${escapeHtml(messages['common.openInMaps'])}</a>` : '';
@@ -55,7 +55,7 @@ function confirmedBody(context: Pick<BookkitContext, 'config'>, messages: Bookki
   let calendar = '';
   if (start) {
     const event = {
-      title: `${context.config.business.name} — ${booking.tourSlug ?? ''}`,
+      title: `${context.config.business.name} — ${booking.serviceSlug ?? ''}`,
       start,
       end,
       location: meetingLabel,

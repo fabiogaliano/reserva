@@ -1,6 +1,6 @@
 import { confirmBooking, type Booking } from './core/booking';
-import { resolveTour } from './core/config';
-import type { BookingEvent, EmailBookingEvent, EmailRecipientRole, StripeCustomerDetails } from './core/events';
+import { resolveService } from './core/config';
+import type { BookingEvent, EmailBookingEvent, EmailRecipientRole, PaymentCustomerDetails } from './core/events';
 import {
   capacityForDate,
   defaultCapacityForDate,
@@ -123,22 +123,22 @@ export class ConfirmationInProgressError extends Error {
 }
 
 async function expiredHoldOversold(context: BookkitContext, booking: Booking, now: string): Promise<boolean> {
-  const tour = resolveTour(context.config, booking.tourSlug);
+  const service = resolveService(context.config, booking.serviceSlug);
   const date = localDateKey(booking.startsAt, context.config.business.timezone);
   const [override, capacityDefaults] = await Promise.all([
     context.repo.getDayOverride(date),
     context.repo.listCapacityDefaults(),
   ]);
-  const lookback = Math.max(...Object.values(context.config.tours).map((candidate) => candidate.durationMin + candidate.turnaroundMin));
+  const lookback = Math.max(...Object.values(context.config.services).map((candidate) => candidate.durationMin + candidate.turnaroundMin));
   const windowStart = new Date(parseUtcInstant(booking.startsAt).getTime() - lookback * 60_000).toISOString();
-  const windowEnd = new Date(parseUtcInstant(booking.endsAt).getTime() + tour.turnaroundMin * 60_000).toISOString();
+  const windowEnd = new Date(parseUtcInstant(booking.endsAt).getTime() + service.turnaroundMin * 60_000).toISOString();
   const [bookings, calendarEvents] = await Promise.all([
     context.repo.listOccupancyBookings(windowStart, windowEnd),
     context.providers.calendar ? context.providers.calendar.listEvents(windowStart, windowEnd) : Promise.resolve([]),
   ]);
   const capacity = capacityForDate(
     date,
-    defaultCapacityForDate(date, context.config.fleet.defaultCapacity, capacityDefaults),
+    defaultCapacityForDate(date, context.config.capacity.default, capacityDefaults),
     override ? [override] : [],
   ).capacity;
   return !isSlotAvailable(booking.startsAt, booking.endsAt, {
@@ -146,12 +146,12 @@ async function expiredHoldOversold(context: BookkitContext, booking: Booking, no
     intervals: getOccupancyIntervals({
       bookings,
       calendarEvents,
-      tour,
-      tours: context.config.tours,
+      service,
+      services: context.config.services,
       now,
     }),
-    requestedUnits: tour.occupancyFor ? tour.occupancyFor(booking.people) : 1,
-    turnaroundMin: tour.turnaroundMin,
+    requestedUnits: service.occupancyFor ? service.occupancyFor(booking.quantity) : 1,
+    turnaroundMin: service.turnaroundMin,
   });
 }
 
@@ -248,7 +248,7 @@ async function executeOperation(
         error: outcome.error,
       });
       // Plan 016 (design decision 5): terminal means deliberately stopped retrying — never throw
-      // back to Stripe/`/status`, unlike the still-retryable 'failed' case below.
+      // back to the payment webhook/`/status`, unlike the still-retryable 'failed' case below.
       return;
     }
     throw error;
@@ -259,11 +259,11 @@ async function confirmBookingFromPaymentUnlocked(
   context: BookkitContext,
   booking: Booking,
   token: string,
-  paymentIntent?: string | null,
-  details: StripeCustomerDetails = {},
+  paymentRef?: string | null,
+  details: PaymentCustomerDetails = {},
 ): Promise<Booking> {
   const now = nowIso(context);
-  const customerPatch: StripeCustomerDetails = {};
+  const customerPatch: PaymentCustomerDetails = {};
   if (details.customerName !== undefined) customerPatch.customerName = details.customerName;
   if (details.customerEmail !== undefined) customerPatch.customerEmail = details.customerEmail;
   if (details.customerPhone !== undefined) customerPatch.customerPhone = details.customerPhone;
@@ -292,13 +292,13 @@ async function confirmBookingFromPaymentUnlocked(
     // so `occurredAt` and the snapshot's `updatedAt` are the same instant by construction, and a
     // later mutation can never rewrite what this occurrence said.
     const confirmedSnapshot = confirmBooking(current, now, {
-      ...(paymentIntent !== undefined ? { stripePaymentIntent: paymentIntent } : {}),
+      ...(paymentRef !== undefined ? { paymentRef } : {}),
       ...customerPatch,
     });
     const eventSeeds = bookingEventSeeds(context, 'booking.confirmed', confirmedSnapshot, now);
     const result = await context.repo.confirmWithSideEffectOperations(current.id, {
       expectedStatusIn: ['hold', 'expired'],
-      ...(paymentIntent !== undefined ? { stripePaymentIntent: paymentIntent } : {}),
+      ...(paymentRef !== undefined ? { paymentRef } : {}),
       ...customerPatch,
       leaseToken: token,
       oversold,
@@ -312,10 +312,10 @@ async function confirmBookingFromPaymentUnlocked(
   }
   if (current.status !== 'confirmed') return current;
 
-  if (!transitionApplied && (paymentIntent !== undefined || Object.keys(customerPatch).length > 0)) {
+  if (!transitionApplied && (paymentRef !== undefined || Object.keys(customerPatch).length > 0)) {
     await renewConfirmationLease(context, current.id, token);
     if (!await context.repo.applyConfirmedPaymentDetails(current.id, {
-      ...(paymentIntent !== undefined ? { stripePaymentIntent: paymentIntent } : {}),
+      ...(paymentRef !== undefined ? { paymentRef } : {}),
       ...customerPatch,
     }, token, nowIso(context))) {
       throw new ConfirmationInProgressError();
@@ -359,11 +359,16 @@ async function confirmBookingFromPaymentUnlocked(
   return current;
 }
 
+async function confirmationFullySettled(context: BookkitContext, bookingId: string): Promise<boolean> {
+  const operations = (await context.repo.listSideEffectOperations(bookingId)).filter(isConfirmationSideEffectOperation);
+  return operations.length > 0 && !operations.some((operation) => isActionableSideEffectStatus(operation.status));
+}
+
 async function confirmBookingWithLease(
   context: BookkitContext,
   booking: Booking,
-  paymentIntent: string | null | undefined,
-  details: StripeCustomerDetails,
+  paymentRef: string | null | undefined,
+  details: PaymentCustomerDetails,
 ): Promise<Booking> {
   const startedAt = context.clock();
   const token = crypto.randomUUID();
@@ -375,12 +380,16 @@ async function confirmBookingWithLease(
   );
   if (!acquired) {
     const current = await context.repo.getBookingById(booking.id) ?? booking;
-    if (current.status === 'confirmed' && current.calendarSynced && current.emailSynced) return current;
+    // Plan 022: the booking row no longer carries sync flags — "nothing left to do" is read off the
+    // outbox rows themselves, which is where that state has actually lived since plan 011. A
+    // confirmed booking with no confirmation rows at all is a legacy one that still needs the
+    // repair path, so it keeps waiting on the lease rather than returning as if it were settled.
+    if (current.status === 'confirmed' && await confirmationFullySettled(context, current.id)) return current;
     throw new ConfirmationInProgressError();
   }
   try {
     const current = await context.repo.getBookingById(booking.id) ?? booking;
-    return await confirmBookingFromPaymentUnlocked(context, current, token, paymentIntent, details);
+    return await confirmBookingFromPaymentUnlocked(context, current, token, paymentRef, details);
   } finally {
     await context.repo.releaseConfirmationLease(booking.id, token);
   }
@@ -389,11 +398,11 @@ async function confirmBookingWithLease(
 export async function confirmBookingFromPayment(
   context: BookkitContext,
   booking: Booking,
-  paymentIntent?: string | null,
-  details: StripeCustomerDetails = {},
+  paymentRef?: string | null,
+  details: PaymentCustomerDetails = {},
 ): Promise<Booking> {
   const locks = context.confirmationLocks;
-  if (!locks) return confirmBookingWithLease(context, booking, paymentIntent, details);
+  if (!locks) return confirmBookingWithLease(context, booking, paymentRef, details);
   const previous = locks.get(booking.id) ?? Promise.resolve();
   let release = (): void => undefined;
   const gate = new Promise<void>((resolve) => { release = resolve; });
@@ -401,7 +410,7 @@ export async function confirmBookingFromPayment(
   locks.set(booking.id, queued);
   await previous;
   try {
-    return await confirmBookingWithLease(context, booking, paymentIntent, details);
+    return await confirmBookingWithLease(context, booking, paymentRef, details);
   } finally {
     release();
     if (locks.get(booking.id) === queued) locks.delete(booking.id);

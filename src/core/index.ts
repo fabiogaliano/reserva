@@ -1,5 +1,6 @@
 export * from './booking';
 export * from './config';
+export * from './currency';
 export * from './events';
 export * from './occupancy';
 export * from './pricing';

@@ -29,14 +29,14 @@ export type RefundAttemptOutcome =
   // Stripe succeeded (or choice === 'none', which never touches Stripe) and the outcome is recorded.
   | { kind: 'succeeded' }
   // A same-choice loser's stale snapshot lost the re-read race to an already-resolved winner —
-  // never attempted Stripe. HTTP-path-only (attempt undefined); the scheduled path never sees this
-  // because its claim already excludes a 'succeeded' row.
+  // never called the provider. HTTP-path-only (attempt undefined); the scheduled path never sees
+  // this because its claim already excludes a 'succeeded' row.
   | { kind: 'skipped' }
-  // 'full' was requested but the booking has no Stripe payment intent (a free booking, or legacy
-  // data) — recorded as a permanent 'failed' row; retrying without a payment intent could never
+  // 'full' was requested but the booking has no payment reference (a free booking, or legacy
+  // data) — recorded as a permanent 'failed' row; retrying without one could never
   // succeed, so the scheduled path should treat this the same as an unrecoverable failure.
-  | { kind: 'payment_intent_missing' }
-  // Stripe's refund() call itself failed. `retryable`/`statusCode` are classifyProviderError's
+  | { kind: 'payment_ref_missing' }
+  // The provider's refund() call itself failed. `retryable`/`statusCode` are classifyProviderError's
   // verdict — the scheduled path already used these to decide 'failed' vs 'abandoned' before
   // calling resolveRefundOperation; the HTTP caller only needs to know to report a 502.
   | { kind: 'failed'; message: string; retryable: boolean; statusCode: number | undefined };
@@ -53,33 +53,34 @@ export async function attemptRefund(
   booking: Booking,
   operationId: string,
   choice: RefundChoice,
-  paymentIntent: string | null,
+  paymentRef: string | null,
   claim?: RefundExecutionClaim,
 ): Promise<RefundAttemptOutcome> {
-  const { id: bookingId, priceCents } = booking;
+  const { id: bookingId, priceMinor } = booking;
   if (choice === 'none') {
     await context.repo.resolveRefundOperation(operationId, { status: 'succeeded', resolvedAt: nowIso(context) });
     return { kind: 'succeeded' };
   }
-  if (!paymentIntent) {
+  if (!paymentRef) {
     // Legacy requested rows can bypass the pre-claim guard below. They must remain visibly
-    // unresolved rather than claiming a full refund succeeded when Stripe was never called.
+    // unresolved rather than claiming a full refund succeeded when the provider was never called.
     await context.repo.resolveRefundOperation(operationId, {
-      status: 'failed', error: 'Stripe payment intent is missing', resolvedAt: nowIso(context),
+      status: 'failed', error: 'payment reference is missing', resolvedAt: nowIso(context),
     });
-    return { kind: 'payment_intent_missing' };
+    return { kind: 'payment_ref_missing' };
   }
   if (!claim) {
     // A same-choice loser can hold a stale requested snapshot while the winner records success.
-    // Re-read immediately before Stripe so it does not turn that success into a needless retry.
+    // Re-read immediately before the provider call so it does not turn that success into a
+    // needless retry.
     const current = await context.repo.getRefundOperationByBookingId(bookingId);
     if (current?.id !== operationId || current.status === 'succeeded') return { kind: 'skipped' };
   }
-  let result: { refundId: string; amountCents: number };
+  let result: { refundRef: string; amountMinor: number };
   try {
-    result = await context.providers.payments.refund(paymentIntent, priceCents);
+    result = await context.providers.payments.refund(paymentRef, priceMinor);
   } catch (error) {
-    // Only a failure of the Stripe call itself is a genuine refund failure — record it so the
+    // Only a failure of the provider call itself is a genuine refund failure — record it so the
     // operation row remains for retry/reconciliation.
     if (claim) {
       const outcome = classifyAttemptOutcome(claim.attemptNumber, error);
@@ -95,15 +96,15 @@ export async function attemptRefund(
     await context.repo.resolveRefundOperation(operationId, { status: 'failed', error: message, resolvedAt: nowIso(context) });
     return { kind: 'failed', message, retryable: true, statusCode: undefined };
   }
-  // Stripe has already moved the money by this point — a failure recording that outcome to D1
-  // must never be classified as a Stripe failure (that would misreport a completed refund as
+  // The provider has already moved the money by this point — a failure recording that outcome to
+  // D1 must never be classified as a provider failure (that would misreport a completed refund as
   // failed, or mark it 'failed' forever). Let a write failure here propagate as a plain error
-  // instead: the row stays 'requested'/'in_flight', and a retry recovers the same result via
-  // Stripe's idempotency key (or, once that key's ~24h window has lapsed, via refunds.list
-  // reconciliation in StripeProvider.refund) rather than ever double-refunding or losing the
-  // outcome.
+  // instead: the row stays 'requested'/'in_flight', and a retry recovers the same result via the
+  // provider's own idempotency guarantees (for Stripe: its idempotency key, or once that key's
+  // ~24h window has lapsed, refunds.list reconciliation in StripeProvider.refund) rather than ever
+  // double-refunding or losing the outcome.
   await context.repo.resolveRefundOperation(operationId, {
-    status: 'succeeded', stripeRefundId: result.refundId, amountCents: result.amountCents, resolvedAt: nowIso(context),
+    status: 'succeeded', stripeRefundId: result.refundRef, amountCents: result.amountMinor, resolvedAt: nowIso(context),
   });
   return { kind: 'succeeded' };
 }

@@ -8,14 +8,17 @@ import type { CapacityDefault, DayCapacityOverride } from './core/occupancy';
 export interface BookingInsert {
   id: string;
   reference: string;
-  tourSlug: string;
-  people: number;
-  // Any tour-declared option id — see core/booking.ts Booking.pickupType.
+  serviceSlug: string;
+  quantity: number;
+  // Any service-declared option id — see core/booking.ts Booking.pickupType.
   pickupType: PickupType;
   startsAt: string;
   endsAt: string;
   locale: string;
-  priceCents: number;
+  priceMinor: number;
+  // Lowercase ISO 4217 (core/currency.ts). Captured on the row so a later config change cannot
+  // re-denominate money already taken.
+  currency: string;
   holdExpiresAt: string;
   cancelToken: string;
   operatorToken: string;
@@ -49,19 +52,19 @@ export class HoldLimitExceededError extends Error {
   }
 }
 
-// BK-SCHEMA-001 (task 12): thrown wherever a write would set stripe_payment_intent to a value
-// already claimed by a different booking, translating the D1 UNIQUE-violation on the new partial
-// index (migrations/0011_schema_constraints.sql idx_bookings_payment_intent) into a typed error
+// BK-SCHEMA-001 (task 12): thrown wherever a write would set payment_ref to a value
+// already claimed by a different booking, translating the D1 UNIQUE-violation on the partial
+// index (migrations/0018_v2_domain_rename.sql idx_bookings_payment_ref) into a typed error
 // instead of an opaque D1 error bubbling up as an unhandled 500. status/code follow the same
 // self-describing-error convention as ConfirmationInProgressError (src/confirmation.ts) and
 // AccessVerificationError (src/access.ts) -- src/http.ts's errorResponse already knows how to turn
 // any `Error & {status, code}` into a clean JSON response, so no handler-level catch is needed.
-export class DuplicatePaymentIntentError extends Error {
+export class DuplicatePaymentRefError extends Error {
   readonly status = 409;
-  readonly code = 'duplicate_payment_intent';
-  constructor(paymentIntent: string) {
-    super(`stripe_payment_intent ${paymentIntent} already confirmed a different booking`);
-    this.name = 'DuplicatePaymentIntentError';
+  readonly code = 'duplicate_payment_ref';
+  constructor(paymentRef: string) {
+    super(`payment_ref ${paymentRef} already confirmed a different booking`);
+    this.name = 'DuplicatePaymentRefError';
   }
 }
 
@@ -81,24 +84,24 @@ export class InvalidBookingRowError extends Error {
 
 // SQLite reports a UNIQUE-index violation the same way regardless of whether the index is partial
 // or a plain column UNIQUE -- "UNIQUE constraint failed: <table>.<column>" -- so this doesn't need
-// to special-case the partial WHERE clause on idx_bookings_payment_intent.
-function isPaymentIntentUniqueViolation(error: unknown): boolean {
-  return error instanceof Error && /UNIQUE constraint failed:.*\bstripe_payment_intent\b/i.test(error.message);
+// to special-case the partial WHERE clause on idx_bookings_payment_ref.
+function isPaymentRefUniqueViolation(error: unknown): boolean {
+  return error instanceof Error && /UNIQUE constraint failed:.*\bpayment_ref\b/i.test(error.message);
 }
 
-// Shared by every repo method that can write stripe_payment_intent (updateBooking,
+// Shared by every repo method that can write payment_ref (updateBooking,
 // transitionToConfirmed, confirmWithSideEffectOperations, applyConfirmedPaymentDetails): runs the
-// D1 write and reclassifies a UNIQUE-violation on the new partial index into DuplicatePaymentIntentError,
+// D1 write and reclassifies a UNIQUE-violation on the partial index into DuplicatePaymentRefError,
 // leaving every other error (a different column's constraint, a transient D1 failure) untouched.
-async function guardDuplicatePaymentIntent<T>(paymentIntent: string | null | undefined, run: () => Promise<T>): Promise<T> {
+async function guardDuplicatePaymentRef<T>(paymentRef: string | null | undefined, run: () => Promise<T>): Promise<T> {
   try {
     return await run();
   } catch (error) {
-    // Non-null (NOT falsy): the partial index's WHERE stripe_payment_intent IS NOT NULL clause
+    // Non-null (NOT falsy): the partial index's WHERE payment_ref IS NOT NULL clause
     // covers '' just like any other non-null value, so a truthiness check here would wrongly skip
     // reclassifying a collision on the empty string, letting it surface as an unhandled 500.
-    if (paymentIntent !== null && paymentIntent !== undefined && isPaymentIntentUniqueViolation(error)) {
-      throw new DuplicatePaymentIntentError(paymentIntent);
+    if (paymentRef !== null && paymentRef !== undefined && isPaymentRefUniqueViolation(error)) {
+      throw new DuplicatePaymentRefError(paymentRef);
     }
     throw error;
   }
@@ -106,16 +109,16 @@ async function guardDuplicatePaymentIntent<T>(paymentIntent: string | null | und
 
 // BK-CAP-001 / AR-001 (handoff 05): shared inputs for the atomic capacity guard used by both
 // insertHoldWithCapacity and rescheduleWithCapacity. occupancyUnits/occupancyEndsAt describe the
-// interval the *requesting* write needs (occupancyFor(tour, people) units, and endsAt + that
-// tour's turnaroundMin — the same window src/core/occupancy.ts uses for overlap); localDate is
+// interval the *requesting* write needs (occupancyFor(service, quantity) units, and endsAt + that
+// service's turnaroundMin — the same window src/core/occupancy.ts uses for overlap); localDate is
 // the resolved local-date key (see core/time.ts localDateKey) the capacity lookup runs against;
-// fleetDefaultCapacity is the fallback when neither a day override nor a capacity default apply
+// defaultCapacity is the fallback when neither a day override nor a capacity default apply
 // (see core/occupancy.ts capacityForDate/defaultCapacityForDate, which this mirrors in SQL).
 export interface CapacityGuardInput {
   occupancyUnits: number;
   occupancyEndsAt: string;
   localDate: string;
-  fleetDefaultCapacity: number;
+  defaultCapacity: number;
 }
 
 // BK-REFUND-001: a durable record of a refund decision + its Stripe outcome, replacing the
@@ -306,11 +309,9 @@ export interface BookingUpdate {
   startsAt?: string;
   endsAt?: string;
   holdExpiresAt?: string | null;
-  stripeSessionId?: string | null;
-  stripePaymentIntent?: string | null;
+  paymentSessionRef?: string | null;
+  paymentRef?: string | null;
   calendarEventId?: string | null;
-  calendarSynced?: boolean;
-  emailSynced?: boolean;
   cancelledAt?: string | null;
   cancelledBy?: CancellationActor | null;
   rescheduledFrom?: string | null;
@@ -325,8 +326,8 @@ export interface BookingRepository {
   releaseConfirmationLease(id: string, token: string): Promise<void>;
   getBookingById(id: string): Promise<Booking | null>;
   getBookingByReference(reference: string): Promise<Booking | null>;
-  getBookingBySessionId(sessionId: string): Promise<Booking | null>;
-  getBookingByPaymentIntent?(paymentIntent: string): Promise<Booking | null>;
+  getBookingBySessionRef(sessionRef: string): Promise<Booking | null>;
+  getBookingByPaymentRef?(paymentRef: string): Promise<Booking | null>;
   // BK-SEC-002: `now` gates expiry (tokens_expire_at) in the same query as the hash/fallback
   // lookup, so an expired token is denied identically to an unknown one (no timing/response
   // oracle distinguishing "expired" from "never existed").
@@ -362,7 +363,7 @@ export interface BookingRepository {
   }): Promise<Booking | null>;
   transitionToConfirmed(id: string, input: {
     expectedStatusIn: BookingStatus[];
-    stripePaymentIntent?: string | null;
+    paymentRef?: string | null;
     customerName?: string | null;
     customerEmail?: string | null;
     customerPhone?: string | null;
@@ -371,7 +372,7 @@ export interface BookingRepository {
   }): Promise<Booking | null>;
   confirmWithSideEffectOperations(id: string, input: {
     expectedStatusIn: BookingStatus[];
-    stripePaymentIntent?: string | null;
+    paymentRef?: string | null;
     customerName?: string | null;
     customerEmail?: string | null;
     customerPhone?: string | null;
@@ -391,7 +392,7 @@ export interface BookingRepository {
     emailRecipients?: EmailRecipientRole[];
   }): Promise<Booking | null>;
   applyConfirmedPaymentDetails(id: string, patch: {
-    stripePaymentIntent?: string | null;
+    paymentRef?: string | null;
     customerName?: string | null;
     customerEmail?: string | null;
     customerPhone?: string | null;
@@ -479,7 +480,7 @@ export interface BookingRepository {
     updatedAt: string;
     // patch-11-r1 MEDIUM 2: recomputed from the NEW endsAt at the call site (src/handlers/
     // index.ts rescheduleWithToken), mirroring the checkout-time computation — otherwise a
-    // booking moved later could have its manage link expire before the rescheduled tour even
+    // booking moved later could have its manage link expire before the rescheduled service even
     // happens, and one moved earlier would keep an over-long window. Optional/nullable so
     // existing callers that don't pass one (older tests, mainly) leave tokens_expire_at
     // untouched rather than clobbering it to NULL — see the COALESCE in the implementation.
@@ -650,12 +651,12 @@ export interface BookingRepository {
 interface BookingRow {
   id: string;
   reference: string;
-  tour_slug: string;
-  people: number;
-  // Plan 018 (design decision 2/4): the pickup domain lives in TourConfig.pickupOptions, which
+  service_slug: string;
+  quantity: number;
+  // Plan 018 (design decision 2/4): the pickup domain lives in ServiceConfig.pickupOptions, which
   // the DB can't see — assertValidBookingRow below only enforces the config-independent invariant
-  // that the id is a non-empty string.
-  pickup_type: PickupType;
+  // that a present id is a non-empty string. Plan 022 made the column nullable (no location module).
+  pickup_type: PickupType | null;
   pickup_address: string | null;
   // Plan 017 (design decision 3): see migrations/0014_meeting_points.sql for what each means.
   meeting_point_id: string | null;
@@ -666,16 +667,14 @@ interface BookingRow {
   customer_email: string | null;
   customer_phone: string | null;
   locale: string;
-  price_cents: number;
+  price_minor: number;
+  currency: string;
   status: BookingStatus;
   hold_expires_at: string | null;
-  stripe_session_id: string | null;
-  stripe_payment_intent: string | null;
+  payment_session_ref: string | null;
+  payment_ref: string | null;
   calendar_event_id: string | null;
-  calendar_synced: number;
-  email_synced: number;
-  reminded_at: string | null;
-  review_requested_at: string | null;
+  metadata: string | null;
   cancel_token: string;
   operator_token: string;
   // BK-SEC-002: see migrations/0009_token_hashing.sql for what each column means and why.
@@ -698,22 +697,32 @@ interface BookingRow {
 // columns are consistently-formatted ISO 8601 UTC instants (e.g. '2026-08-01T09:00:00.000Z'), so
 // lexical order matches chronological order, same as the CHECK constraint's own TEXT comparison.
 function assertValidBookingRow(row: BookingRow): void {
-  if (row.people <= 0) throw new InvalidBookingRowError(row.id, `people must be > 0, got ${row.people}`);
-  if (row.price_cents < 0) throw new InvalidBookingRowError(row.id, `price_cents must be >= 0, got ${row.price_cents}`);
+  if (row.quantity <= 0) throw new InvalidBookingRowError(row.id, `quantity must be > 0, got ${row.quantity}`);
+  if (row.price_minor < 0) throw new InvalidBookingRowError(row.id, `price_minor must be >= 0, got ${row.price_minor}`);
   if (!(row.ends_at > row.starts_at)) {
     throw new InvalidBookingRowError(row.id, `ends_at (${row.ends_at}) must be after starts_at (${row.starts_at})`);
   }
   // Plan 018 (design decision 4): migration 0015 dropped the pickup_type CHECK because the id
-  // domain is per-tour config the DB can't enumerate — but an empty id is invalid under every
+  // domain is per-service config the DB can't enumerate — but an empty id is invalid under every
   // possible config (pickupOption ids are non-empty by schema), so that floor is enforced here.
-  if (typeof row.pickup_type !== 'string' || row.pickup_type === '') {
-    throw new InvalidBookingRowError(row.id, 'pickup_type must be a non-empty string');
+  // NULL is a distinct, legitimate state (plan 022/023: the service declares no location options);
+  // the empty string is not, since it would read back as a declared-but-nameless option.
+  if (row.pickup_type !== null && (typeof row.pickup_type !== 'string' || row.pickup_type === '')) {
+    throw new InvalidBookingRowError(row.id, 'pickup_type must be a non-empty string or NULL');
   }
-  for (const [column, value] of [
-    ['calendar_synced', row.calendar_synced],
-    ['email_synced', row.email_synced],
-  ] as const) {
-    if (value !== 0 && value !== 1) throw new InvalidBookingRowError(row.id, `${column} must be 0 or 1, got ${value}`);
+}
+
+// The metadata column is opaque consumer JSON (plan 024 declares and validates its shape). A row
+// that somehow holds unparseable text degrades to null rather than failing every read of the
+// booking -- nothing in plan 022 depends on it, and an operator must still be able to see, cancel,
+// and refund that booking.
+function parseBookingMetadata(raw: string | null): Record<string, unknown> | null {
+  if (raw === null) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
   }
 }
 
@@ -722,8 +731,8 @@ function mapBooking(row: BookingRow): Booking {
   return {
     id: row.id,
     reference: row.reference,
-    tourSlug: row.tour_slug,
-    people: Number(row.people),
+    serviceSlug: row.service_slug,
+    quantity: Number(row.quantity),
     pickupType: row.pickup_type,
     pickupAddress: row.pickup_address,
     meetingPointId: row.meeting_point_id ?? null,
@@ -734,16 +743,14 @@ function mapBooking(row: BookingRow): Booking {
     customerEmail: row.customer_email,
     customerPhone: row.customer_phone,
     locale: row.locale,
-    priceCents: Number(row.price_cents),
+    priceMinor: Number(row.price_minor),
+    currency: row.currency,
     status: row.status,
     holdExpiresAt: row.hold_expires_at,
-    stripeSessionId: row.stripe_session_id,
-    stripePaymentIntent: row.stripe_payment_intent,
+    paymentSessionRef: row.payment_session_ref,
+    paymentRef: row.payment_ref,
     calendarEventId: row.calendar_event_id,
-    calendarSynced: Boolean(row.calendar_synced),
-    emailSynced: Boolean(row.email_synced),
-    remindedAt: row.reminded_at,
-    reviewRequestedAt: row.review_requested_at,
+    metadata: parseBookingMetadata(row.metadata),
     cancelToken: row.cancel_token,
     operatorToken: row.operator_token,
     cancelledAt: row.cancelled_at,
@@ -754,11 +761,10 @@ function mapBooking(row: BookingRow): Booking {
   };
 }
 
-const bookingColumns = `id, reference, tour_slug, people, pickup_type, pickup_address, meeting_point_id,
+const bookingColumns = `id, reference, service_slug, quantity, pickup_type, pickup_address, meeting_point_id,
   meeting_point_label, starts_at, ends_at,
-  customer_name, customer_email, customer_phone, locale, price_cents, status, hold_expires_at,
-  stripe_session_id, stripe_payment_intent, calendar_event_id, calendar_synced, email_synced,
-  reminded_at, review_requested_at, cancel_token, operator_token,
+  customer_name, customer_email, customer_phone, locale, price_minor, currency, status, hold_expires_at,
+  payment_session_ref, payment_ref, calendar_event_id, metadata, cancel_token, operator_token,
   cancel_token_hash, operator_token_hash, cancel_token_enc, operator_token_enc, tokens_expire_at,
   cancel_token_revoked_at, cancelled_at, cancelled_by, rescheduled_from, created_at, updated_at`;
 
@@ -1208,8 +1214,8 @@ export function createBookingRepository(
       const row = await first(db.prepare(`SELECT ${bookingColumns} FROM bookings WHERE reference = ?`).bind(reference).all<BookingRow>());
       return row ? mapBooking(row) : null;
     },
-    getBookingBySessionId: (sessionId) => oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE stripe_session_id = ?`, sessionId),
-    getBookingByPaymentIntent: (paymentIntent) => oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE stripe_payment_intent = ?`, paymentIntent),
+    getBookingBySessionRef: (sessionRef) => oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE payment_session_ref = ?`, sessionRef),
+    getBookingByPaymentRef: (paymentRef) => oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE payment_ref = ?`, paymentRef),
     // BK-SEC-002: hash-first lookup with a guarded legacy-plaintext fallback + lazy backfill (see
     // migrations/0009_token_hashing.sql). `now` gates tokens_expire_at in the SAME query as the
     // hash/plaintext match, and cancel-token lookups additionally require
@@ -1311,19 +1317,19 @@ export function createBookingRepository(
       const tokenColumns = await newTokenColumns(input);
       const result = await db.prepare(
         `INSERT INTO bookings (
-          id, reference, tour_slug, people, pickup_type, starts_at, ends_at, locale, price_cents,
-          status, hold_expires_at, cancel_token, operator_token, cancel_token_hash,
+          id, reference, service_slug, quantity, pickup_type, starts_at, ends_at, locale, price_minor,
+          currency, status, hold_expires_at, cancel_token, operator_token, cancel_token_hash,
           operator_token_hash, cancel_token_enc, operator_token_enc, tokens_expire_at, hold_ip,
           meeting_point_id, meeting_point_label, created_at, updated_at
         )
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'hold', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'hold', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         WHERE ? IS NULL OR (
           SELECT COUNT(*) FROM bookings
           WHERE hold_ip = ? AND status = 'hold' AND hold_expires_at >= ?
         ) < ?`,
       ).bind(
-        input.id, input.reference, input.tourSlug, input.people, input.pickupType,
-        input.startsAt, input.endsAt, input.locale, input.priceCents, input.holdExpiresAt,
+        input.id, input.reference, input.serviceSlug, input.quantity, input.pickupType,
+        input.startsAt, input.endsAt, input.locale, input.priceMinor, input.currency, input.holdExpiresAt,
         tokenColumns.cancelTokenPlaceholder, tokenColumns.operatorTokenPlaceholder,
         tokenColumns.cancelTokenHash, tokenColumns.operatorTokenHash,
         tokenColumns.cancelTokenEnc, tokenColumns.operatorTokenEnc, tokenColumns.tokensExpireAt,
@@ -1341,7 +1347,7 @@ export function createBookingRepository(
     // single-statement-transaction semantics make "check occupancy, then insert" atomic (see
     // handoff 05 / the D1 concurrency FAQ cited there). The capacity subexpression mirrors
     // core/occupancy.ts: capacityForDate (day override, else the capacity_defaults row with the
-    // latest from_date <= localDate, else fleetDefaultCapacity, each floored at 0 via the
+    // latest from_date <= localDate, else defaultCapacity, each floored at 0 via the
     // 2+-argument MAX).
     //
     // patch-05-r1 Fix 1: the occupancy test is a faithful MAX-CONCURRENCY test, not a SUM of
@@ -1371,12 +1377,12 @@ export function createBookingRepository(
       const tokenColumns = await newTokenColumns(input);
       const result = await db.prepare(
         `INSERT INTO bookings (
-          id, reference, tour_slug, people, pickup_type, starts_at, ends_at, locale, price_cents,
-          status, hold_expires_at, cancel_token, operator_token, cancel_token_hash,
+          id, reference, service_slug, quantity, pickup_type, starts_at, ends_at, locale, price_minor,
+          currency, status, hold_expires_at, cancel_token, operator_token, cancel_token_hash,
           operator_token_hash, cancel_token_enc, operator_token_enc, tokens_expire_at, hold_ip,
           occupancy_units, occupancy_ends_at, meeting_point_id, meeting_point_label, created_at, updated_at
         )
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'hold', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'hold', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         WHERE (? IS NULL OR (
             SELECT COUNT(*) FROM bookings WHERE hold_ip = ? AND status = 'hold' AND hold_expires_at >= ?
           ) < ?)
@@ -1404,8 +1410,8 @@ export function createBookingRepository(
             ))
           )`,
       ).bind(
-        input.id, input.reference, input.tourSlug, input.people, input.pickupType,
-        input.startsAt, input.endsAt, input.locale, input.priceCents, input.holdExpiresAt,
+        input.id, input.reference, input.serviceSlug, input.quantity, input.pickupType,
+        input.startsAt, input.endsAt, input.locale, input.priceMinor, input.currency, input.holdExpiresAt,
         tokenColumns.cancelTokenPlaceholder, tokenColumns.operatorTokenPlaceholder,
         tokenColumns.cancelTokenHash, tokenColumns.operatorTokenHash,
         tokenColumns.cancelTokenEnc, tokenColumns.operatorTokenEnc, tokenColumns.tokensExpireAt,
@@ -1420,7 +1426,7 @@ export function createBookingRepository(
         // sum-at-point (b2) + requestedUnits > capacity resolution.
         input.createdAt,
         input.occupancyUnits,
-        input.localDate, input.localDate, input.fleetDefaultCapacity,
+        input.localDate, input.localDate, input.defaultCapacity,
       ).run();
       if (result.meta.changes === 0) {
         // Reclassify a losing write: the hold-ip cap throws (matching insertHold's contract for
@@ -1450,19 +1456,15 @@ export function createBookingRepository(
       const columnMap: Record<string, string> = {
         pickupAddress: 'pickup_address', customerName: 'customer_name',
         customerEmail: 'customer_email', customerPhone: 'customer_phone', startsAt: 'starts_at',
-        endsAt: 'ends_at', holdExpiresAt: 'hold_expires_at', stripeSessionId: 'stripe_session_id',
-        stripePaymentIntent: 'stripe_payment_intent', calendarEventId: 'calendar_event_id',
-        calendarSynced: 'calendar_synced', emailSynced: 'email_synced',
+        endsAt: 'ends_at', holdExpiresAt: 'hold_expires_at', paymentSessionRef: 'payment_session_ref',
+        paymentRef: 'payment_ref', calendarEventId: 'calendar_event_id',
         cancelledAt: 'cancelled_at', cancelledBy: 'cancelled_by', rescheduledFrom: 'rescheduled_from',
         updatedAt: 'updated_at',
       };
       const columns = entries.map(([key]) => columnMap[key]);
       if (columns.some((column) => !column)) throw new Error('Unsupported booking update field');
-      const values = entries.map(([key, value]) => {
-        if (key === 'calendarSynced' || key === 'emailSynced') return value ? 1 : 0;
-        return value;
-      });
-      await guardDuplicatePaymentIntent(patch.stripePaymentIntent, () =>
+      const values = entries.map(([, value]) => value);
+      await guardDuplicatePaymentRef(patch.paymentRef, () =>
         db.prepare(`UPDATE bookings SET ${columns.map((column) => `${column} = ?`).join(', ')} WHERE id = ?`)
           .bind(...values, id).run());
       const updated = await oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
@@ -1513,7 +1515,7 @@ export function createBookingRepository(
     async transitionToConfirmed(id, input) {
       const { expectedStatusIn, updatedAt, ...patch } = input;
       const columnMap: Record<string, string> = {
-        stripePaymentIntent: 'stripe_payment_intent', customerName: 'customer_name',
+        paymentRef: 'payment_ref', customerName: 'customer_name',
         customerEmail: 'customer_email', customerPhone: 'customer_phone', pickupAddress: 'pickup_address',
       };
       const entries = Object.entries(patch).filter(([, value]) => value !== undefined);
@@ -1521,7 +1523,7 @@ export function createBookingRepository(
       if (columns.some((column) => !column)) throw new Error('Unsupported confirmation field');
       const placeholders = expectedStatusIn.map(() => '?').join(', ');
       const setClauses = [`status = 'confirmed'`, 'hold_expires_at = NULL', ...columns.map((column) => `${column} = ?`), 'updated_at = ?'];
-      const result = await guardDuplicatePaymentIntent(patch.stripePaymentIntent, () =>
+      const result = await guardDuplicatePaymentRef(patch.paymentRef, () =>
         db.prepare(
           `UPDATE bookings SET ${setClauses.join(', ')} WHERE id = ? AND status IN (${placeholders})`,
         ).bind(...entries.map(([, value]) => value), updatedAt, id, ...expectedStatusIn).run());
@@ -1531,7 +1533,7 @@ export function createBookingRepository(
     async confirmWithSideEffectOperations(id, input) {
       const { expectedStatusIn, updatedAt, leaseToken, oversold, eventSeeds, emailRecipients, ...patch } = input;
       const columnMap: Record<string, string> = {
-        stripePaymentIntent: 'stripe_payment_intent', customerName: 'customer_name',
+        paymentRef: 'payment_ref', customerName: 'customer_name',
         customerEmail: 'customer_email', customerPhone: 'customer_phone', pickupAddress: 'pickup_address',
       };
       const entries = Object.entries(patch).filter(([, value]) => value !== undefined);
@@ -1570,7 +1572,7 @@ export function createBookingRepository(
       const emailOperations = emailRecipients && emailRecipients.length > 0
         ? emailRecipients.map((recipient) => operation({ family: 'email', name: recipient, event: 'booking.confirmed' }, null, 'pending', null, null))
         : [operation({ family: 'email_confirmation' }, null, 'pending', null, null)];
-      const results = await guardDuplicatePaymentIntent(patch.stripePaymentIntent, () =>
+      const results = await guardDuplicatePaymentRef(patch.paymentRef, () =>
         db.batch([
           db.prepare(
             `UPDATE bookings SET ${setClauses.join(', ')}
@@ -1586,14 +1588,14 @@ export function createBookingRepository(
     },
     async applyConfirmedPaymentDetails(id, patch, leaseToken, updatedAt) {
       const columnMap: Record<string, string> = {
-        stripePaymentIntent: 'stripe_payment_intent', customerName: 'customer_name',
+        paymentRef: 'payment_ref', customerName: 'customer_name',
         customerEmail: 'customer_email', customerPhone: 'customer_phone', pickupAddress: 'pickup_address',
       };
       const entries = Object.entries(patch).filter(([, value]) => value !== undefined);
       if (entries.length === 0) return false;
       const columns = entries.map(([key]) => columnMap[key]);
       if (columns.some((column) => !column)) throw new Error('Unsupported confirmation field');
-      const result = await guardDuplicatePaymentIntent(patch.stripePaymentIntent, () =>
+      const result = await guardDuplicatePaymentRef(patch.paymentRef, () =>
         db.prepare(
           `UPDATE bookings SET ${columns.map((column) => `${column} = COALESCE(${column}, ?)`).join(', ')}, updated_at = ?
            WHERE id = ? AND status = 'confirmed' AND confirmation_lease_token = ?`,
@@ -1607,13 +1609,17 @@ export function createBookingRepository(
            status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
          )
          SELECT ?, 'calendar_create', NULL, NULL, NULL, NULL,
-           CASE WHEN calendar_synced = 1 THEN 'succeeded' ELSE 'pending' END,
-           CASE WHEN calendar_synced = 1 THEN calendar_event_id ELSE NULL END,
-           0, NULL, CASE WHEN calendar_synced = 1 THEN ? ELSE NULL END, NULL, ?, ?
+           CASE WHEN calendar_event_id IS NOT NULL THEN 'succeeded' ELSE 'pending' END,
+           calendar_event_id,
+           0, NULL, CASE WHEN calendar_event_id IS NOT NULL THEN ? ELSE NULL END, NULL, ?, ?
          FROM bookings
          WHERE id = ? AND status = 'confirmed' AND confirmation_lease_token = ?
          ON CONFLICT DO NOTHING`,
       ).bind(id, now, now, now, id, leaseToken);
+      // Plan 022: always 'pending'. The old `email_synced = 1 -> succeeded` branch is gone with the
+      // flag; migration 0018 turned every legacy "already delivered" flag into the succeeded row it
+      // describes, and ON CONFLICT DO NOTHING leaves that row alone here.
+      //
       // Plan 012 (design decision 1/2/3): same split-vs-combined choice confirmWithSideEffectOperations
       // makes for a brand-new confirmation, applied here for legacy repair. A split row is only
       // ever inserted when no legacy combined email_confirmation row already exists for this
@@ -1634,18 +1640,16 @@ export function createBookingRepository(
            booking_id, family, name, event, discriminator, event_payload_json,
            status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
          )
-         SELECT ?, ?, ?, ?, ?, NULL,
-           CASE WHEN email_synced = 1 THEN 'succeeded' ELSE 'pending' END,
-           NULL, 0, NULL, CASE WHEN email_synced = 1 THEN ? ELSE NULL END, NULL, ?, ?
+         SELECT ?, ?, ?, ?, ?, NULL, 'pending', NULL, 0, NULL, NULL, NULL, ?, ?
          FROM bookings
          WHERE id = ? AND status = 'confirmed' AND confirmation_lease_token = ? ${emailGuard}
          ON CONFLICT DO NOTHING`,
-      ).bind(id, ...sideEffectIdentityParams(identity), now, now, now, id, leaseToken, ...(emailGuard ? [id] : [])));
+      ).bind(id, ...sideEffectIdentityParams(identity), now, now, id, leaseToken, ...(emailGuard ? [id] : [])));
       // Plan 021 (design decision 4): a legacy confirmed booking's subscriber rows, created lazily
       // when a hook/webhook was registered after it was already confirmed. Always inserted
-      // 'pending' (unlike calendar/email above, which can already be synced when this repair path
-      // first runs), and always no-ops once the row exists — the row's own status is the only
-      // record of whether the subscriber has been told.
+      // 'pending' (unlike the calendar row above, which reads its outcome back off
+      // calendar_event_id), and always no-ops once the row exists — the row's own status is the
+      // only record of whether the subscriber has been told.
       const eventOperations = (eventSeeds ?? []).map((seed) => db.prepare(
         `INSERT INTO side_effect_operations (
            booking_id, family, name, event, discriminator, event_payload_json,
@@ -1714,15 +1718,10 @@ export function createBookingRepository(
         .all<{ attempt_count: number }>();
       return result.results[0]?.attempt_count ?? null;
     },
-    // Plan 012 (design decision 5): calendar_create is always exactly one row, so calendar_synced
-    // still flips directly off this resolve's own outcome, unchanged. email_synced is no longer
-    // always one row's outcome -- it's recomputed here by re-reading side_effect_operations for
-    // the SAME booking, inside the SAME batch, so it sees rowUpdate's write below (D1's batch()
-    // sequences statements in one transaction). It becomes 1 only when every row in the applicable
-    // set is 'succeeded': the legacy combined row when one exists for this booking, otherwise
-    // every split row. The row rowUpdate just wrote is always itself a member of whichever set
-    // applies to it (it's either the email_confirmation family or an email/booking.confirmed row), so
-    // the EXISTS/NOT EXISTS pair below can never evaluate against zero candidate rows.
+    // Plan 022: the booking row no longer mirrors delivery state -- the operation row's own status
+    // IS that state, and the two can no longer disagree. What still has to be written back is
+    // calendar_event_id: the provider's event id is needed later to patch or delete the event, and
+    // an outbox row can be pruned while the calendar entry lives on.
     async resolveSideEffectOperation(input) {
       const rowUpdate = db.prepare(
         `UPDATE side_effect_operations
@@ -1742,20 +1741,10 @@ export function createBookingRepository(
       const bookingUpdate = db.prepare(
         `UPDATE bookings SET
            calendar_event_id = CASE WHEN ? = 'calendar_create' THEN ? ELSE calendar_event_id END,
-           calendar_synced = CASE WHEN ? = 'calendar_create' THEN ? ELSE calendar_synced END,
-           email_synced = CASE WHEN ? = 'calendar_create' THEN email_synced ELSE (
-             CASE
-               WHEN EXISTS (SELECT 1 FROM side_effect_operations WHERE booking_id = ? AND family = 'email_confirmation')
-                 THEN NOT EXISTS (SELECT 1 FROM side_effect_operations WHERE booking_id = ? AND family = 'email_confirmation' AND status != 'succeeded')
-               ELSE NOT EXISTS (SELECT 1 FROM side_effect_operations WHERE booking_id = ? AND family = 'email' AND event = 'booking.confirmed' AND status != 'succeeded')
-             END
-           ) END,
            updated_at = ?
          WHERE id = ? AND confirmation_lease_token = ?`,
       ).bind(
         input.identity.family, input.identity.family === 'calendar_create' ? (input.providerResultId ?? null) : null,
-        input.identity.family, input.status === 'succeeded' ? 1 : 0,
-        input.identity.family, input.bookingId, input.bookingId, input.bookingId,
         input.resolvedAt,
         input.bookingId, input.leaseToken,
       );
@@ -1847,7 +1836,7 @@ export function createBookingRepository(
     // count itself against its own request (see the "excludes its own occupancy" test).
     //
     // patch-05-r1 Fix 3: occupancy_units is now re-asserted on every reschedule (computed from
-    // occupancyFor(tour, people) at the call site — party size doesn't change on a reschedule).
+    // occupancyFor(service, quantity) at the call site — party size doesn't change on a reschedule).
     // This opportunistically self-heals a legacy NULL row (see migrations/0008) the first time it
     // is ever moved, instead of leaving it undercounted as 1 unit forever.
     async rescheduleWithCapacity(id, input) {
@@ -1892,7 +1881,7 @@ export function createBookingRepository(
         // sum-at-point (b2, self-excluded) + requestedUnits > capacity resolution.
         id, input.now,
         input.occupancyUnits,
-        input.localDate, input.localDate, input.fleetDefaultCapacity,
+        input.localDate, input.localDate, input.defaultCapacity,
       ];
       // patch-11-r1 MEDIUM 2: same COALESCE(?, tokens_expire_at) as transitionReschedule above.
       const updateStmt = db.prepare(

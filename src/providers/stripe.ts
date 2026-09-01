@@ -1,8 +1,8 @@
 import Stripe from 'stripe';
 import type { Booking } from '../core/booking';
 import type { ClientConfig } from '../core/config';
-import { pickupOptionFor, resolveTour, stripeLocaleFor } from '../core/config';
-import type { PaymentProvider, SessionStatus, StripeEventParsed } from '../core/events';
+import { pickupOptionFor, resolveService } from '../core/config';
+import type { PaymentProvider, SessionStatus, PaymentEventParsed } from '../core/events';
 import { priceFor } from '../core/pricing';
 import { requestText, STRIPE_WEBHOOK_BODY_LIMIT_BYTES } from '../http';
 import type { BookkitResolvedRouteConfig } from '../routes-manifest';
@@ -41,8 +41,8 @@ export interface StripeProviderOptions {
   cancelUrl?: UrlOption;
   getSuccessUrl?: BookingCallback<string>;
   getCancelUrl?: BookingCallback<string>;
-  getTourName?: BookingCallback<string>;
-  tourName?: BookingCallback<string>;
+  getServiceName?: BookingCallback<string>;
+  serviceName?: BookingCallback<string>;
   getProductName?: BookingCallback<string>;
   productName?: BookingCallback<string>;
   getLineItemName?: BookingCallback<string>;
@@ -50,6 +50,10 @@ export interface StripeProviderOptions {
   // unset so the checkout stays name-only, matching prior behaviour.
   productDescription?: string | BookingCallback<string>;
   pickupFieldLabel?: string | BookingCallback<string>;
+  // Plan 022 (design decision 7): payment methods are adapter configuration, not a Reserva setting
+  // — the accepted set is Stripe's, changing it needs a Stripe dashboard capability, and no other
+  // provider shares the vocabulary. Defaults to card-only.
+  paymentMethods?: StripePaymentMethod[];
   // Stripe rejects consent collection unless the account has a Terms of Service
   // URL in its public business details, which a not-yet-activated test account
   // lacks. Defaults to 'required' so operators keep the chargeback-defense
@@ -59,9 +63,51 @@ export interface StripeProviderOptions {
 
 type PositionalOptions = Omit<StripeProviderOptions, 'secretKey' | 'webhookSecret'>;
 
+// The Stripe payment method types this adapter is tested against.
+export type StripePaymentMethod = 'card' | 'mb_way';
+
+const DEFAULT_PAYMENT_METHODS: readonly StripePaymentMethod[] = ['card'];
+
+// Stripe Checkout's own supported `locale` values, and its 24-hour cap on how long a session may
+// stay open. Both left core config with plan 022 (design decision 7): they are this vendor's
+// limits, enforced in validateConfig() below.
+export const STRIPE_SUPPORTED_LOCALES = new Set([
+  'auto', 'bg', 'cs', 'da', 'de', 'el', 'en', 'en-GB', 'es', 'es-419', 'et',
+  'fi', 'fil', 'fr', 'fr-CA', 'he', 'hr', 'hu', 'id', 'it', 'ja', 'ko', 'lt',
+  'lv', 'ms', 'mt', 'nb', 'nl', 'pl', 'pt', 'pt-BR', 'ro', 'ru', 'sk', 'sl',
+  'sv', 'th', 'tr', 'uk', 'vi', 'zh', 'zh-HK', 'zh-TW',
+]);
+
+// The currencies Stripe can present at Checkout (docs.stripe.com/currencies, "Presentment
+// currencies", 2026-09). Reserva's own core accepts any ISO 4217 code (core/currency.ts); this is
+// the narrower set THIS adapter can actually charge in, which is exactly why it lives here.
+export const STRIPE_SUPPORTED_CURRENCIES = new Set([
+  'aed', 'afn', 'all', 'amd', 'ang', 'aoa', 'ars', 'aud', 'awg', 'azn', 'bam', 'bbd', 'bdt', 'bgn',
+  'bif', 'bmd', 'bnd', 'bob', 'brl', 'bsd', 'bwp', 'byn', 'bzd', 'cad', 'cdf', 'chf', 'clp', 'cny',
+  'cop', 'crc', 'cve', 'czk', 'djf', 'dkk', 'dop', 'dzd', 'egp', 'etb', 'eur', 'fjd', 'fkp', 'gbp',
+  'gel', 'gip', 'gmd', 'gnf', 'gtq', 'gyd', 'hkd', 'hnl', 'hrk', 'htg', 'huf', 'idr', 'ils', 'inr',
+  'isk', 'jmd', 'jpy', 'kes', 'kgs', 'khr', 'kmf', 'krw', 'kyd', 'kzt', 'lak', 'lbp', 'lkr', 'lrd',
+  'lsl', 'mad', 'mdl', 'mga', 'mkd', 'mmk', 'mnt', 'mop', 'mur', 'mvr', 'mwk', 'mxn', 'myr', 'mzn',
+  'nad', 'ngn', 'nio', 'nok', 'npr', 'nzd', 'pab', 'pen', 'pgk', 'php', 'pkr', 'pln', 'pyg', 'qar',
+  'ron', 'rsd', 'rub', 'rwf', 'sar', 'sbd', 'scr', 'sek', 'sgd', 'shp', 'sle', 'sos', 'srd', 'std',
+  'szl', 'thb', 'tjs', 'top', 'try', 'ttd', 'twd', 'tzs', 'uah', 'ugx', 'usd', 'uyu', 'uzs', 'vnd',
+  'vuv', 'wst', 'xaf', 'xcd', 'xof', 'xpf', 'yer', 'zar', 'zmw',
+]);
+
+// 1440 (not Stripe's exact 1445min cap) keeps expires_at 5 minutes under Stripe's 24h-from-creation
+// limit, since expires_at is computed from Reserva's clock, not Stripe's — a holdMinutes=1445
+// session would sit exactly on the edge and fail intermittently under clock skew (see
+// expiresInMinutes in createCheckout below).
+export const STRIPE_MAX_HOLD_MINUTES = 1440;
+
+// Stripe names European Portuguese `pt`, while the rest of Reserva uses the precise BCP 47 tag.
+export function stripeLocaleFor(locale: string): string {
+  return locale.toLowerCase() === 'pt-pt' ? 'pt' : locale;
+}
+
 export class StripeWebhookVerificationError extends Error {
   readonly status = 400;
-  readonly code = 'invalid_stripe_signature';
+  readonly code = 'invalid_payment_signature';
 
   constructor() {
     super('Stripe webhook signature verification failed');
@@ -185,10 +231,10 @@ function defaultSuccessUrl(config: ClientConfig, routePaths?: BookkitResolvedRou
 }
 
 function defaultCancelUrl(booking: Booking, config: ClientConfig): string {
-  return `${config.business.url.replace(/\/$/, '')}/tours/${booking.tourSlug}`;
+  return `${config.business.url.replace(/\/$/, '')}/services/${booking.serviceSlug}`;
 }
 
-export function stripePaymentMethodTypes(methods: ClientConfig['payments']['methods']): Stripe.Checkout.SessionCreateParams.PaymentMethodType[] {
+export function stripePaymentMethodTypes(methods: readonly StripePaymentMethod[]): Stripe.Checkout.SessionCreateParams.PaymentMethodType[] {
   return [...methods] as Stripe.Checkout.SessionCreateParams.PaymentMethodType[];
 }
 
@@ -204,7 +250,7 @@ export function sessionStatusFromStripe(session: Stripe.Checkout.Session): Sessi
     paymentStatus: session.payment_status,
     ...(amountTotal !== undefined ? { amountTotal } : {}),
     ...(currency !== undefined ? { currency } : {}),
-    paymentIntent: objectId(session.payment_intent),
+    paymentRef: objectId(session.payment_intent),
     ...customerDetailsOf(session),
     ...(metadata ? { metadata } : {}),
   };
@@ -212,9 +258,22 @@ export function sessionStatusFromStripe(session: Stripe.Checkout.Session): Sessi
 
 export const mapSessionStatus = sessionStatusFromStripe;
 
-export function stripeEventToParsed(event: Stripe.Event): StripeEventParsed {
+// Maps Stripe's own event names onto Reserva's PAYMENT_EVENTS vocabulary (core/events.ts). An event
+// Reserva has no name for keeps Stripe's string and is ignored downstream.
+const PAYMENT_EVENT_BY_STRIPE_TYPE: Record<string, PaymentEventParsed['type']> = {
+  'checkout.session.completed': 'checkout_completed',
+  'checkout.session.expired': 'checkout_expired',
+  'charge.refunded': 'refunded',
+  'charge.dispute.created': 'dispute_created',
+};
+
+export function stripeEventToParsed(event: Stripe.Event): PaymentEventParsed {
   const object = event.data.object as unknown;
-  const parsed: StripeEventParsed = { id: event.id, type: event.type, raw: event };
+  const parsed: PaymentEventParsed = {
+    id: event.id,
+    type: PAYMENT_EVENT_BY_STRIPE_TYPE[event.type] ?? event.type,
+    raw: event,
+  };
   if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.expired') {
     const session = object as Stripe.Checkout.Session;
     const bookingId = bookingIdOf(session);
@@ -222,8 +281,8 @@ export function stripeEventToParsed(event: Stripe.Event): StripeEventParsed {
     const amountCaptured = amountOf(session, 'amount_total');
     Object.assign(parsed, customerDetailsOf(session));
     if (bookingId) parsed.bookingId = bookingId;
-    if (session.id) parsed.sessionId = session.id;
-    if (paymentIntent) parsed.paymentIntent = paymentIntent;
+    if (session.id) parsed.sessionRef = session.id;
+    if (paymentIntent) parsed.paymentRef = paymentIntent;
     if (amountCaptured !== undefined) parsed.amountCaptured = amountCaptured;
     const currency = currencyOf(session);
     if (currency !== undefined) parsed.currency = currency;
@@ -241,10 +300,10 @@ export function stripeEventToParsed(event: Stripe.Event): StripeEventParsed {
     const amountRefunded = amountOf(charge, 'amount_refunded');
     const refundId = event.type === 'charge.refunded' ? refundIdOf(charge) : undefined;
     if (bookingId) parsed.bookingId = bookingId;
-    if (paymentIntent) parsed.paymentIntent = paymentIntent;
+    if (paymentIntent) parsed.paymentRef = paymentIntent;
     if (amountCaptured !== undefined) parsed.amountCaptured = amountCaptured;
     if (amountRefunded !== undefined) parsed.amountRefunded = amountRefunded;
-    if (refundId !== undefined) parsed.refundId = refundId;
+    if (refundId !== undefined) parsed.refundRef = refundId;
     if (charge.paid !== undefined) parsed.paid = charge.paid;
   }
   return parsed;
@@ -278,14 +337,14 @@ export class StripeProvider implements PaymentProvider {
     booking: Booking,
     config: ClientConfig,
     routePaths?: BookkitResolvedRouteConfig['paths'],
-  ): Promise<{ url: string; sessionId: string }> {
-    const tour = resolveTour(config, booking.tourSlug);
-    const nameCallback = this.options.getTourName
-      ?? this.options.tourName
+  ): Promise<{ url: string; sessionRef: string }> {
+    const service = resolveService(config, booking.serviceSlug);
+    const nameCallback = this.options.getServiceName
+      ?? this.options.serviceName
       ?? this.options.getProductName
       ?? this.options.productName
       ?? this.options.getLineItemName;
-    const name = resolveOption(nameCallback, booking, config, booking.tourSlug);
+    const name = resolveOption(nameCallback, booking, config, booking.serviceSlug);
     const description = resolveOption(this.options.productDescription, booking, config, '').trim();
     const successUrl = this.options.getSuccessUrl?.(booking, config)
       ?? resolveOption(this.options.successUrl, booking, config, defaultSuccessUrl(config, routePaths));
@@ -297,25 +356,25 @@ export class StripeProvider implements PaymentProvider {
       mode: 'payment',
       line_items: [{ quantity: 1, price_data: {
         currency: config.business.currency,
-        unit_amount: priceFor(tour, booking.people, booking.pickupType),
+        unit_amount: priceFor(service, booking.quantity, booking.pickupType),
         product_data: { name, ...(description ? { description } : {}) },
       } }],
       expires_at: Math.floor(nowMs(this.now) / 1000) + expiresInMinutes * 60,
       locale: stripeLocaleFor(booking.locale) as Stripe.Checkout.SessionCreateParams.Locale,
-      payment_method_types: stripePaymentMethodTypes(config.payments.methods),
+      payment_method_types: stripePaymentMethodTypes(this.options.paymentMethods ?? DEFAULT_PAYMENT_METHODS),
       phone_number_collection: { enabled: true },
       metadata: { bookingId: booking.id },
       payment_intent_data: { metadata: { bookingId: booking.id } },
       success_url: successUrl,
       cancel_url: cancelUrl,
     };
-    // Plan 018 (design decision 7): re-keyed off the tour's declared option instead of the fixed
-    // 'custom' id, so any option a tour marks requiresAddress collects the field, not just the id
-    // literally named 'custom'. An undeclared stored pickupType (the tour's pickupOptions changed
+    // Plan 018 (design decision 7): re-keyed off the service's declared option instead of the fixed
+    // 'custom' id, so any option a service marks requiresAddress collects the field, not just the id
+    // literally named 'custom'. An undeclared stored pickupType (the service's pickupOptions changed
     // after this booking's hold was created) resolves option to undefined, and `undefined?.` is
     // falsy — the safe degrade is to skip the field rather than guess, since Stripe would otherwise
     // collect an address label for an option the operator no longer recognizes.
-    if (pickupOptionFor(tour, booking.pickupType)?.requiresAddress) params.custom_fields = [{
+    if (pickupOptionFor(service, booking.pickupType)?.requiresAddress) params.custom_fields = [{
       key: 'pickup_address', label: { type: 'custom', custom: pickupLabel }, type: 'text',
     }];
     if ((this.options.termsOfService ?? 'required') === 'required') {
@@ -326,7 +385,7 @@ export class StripeProvider implements PaymentProvider {
     const idempotencyKey = `bookkit-checkout-${booking.id}`;
     const session = await this.createSession(params, idempotencyKey);
     if (!session.url) throw new Error('Stripe Checkout Session did not include a URL');
-    return { url: session.url, sessionId: session.id };
+    return { url: session.url, sessionRef: session.id };
   }
 
   // Stripe only replays the cached response for a reused idempotency key when the retried request
@@ -347,7 +406,7 @@ export class StripeProvider implements PaymentProvider {
     }
   }
 
-  async parseWebhook(request: Request): Promise<StripeEventParsed> {
+  async parseWebhook(request: Request): Promise<PaymentEventParsed> {
     const signature = request.headers.get('stripe-signature');
     if (!signature) throw new StripeWebhookVerificationError();
     // Read outside the try below: an oversized body must surface as HttpError(413), not get
@@ -365,49 +424,76 @@ export class StripeProvider implements PaymentProvider {
     }
   }
 
-  async getSession(sessionId: string): Promise<SessionStatus> {
-    return sessionStatusFromStripe(await this.stripe.checkout.sessions.retrieve(sessionId));
+  async getSession(sessionRef: string): Promise<SessionStatus> {
+    return sessionStatusFromStripe(await this.stripe.checkout.sessions.retrieve(sessionRef));
   }
 
-  async refund(paymentIntent: string, expectedAmountCents: number): Promise<{ refundId: string; amountCents: number }> {
-    const idempotencyKey = `bookkit-refund-${paymentIntent}`;
+  // Plan 022 (design decision 7): Stripe's own limits, checked once while the runtime definition
+  // initializes (runtime-context.ts) instead of leaking into ClientConfig's schema. Every message
+  // names the config path and the fix, so a misconfigured deployment fails to start with something
+  // actionable rather than 500ing on the first checkout.
+  validateConfig(config: ClientConfig): void {
+    if (config.booking.holdMinutes > STRIPE_MAX_HOLD_MINUTES) {
+      throw new Error(
+        `booking.holdMinutes is ${config.booking.holdMinutes}; Stripe Checkout sessions cannot stay open longer `
+        + `than 24 hours, so set it to at most ${STRIPE_MAX_HOLD_MINUTES}.`,
+      );
+    }
+    for (const locale of config.locales.supported) {
+      if (!STRIPE_SUPPORTED_LOCALES.has(stripeLocaleFor(locale))) {
+        throw new Error(
+          `locales.supported contains "${locale}", which Stripe Checkout has no locale for. `
+          + `Remove it, or use one of: ${[...STRIPE_SUPPORTED_LOCALES].join(', ')}.`,
+        );
+      }
+    }
+    if (!STRIPE_SUPPORTED_CURRENCIES.has(config.business.currency.toLowerCase())) {
+      throw new Error(
+        `business.currency "${config.business.currency}" is not a currency Stripe presents at checkout. `
+        + 'Use an ISO 4217 code from Stripe\'s supported list (https://docs.stripe.com/currencies).',
+      );
+    }
+  }
+
+  async refund(paymentRef: string, expectedAmountMinor: number): Promise<{ refundRef: string; amountMinor: number }> {
+    const idempotencyKey = `bookkit-refund-${paymentRef}`;
     let created: Stripe.Refund;
     try {
       created = await this.stripe.refunds.create(
-        { payment_intent: paymentIntent, metadata: { bookkit_refund_key: idempotencyKey } },
+        { payment_intent: paymentRef, metadata: { bookkit_refund_key: idempotencyKey } },
         { idempotencyKey },
       );
     } catch (error) {
       if (isDefinitiveStripeError(error) && !isChargeAlreadyRefundedError(error)) throw error;
       // A list result is proof of success only when the refund carries this request's marker and
       // its own amount is exact.
-      const reconciled = await this.findExistingRefund(paymentIntent, expectedAmountCents, idempotencyKey);
+      const reconciled = await this.findExistingRefund(paymentRef, expectedAmountMinor, idempotencyKey);
       if (reconciled) return reconciled;
       throw error;
     }
     if (created.status !== 'succeeded') {
       throw new Error(`Stripe refund ${created.id} did not succeed (status ${created.status ?? 'unknown'})`);
     }
-    if (created.amount !== expectedAmountCents) {
-      throw new Error(`Stripe refund amount ${created.amount} did not match expected total ${expectedAmountCents}`);
+    if (created.amount !== expectedAmountMinor) {
+      throw new Error(`Stripe refund amount ${created.amount} did not match expected total ${expectedAmountMinor}`);
     }
-    return { refundId: created.id, amountCents: expectedAmountCents };
+    return { refundRef: created.id, amountMinor: expectedAmountMinor };
   }
 
   private async findExistingRefund(
-    paymentIntent: string,
-    expectedAmountCents: number,
+    paymentRef: string,
+    expectedAmountMinor: number,
     idempotencyKey: string,
-  ): Promise<{ refundId: string; amountCents: number } | null> {
+  ): Promise<{ refundRef: string; amountMinor: number } | null> {
     try {
-      const list = await this.stripe.refunds.list?.({ payment_intent: paymentIntent, limit: 100 });
+      const list = await this.stripe.refunds.list?.({ payment_intent: paymentRef, limit: 100 });
       if (!list) return null;
       const matched = list.data.find((candidate) => (
         candidate.status === 'succeeded'
-        && candidate.amount === expectedAmountCents
+        && candidate.amount === expectedAmountMinor
         && candidate.metadata?.bookkit_refund_key === idempotencyKey
       ));
-      return matched ? { refundId: matched.id, amountCents: expectedAmountCents } : null;
+      return matched ? { refundRef: matched.id, amountMinor: expectedAmountMinor } : null;
     } catch {
       // Listing is only reconciliation evidence; retain the original create failure if unavailable.
       return null;

@@ -1,5 +1,5 @@
 import { canCancelBooking, canRescheduleBooking, type Booking } from '../core/booking';
-import { meetingPointForBooking, pickupOptionFor, resolveTour } from '../core/config';
+import { meetingPointForBooking, pickupOptionFor, resolveService } from '../core/config';
 import { verifyPayment } from '../core/payment-verification';
 import { parseUtcInstant, utcToLocalIso } from '../core/time';
 import {
@@ -16,19 +16,19 @@ import { HttpError, json } from '../http';
 import { run, withSensitiveHeaders } from './shared';
 
 function bookingSummary(context: BookkitContext, booking: Booking): Record<string, unknown> {
-  const tour = resolveTour(context.config, booking.tourSlug);
+  const service = resolveService(context.config, booking.serviceSlug);
   // Plan 018 (design decision 8): the manage page renders off these two flags, not off the raw
   // pickupType — a declared option like Maze's custom pick-up must show its address and hide the
   // meeting point regardless of what its id happens to be. A stored id no longer declared in
   // config degrades to the pre-018 rendering: address only for the literal 'custom' id, meeting
   // point always shown.
-  const option = pickupOptionFor(tour, booking.pickupType);
+  const option = pickupOptionFor(service, booking.pickupType);
   return {
     reference: booking.reference,
-    tourSlug: booking.tourSlug,
+    serviceSlug: booking.serviceSlug,
     start: utcToLocalIso(booking.startsAt, context.config.business.timezone),
     end: utcToLocalIso(booking.endsAt, context.config.business.timezone),
-    people: booking.people,
+    quantity: booking.quantity,
     pickupType: booking.pickupType,
     pickupAddress: booking.pickupAddress,
     pickupRequiresAddress: option ? option.requiresAddress : booking.pickupType === 'custom',
@@ -38,31 +38,31 @@ function bookingSummary(context: BookkitContext, booking: Booking): Record<strin
     customerPhone: booking.customerPhone,
     locale: booking.locale,
     status: booking.status,
-    priceCents: booking.priceCents,
-    // Plan 017 (design decision 3): resolved per booking, not read live off the tour — a stored
+    priceMinor: booking.priceMinor,
+    // Plan 017 (design decision 3): resolved per booking, not read live off the service — a stored
     // id no longer declared in config falls back to the booking's own label snapshot instead of
     // silently pointing the customer at whatever point happens to be first today.
-    meetingPoint: meetingPointForBooking(tour, booking.meetingPointId, booking.meetingPointLabel),
+    meetingPoint: meetingPointForBooking(service, booking.meetingPointId, booking.meetingPointLabel),
   };
 }
 
 function confirmationSummary(context: BookkitContext, booking: Booking): Record<string, unknown> {
-  const tour = resolveTour(context.config, booking.tourSlug);
+  const service = resolveService(context.config, booking.serviceSlug);
   // Plan 019 (design decision 2): gate the meeting point on the selected option's
   // usesMeetingPoint, the same read-model filter bookingSummary already applies (plan 018
   // decision 8) — otherwise custom_both (requiresAddress, no meeting point) would still tell the
   // customer to meet at a dock their option never uses. A stored id no longer declared in config
   // has no option to check, so it preserves the pre-018 behavior and includes the meeting point.
-  const option = pickupOptionFor(tour, booking.pickupType);
+  const option = pickupOptionFor(service, booking.pickupType);
   const includeMeetingPoint = option ? option.usesMeetingPoint : true;
   return {
     reference: booking.reference,
-    tourSlug: booking.tourSlug,
+    serviceSlug: booking.serviceSlug,
     start: utcToLocalIso(booking.startsAt, context.config.business.timezone),
     end: utcToLocalIso(booking.endsAt, context.config.business.timezone),
-    people: booking.people,
-    priceCents: booking.priceCents,
-    ...(includeMeetingPoint ? { meetingPoint: meetingPointForBooking(tour, booking.meetingPointId, booking.meetingPointLabel) } : {}),
+    quantity: booking.quantity,
+    priceMinor: booking.priceMinor,
+    ...(includeMeetingPoint ? { meetingPoint: meetingPointForBooking(service, booking.meetingPointId, booking.meetingPointLabel) } : {}),
     locale: booking.locale,
   };
 }
@@ -73,16 +73,16 @@ const STATUS_DETAIL_GRACE_MS = 4 * 60 * 60_000;
 export function handleStatus(request: Request, context: BookkitContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
-    const sessionId = new URL(request.url).searchParams.get('session_id');
-    if (!sessionId) throw new HttpError(400, 'validation_failed', 'session_id is required');
-    const booking = await context.repo.getBookingBySessionId(sessionId);
+    const sessionRef = new URL(request.url).searchParams.get('session_id');
+    if (!sessionRef) throw new HttpError(400, 'validation_failed', 'session_id is required');
+    const booking = await context.repo.getBookingBySessionRef(sessionRef);
     if (!booking) return json({ status: 'not_found' });
     let current = booking;
     if (current.status === 'hold' || current.status === 'expired') {
-      const session = await context.providers.payments.getSession(sessionId);
+      const session = await context.providers.payments.getSession(sessionRef);
       const verification = verifyPayment(current, {
         completed: session.status === 'complete',
-        sessionId: session.id,
+        sessionRef: session.id,
         paid: session.paymentStatus === 'paid',
         paymentStatus: session.paymentStatus,
         amountTotal: session.amountTotal,
@@ -91,13 +91,13 @@ export function handleStatus(request: Request, context: BookkitContext): Promise
       });
       if (verification.allowed) {
         try {
-          current = await confirmBookingFromPayment(context, current, session.paymentIntent ?? null, session);
+          current = await confirmBookingFromPayment(context, current, session.paymentRef ?? null, session);
         } catch (error) {
           if (!(error instanceof ConfirmationInProgressError)) throw error;
           current = await context.repo.getBookingById(current.id) ?? current;
         }
       } else if (session.status === 'complete') {
-        context.logger.warn?.('Stripe payment verification rejected', { bookingId: current.id, reason: verification.reason });
+        context.logger.warn?.('payment verification rejected', { bookingId: current.id, reason: verification.reason });
         return json({ status: 'pending' });
       } else if (session.status === 'expired' && current.status === 'hold') {
         current = await context.repo.expireHold(current.id, nowIso(context))
@@ -120,8 +120,12 @@ export function handleStatus(request: Request, context: BookkitContext): Promise
       // 'succeeded'), so a permanently-failed delivery cannot keep tripping needsFulfillment (and
       // re-entering confirmBookingFromPayment) on every future request forever, even though the
       // claim predicate itself would just no-op every time.
+      // Plan 022: no confirmation rows at all is now the whole legacy signal. The sync flags that
+      // used to qualify it are gone, and migration 0018 converted every "already delivered" flag
+      // into the succeeded row it described — so a booking that reaches this branch with zero rows
+      // genuinely has no delivery record and needs the repair path.
       const needsFulfillment = confirmationOperations.some((operation) => isActionableSideEffectStatus(operation.status))
-        || (confirmationOperations.length === 0 && (!current.calendarSynced || !current.emailSynced))
+        || confirmationOperations.length === 0
         || missingConfirmationEventOperations(context, allOperations);
       if (needsFulfillment) {
         try {

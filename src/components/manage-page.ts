@@ -24,8 +24,8 @@ export interface ManagePageOptions {
   scriptHref?: string;
   availability?: {
     endpoint: string;
-    tourSlug: string;
-    people: number;
+    serviceSlug: string;
+    quantity: number;
     from: string;
     to: string;
   };
@@ -33,9 +33,9 @@ export interface ManagePageOptions {
 
 interface ManageBookingPayload {
   reference?: string;
-  tourSlug?: string;
+  serviceSlug?: string;
   start?: string;
-  people?: number;
+  quantity?: number;
   pickupType?: string;
   pickupAddress?: string | null;
   // Plan 018 (design decision 8): the chosen pickup option's flags, resolved by the manage
@@ -46,7 +46,7 @@ interface ManageBookingPayload {
   customerEmail?: string | null;
   customerPhone?: string | null;
   status?: string;
-  priceCents?: number;
+  priceMinor?: number;
   meetingPoint?: { label?: string; mapsUrl?: string };
 }
 
@@ -71,16 +71,16 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
   const displayStart = start && options.timezone ? formatDateTime(start, locale, options.timezone) : start;
   const displayDeadline = deadline && options.timezone ? formatDateTime(deadline, locale, options.timezone) : deadline;
 
-  const peopleLabel = typeof booking.people === 'number'
-    ? formatMessage(messages[booking.people === 1 ? 'widget.person' : 'widget.peopleCount'], { n: booking.people })
-    : String(booking.people ?? '');
+  const quantityLabel = typeof booking.quantity === 'number'
+    ? formatMessage(messages[booking.quantity === 1 ? 'widget.person' : 'widget.quantityCount'], { n: booking.quantity })
+    : String(booking.quantity ?? '');
   const facts: Array<[string, string]> = [
-    [messages['common.tour'], escapeHtml(booking.tourSlug)],
+    [messages['common.service'], escapeHtml(booking.serviceSlug)],
     [messages['common.date'], escapeHtml(displayStart)],
-    [messages['common.people'], escapeHtml(peopleLabel)],
+    [messages['common.quantity'], escapeHtml(quantityLabel)],
   ];
-  if (typeof booking.priceCents === 'number' && options.currency) {
-    facts.push([messages['common.price'], escapeHtml(formatPrice(booking.priceCents, locale, options.currency))]);
+  if (typeof booking.priceMinor === 'number' && options.currency) {
+    facts.push([messages['common.price'], escapeHtml(formatPrice(booking.priceMinor, locale, options.currency))]);
   }
   // Plan 018 (design decision 8): both facts key off the chosen option's flags, independently — a
   // both-flags option (Maze's custom drop-off) shows its address AND its meeting point. When a
@@ -143,7 +143,7 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
 
   const availability = options.availability;
   const rescheduleData = availability
-    ? ` data-endpoint="${escapeHtml(availability.endpoint)}" data-tour="${escapeHtml(availability.tourSlug)}" data-people="${escapeHtml(availability.people)}" data-from="${escapeHtml(availability.from)}" data-to="${escapeHtml(availability.to)}" data-locale="${escapeHtml(locale)}"`
+    ? ` data-endpoint="${escapeHtml(availability.endpoint)}" data-service="${escapeHtml(availability.serviceSlug)}" data-quantity="${escapeHtml(availability.quantity)}" data-from="${escapeHtml(availability.from)}" data-to="${escapeHtml(availability.to)}" data-locale="${escapeHtml(locale)}"`
     : '';
   const rescheduleIsland = availability
     ? `<script type="application/json" data-bookkit-i18n>${JSON.stringify({

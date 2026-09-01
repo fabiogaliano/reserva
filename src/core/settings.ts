@@ -1,9 +1,9 @@
 import { ZodError } from 'astro/zod';
-import { validateConfig, type ClientConfig, type PaymentMethod } from './config';
+import { validateConfig, type ClientConfig } from './config';
 
 // Operator-editable settings: the runtime-safe scalar dials of ClientConfig, stored as JSON in the
 // `settings` table and merged over the file config per request (see routes/route-context.ts).
-// Anything structural (tours, locales), code (occupancyFor), or infrastructure (timezone, Access)
+// Anything structural (services, locales), code (occupancyFor), or infrastructure (timezone, Access)
 // deliberately stays file-only — those need a review and a deploy, not a form.
 //
 // A row is only written when the submitted value differs from the file config; a value equal to
@@ -11,9 +11,9 @@ import { validateConfig, type ClientConfig, type PaymentMethod } from './config'
 // state, so config edits in a later deploy still take effect for anything the operator never
 // touched.
 
-export type SettingValue = string | number | boolean | string[] | null;
+export type SettingValue = string | number | boolean | null;
 
-export type SettingSection = 'policy' | 'fleet' | 'contact' | 'payments' | 'legal';
+export type SettingSection = 'policy' | 'capacity' | 'contact' | 'legal';
 
 export type SettingKind =
   // `optional: true` allows clearing the field: an empty submission stores an explicit null,
@@ -26,8 +26,7 @@ export type SettingKind =
   | { type: 'boolean' }
   | { type: 'text'; optional?: boolean }
   | { type: 'email' }
-  | { type: 'url' }
-  | { type: 'methods' };
+  | { type: 'url' };
 
 export interface SettingDefinition {
   key: string;
@@ -42,8 +41,6 @@ export interface SettingDefinition {
   get(config: ClientConfig): SettingValue;
   set(config: ClientConfig, value: SettingValue): void;
 }
-
-const PAYMENT_METHODS: readonly PaymentMethod[] = ['card', 'mb_way'];
 
 export const settingDefinitions: readonly SettingDefinition[] = [
   {
@@ -84,9 +81,11 @@ export const settingDefinitions: readonly SettingDefinition[] = [
   {
     key: 'booking.holdMinutes', section: 'policy', labelKey: 'setting.holdMinutes',
     groupKey: 'settingGroup.holds',
-    // Mirrors validateConfig's holdMinutes bound (core/config.ts): below 35, the D1 hold can
-    // expire while the Stripe session is still payable (oversell); above 1440, expires_at can
-    // exceed Stripe's 24h checkout-session cap.
+    // The floor mirrors validateConfig's (core/config.ts): below 35, the D1 hold can expire while
+    // the payment session it guards is still payable (oversell). The ceiling is the tightest bound
+    // any shipped payment adapter imposes on how long a checkout session may stay open — an
+    // operator's form submission never reaches PaymentProvider.validateConfig, which only sees the
+    // file config at runtime-definition time, so it is enforced here too.
     kind: { type: 'int', min: 35, max: 1440 },
     get: (config) => config.booking.holdMinutes,
     set: (config, value) => { config.booking.holdMinutes = value as number; },
@@ -109,10 +108,10 @@ export const settingDefinitions: readonly SettingDefinition[] = [
     set: (config, value) => { config.booking.limitedThreshold = value as number; },
   },
   {
-    key: 'fleet.defaultCapacity', section: 'fleet', labelKey: 'setting.fleetCapacity',
+    key: 'capacity.default', section: 'capacity', labelKey: 'setting.capacity',
     kind: { type: 'int', min: 0 },
-    get: (config) => config.fleet.defaultCapacity,
-    set: (config, value) => { config.fleet.defaultCapacity = value as number; },
+    get: (config) => config.capacity.default,
+    set: (config, value) => { config.capacity.default = value as number; },
   },
   {
     key: 'business.name', section: 'contact', labelKey: 'setting.businessName',
@@ -142,12 +141,6 @@ export const settingDefinitions: readonly SettingDefinition[] = [
     },
   },
   {
-    key: 'payments.methods', section: 'payments', labelKey: 'setting.paymentMethods',
-    kind: { type: 'methods' },
-    get: (config) => [...config.payments.methods],
-    set: (config, value) => { config.payments.methods = value as PaymentMethod[]; },
-  },
-  {
     key: 'legal.termsUrl', section: 'legal', labelKey: 'setting.termsUrl',
     kind: { type: 'url' },
     get: (config) => config.legal.termsUrl,
@@ -155,7 +148,7 @@ export const settingDefinitions: readonly SettingDefinition[] = [
   },
 ];
 
-export const settingSections: readonly SettingSection[] = ['policy', 'fleet', 'contact', 'payments', 'legal'];
+export const settingSections: readonly SettingSection[] = ['policy', 'capacity', 'contact', 'legal'];
 
 function isValidHttpUrl(value: string): boolean {
   try {
@@ -187,17 +180,12 @@ function decodeStoredValue(definition: SettingDefinition, raw: unknown): Setting
       return typeof raw === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw) ? raw : undefined;
     case 'url':
       return typeof raw === 'string' && isValidHttpUrl(raw) ? raw : undefined;
-    case 'methods': {
-      if (!Array.isArray(raw) || raw.length === 0) return undefined;
-      const methods = raw.filter((entry): entry is PaymentMethod => PAYMENT_METHODS.includes(entry as PaymentMethod));
-      return methods.length === raw.length ? [...new Set(methods)] : undefined;
-    }
   }
 }
 
 // Merges stored overrides (key -> JSON string, as returned by repo.listSettings) over the file
 // config. Clones only the branches settings can touch — a deep clone is off the table because
-// tours carry the occupancyFor function.
+// services carry the occupancyFor function.
 // `onInvalidRow` is called for a row that fails to decode (bad JSON or fails its SettingKind
 // bounds) — optional because the save path already validates freshly-submitted values up front
 // and has nothing useful to report, while the load path (loadMergedConfig below) uses it to
@@ -211,10 +199,9 @@ export function applySettingOverrides(
   if (keys.length === 0) return config;
   const next: ClientConfig = {
     ...config,
-    fleet: { ...config.fleet },
+    capacity: { ...config.capacity },
     business: { ...config.business, contact: { ...config.business.contact } },
     booking: { ...config.booking, reschedule: { ...config.booking.reschedule } },
-    payments: { ...config.payments, methods: [...config.payments.methods] },
     legal: { ...config.legal },
   };
   for (const definition of settingDefinitions) {
@@ -250,7 +237,7 @@ export class SettingsMergeError extends Error {
 }
 
 // Save-path backstop (BK-CONFIG-001): a SettingDefinition's kind bounds a field on its own, but
-// only validateConfig knows the cross-field and tour-level rules (e.g. locales.default must be in
+// only validateConfig knows the cross-field and service-level rules (e.g. locales.default must be in
 // locales.supported), so the section being saved is merged over every OTHER currently stored
 // override plus the file config and re-validated as a whole before anything is written. Throws
 // SettingsMergeError (same {path, message} shape as validateConfig's own issues) so the handler
@@ -318,12 +305,6 @@ interface FormLike {
 export function parseSettingForm(definition: SettingDefinition, form: FormLike): SettingValue {
   const kind = definition.kind;
   if (kind.type === 'boolean') return form.get(definition.key) !== null;
-  if (kind.type === 'methods') {
-    const raw = form.getAll(definition.key).filter((entry): entry is string => typeof entry === 'string');
-    const methods = [...new Set(raw)].filter((entry): entry is PaymentMethod => PAYMENT_METHODS.includes(entry as PaymentMethod));
-    if (methods.length === 0) throw new SettingParseError(`${definition.key}: at least one payment method is required`);
-    return methods;
-  }
   const raw = form.get(definition.key);
   const text = typeof raw === 'string' ? raw.trim() : '';
   if (text === '') {

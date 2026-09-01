@@ -10,10 +10,10 @@ interface StartOption {
 }
 
 interface PricingRuleProp {
-  maxPeople: number;
-  // Any pickup id the tour's own pricing rows declare (see core/pricing.ts ResolvedPriceTable).
+  maxQuantity: number;
+  // Any pickup id the service's own pricing rows declare (see core/pricing.ts ResolvedPriceTable).
   pickup: string;
-  priceCents: number;
+  priceMinor: number;
 }
 
 // Plan 018 (design decision 9): the widget-prop shape of core/config.ts's PickupOption, minus
@@ -26,7 +26,7 @@ interface PickupOptionProp {
 }
 
 interface Props {
-  tourSlug: string;
+  serviceSlug: string;
   checkoutEndpoint?: string;
   availabilityEndpoint?: string;
   availabilityFrom?: string;
@@ -37,16 +37,16 @@ interface Props {
   // pair (DEFAULT_PICKUP_OPTIONS in core/config.ts) so existing embeds keep compiling and keep
   // rendering today's exact markup — see plan 018 (design decision 9).
   pickupTypes?: Array<'default' | 'custom'>;
-  // Plan 018 (design decision 9): tour-declared pickup options, superseding pickupTypes above.
-  // Pass config.tours[slug].pickupOptions mapped to {id, label, hint, usesMeetingPoint}. Absent ⇒
+  // Plan 018 (design decision 9): service-declared pickup options, superseding pickupTypes above.
+  // Pass config.services[slug].pickupOptions mapped to {id, label, hint, usesMeetingPoint}. Absent ⇒
   // pickupTypes is mapped onto the default pair instead, rendering byte-identical markup.
   pickupOptions?: PickupOptionProp[];
   // Plan 017 (design decision 5): labels are config-provided plain strings, like
-  // meetingPoint.label today — pass config.tours[slug].meetingPoints mapped to {id, label}. 0 or 1
-  // entries render nothing new (single-point tours stay byte-identical); 2+ renders a radio group.
+  // meetingPoint.label today — pass config.services[slug].meetingPoints mapped to {id, label}. 0 or 1
+  // entries render nothing new (single-point services stay byte-identical); 2+ renders a radio group.
   meetingPoints?: Array<{ id: string; label: string }>;
   startOptions?: StartOption[];
-  // Pass the tour's pricing rules (config.tours[slug].pricing) to show a live price; omit to hide.
+  // Pass the service's pricing rules (config.services[slug].pricing) to show a live price; omit to hide.
   pricing?: PricingRuleProp[];
   currency?: string;
   // Used when availability is static: fetched availability supplies the server-configured value,
@@ -62,7 +62,7 @@ interface Props {
 }
 
 const {
-  tourSlug,
+  serviceSlug,
   checkoutEndpoint = routeConfig.paths.checkout,
   availabilityEndpoint = routeConfig.paths.availability,
   availabilityFrom,
@@ -84,7 +84,7 @@ const {
 
 const t: BookkitMessages = { ...resolveMessages(undefined, locale), ...messageOverrides };
 const usesAvailability = availabilityFrom !== undefined && availabilityTo !== undefined;
-const peopleLabel = (n: number): string => formatMessage(n === 1 ? t['widget.person'] : t['widget.peopleCount'], { n });
+const quantityLabel = (n: number): string => formatMessage(n === 1 ? t['widget.person'] : t['widget.quantityCount'], { n });
 const resolvedPrices = pricing ? resolvedPriceTableFor({ pricing }) : null;
 
 // Everything the client script needs that can vary per render (copy, pricing, locale) travels in
@@ -170,15 +170,15 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
   hidden
 >
   <script type="application/json" data-bookkit-data set:html={JSON.stringify(scriptData).replace(/</g, '\\u003c')} />
-  <input type="hidden" name="tourSlug" value={tourSlug} />
+  <input type="hidden" name="serviceSlug" value={serviceSlug} />
   <input type="hidden" name="locale" value={locale} />
 
   {showTitle && <h2 class="bkw-title">{t['widget.title']}</h2>}
 
   <label class="bkw-field">
-    <span class="bkw-label">{t['widget.people']}</span>
-    <select class="bkw-select" name="people" required>
-      {peopleOptions.map((people) => <option value={people}>{peopleLabel(people)}</option>)}
+    <span class="bkw-label">{t['widget.quantity']}</span>
+    <select class="bkw-select" name="quantity" required>
+      {peopleOptions.map((quantity) => <option value={quantity}>{quantityLabel(quantity)}</option>)}
     </select>
   </label>
 
@@ -238,7 +238,7 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     </fieldset>
   )}
 
-  {/* Plan 017 (design decision 5): 0-1 points render nothing new — a single-point tour's markup
+  {/* Plan 017 (design decision 5): 0-1 points render nothing new — a single-point service's markup
       stays byte-identical to before this prop existed. 2+ mirrors the pickupType group above
       (same fieldset/legend/bkw-pickup markup and classes). Hidden/disabled client-side while
       pickupType is 'custom' (see the script below); the server's requirement rule is
@@ -314,6 +314,7 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
 
 <script>
   import 'cally';
+  import { toMajorUnits } from '../core/currency';
 
   interface CalendarDateElement extends HTMLElement {
     value: string;
@@ -324,7 +325,7 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
   interface AvailabilitySlot { start: string; remaining: number; remainingBookings: number }
   interface AvailabilityDay { date: string; status: string; closedReason?: string; slots: AvailabilitySlot[] }
   interface AvailabilityResponse { days?: AvailabilityDay[]; limitedThreshold?: number; error?: { message?: string } }
-  // Keyed by whatever pickup ids the tour's own pricing rows declare (see core/pricing.ts).
+  // Keyed by whatever pickup ids the service's own pricing rows declare (see core/pricing.ts).
   type ResolvedPriceTable = Record<string, number[]>;
   interface WidgetData {
     locale: string;
@@ -367,16 +368,16 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     const target = form.querySelector<HTMLElement>('[data-bookkit-price-value]');
     if (!target || !data.resolvedPrices) return;
     const formData = new FormData(form);
-    const people = Number(formData.get('people'));
+    const quantity = Number(formData.get('quantity'));
     // Plan 018 (design decision 9): the selected radio's raw value is the table key now — no more
     // collapsing every non-'custom' id to 'default'. An id with no pricing column (a config bug
-    // elsewhere) behaves like today's missing-price case: optional chaining leaves priceCents
+    // elsewhere) behaves like today's missing-price case: optional chaining leaves priceMinor
     // undefined, which blanks the price rather than throwing.
     const pickup = String(formData.get('pickupType') ?? '');
-    const priceCents = data.resolvedPrices[pickup]?.[people];
-    target.textContent = priceCents === undefined
+    const priceMinor = data.resolvedPrices[pickup]?.[quantity];
+    target.textContent = priceMinor === undefined
       ? ''
-      : new Intl.NumberFormat(data.locale, { style: 'currency', currency: data.currency }).format(priceCents / 100);
+      : new Intl.NumberFormat(data.locale, { style: 'currency', currency: data.currency }).format(toMajorUnits(priceMinor, data.currency));
   }
 
   // Plan 017 (design decision 5) / Plan 018 (design decision 9): hides AND disables the
@@ -473,8 +474,8 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     if (!availabilityEndpoint || !availabilityFrom || !availabilityTo || !calendar) return;
     const formData = new FormData(form);
     const query = new URLSearchParams({
-      tour: String(formData.get('tourSlug') ?? ''),
-      people: String(formData.get('people') ?? ''),
+      service: String(formData.get('serviceSlug') ?? ''),
+      quantity: String(formData.get('quantity') ?? ''),
       from: availabilityFrom,
       to: availabilityTo,
     });
@@ -560,7 +561,7 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
       // readData JSON.parses this instance's data island — a corrupted island throws here, caught
       // below, before any listener is attached or the form is revealed.
       const data = readData(form);
-      form.querySelector<HTMLSelectElement>('select[name="people"]')?.addEventListener('change', () => {
+      form.querySelector<HTMLSelectElement>('select[name="quantity"]')?.addEventListener('change', () => {
         updatePrice(form, data);
         void loadAvailability(form, data);
       });
@@ -580,14 +581,14 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
         event.preventDefault();
         const formData = new FormData(form);
         const payload: Record<string, unknown> = {
-          tourSlug: String(formData.get('tourSlug') ?? ''),
+          serviceSlug: String(formData.get('serviceSlug') ?? ''),
           start: String(formData.get('start') ?? ''),
-          people: Number(formData.get('people')),
+          quantity: Number(formData.get('quantity')),
           pickupType: String(formData.get('pickupType') ?? ''),
           locale: String(formData.get('locale') ?? ''),
         };
         // Plan 017 (design decision 5): a disabled meeting-point group (pickupType 'custom', or no
-        // such group at all for a single-point tour) naturally drops out of FormData — follow that
+        // such group at all for a single-point service) naturally drops out of FormData — follow that
         // rather than sending an empty string the server would reject as an unknown id.
         const meetingPointId = formData.get('meetingPointId');
         if (meetingPointId !== null) payload.meetingPointId = String(meetingPointId);
