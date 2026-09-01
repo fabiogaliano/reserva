@@ -48,6 +48,61 @@ export interface Booking {
 
 export type BookingPatch = Partial<Omit<Booking, 'id' | 'reference' | 'status'>>;
 
+// Plan 021 (design decision 3): the ONE public projection of a booking. Webhook envelopes, durable
+// in-process hooks, and (from plan 027) the status/manage wire types all read through this, so a
+// pushed booking and a pulled booking can never describe the same row differently. Built field by
+// field rather than by spreading `booking`, so a future column can't leak a token, a payment
+// reference, or an internal sync flag into a consumer's payload by accident. `updatedAt` is part of
+// the contract: delivery order is not guaranteed, and consumers compare it before replacing newer
+// local state.
+export interface WireBooking {
+  id: string;
+  reference: string;
+  tourSlug: string;
+  people: number;
+  pickupType: PickupType;
+  pickupAddress: string | null;
+  meetingPointId: string | null;
+  meetingPointLabel: string | null;
+  startsAt: string;
+  endsAt: string;
+  customerName: string | null;
+  customerEmail: string | null;
+  customerPhone: string | null;
+  locale: string;
+  priceCents: number;
+  status: BookingStatus;
+  cancelledBy: CancellationActor | null;
+  rescheduledFrom: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function toWireBooking(booking: Booking): WireBooking {
+  return {
+    id: booking.id,
+    reference: booking.reference,
+    tourSlug: booking.tourSlug,
+    people: booking.people,
+    pickupType: booking.pickupType,
+    pickupAddress: booking.pickupAddress,
+    meetingPointId: booking.meetingPointId,
+    meetingPointLabel: booking.meetingPointLabel,
+    startsAt: booking.startsAt,
+    endsAt: booking.endsAt,
+    customerName: booking.customerName,
+    customerEmail: booking.customerEmail,
+    customerPhone: booking.customerPhone,
+    locale: booking.locale,
+    priceCents: booking.priceCents,
+    status: booking.status,
+    cancelledBy: booking.cancelledBy,
+    rescheduledFrom: booking.rescheduledFrom,
+    createdAt: booking.createdAt,
+    updatedAt: booking.updatedAt,
+  };
+}
+
 export class BookingTransitionError extends Error {
   readonly from: BookingStatus;
   readonly to: BookingStatus;

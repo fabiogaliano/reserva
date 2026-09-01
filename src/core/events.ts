@@ -1,17 +1,23 @@
 import type { ClientConfig } from './config';
-import type { Booking } from './booking';
+import type { Booking, WireBooking } from './booking';
 import type { CalEvent } from './occupancy';
 import type { BookkitResolvedRouteConfig } from '../routes-manifest';
 
-export type BookingEvent =
-  | 'booking.confirmed'
-  | 'booking.cancelled_by_customer'
-  | 'booking.cancelled_by_operator'
-  | 'booking.rescheduled'
-  | 'booking.no_show'
-  | 'payment.dispute_created'
-  | 'booking.reminder'
-  | 'booking.review_request';
+// Plan 021 (design decision 1): the closed set of emittable booking events, exported as a runtime
+// VALUE (not only a type) so a consumer — or an agent reading the package — can enumerate every
+// case, and so hook/webhook `events` filters can be validated against it at startup instead of
+// failing silently on a typo. `BookingEvent` derives from it, which is what keeps the two from
+// drifting.
+export const BOOKING_EVENTS = [
+  'booking.confirmed',
+  'booking.cancelled_by_customer',
+  'booking.cancelled_by_operator',
+  'booking.rescheduled',
+  'booking.no_show',
+  'payment.dispute_created',
+] as const;
+
+export type BookingEvent = (typeof BOOKING_EVENTS)[number];
 
 export interface BookingEventPayload {
   bookingId: string;
@@ -154,13 +160,40 @@ export interface OperationalAlertSink {
   send(alert: OperationalAlert): Promise<void>;
 }
 
-export const bookingEvents: readonly BookingEvent[] = [
-  'booking.confirmed',
-  'booking.cancelled_by_customer',
-  'booking.cancelled_by_operator',
-  'booking.rescheduled',
-  'booking.no_show',
-  'payment.dispute_created',
-  'booking.reminder',
-  'booking.review_request',
-];
+// Plan 021 (design decision 3): the versioned envelope every durable booking event is delivered
+// in. `apiVersion` is an integer consumers dispatch shape on; `id` is stable across retries so
+// they can deduplicate on it; the booking payload comes from the single toWireBooking projection,
+// so pushed and pulled shapes cannot fork. Serialized once, when the occurrence happens — it is
+// the historical record of that occurrence, never a cache of the booking's current state.
+export const BOOKING_EVENT_API_VERSION = 1;
+
+export interface BookingEventEnvelope {
+  apiVersion: number;
+  id: string;
+  event: BookingEvent;
+  occurredAt: string;
+  data: { booking: WireBooking };
+}
+
+// Plan 021 (design decision 1/2): hook and webhook names share this domain because outbox rows
+// distinguish them by their `family` column, not by a qualified string key.
+export const BOOKING_EVENT_SUBSCRIBER_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
+
+export interface BookingEventHookContext {
+  // The envelope id of this occurrence: identical to what a webhook subscriber would receive, so a
+  // hook can deduplicate against the same key an HTTP consumer does.
+  id: string;
+  occurredAt: string;
+  config: ClientConfig;
+}
+
+// Plan 021 (design decision 1): an in-process listener. `durable: false` (the default) fires
+// post-commit and is never retried; `durable: true` gets an outbox row per subscribed event and
+// rides the existing claim/attempt/abandon machinery. The handler receives the wire projection —
+// the same snapshot a webhook subscriber gets — so durability never changes an event's meaning.
+export interface BookingEventHook {
+  name: string;
+  events?: readonly BookingEvent[];
+  durable?: boolean;
+  handler(event: BookingEvent, booking: WireBooking, context: BookingEventHookContext): Promise<void>;
+}

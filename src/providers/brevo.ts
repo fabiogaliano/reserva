@@ -51,8 +51,6 @@ const eventCopyKey: Record<EmailBookingEvent, string> = {
   'booking.cancelled_by_operator': 'cancelledByOperator',
   'booking.rescheduled': 'rescheduled',
   'booking.no_show': 'noShow',
-  'booking.reminder': 'reminder',
-  'booking.review_request': 'review',
 };
 
 const englishEmailCopy: Record<string, string> = {
@@ -97,15 +95,6 @@ const englishEmailCopy: Record<string, string> = {
   'noShow.customer.lead': 'Your booking for <strong>{tourTitle}</strong> on {when} was marked as a no-show. If you think this is a mistake, just reply to this email.',
   'noShow.owner.subject': 'No-show: {tourTitle} — {when}',
   'noShow.owner.lead': 'Booking <strong>{reference}</strong> was marked as a no-show.',
-  'reminder.customer.subject': 'See you soon: {tourTitle} — {when}',
-  'reminder.customer.lead': 'Your <strong>{tourTitle}</strong> is coming up!',
-  'reminder.customer.button': 'View my booking',
-  'reminder.owner.subject': 'Booking reminder: {tourTitle} — {when}',
-  'reminder.owner.lead': 'Reminder: booking <strong>{reference}</strong> starts at {when}.',
-  'review.customer.subject': 'How was your {tourTitle}?',
-  'review.customer.lead': "Thank you for touring with us! We'd love to hear how it went — just reply to this email.",
-  'review.owner.subject': 'Review request: {tourTitle} — {when}',
-  'review.owner.lead': 'Booking <strong>{reference}</strong> is ready for a review request.',
 };
 
 const portuguesePortugalEmailCopy: Record<string, string> = {
@@ -150,15 +139,6 @@ const portuguesePortugalEmailCopy: Record<string, string> = {
   'noShow.customer.lead': 'A sua reserva de <strong>{tourTitle}</strong> para {when} foi marcada como não comparecimento. Se acha que se trata de um erro, responda a este email.',
   'noShow.owner.subject': 'Não comparecimento: {tourTitle} — {when}',
   'noShow.owner.lead': 'A reserva <strong>{reference}</strong> foi marcada como não comparecimento.',
-  'reminder.customer.subject': 'Até já: {tourTitle} — {when}',
-  'reminder.customer.lead': 'A sua reserva de <strong>{tourTitle}</strong> está quase a chegar!',
-  'reminder.customer.button': 'Ver a minha reserva',
-  'reminder.owner.subject': 'Lembrete de reserva: {tourTitle} — {when}',
-  'reminder.owner.lead': 'Lembrete: a reserva <strong>{reference}</strong> começa em {when}.',
-  'review.customer.subject': 'Como correu o seu {tourTitle}?',
-  'review.customer.lead': 'Obrigado por ter passeado connosco! Adorávamos saber como correu — basta responder a este email.',
-  'review.owner.subject': 'Pedido de avaliação: {tourTitle} — {when}',
-  'review.owner.lead': 'A reserva <strong>{reference}</strong> está pronta para um pedido de avaliação.',
 };
 
 const emailCopyCatalogs: Record<string, Record<string, string>> = {
@@ -304,7 +284,7 @@ function buildModel(context: BrevoEmailTemplateContext): EmailModel {
     : copy('greeting.anonymous');
   const greetingHtml = `<p style="margin:0 0 18px;font-size:17px;line-height:1.5;">${greeting}</p>`;
 
-  const withCard = event === 'booking.confirmed' || event === 'booking.rescheduled' || event === 'booking.reminder';
+  const withCard = event === 'booking.confirmed' || event === 'booking.rescheduled';
   const card: EmailCardRow[] = withCard
     ? [
         { label: copy('label.date'), valueHtml: `<strong>${escapeHtml(dateLong)}</strong>`, valueText: dateLong },

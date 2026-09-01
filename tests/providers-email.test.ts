@@ -77,7 +77,7 @@ describe('email providers', () => {
     const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
     const render = vi.fn(({ locale, recipient }) => ({ subject: `${locale}:${recipient}`, htmlContent: '<p>custom</p>' }));
     const provider = brevoEmail({ apiKey: 'key', fetch: request, render });
-    await provider.send('booking.reminder', booking({ locale: 'fr' }), config);
+    await provider.send('booking.no_show', booking({ locale: 'fr' }), config);
     expect(render).toHaveBeenCalledWith(expect.objectContaining({ locale: 'en', recipient: 'customer' }));
     expect(request).toHaveBeenCalledTimes(1);
   });
