@@ -81,6 +81,10 @@ function buildModel(context: EmailTemplateContext): EmailModel {
   const rawValues: Record<string, string> = {
     serviceTitle, when, customerName, reference: booking.reference,
     quantity: String(booking.quantity), guestsWord, startsAtLocal: context.startsAtLocal,
+    // Plan 026 (design decision 3): the refund-timing sentence is a copy key so a consumer can
+    // override it with a concrete promise; interpolated like every other placeholder rather than
+    // hardcoded into the cancellation leads themselves.
+    refundTiming: copy('refund.timing'),
   };
   const htmlValues = Object.fromEntries(Object.entries(rawValues).map(([key, value]) => [key, escapeHtml(value)]));
 
