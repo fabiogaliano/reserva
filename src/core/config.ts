@@ -52,6 +52,31 @@ export interface PickupOption {
   usesMeetingPoint: boolean;
 }
 
+// Plan 024 (design decision 1): a label (field label, option label) is either a plain string or a
+// per-locale map resolved the same way config.ui.messages/config.emails.messages already are
+// (candidate locale, then its base language, then the config's default locale/its base, then the
+// first declared value) — see resolveMetadataFieldLabel below.
+export type LocalizedText = string | Record<string, string>;
+
+export interface MetadataFieldOption {
+  value: string;
+  label: LocalizedText;
+}
+
+// Plan 024 (design decision 1): the whole consumer-declared metadata DSL — four types, three
+// optional modifiers. This is deliberately the entire language: no conditional fields, cross-field
+// rules, custom validators, regex types, or a fifth type (the plan's STOP condition). `key` is the
+// wire/storage key (validated against METADATA_FIELD_KEY_PATTERN); `maxLength` applies to `text`
+// only (default 500, enforced at checkout — see handlers/checkout.ts).
+export interface MetadataField {
+  key: string;
+  label: LocalizedText;
+  type: 'text' | 'number' | 'boolean' | 'select';
+  options?: MetadataFieldOption[];
+  required?: boolean;
+  maxLength?: number;
+}
+
 export interface ServiceConfig {
   // Customer-facing display name used in emails ("Your Alfama Discovery is confirmed");
   // absent falls back to the service slug.
@@ -71,6 +96,10 @@ export interface ServiceConfig {
     meetingPoints?: MeetingPoint[];
     pickupOptions: PickupOption[];
   };
+  // Plan 024 (design decision 1): the extension mechanism for anything business-specific that
+  // isn't core and isn't location — dietary notes, skill level, table preference, etc. Absent means
+  // the service accepts no metadata at all; checkout rejects a non-empty `metadata` body for it.
+  metadataFields?: MetadataField[];
 }
 
 export interface WebhookEndpointConfig {
@@ -207,6 +236,26 @@ const meetingPointSchema = z.object({
   mapsUrl: z.string().url(),
 });
 
+// Plan 024 (design decision 1): the wire/storage key — lowercase, `_`-separated, capped at 32
+// characters so it's safe to use verbatim as a JSON object key and a checkout body field.
+export const METADATA_FIELD_KEY_PATTERN = /^[a-z][a-z0-9_]{0,31}$/;
+
+const localizedTextSchema = z.union([z.string().min(1), z.record(z.string(), z.string().min(1))]);
+
+const metadataFieldOptionSchema = z.object({
+  value: z.string().min(1),
+  label: localizedTextSchema,
+});
+
+const metadataFieldSchema = z.object({
+  key: z.string().regex(METADATA_FIELD_KEY_PATTERN),
+  label: localizedTextSchema,
+  type: z.enum(['text', 'number', 'boolean', 'select']),
+  options: z.array(metadataFieldOptionSchema).min(1).optional(),
+  required: z.boolean().optional(),
+  maxLength: z.number().int().positive().optional(),
+});
+
 // Plan 023 (design decision 1): pickupOptions is required within a declared location (at least one
 // entry) — a location with no pickup options is not expressible, matching "declaring it requires
 // pickupOptions" in the plan's design decision. meetingPoints stays optional: a service can collect
@@ -231,6 +280,7 @@ const serviceSchema = z.object({
   })).min(1),
   occupancyFor: z.custom<(quantity: number) => number>((value) => typeof value === 'function').optional(),
   location: locationSchema.optional(),
+  metadataFields: z.array(metadataFieldSchema).optional(),
   // Plan 023 (design decision 1): the v1 top-level keys. Kept in the schema as z.unknown() (rather
   // than omitted, which zod would just strip silently) purely so validateService below can detect
   // their presence and reject the config with a message pointing at the new `location` path.
@@ -460,6 +510,30 @@ function validateService(service: ServiceConfig, serviceSlug: string, add: (path
       }
     }
   }
+  // Plan 024 (design decision 1): key uniqueness and select-needs-options are the whole shape
+  // check config validation owns; per-value type/required/maxLength enforcement happens at
+  // checkout (handlers/checkout.ts), where the request body is available.
+  const seenMetadataKeys = new Set<string>();
+  for (const [index, field] of (service.metadataFields ?? []).entries()) {
+    if (seenMetadataKeys.has(field.key)) {
+      add(['services', serviceSlug, 'metadataFields', index, 'key'], `duplicate metadata field key (${field.key}); keys must be unique within a service`);
+    }
+    seenMetadataKeys.add(field.key);
+    if (field.type === 'select') {
+      if (!field.options || field.options.length === 0) {
+        add(['services', serviceSlug, 'metadataFields', index, 'options'], `metadata field ${field.key} declares type 'select' and must declare at least one option`);
+      } else {
+        const seenOptionValues = new Set<string>();
+        for (const [optionIndex, option] of field.options.entries()) {
+          if (seenOptionValues.has(option.value)) {
+            add(['services', serviceSlug, 'metadataFields', index, 'options', optionIndex, 'value'], `duplicate option value (${option.value}) for metadata field ${field.key}; option values must be unique`);
+          }
+          seenOptionValues.add(option.value);
+        }
+      }
+    }
+  }
+
   if (service.occupancyFor) {
     for (const quantity of quantityValues) {
       try {
@@ -610,4 +684,63 @@ export function meetingPointForBooking(
   const first = points[0];
   if (first) return { label: first.label, mapsUrl: first.mapsUrl };
   return { label: meetingPointLabel ?? '', mapsUrl: null };
+}
+
+// Plan 024 (design decision 1): the same candidate-locale-then-default-then-base-language fallback
+// chain config.ui.messages/config.emails.messages already use (src/ui/messages.ts, src/providers/
+// brevo.ts) — duplicated narrowly here rather than imported, since core must not depend on the ui
+// layer and this file is metadata's only declaration point.
+function metadataLabelCandidates(locale: string, defaultLocale: string): string[] {
+  const values = [locale, locale.split('-')[0], defaultLocale, defaultLocale.split('-')[0]];
+  return values.filter((value, index): value is string => Boolean(value) && values.indexOf(value) === index);
+}
+
+export function resolveMetadataFieldLabel(label: LocalizedText, locale: string, defaultLocale: string): string {
+  if (typeof label === 'string') return label;
+  for (const candidate of metadataLabelCandidates(locale, defaultLocale)) {
+    const value = label[candidate];
+    if (value) return value;
+  }
+  return Object.values(label)[0] ?? '';
+}
+
+export interface MetadataRow {
+  key: string;
+  label: string;
+  // A raw boolean/number/string, or (for `select`) the resolved option label — never the bare
+  // option value. Renderers turn boolean into the existing yes/no copy pair and everything else
+  // into its plain string form; every renderer HTML-escapes it, since this is attacker-controlled
+  // free text for `text` fields.
+  value: string | number | boolean;
+}
+
+// Plan 024 (design decision 3): the one place a booking's raw stored metadata is turned into
+// labeled, presentation-ready rows — shared by the manage/confirmation JSON payloads and the email
+// renderer so a field's label and a select value's option label can never be resolved two
+// different ways. A stored key no longer declared (the service dropped or renamed a field since
+// the booking was made) is silently omitted rather than shown unlabeled, the same tolerance
+// meetingPointForBooking/pickupOptionFor already apply to a stale config reference.
+export function metadataRowsForBooking(
+  service: ServiceConfig,
+  metadata: Record<string, unknown> | null,
+  locale: string,
+  defaultLocale: string,
+): MetadataRow[] {
+  if (!metadata) return [];
+  const rows: MetadataRow[] = [];
+  for (const field of service.metadataFields ?? []) {
+    if (!(field.key in metadata)) continue;
+    const raw = metadata[field.key];
+    const label = resolveMetadataFieldLabel(field.label, locale, defaultLocale);
+    if (field.type === 'select') {
+      const option = field.options?.find((candidate) => candidate.value === raw);
+      if (option) rows.push({ key: field.key, label, value: resolveMetadataFieldLabel(option.label, locale, defaultLocale) });
+      else if (typeof raw === 'string') rows.push({ key: field.key, label, value: raw });
+      continue;
+    }
+    if (typeof raw === 'string' || typeof raw === 'number' || typeof raw === 'boolean') {
+      rows.push({ key: field.key, label, value: raw });
+    }
+  }
+  return rows;
 }

@@ -76,6 +76,11 @@ export interface WireBooking {
   status: BookingStatus;
   cancelledBy: CancellationActor | null;
   rescheduledFrom: string | null;
+  // Plan 024 (design decision 3): the raw consumer-declared record, never the labeled rows read
+  // surfaces render — a wire consumer gets values, not display labels. Follows the wave's
+  // empty-value rule (collections are `{}`/`[]`, optional modules are `null`): metadata is a
+  // collection, so an absent value is `{}`, never `null`.
+  metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
 }
@@ -101,6 +106,7 @@ export function toWireBooking(booking: Booking): WireBooking {
     status: booking.status,
     cancelledBy: booking.cancelledBy,
     rescheduledFrom: booking.rescheduledFrom,
+    metadata: booking.metadata ?? {},
     createdAt: booking.createdAt,
     updatedAt: booking.updatedAt,
   };

@@ -36,6 +36,10 @@ export interface BookingInsert {
   // keeps compiling and simply writes NULL, matching pre-migration behavior.
   meetingPointId?: string | null;
   meetingPointLabel?: string | null;
+  // Plan 024 (design decision 2): validated/coerced by handlers/checkout.ts against the service's
+  // declaration before it ever reaches here — this layer just stores whatever it's given. Optional
+  // for the same pre-existing-caller reason as tokensExpireAt above.
+  metadata?: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -728,6 +732,14 @@ function parseBookingMetadata(raw: string | null): Record<string, unknown> | nul
   }
 }
 
+// The symmetric write side of parseBookingMetadata above — an empty/absent record stores as SQL
+// NULL rather than the literal string '{}', matching every pre-024 row and keeping "no metadata"
+// one representation, not two.
+function serializeBookingMetadata(value: Record<string, unknown> | null | undefined): string | null {
+  if (!value || Object.keys(value).length === 0) return null;
+  return JSON.stringify(value);
+}
+
 function mapBooking(row: BookingRow): Booking {
   assertValidBookingRow(row);
   return {
@@ -1322,9 +1334,9 @@ export function createBookingRepository(
           id, reference, service_slug, quantity, pickup_type, starts_at, ends_at, locale, price_minor,
           currency, status, hold_expires_at, cancel_token, operator_token, cancel_token_hash,
           operator_token_hash, cancel_token_enc, operator_token_enc, tokens_expire_at, hold_ip,
-          meeting_point_id, meeting_point_label, created_at, updated_at
+          meeting_point_id, meeting_point_label, metadata, created_at, updated_at
         )
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'hold', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'hold', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         WHERE ? IS NULL OR (
           SELECT COUNT(*) FROM bookings
           WHERE hold_ip = ? AND status = 'hold' AND hold_expires_at >= ?
@@ -1336,6 +1348,7 @@ export function createBookingRepository(
         tokenColumns.cancelTokenHash, tokenColumns.operatorTokenHash,
         tokenColumns.cancelTokenEnc, tokenColumns.operatorTokenEnc, tokenColumns.tokensExpireAt,
         holdIp, input.meetingPointId ?? null, input.meetingPointLabel ?? null,
+        serializeBookingMetadata(input.metadata),
         input.createdAt, input.updatedAt,
         holdLimit, holdIp, input.createdAt, holdLimit,
       ).run();
@@ -1382,9 +1395,9 @@ export function createBookingRepository(
           id, reference, service_slug, quantity, pickup_type, starts_at, ends_at, locale, price_minor,
           currency, status, hold_expires_at, cancel_token, operator_token, cancel_token_hash,
           operator_token_hash, cancel_token_enc, operator_token_enc, tokens_expire_at, hold_ip,
-          occupancy_units, occupancy_ends_at, meeting_point_id, meeting_point_label, created_at, updated_at
+          occupancy_units, occupancy_ends_at, meeting_point_id, meeting_point_label, metadata, created_at, updated_at
         )
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'hold', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'hold', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         WHERE (? IS NULL OR (
             SELECT COUNT(*) FROM bookings WHERE hold_ip = ? AND status = 'hold' AND hold_expires_at >= ?
           ) < ?)
@@ -1419,6 +1432,7 @@ export function createBookingRepository(
         tokenColumns.cancelTokenEnc, tokenColumns.operatorTokenEnc, tokenColumns.tokensExpireAt,
         holdIp, input.occupancyUnits, input.occupancyEndsAt,
         input.meetingPointId ?? null, input.meetingPointLabel ?? null,
+        serializeBookingMetadata(input.metadata),
         input.createdAt, input.updatedAt,
         holdLimit, holdIp, input.createdAt, holdLimit,
         // NOT EXISTS candidate points: the request's own start, then every active overlapping

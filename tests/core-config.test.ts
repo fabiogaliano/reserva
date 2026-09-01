@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { ServiceConfig } from '../src/core/config';
-import { meetingPointForBooking, quantityValuesForService, pickupOptionFor, pickupPresentationFor, resolveMeetingPoint, validateConfig } from '../src/core/config';
+import type { MetadataField, ServiceConfig } from '../src/core/config';
+import { meetingPointForBooking, metadataRowsForBooking, quantityValuesForService, pickupOptionFor, pickupPresentationFor, resolveMeetingPoint, resolveMetadataFieldLabel, validateConfig } from '../src/core/config';
 import { priceFor } from '../src/core/pricing';
 import { config, service } from './fixtures';
 
@@ -525,5 +525,133 @@ describe('pickupPresentationFor', () => {
       .toEqual({ requiresAddress: true, usesMeetingPoint: false });
     expect(pickupPresentationFor(service, { pickupType: 'no-longer-declared', pickupAddress: null, meetingPointId: 'square' }))
       .toEqual({ requiresAddress: false, usesMeetingPoint: true });
+  });
+});
+
+// Plan 024 (design decisions 1/3): the declaration DSL (four types, three modifiers), its config
+// validation, and the read-surface label/value resolution — checkout's own coercion is covered by
+// tests/handlers-checkout-metadata.test.ts (a request-body concern, not a config-shape one).
+describe('metadata fields (plan 024)', () => {
+  const dietaryField: MetadataField = { key: 'dietary_notes', label: 'Dietary notes', type: 'text', required: true, maxLength: 100 };
+  const seatField: MetadataField = {
+    key: 'seat_pref',
+    label: { en: 'Seat preference', 'pt-PT': 'Preferência de lugar' },
+    type: 'select',
+    options: [
+      { value: 'window', label: { en: 'Window', 'pt-PT': 'Janela' } },
+      { value: 'aisle', label: 'Aisle' },
+    ],
+  };
+  const configWithMetadata: typeof config = {
+    ...config,
+    services: { ...config.services, vintage: { ...service, metadataFields: [dietaryField, seatField] } },
+  };
+
+  it('accepts a service declaring all four field types with their modifiers', () => {
+    const wheelchairField: MetadataField = { key: 'wheelchair', label: 'Wheelchair access needed', type: 'boolean' };
+    const partySizeField: MetadataField = { key: 'kids_count', label: 'Number of kids', type: 'number' };
+    const validated = validateConfig({
+      ...config,
+      services: { ...config.services, vintage: { ...service, metadataFields: [dietaryField, seatField, wheelchairField, partySizeField] } },
+    });
+    expect(validated.services.vintage!.metadataFields).toHaveLength(4);
+  });
+
+  it('accepts a service with no metadataFields at all (unchanged, absent)', () => {
+    const validated = validateConfig(config);
+    expect(validated.services.vintage!.metadataFields).toBeUndefined();
+  });
+
+  it.each([
+    ['UpperCase', 'Dietary'],
+    ['starts with a digit', '1field'],
+    ['contains a hyphen', 'seat-pref'],
+    ['too long (33 chars)', 'a'.repeat(33)],
+    ['empty', ''],
+  ])('rejects a bad metadata field key: %s', (_label, key) => {
+    const invalid = {
+      ...config,
+      services: { ...config.services, vintage: { ...service, metadataFields: [{ key, label: 'X', type: 'text' as const }] } },
+    };
+    expect(() => validateConfig(invalid)).toThrow();
+  });
+
+  it('rejects duplicate metadata field keys within a service', () => {
+    const invalid = {
+      ...config,
+      services: {
+        ...config.services,
+        vintage: { ...service, metadataFields: [dietaryField, { ...dietaryField, label: 'Dupe' }] },
+      },
+    };
+    expect(() => validateConfig(invalid)).toThrow(/duplicate metadata field key \(dietary_notes\)/);
+  });
+
+  it('rejects a select field with no options', () => {
+    const invalid = {
+      ...config,
+      services: { ...config.services, vintage: { ...service, metadataFields: [{ key: 'pref', label: 'Pref', type: 'select' as const }] } },
+    };
+    expect(() => validateConfig(invalid)).toThrow(/declares type 'select' and must declare at least one option/);
+  });
+
+  it('rejects a select field with duplicate option values', () => {
+    const invalid = {
+      ...config,
+      services: {
+        ...config.services,
+        vintage: {
+          ...service,
+          metadataFields: [{
+            key: 'pref', label: 'Pref', type: 'select' as const,
+            options: [{ value: 'a', label: 'A' }, { value: 'a', label: 'A again' }],
+          }],
+        },
+      },
+    };
+    expect(() => validateConfig(invalid)).toThrow(/duplicate option value \(a\)/);
+  });
+
+  describe('resolveMetadataFieldLabel', () => {
+    it('returns a plain string unchanged', () => {
+      expect(resolveMetadataFieldLabel('Dietary notes', 'pt-PT', 'en')).toBe('Dietary notes');
+    });
+
+    it('resolves an exact locale match', () => {
+      expect(resolveMetadataFieldLabel(seatField.label, 'pt-PT', 'en')).toBe('Preferência de lugar');
+    });
+
+    it('falls back through the base language, then the default locale, then the first declared value', () => {
+      expect(resolveMetadataFieldLabel({ pt: 'Preferência (PT)', en: 'Preference (EN)' }, 'pt-BR', 'en')).toBe('Preferência (PT)');
+      expect(resolveMetadataFieldLabel({ en: 'Seat preference', 'pt-PT': 'Preferência de lugar' }, 'fr', 'en')).toBe('Seat preference');
+      expect(resolveMetadataFieldLabel({ de: 'Sitzplatz' }, 'fr', 'en')).toBe('Sitzplatz');
+    });
+  });
+
+  describe('metadataRowsForBooking', () => {
+    const vintageWithMetadata = configWithMetadata.services.vintage!;
+
+    it('returns an empty array for null metadata', () => {
+      expect(metadataRowsForBooking(vintageWithMetadata, null, 'en', 'en')).toEqual([]);
+    });
+
+    it('resolves a select value to its option label, per locale, alongside a plain text value', () => {
+      expect(metadataRowsForBooking(vintageWithMetadata, { dietary_notes: 'Vegan', seat_pref: 'window' }, 'pt-PT', 'en')).toEqual([
+        { key: 'dietary_notes', label: 'Dietary notes', value: 'Vegan' },
+        { key: 'seat_pref', label: 'Preferência de lugar', value: 'Janela' },
+      ]);
+    });
+
+    it('omits a stored key the service no longer declares', () => {
+      expect(metadataRowsForBooking(vintageWithMetadata, { dietary_notes: 'Vegan', retired_field: 'x' }, 'en', 'en')).toEqual([
+        { key: 'dietary_notes', label: 'Dietary notes', value: 'Vegan' },
+      ]);
+    });
+
+    it('falls back to the raw stored value for a select whose option is no longer declared', () => {
+      expect(metadataRowsForBooking(vintageWithMetadata, { seat_pref: 'no_longer_declared' }, 'en', 'en')).toEqual([
+        { key: 'seat_pref', label: 'Seat preference', value: 'no_longer_declared' },
+      ]);
+    });
   });
 });
