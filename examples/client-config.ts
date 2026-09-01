@@ -19,7 +19,7 @@ export default {
   admin: {
     accessTeamDomain: 'https://example.cloudflareaccess.com',
     accessAud: 'example-bookkit',
-    locale: 'pt-PT',
+    locale: 'en',
   },
   tours: {
     oldTown: {
@@ -67,7 +67,7 @@ export default {
   },
   locales: {
     supported: ['pt-PT', 'en'],
-    default: 'pt-PT',
+    default: 'en',
   },
   payments: {
     methods: ['card', 'mb_way'],

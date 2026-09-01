@@ -44,6 +44,7 @@ const meetingPoints = tour.meetingPoints!.map(({ id, label }) => ({ id, label })
           pickupOptions={pickupOptions}
           pricing={tour.pricing}
           meetingPoints={meetingPoints}
+          locale={config.locales.default}
         />
         <p>Submitting redirects through the confirmation route. The simulated payment provider reports the session as paid, which exercises confirmation and every provider seam.</p>
       </section>
