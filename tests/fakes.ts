@@ -1062,7 +1062,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
 }
 
 // Records the idempotency key and expected amount each refund() call would carry (mirroring
-// StripeProvider's own deterministic `reserva-refund-<paymentRef>` derivation) so tests can
+// the Stripe adapter's own deterministic `reserva-refund-<paymentRef>` derivation) so tests can
 // assert a retried refund reuses the same key instead of minting a fresh one per attempt
 // (BK-REFUND-001 F10), and that callers forward the booking's full expected amount. `resultFor`
 // lets a test control the returned refund ref/amount, or throw to simulate a provider-side failure.

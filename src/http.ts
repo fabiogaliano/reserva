@@ -43,12 +43,12 @@ export function badRequest(code: ApiErrorCode, message: string): never {
 }
 
 // Hardening sweep (audit finding #10): nothing in src/ bounded a request body before this — public
-// JSON endpoints, both form-POST entrypoints, and the buffered Stripe webhook body all read
+// JSON endpoints, both form-POST entrypoints, and the buffered payment webhook body all read
 // request.json()/formData()/text() unbounded. One limit per traffic class, chosen for the largest
 // legitimate payload each entrypoint actually receives.
 export const JSON_BODY_LIMIT_BYTES = 32 * 1024;
 export const FORM_BODY_LIMIT_BYTES = 256 * 1024;
-export const STRIPE_WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024;
+export const PAYMENT_WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024;
 
 // Rejects a request whose body exceeds limitBytes: immediately, from a valid (numeric)
 // Content-Length header that already overshoots, before a single byte is read off the wire; or

@@ -1,8 +1,10 @@
 import { defineConfig } from 'vitest/config';
+import { workspaceAlias } from './vitest.workspace-alias';
 
 export default defineConfig({
+  resolve: { alias: workspaceAlias },
   test: {
-    include: ['tests/**/*.test.ts'],
+    include: ['tests/**/*.test.ts', 'packages/*/tests/**/*.test.ts'],
     // tests/workers: separate config with the Cloudflare Workers pool (vitest.workers.config.ts,
     // run via `bun run test:workers`). tests/component: separate config with Astro's Vite pipeline
     // wired in (vitest.component.config.ts) — this plain config has no `.astro` transform, so

@@ -6,7 +6,7 @@
 // rejects before a single byte is read off the wire, and a body that lies about its length (or
 // omits Content-Length entirely) is still caught mid-stream once the real byte count overshoots.
 import { describe, expect, it } from 'vitest';
-import { FORM_BODY_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES, requestFormData, requestJson, requestText, STRIPE_WEBHOOK_BODY_LIMIT_BYTES } from '../src/http';
+import { FORM_BODY_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES, requestFormData, requestJson, requestText, PAYMENT_WEBHOOK_BODY_LIMIT_BYTES } from '../src/http';
 
 // A tiny actual body with a manually oversized Content-Length header: the early-reject path must
 // fire off the header alone, so the assertion that request.bodyUsed stays false afterward proves
@@ -80,20 +80,20 @@ describe('requestFormData (256 KB limit)', () => {
   });
 });
 
-describe('requestText (1 MB Stripe webhook limit)', () => {
+describe('requestText (1 MB payment webhook limit)', () => {
   it('returns an under-limit body exactly, byte-for-byte', async () => {
     const request = new Request('https://example.test/x', { method: 'POST', body: '{"raw":true}' });
-    await expect(requestText(request, STRIPE_WEBHOOK_BODY_LIMIT_BYTES)).resolves.toBe('{"raw":true}');
+    await expect(requestText(request, PAYMENT_WEBHOOK_BODY_LIMIT_BYTES)).resolves.toBe('{"raw":true}');
   });
 
   it('rejects a valid Content-Length over the limit with 413, before reading any body bytes', async () => {
-    const request = declaredOverLimitRequest(STRIPE_WEBHOOK_BODY_LIMIT_BYTES);
-    await expect(requestText(request, STRIPE_WEBHOOK_BODY_LIMIT_BYTES)).rejects.toMatchObject({ status: 413, code: 'payload_too_large' });
+    const request = declaredOverLimitRequest(PAYMENT_WEBHOOK_BODY_LIMIT_BYTES);
+    await expect(requestText(request, PAYMENT_WEBHOOK_BODY_LIMIT_BYTES)).rejects.toMatchObject({ status: 413, code: 'payload_too_large' });
     expect(request.bodyUsed).toBe(false);
   });
 
   it('rejects an understated-Content-Length body that streams past the limit with 413', async () => {
-    const request = dishonestStreamedOverLimitRequest(STRIPE_WEBHOOK_BODY_LIMIT_BYTES);
-    await expect(requestText(request, STRIPE_WEBHOOK_BODY_LIMIT_BYTES)).rejects.toMatchObject({ status: 413, code: 'payload_too_large' });
+    const request = dishonestStreamedOverLimitRequest(PAYMENT_WEBHOOK_BODY_LIMIT_BYTES);
+    await expect(requestText(request, PAYMENT_WEBHOOK_BODY_LIMIT_BYTES)).rejects.toMatchObject({ status: 413, code: 'payload_too_large' });
   });
 });

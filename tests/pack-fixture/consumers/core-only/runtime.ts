@@ -1,20 +1,17 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import { consoleEmailProvider } from './email-provider';
+import type { PaymentProvider } from '@reservajs/astro/core';
 import { GoogleCalendarProvider } from '@reservajs/astro/providers/calendar-google';
-import { StripeProvider } from '@reservajs/astro/providers/payments-stripe';
 import { defineCloudflareReservaRuntime, type ReservaProviders } from '@reservajs/astro/runtime';
+import { consoleEmailProvider } from './email-provider';
 import config from './reserva.config';
 
-// A packed consumer's site and scheduled Worker both instantiate this factory. Every credential
-// used by reconciliation is therefore represented in the consumer's Env contract rather than
-// accidentally relying on secrets attached only to the HTTP Worker.
+// The core-only consumer: @reservajs/astro alone, with a payment provider written from the public
+// port. `stripe` is not installed anywhere in this project — if the library still reached for the
+// SDK, this build could not succeed.
 interface Env {
   RESERVA_DB: D1Database;
   RESERVA_TOKEN_ENC_KEY: string;
   RESERVA_CSRF_SECRET: string;
-  STRIPE_SECRET_KEY: string;
-  STRIPE_WEBHOOK_SECRET: string;
-  BREVO_API_KEY: string;
   GOOGLE_SA_EMAIL: string;
   GOOGLE_SA_PRIVATE_KEY: string;
   GOOGLE_IMPERSONATE_EMAIL: string;
@@ -24,15 +21,24 @@ interface Env {
   OPERATIONS_ALERT_TOKEN: string;
 }
 
+const housePayments: PaymentProvider = {
+  async createCheckout(booking) {
+    return { url: `https://payments.example/checkout/${booking.id}`, sessionRef: `house_${booking.id}` };
+  },
+  async parseWebhook(request) {
+    return await request.json() as Awaited<ReturnType<PaymentProvider['parseWebhook']>>;
+  },
+  async getSession() {
+    return { status: 'complete', paymentStatus: 'paid' };
+  },
+  async refund(paymentRef, expectedAmountMinor) {
+    return { refundRef: `house_refund_${paymentRef}`, amountMinor: expectedAmountMinor };
+  },
+};
+
 function providers(env: Env): ReservaProviders {
   return {
-    payments: new StripeProvider({
-      secretKey: env.STRIPE_SECRET_KEY,
-      webhookSecret: env.STRIPE_WEBHOOK_SECRET,
-      // Plan 022 (design decision 1): payment methods are the adapter's option now, not a
-      // core config key — a packed consumer has to be able to reach them from this subpath.
-      paymentMethods: ['card', 'mb_way'],
-    }),
+    payments: housePayments,
     calendar: new GoogleCalendarProvider({
       calendarId: env.GOOGLE_CALENDAR_ID,
       serviceAccountEmail: env.GOOGLE_SA_EMAIL,

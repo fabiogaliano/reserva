@@ -2,13 +2,13 @@ import type { Booking } from '../../src/core/booking';
 import type { BookingEventHook } from '../../src/core/events';
 import type { CalEvent } from '../../src/core/occupancy';
 import { handlePaymentWebhook } from '../../src/handlers';
-import { StripeProvider } from '../../src/providers/stripe';
+import { stripe } from '@reservajs/stripe';
 import { defineCloudflareReservaRuntime, type ReservaProviders } from '../../src/runtime';
 import config from '../../examples/client-config';
 
 // Plan 015: this is `main` in wrangler.test.jsonc -- a real worker entrypoint that assembles the
 // production stack (defineCloudflareReservaRuntime against the real D1 binding, a real
-// StripeProvider doing real HMAC signature verification) and dispatches the exact production route
+// the real Stripe adapter doing real HMAC signature verification) and dispatches the exact production route
 // to handlePaymentWebhook, so tests/workers/webhook.test.ts exercises runtime + handler + D1
 // together instead of any one layer in isolation. Never contacts Stripe's API: parseWebhook only
 // verifies a signature against WEBHOOK_SECRET locally, and this worker never calls
@@ -31,7 +31,7 @@ export function resetWebhookWorkerOutboxes(): void {
 }
 
 const providers: ReservaProviders = {
-  payments: new StripeProvider({ secretKey: STRIPE_TEST_SECRET_KEY, webhookSecret: WEBHOOK_SECRET }),
+  payments: stripe({ secretKey: STRIPE_TEST_SECRET_KEY, webhookSecret: WEBHOOK_SECRET }),
   calendar: {
     async listEvents() {
       return [...calendarEvents.values()];

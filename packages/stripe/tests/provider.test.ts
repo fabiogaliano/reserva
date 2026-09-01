@@ -1,19 +1,19 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import Stripe from 'stripe';
 import { describe, expect, it, vi } from 'vitest';
-import { createReservaContext } from '../src/context';
-import { handleCheckout } from '../src/handlers';
-import { booking, config, service } from './fixtures';
-import { fakeRepository, providers } from './fakes';
-import {
-  StripeProvider,
-  mapSessionStatus,
-  mapStripeEvent,
-  stripePaymentMethodTypes,
-  type StripeClient,
-} from '../src/providers/stripe';
-import { resolveRouteConfig } from '../src/routes-manifest';
-import type { ClientConfig, ServiceConfig } from '../src/core/config';
+import { stripe, type StripeClient } from '../src/index';
+import { sessionStatusFromStripe, stripeEventToParsed, stripePaymentMethodTypes } from '../src/provider';
+import type { ClientConfig, ServiceConfig } from '@reservajs/astro/core';
+
+// The adapter's own source reaches only published entrypoints; this suite additionally drives the
+// library's internal checkout handler and shares the root suite's fixtures, because it also pins
+// how core checkout behaves against a failing Stripe. That reach is in-repo test wiring, not part
+// of the package's contract.
+import { createReservaContext } from '../../../src/context';
+import { resolveRouteConfig } from '../../../src/routes-manifest';
+import { handleCheckout } from '../../../src/handlers';
+import { booking, config, service } from '../../../tests/fixtures';
+import { fakeRepository, providers } from '../../../tests/fakes';
 
 // Plan 018 (design decision 7): a Maze-shaped four-option service, built inline — fixtures.ts stays
 // the two-option default/custom service so every other suite's byte-identical assertions keep holding.
@@ -98,10 +98,10 @@ function makeClient() {
   return { client: client as unknown as StripeClient, sessions };
 }
 
-describe('StripeProvider', () => {
+describe('stripe() adapter', () => {
   it('creates a contract-compliant checkout session', async () => {
     const { client, sessions } = makeClient();
-    const provider = new StripeProvider({
+    const provider = stripe({
       secretKey: 'sk_test', webhookSecret: 'whsec_test', client,
       // Plan 022 (design decision 1): the method list is the Stripe adapter's own option now, not
       // core config — passed here so this contract test still covers a multi-method session.
@@ -124,7 +124,7 @@ describe('StripeProvider', () => {
 
   it('maps the pt-PT application locale to Stripe’s European Portuguese locale', async () => {
     const { client, sessions } = makeClient();
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
 
     await provider.createCheckout(booking({ locale: 'pt-PT' }), config);
 
@@ -140,7 +140,7 @@ describe('StripeProvider', () => {
   it('keeps expires_at strictly below now + 24h when holdMinutes is at its 1440 upper bound', async () => {
     const { client, sessions } = makeClient();
     const now = new Date('2026-01-01T00:00:00.000Z');
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client, now: () => now });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client, now: () => now });
     const nowSec = Math.floor(now.getTime() / 1000);
     await provider.createCheckout(booking(), { ...config, booking: { ...config.booking, holdMinutes: 1440 } });
     const expiresAt = sessions.create.mock.calls[0]?.[0].expires_at;
@@ -150,21 +150,21 @@ describe('StripeProvider', () => {
 
   it('uses the resolved confirmation path for its default success URL and preserves the unprefixed fallback', async () => {
     const prefixed = makeClient();
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client: prefixed.client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client: prefixed.client });
     await provider.createCheckout(booking(), config, resolveRouteConfig('/en').paths);
     const prefixedParams = prefixed.sessions.create.mock.calls[0]?.[0];
     expect(prefixedParams?.success_url).toContain('/en/booking-confirmation?session_id=');
     expect(prefixedParams?.success_url).not.toContain(`${config.business.url}/booking-confirmation?session_id=`);
 
     const unprefixed = makeClient();
-    const fallbackProvider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client: unprefixed.client });
+    const fallbackProvider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client: unprefixed.client });
     await fallbackProvider.createCheckout(booking(), config);
     expect(unprefixed.sessions.create.mock.calls[0]?.[0].success_url).toContain('/booking-confirmation?session_id=');
   });
 
-  it('omits pickup custom fields for the default pickup and supports positional construction', async () => {
+  it('omits pickup custom fields for the default pickup', async () => {
     const { client, sessions } = makeClient();
-    const provider = new StripeProvider('sk_test', 'whsec_test', { client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     await provider.createCheckout(booking(), config);
     expect(sessions.create).toHaveBeenCalledWith(expect.not.objectContaining({ custom_fields: expect.anything() }), expect.anything());
   });
@@ -175,7 +175,7 @@ describe('StripeProvider', () => {
   // neither is named 'default' or 'custom'.
   it('collects pickup_address for any declared option with requiresAddress, not just the id "custom"', async () => {
     const { client, sessions } = makeClient();
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     await provider.createCheckout(booking({ pickupType: 'custom_dropoff' }), mazeConfig);
     expect(sessions.create).toHaveBeenCalledWith(expect.objectContaining({
       custom_fields: [{ key: 'pickup_address', label: { type: 'custom', custom: 'Pickup address' }, type: 'text' }],
@@ -184,7 +184,7 @@ describe('StripeProvider', () => {
 
   it('omits pickup_address for a declared non-"default" option with requiresAddress: false', async () => {
     const { client, sessions } = makeClient();
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     await provider.createCheckout(booking({ pickupType: 'meet_elsewhere' }), mazeConfig);
     expect(sessions.create).toHaveBeenCalledWith(expect.not.objectContaining({ custom_fields: expect.anything() }), expect.anything());
   });
@@ -194,14 +194,14 @@ describe('StripeProvider', () => {
   // `undefined?.requiresAddress` is falsy — no address field, rather than guessing.
   it('omits pickup_address for a stored pickupType the service no longer declares', async () => {
     const { client, sessions } = makeClient();
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     await provider.createCheckout(booking({ pickupType: 'removed_option' }), mazeConfig);
     expect(sessions.create).toHaveBeenCalledWith(expect.not.objectContaining({ custom_fields: expect.anything() }), expect.anything());
   });
 
   it('adds a line-item description when productDescription is provided', async () => {
     const { client, sessions } = makeClient();
-    const provider = new StripeProvider({
+    const provider = stripe({
       secretKey: 'sk_test', webhookSecret: 'whsec_test', client,
       productDescription: (b) => `Service of ${b.serviceSlug} for ${b.quantity}`,
     });
@@ -215,14 +215,14 @@ describe('StripeProvider', () => {
 
   it('omits terms-of-service consent when termsOfService is none', async () => {
     const { client, sessions } = makeClient();
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client, termsOfService: 'none' });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client, termsOfService: 'none' });
     await provider.createCheckout(booking(), config);
     expect(sessions.create).toHaveBeenCalledWith(expect.not.objectContaining({ consent_collection: expect.anything() }), expect.anything());
   });
 
   it('retrieves session status and performs a full refund', async () => {
     const { client } = makeClient();
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     await expect(provider.getSession('cs_1')).resolves.toEqual({
       id: 'cs_1',
       status: 'complete',
@@ -246,7 +246,7 @@ describe('StripeProvider', () => {
   it('rejects a directly created refund whose amount differs from the expected full amount', async () => {
     const { client } = makeClient();
     client.refunds.create = vi.fn(async () => stripeRefund('re_overpaid', 12000));
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     await expect(provider.refund('pi_1', 10000)).rejects.toThrow('Stripe refund amount 12000 did not match expected total 10000');
     expect(client.refunds.list).not.toHaveBeenCalled();
   });
@@ -257,7 +257,7 @@ describe('StripeProvider', () => {
   it('rejects a directly created refund whose status did not succeed, without reconciling', async () => {
     const { client } = makeClient();
     client.refunds.create = vi.fn(async () => stripeRefund('re_pending', 10000, { status: 'pending' }));
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     await expect(provider.refund('pi_1', 10000)).rejects.toThrow('Stripe refund re_pending did not succeed (status pending)');
     expect(client.refunds.list).not.toHaveBeenCalled();
   });
@@ -271,7 +271,7 @@ describe('StripeProvider', () => {
       },
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     await expect(provider.refund('pi_1', 10000)).resolves.toEqual({ refundRef: 're_existing', amountMinor: 10000 });
     expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 100 });
   });
@@ -289,7 +289,7 @@ describe('StripeProvider', () => {
       },
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     await expect(provider.refund('pi_1', 10000)).resolves.toEqual({ refundRef: 're_from_cache', amountMinor: 10000 });
     expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 100 });
   });
@@ -303,7 +303,7 @@ describe('StripeProvider', () => {
       },
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     await expect(provider.refund('pi_1', 10000)).rejects.toThrow('Request failed with status code 500');
   });
 
@@ -316,7 +316,7 @@ describe('StripeProvider', () => {
       },
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     await expect(provider.refund('pi_1', 10000)).rejects.toThrow('Request failed with status code 500');
   });
 
@@ -332,7 +332,7 @@ describe('StripeProvider', () => {
       },
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     await expect(provider.refund('pi_1', 10000)).rejects.toThrow('Request failed with status code 500');
   });
 
@@ -345,7 +345,7 @@ describe('StripeProvider', () => {
       },
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     await expect(provider.refund('pi_1', 10000)).rejects.toThrow('Your card was declined.');
     expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 100 });
   });
@@ -359,7 +359,7 @@ describe('StripeProvider', () => {
       },
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     await expect(provider.refund('pi_1', 10000)).rejects.toThrow('Your card was declined.');
     expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 100 });
   });
@@ -373,7 +373,7 @@ describe('StripeProvider', () => {
       },
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     await expect(provider.refund('pi_1', 10000)).rejects.toThrow('Stripe create response was lost');
   });
 
@@ -393,7 +393,7 @@ describe('StripeProvider', () => {
       },
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     await expect(provider.refund('pi_1', 10000)).resolves.toEqual({ refundRef: 're_recovered', amountMinor: 10000 });
     expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 100 });
   });
@@ -410,7 +410,7 @@ describe('StripeProvider', () => {
       },
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     await expect(provider.refund('pi_1', 10000)).rejects.toThrow('Charge ch_1 has already been refunded.');
     expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 100 });
   });
@@ -426,7 +426,7 @@ describe('StripeProvider', () => {
       },
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     await expect(provider.refund('pi_1', 10000)).rejects.toThrow('No such payment_intent');
     expect(client.refunds.list).not.toHaveBeenCalled();
   });
@@ -442,21 +442,21 @@ describe('StripeProvider', () => {
       },
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     await expect(provider.refund('pi_1', 10000)).rejects.toThrow('Your card was declined.');
     expect(client.refunds.list).not.toHaveBeenCalled();
   });
 
   it('rejects missing webhook signatures with a typed client error', async () => {
     const { client } = makeClient();
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     await expect(provider.parseWebhook(new Request('https://example.test/webhook', { method: 'POST', body: '{}' })))
       .rejects.toMatchObject({ status: 400, code: 'invalid_payment_signature' });
   });
 
   it('passes the raw webhook body through subtle verification and maps it', async () => {
     const { client } = makeClient();
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     const request = new Request('https://example.test/webhook', { method: 'POST', headers: { 'stripe-signature': 't=1,v1=x' }, body: '{"raw":true}' });
     await expect(provider.parseWebhook(request)).resolves.toMatchObject({
       id: 'evt_1',
@@ -481,7 +481,7 @@ describe('StripeProvider', () => {
   // the surrounding try/catch maps everything else to (the STOP condition this item calls out).
   it('rejects an oversized webhook body with 413 before attempting signature verification', async () => {
     const { client } = makeClient();
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     const oversizedLimit = 1024 * 1024;
     const request = new Request('https://example.test/webhook', {
       method: 'POST',
@@ -507,7 +507,7 @@ describe('Checkout idempotency (BK-PAY-002)', () => {
 
   it('derives a checkout idempotency key from the booking id: stable for the same booking, distinct across bookings', async () => {
     const { client, sessions } = makeClient();
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     await provider.createCheckout(booking({ id: 'booking-1' }), config);
     await provider.createCheckout(booking({ id: 'booking-1' }), config);
     await provider.createCheckout(booking({ id: 'booking-2' }), config);
@@ -547,7 +547,7 @@ describe('Checkout idempotency (BK-PAY-002)', () => {
     // recompute would produce a strictly later expires_at and be caught by the equality checks below.
     let tick = 0;
     const now = () => new Date('2026-06-15T08:00:00.000Z').getTime() + (tick++) * 60_000;
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client, now });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client, now });
 
     await expect(provider.createCheckout(booking(), config)).resolves.toEqual({
       url: 'https://checkout.test/cs_original', sessionRef: 'cs_original',
@@ -575,7 +575,7 @@ describe('Checkout idempotency (BK-PAY-002)', () => {
       refunds: { create: vi.fn(), list: vi.fn() },
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     const repo = fakeRepository();
     const context = createReservaContext({
       config,
@@ -604,7 +604,7 @@ describe('Checkout idempotency (BK-PAY-002)', () => {
       refunds: { create: vi.fn(), list: vi.fn() },
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     const repo = fakeRepository();
     const context = createReservaContext({
       config,
@@ -633,7 +633,7 @@ describe('Checkout idempotency (BK-PAY-002)', () => {
       refunds: { create: vi.fn(), list: vi.fn() },
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     const repo = fakeRepository();
     const context = createReservaContext({
       config,
@@ -655,36 +655,36 @@ describe('Checkout idempotency (BK-PAY-002)', () => {
 
 // Plan 022 (design decision 7): the limits that used to live in core's validateConfig, checked
 // where they actually apply — the adapter that has to honour them.
-describe('StripeProvider.validateConfig', () => {
-  const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client: makeClient().client });
+describe('stripe() validateConfig', () => {
+  const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client: makeClient().client });
 
   it('rejects a hold above the 24h checkout-session cap and accepts the boundary', () => {
-    expect(() => provider.validateConfig({ ...config, booking: { ...config.booking, holdMinutes: 1441 } })).toThrow(/at most 1440/);
-    expect(() => provider.validateConfig({ ...config, booking: { ...config.booking, holdMinutes: 1440 } })).not.toThrow();
+    expect(() => provider.validateConfig!({ ...config, booking: { ...config.booking, holdMinutes: 1441 } })).toThrow(/at most 1440/);
+    expect(() => provider.validateConfig!({ ...config, booking: { ...config.booking, holdMinutes: 1440 } })).not.toThrow();
   });
 
   it('accepts pt-PT through Stripe\u2019s pt locale and rejects a locale Stripe has no checkout copy for', () => {
-    expect(() => provider.validateConfig({ ...config, locales: { supported: ['pt-PT'], default: 'pt-PT' } })).not.toThrow();
-    expect(() => provider.validateConfig({ ...config, locales: { supported: ['en', 'gd'], default: 'en' } })).toThrow(/no locale for/);
+    expect(() => provider.validateConfig!({ ...config, locales: { supported: ['pt-PT'], default: 'pt-PT' } })).not.toThrow();
+    expect(() => provider.validateConfig!({ ...config, locales: { supported: ['en', 'gd'], default: 'en' } })).toThrow(/no locale for/);
   });
 
   it('rejects a currency Stripe cannot present at checkout, naming the config path', () => {
-    expect(() => provider.validateConfig({ ...config, business: { ...config.business, currency: 'kpw' } }))
+    expect(() => provider.validateConfig!({ ...config, business: { ...config.business, currency: 'kpw' } }))
       .toThrow(/business\.currency/);
-    expect(() => provider.validateConfig({ ...config, business: { ...config.business, currency: 'jpy' } })).not.toThrow();
+    expect(() => provider.validateConfig!({ ...config, business: { ...config.business, currency: 'jpy' } })).not.toThrow();
   });
 });
 
 describe('Stripe mapping helpers', () => {
   it('maps payment methods and full-refund charge amounts', () => {
     expect(stripePaymentMethodTypes(['card', 'mb_way'])).toEqual(['card', 'mb_way']);
-    expect(mapStripeEvent({ id: 'evt_refund', type: 'charge.refunded', data: { object: {
+    expect(stripeEventToParsed({ id: 'evt_refund', type: 'charge.refunded', data: { object: {
       metadata: { bookingId: 'booking-1' }, payment_intent: { id: 'pi_1' }, amount_captured: 10000, amount_refunded: 10000,
       refunds: { data: [{ id: 're_1' }] },
     } } } as unknown as Stripe.Event)).toMatchObject({ bookingId: 'booking-1', paymentRef: 'pi_1', amountCaptured: 10000, amountRefunded: 10000, refundRef: 're_1' });
   });
 
   it('maps a session to the public status shape', () => {
-    expect(mapSessionStatus({ id: 'cs_1', status: 'open', payment_status: 'unpaid', amount_total: 10000, currency: 'eur', payment_intent: null, metadata: null } as Stripe.Checkout.Session)).toEqual({ id: 'cs_1', status: 'open', paymentStatus: 'unpaid', amountTotal: 10000, currency: 'eur', paymentRef: null });
+    expect(sessionStatusFromStripe({ id: 'cs_1', status: 'open', payment_status: 'unpaid', amount_total: 10000, currency: 'eur', payment_intent: null, metadata: null } as Stripe.Checkout.Session)).toEqual({ id: 'cs_1', status: 'open', paymentStatus: 'unpaid', amountTotal: 10000, currency: 'eur', paymentRef: null });
   });
 });

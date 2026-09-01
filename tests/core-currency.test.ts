@@ -5,7 +5,7 @@ import { createReservaContext } from '../src/context';
 import { validateConfig } from '../src/core/config';
 import { minorUnitFactor, toMajorUnits } from '../src/core/currency';
 import { handleCheckout } from '../src/handlers';
-import { StripeProvider, type StripeClient } from '../src/providers/stripe';
+import { stripe, type StripeClient } from '@reservajs/stripe';
 import { formatPrice } from '../src/ui/format';
 import { config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
@@ -64,7 +64,7 @@ describe('currency plumbing (plan 022 design decision 2)', () => {
   it('sends the booking price to the payment provider in that currency, in minor units', async () => {
     const { client, sessions } = stripeClient();
     const jpyConfig = configIn('jpy');
-    const provider = new StripeProvider({
+    const provider = stripe({
       secretKey: 'sk_test', webhookSecret: 'whsec_test', client,
       now: () => new Date('2026-06-14T08:00:00.000Z'),
       getSuccessUrl: () => 'https://example.test/booking-confirmation?session_id={CHECKOUT_SESSION_ID}',
@@ -100,7 +100,7 @@ describe('currency plumbing (plan 022 design decision 2)', () => {
   it('rejects a currency the Stripe adapter cannot present, without touching core validation', () => {
     // Core accepts any ISO code; the vendor limit belongs to the adapter (design decision 7).
     expect(() => configIn('kpw')).not.toThrow();
-    const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client: stripeClient().client });
-    expect(() => provider.validateConfig(configIn('kpw'))).toThrow(/business\.currency/);
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client: stripeClient().client });
+    expect(() => provider.validateConfig!(configIn('kpw'))).toThrow(/business\.currency/);
   });
 });

@@ -11,6 +11,11 @@
 //   3. `astro build` succeeds and every injected route pattern appears in the built worker
 //   4. the installed `reserva-migrate` bin applies reserva's packaged migrations (plan 008)
 //
+// Two consumers are built from one shared fixture base (plan 028 decision 2): `core-only` installs
+// @reservajs/astro alone and pays through a provider it wrote itself, with the `stripe` SDK absent
+// from its node_modules entirely; `with-stripe` installs both tarballs and wires the official
+// adapter's `stripe(options)` factory.
+//
 // Run: `bun run test:pack` (also folded into `bun run verify` and CI's `pack` job).
 
 import { spawnSync } from 'node:child_process';
@@ -22,7 +27,9 @@ import { RESERVA_MIGRATIONS } from '../src/migrations-manifest';
 import { routeManifest } from '../src/routes-manifest';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const fixtureDir = resolve(repoRoot, 'tests/pack-fixture');
+const fixtureBaseDir = resolve(repoRoot, 'tests/pack-fixture/base');
+const fixtureConsumersDir = resolve(repoRoot, 'tests/pack-fixture/consumers');
+const stripePackageDir = resolve(repoRoot, 'packages/stripe');
 
 class PhaseFailure extends Error {}
 
@@ -37,13 +44,15 @@ function run(command: string, args: string[], options: { cwd: string; env?: Node
 // Explicit, not relying on whichever lifecycle hooks the packing tool happens to honour: the
 // tarball must contain a dist/ built from the tree under test, never a stale one.
 function buildDist(): void {
-  const result = run('bun', ['run', 'build'], { cwd: repoRoot });
-  if (result.status !== 0) fail('build', `\`bun run build\` failed:\n${result.stdout}\n${result.stderr}`);
+  const astro = run('bun', ['run', 'build'], { cwd: repoRoot });
+  if (astro.status !== 0) fail('build', `\`bun run build\` failed:\n${astro.stdout}\n${astro.stderr}`);
+  const adapter = run('bun', ['run', '--filter', '@reservajs/stripe', 'build'], { cwd: repoRoot });
+  if (adapter.status !== 0) fail('build', `\`bun run --filter @reservajs/stripe build\` failed:\n${adapter.stdout}\n${adapter.stderr}`);
 }
 
 // `--destination` (not the default cwd) so the tarball never lands inside the repo tree.
-function packTarball(destination: string): string {
-  const result = run('bun', ['pm', 'pack', '--quiet', '--destination', destination], { cwd: repoRoot });
+function packTarball(packageDir: string, destination: string): string {
+  const result = run('bun', ['pm', 'pack', '--quiet', '--destination', destination], { cwd: packageDir });
   if (result.status !== 0) fail('pack', `\`bun pm pack\` failed:\n${result.stderr}`);
   // `--quiet` can still print a leading blank line before the path (observed with bun 1.2.23); the
   // tarball path is the last non-empty stdout line, not necessarily the whole trimmed output.
@@ -60,9 +69,22 @@ function bunInstall(consumerDir: string): void {
 
 // Real consumer flow: `bun add <tarball path>`, not a workspace/link — proves the tarball is a
 // self-sufficient installable unit, not something that only works via this repo's own node_modules.
-function bunAddTarball(consumerDir: string, tarballPath: string): void {
-  const result = run('bun', ['add', tarballPath], { cwd: consumerDir });
-  if (result.status !== 0) fail('install', `\`bun add ${tarballPath}\` failed:\n${result.stdout}\n${result.stderr}`);
+// Until release day @reservajs/astro does not exist on the registry, and bun resolves an installed
+// package's peerDependencies against the registry rather than against what the very same command
+// just installed — so adding the adapter tarball reports a 404 for its peer even though both
+// packages land correctly. Tolerate exactly that one error, and prove the outcome on disk instead
+// of trusting the exit code; once the package is published the install is clean and this branch
+// stops being taken.
+const UNPUBLISHED_PEER_ERROR = 'https://registry.npmjs.org/@reservajs%2fastro - 404';
+
+function bunAddTarballs(consumerDir: string, tarballPaths: string[], expectInstalled: string[]): void {
+  const result = run('bun', ['add', ...tarballPaths], { cwd: consumerDir });
+  if (result.status === 0) return;
+  const output = `${result.stdout}\n${result.stderr}`;
+  const installed = expectInstalled.every((name) => existsSync(resolve(consumerDir, 'node_modules', name, 'package.json')));
+  if (!output.includes(UNPUBLISHED_PEER_ERROR) || !installed) {
+    fail('install', `\`bun add ${tarballPaths.join(' ')}\` failed:\n${output}`);
+  }
 }
 
 // `.astro` subpaths point straight at the copied raw file; every compiled subpath carries the
@@ -81,7 +103,6 @@ const EXPECTED_EXPORT_SUBPATHS = [
   './email',
   './providers',
   './providers/calendar-google',
-  './providers/payments-stripe',
   './providers/email-brevo',
   './providers/email-none',
   './runtime',
@@ -90,7 +111,7 @@ const EXPECTED_EXPORT_SUBPATHS = [
   './components/AdminDashboard.astro',
 ] as const;
 
-function writeImportAll(consumerDir: string): string[] {
+function writeImportAll(consumerDir: string, extraSpecifiers: string[]): string[] {
   const packageJson = JSON.parse(readFileSync(resolve(repoRoot, 'package.json'), 'utf8')) as PackageJsonExports;
   const actualSubpaths = Object.keys(packageJson.exports);
   const missing = EXPECTED_EXPORT_SUBPATHS.filter((subpath) => !actualSubpaths.includes(subpath));
@@ -102,7 +123,8 @@ function writeImportAll(consumerDir: string): string[] {
   // `.astro` subpaths are proven by the fixture's pages and astro build; tsc cannot parse them.
   const subpaths = Object.entries(packageJson.exports)
     .filter(([, target]) => typeof target !== 'string')
-    .map(([subpath]) => (subpath === '.' ? '@reservajs/astro' : `@reservajs/astro${subpath.slice(1)}`));
+    .map(([subpath]) => (subpath === '.' ? '@reservajs/astro' : `@reservajs/astro${subpath.slice(1)}`))
+    .concat(extraSpecifiers);
   const imports = subpaths.map((specifier, index) => `import * as mod${index} from ${JSON.stringify(specifier)};`).join('\n');
   const usage = `export const importedSubpaths: unknown[] = [${subpaths.map((_, index) => `mod${index}`).join(', ')}];\n`;
   writeFileSync(resolve(consumerDir, 'import-all.generated.ts'), `${imports}\n\n${usage}`);
@@ -134,6 +156,31 @@ function assertPackagedLayout(consumerDir: string): void {
     if (!existsSync(resolve(installedRoot, relativePath))) fail('layout', `missing from packed package: ${relativePath}`);
   }
   if (existsSync(resolve(installedRoot, 'src'))) fail('layout', 'the packed package still ships src/');
+
+  // The package boundary, asserted on the artifact a consumer actually installs.
+  const manifest = JSON.parse(readFileSync(resolve(installedRoot, 'package.json'), 'utf8')) as Record<string, Record<string, string> | undefined>;
+  for (const field of ['dependencies', 'peerDependencies', 'optionalDependencies']) {
+    if (manifest[field]?.stripe) fail('layout', `@reservajs/astro declares stripe in ${field}`);
+  }
+}
+
+// The adapter tarball carries its compiled surface and nothing else — no sources, no tests, no
+// fixture leftovers.
+function assertAdapterPackagedLayout(consumerDir: string): void {
+  const installedRoot = resolve(consumerDir, 'node_modules/@reservajs/stripe');
+  for (const relativePath of ['dist/index.js', 'dist/index.d.ts', 'README.md', 'LICENSE']) {
+    if (!existsSync(resolve(installedRoot, relativePath))) fail('layout', `missing from packed @reservajs/stripe: ${relativePath}`);
+  }
+  const unexpected = readdirSync(installedRoot).filter((entry) => !['dist', 'README.md', 'LICENSE', 'package.json', 'node_modules'].includes(entry));
+  if (unexpected.length > 0) fail('layout', `unexpected entries in packed @reservajs/stripe: ${unexpected.join(', ')}`);
+}
+
+// The core-only consumer proves the SDK is genuinely gone: a stripe/ directory in its node_modules
+// would mean something in the dependency graph still pulls it.
+function assertStripeAbsent(consumerDir: string): void {
+  if (existsSync(resolve(consumerDir, 'node_modules/stripe'))) {
+    fail('layout', 'the core-only consumer installed the stripe SDK; @reservajs/astro must not depend on it');
+  }
 }
 
 function typecheck(consumerDir: string, subpaths: string[]): void {
@@ -225,44 +272,71 @@ function reservaMigrate(consumerDir: string): void {
   }
 }
 
+interface ConsumerSpec {
+  name: string;
+  tarballs: string[];
+  expectInstalled: string[];
+  extraImports: string[];
+  expectStripeAbsent: boolean;
+}
+
+function buildConsumer(workDir: string, spec: ConsumerSpec): void {
+  const consumerDir = resolve(workDir, spec.name);
+  console.log(`pack-test: [${spec.name}] assembling consumer in ${consumerDir}`);
+  cpSync(fixtureBaseDir, consumerDir, { recursive: true });
+  cpSync(resolve(fixtureConsumersDir, spec.name), consumerDir, { recursive: true });
+
+  console.log(`pack-test: [${spec.name}] bun install (fixture devDependencies)`);
+  bunInstall(consumerDir);
+
+  console.log(`pack-test: [${spec.name}] bun add ${spec.tarballs.length} tarball(s), the way a real consumer would`);
+  bunAddTarballs(consumerDir, spec.tarballs, spec.expectInstalled);
+
+  console.log(`pack-test: [${spec.name}] asserting the packed layout`);
+  assertScheduledTemplatePackaged(consumerDir);
+  assertPackagedLayout(consumerDir);
+  if (spec.expectStripeAbsent) assertStripeAbsent(consumerDir);
+  else assertAdapterPackagedLayout(consumerDir);
+
+  console.log(`pack-test: [${spec.name}] typechecking every subpath and the production-like provider factory`);
+  const subpaths = writeImportAll(consumerDir, spec.extraImports);
+  typecheck(consumerDir, subpaths);
+
+  console.log(`pack-test: [${spec.name}] building the packed consumer scheduled Worker`);
+  scheduledWorkerBuild(consumerDir);
+
+  console.log(`pack-test: [${spec.name}] astro build (compiles .astro exports, mounts injected routes)`);
+  astroBuild(consumerDir);
+
+  console.log(`pack-test: [${spec.name}] bunx reserva-migrate --local (packaged migrations, plan 008)`);
+  reservaMigrate(consumerDir);
+}
+
 async function main(): Promise<void> {
   const workDir = mkdtempSync(resolve(tmpdir(), 'reserva-pack-'));
-  const consumerDir = resolve(workDir, 'consumer');
   try {
-    console.log('pack-test: building dist/');
+    console.log('pack-test: building both packages');
     buildDist();
 
-    console.log(`pack-test: packing tarball into ${workDir}`);
-    const tarballPath = packTarball(workDir);
-    console.log(`pack-test: packed ${tarballPath}`);
+    console.log(`pack-test: packing tarballs into ${workDir}`);
+    const astroTarball = packTarball(repoRoot, workDir);
+    const stripeTarball = packTarball(stripePackageDir, workDir);
+    console.log(`pack-test: packed ${astroTarball} and ${stripeTarball}`);
 
-    console.log(`pack-test: copying tests/pack-fixture into ${consumerDir}`);
-    cpSync(fixtureDir, consumerDir, { recursive: true });
-
-    console.log('pack-test: bun install (fixture devDependencies)');
-    bunInstall(consumerDir);
-
-    console.log('pack-test: bun add <tarball> (installs reserva the way a real consumer would)');
-    bunAddTarball(consumerDir, tarballPath);
-
-    console.log('pack-test: asserting the scheduled Worker template is included');
-    assertScheduledTemplatePackaged(consumerDir);
-
-    console.log('pack-test: asserting the packed layout is dist-only');
-    assertPackagedLayout(consumerDir);
-
-    console.log('pack-test: typechecking every non-.astro exports subpath and the production-like provider factory');
-    const subpaths = writeImportAll(consumerDir);
-    typecheck(consumerDir, subpaths);
-
-    console.log('pack-test: building the packed consumer scheduled Worker');
-    scheduledWorkerBuild(consumerDir);
-
-    console.log('pack-test: astro build (compiles .astro exports, mounts injected routes)');
-    astroBuild(consumerDir);
-
-    console.log('pack-test: bunx reserva-migrate --local (packaged migrations, plan 008)');
-    reservaMigrate(consumerDir);
+    buildConsumer(workDir, {
+      name: 'core-only',
+      tarballs: [astroTarball],
+      expectInstalled: ['@reservajs/astro'],
+      extraImports: [],
+      expectStripeAbsent: true,
+    });
+    buildConsumer(workDir, {
+      name: 'with-stripe',
+      tarballs: [astroTarball, stripeTarball],
+      expectInstalled: ['@reservajs/astro', '@reservajs/stripe'],
+      extraImports: ['@reservajs/stripe'],
+      expectStripeAbsent: false,
+    });
 
     console.log('pack-test: OK');
   } catch (error) {

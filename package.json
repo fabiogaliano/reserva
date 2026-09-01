@@ -1,10 +1,14 @@
 {
   "name": "@reservajs/astro",
-  "version": "0.1.0",
-  "description": "Reusable Astro booking integration for Cloudflare Workers, D1, and Stripe",
+  "version": "0.2.0",
+  "description": "The edge-native booking engine for fixed-capacity time slots — self-hosted on Cloudflare Workers + D1, no per-booking fees.",
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   },
+  "workspaces": [
+    "packages/*"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -32,7 +36,6 @@
     "./email": { "types": "./dist/email/index.d.ts", "default": "./dist/email/index.js" },
     "./providers": { "types": "./dist/providers/index.d.ts", "default": "./dist/providers/index.js" },
     "./providers/calendar-google": { "types": "./dist/providers/calendar-google/index.d.ts", "default": "./dist/providers/calendar-google/index.js" },
-    "./providers/payments-stripe": { "types": "./dist/providers/payments-stripe/index.d.ts", "default": "./dist/providers/payments-stripe/index.js" },
     "./providers/email-brevo": { "types": "./dist/providers/email-brevo/index.d.ts", "default": "./dist/providers/email-brevo/index.js" },
     "./providers/email-none": { "types": "./dist/providers/email-none/index.d.ts", "default": "./dist/providers/email-none/index.js" },
     "./runtime": { "types": "./dist/runtime.d.ts", "default": "./dist/runtime.js" },
@@ -59,6 +62,7 @@
     "node": ">=20"
   },
   "overrides": {
+    "@reservajs/astro": "file:.",
     "sharp": "^0.35.0",
     "undici": "^7.29.0",
     "nanoid": "^3.3.18",
@@ -73,8 +77,7 @@
     "@date-fns/tz": "^1.5.0",
     "cally": "^0.9.2",
     "date-fns": "^4.4.0",
-    "smol-toml": "^1.8.0",
-    "stripe": "^22.5.0"
+    "smol-toml": "^1.8.0"
   },
   "devDependencies": {
     "@astrojs/cloudflare": "^14.2.1",

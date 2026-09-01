@@ -1,12 +1,18 @@
 import Stripe from 'stripe';
-import type { ApiErrorCode } from '../core/api.js';
-import type { Booking } from '../core/booking.js';
-import type { ClientConfig } from '../core/config.js';
-import { pickupOptionFor, resolveService } from '../core/config.js';
-import type { PaymentProvider, SessionStatus, PaymentEventParsed } from '../core/events.js';
-import { priceFor } from '../core/pricing.js';
-import { requestText, STRIPE_WEBHOOK_BODY_LIMIT_BYTES } from '../http.js';
-import type { ReservaResolvedRouteConfig } from '../routes-manifest.js';
+import {
+  pickupOptionFor,
+  priceFor,
+  requestText,
+  resolveService,
+  PAYMENT_WEBHOOK_BODY_LIMIT_BYTES,
+  type ApiErrorCode,
+  type Booking,
+  type ClientConfig,
+  type PaymentEventParsed,
+  type PaymentProvider,
+  type SessionStatus,
+} from '@reservajs/astro/core';
+import type { ReservaResolvedRouteConfig } from '@reservajs/astro';
 
 export interface StripeClient {
   checkout: { sessions: {
@@ -30,7 +36,7 @@ export interface StripeClient {
 type BookingCallback<T> = (booking: Booking, config: ClientConfig) => T;
 type UrlOption = string | BookingCallback<string>;
 
-export interface StripeProviderOptions {
+export interface StripeOptions {
   secretKey?: string;
   apiKey?: string;
   webhookSecret: string;
@@ -61,8 +67,6 @@ export interface StripeProviderOptions {
   // consent record; set 'none' to run against such an account.
   termsOfService?: 'required' | 'none';
 }
-
-type PositionalOptions = Omit<StripeProviderOptions, 'secretKey' | 'webhookSecret'>;
 
 // The Stripe payment method types this adapter is tested against.
 export type StripePaymentMethod = 'card' | 'mb_way';
@@ -239,7 +243,6 @@ export function stripePaymentMethodTypes(methods: readonly StripePaymentMethod[]
   return [...methods] as Stripe.Checkout.SessionCreateParams.PaymentMethodType[];
 }
 
-export const mapPaymentMethods = stripePaymentMethodTypes;
 
 export function sessionStatusFromStripe(session: Stripe.Checkout.Session): SessionStatus {
   const metadata = metadataOf(session);
@@ -257,7 +260,6 @@ export function sessionStatusFromStripe(session: Stripe.Checkout.Session): Sessi
   };
 }
 
-export const mapSessionStatus = sessionStatusFromStripe;
 
 // Maps Stripe's own event names onto Reserva's PAYMENT_EVENTS vocabulary (core/events.ts). An event
 // Reserva has no name for keeps Stripe's string and is ignored downstream.
@@ -310,21 +312,16 @@ export function stripeEventToParsed(event: Stripe.Event): PaymentEventParsed {
   return parsed;
 }
 
-export const mapStripeEvent = stripeEventToParsed;
-export const parseStripeEvent = stripeEventToParsed;
 
+// Internal: consumers construct the provider through the `stripe(options)` factory in index.ts,
+// so the class itself is never part of the published surface.
 export class StripeProvider implements PaymentProvider {
   readonly stripe: StripeClient;
   readonly webhookSecret: string;
   private readonly now: () => Date | number;
-  private readonly options: PositionalOptions;
+  private readonly options: StripeOptions;
 
-  constructor(options: StripeProviderOptions);
-  constructor(secretKey: string, webhookSecret: string, options?: PositionalOptions);
-  constructor(secretOrOptions: string | StripeProviderOptions, positionalWebhookSecret?: string, positionalOptions: PositionalOptions = {}) {
-    const options: StripeProviderOptions = typeof secretOrOptions === 'string'
-      ? { ...positionalOptions, secretKey: secretOrOptions, webhookSecret: positionalWebhookSecret ?? '' }
-      : secretOrOptions;
+  constructor(options: StripeOptions) {
     const secretKey = options.secretKey ?? options.apiKey;
     if (!secretKey) throw new Error('Stripe secret key is required');
     if (!options.webhookSecret) throw new Error('Stripe webhook secret is required');
@@ -414,7 +411,7 @@ export class StripeProvider implements PaymentProvider {
     // collapsed into a generic StripeWebhookVerificationError — and the decoded text is passed to
     // constructEventAsync completely unchanged, since Stripe's signature was computed over these
     // exact bytes and any re-serialization would break verification.
-    const payload = await requestText(request, STRIPE_WEBHOOK_BODY_LIMIT_BYTES);
+    const payload = await requestText(request, PAYMENT_WEBHOOK_BODY_LIMIT_BYTES);
     try {
       const event = await this.stripe.webhooks.constructEventAsync(
         payload, signature, this.webhookSecret, 300, Stripe.createSubtleCryptoProvider(),
@@ -505,5 +502,3 @@ export class StripeProvider implements PaymentProvider {
     }
   }
 }
-
-export default StripeProvider;

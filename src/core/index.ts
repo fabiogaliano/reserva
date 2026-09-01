@@ -9,3 +9,6 @@ export * from './pricing.js';
 export * from './reference.js';
 export * from './slots.js';
 export * from './time.js';
+// The bounded body reader a payment adapter needs to parse a webhook safely (@reservajs/stripe is
+// the first consumer). The rest of src/http.ts stays internal to the library's own handlers.
+export { requestText, PAYMENT_WEBHOOK_BODY_LIMIT_BYTES } from '../http.js';

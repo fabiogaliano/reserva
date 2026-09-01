@@ -1,0 +1,39 @@
+{
+  "name": "@reservajs/stripe",
+  "version": "0.2.0",
+  "description": "The edge-native booking engine for fixed-capacity time slots — self-hosted on Cloudflare Workers + D1, no per-booking fees.",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fabiogaliano/reserva.git",
+    "directory": "packages/stripe"
+  },
+  "author": "Fábio Galiano",
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+  },
+  "scripts": {
+    "build": "bunx tsc -p tsconfig.build.json",
+    "prepack": "bun run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "@reservajs/astro": "^0.2.0"
+  },
+  "dependencies": {
+    "stripe": "^22.5.0"
+  }
+}
