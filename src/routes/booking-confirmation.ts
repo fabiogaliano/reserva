@@ -1,4 +1,5 @@
 import type { APIContext } from 'astro';
+import type { StatusResponse } from '../core/api';
 import { handleStatus } from '../handlers';
 import { escapeHtml } from '../http';
 import { cssAssetHref } from '../ui/asset-hrefs';
@@ -10,20 +11,10 @@ import { createRouteContext } from './route-context';
 
 export const prerender = false;
 
-interface ConfirmedBooking {
-  reference?: string;
-  serviceSlug?: string;
-  start?: string;
-  end?: string;
-  quantity?: number;
-  pickupType?: string;
-  locale?: string;
-  priceMinor?: number;
-  meetingPoint?: { label?: string; mapsUrl?: string };
-  // Plan 024 (design decision 3): see the identical field on ManageBookingPayload
-  // (src/components/manage-page.ts) — same shape, same renderer convention.
-  metadata?: Array<{ key: string; label: string; value: string | number | boolean }>;
-}
+// Plan 027 (design decision 2): this page renders whatever GET /api/booking/status answers, so it
+// takes that exported response type rather than a hand-kept copy — a change to the contract breaks
+// here at compile time instead of silently dropping a row from the ticket.
+type ConfirmedBooking = NonNullable<StatusResponse['booking']>;
 
 function brandLine(context: Pick<BookkitContext, 'config'>): string {
   return `<p class="bk-brand"><a href="${escapeHtml(context.config.business.url)}">${escapeHtml(context.config.business.name)}</a></p>`;
@@ -53,7 +44,7 @@ function confirmedBody(context: Pick<BookkitContext, 'config'>, messages: Bookki
   }
   // Plan 024 (design decision 3): see the identical block in manage-page.ts renderManagePage —
   // boolean -> the existing yes/no copy pair, everything else its plain string form, escaped.
-  for (const row of booking.metadata ?? []) {
+  for (const row of booking.metadataRows ?? []) {
     const displayValue = typeof row.value === 'boolean'
       ? (row.value ? messages['admin.on'] : messages['admin.off'])
       : String(row.value);
@@ -95,14 +86,14 @@ function simpleBody(body: string, options: { pending?: boolean; actionHtml?: str
 
 export function confirmationPage(
   context: Pick<BookkitContext, 'config' | 'routeConfig' | 'viewerTheme'>,
-  payload: Record<string, unknown>,
+  payload: StatusResponse,
   requestUrl: string,
   requestedLocale: string | null,
 ): string {
-  const status = typeof payload.status === 'string' ? payload.status : 'not_found';
-  const booking: ConfirmedBooking = payload.booking && typeof payload.booking === 'object' ? payload.booking : {};
-  const hasConfirmedBooking = typeof booking.reference === 'string' && booking.reference.length > 0;
-  const locale = booking.locale ?? requestedLocale ?? context.config.locales.default;
+  const status = payload.status;
+  const booking = payload.booking;
+  const hasConfirmedBooking = booking !== null && booking.reference.length > 0;
+  const locale = booking?.locale ?? requestedLocale ?? context.config.locales.default;
   const messages = resolveMessages(context.config, locale);
   // Meta refresh (not script polling) keeps the pending→confirmed webhook race handled without
   // any inline script, so the page works under script-src 'none'.
@@ -159,7 +150,7 @@ export async function GET({ request, locals }: APIContext): Promise<Response> {
   const statusRequest = new Request(statusUrl, { headers: request.headers });
   const response = await handleStatus(statusRequest, context);
   if (!response.headers.get('content-type')?.includes('application/json')) return response;
-  const payload = await response.json() as Record<string, unknown>;
+  const payload = await response.json() as StatusResponse;
   return new Response(confirmationPage(context, payload, request.url, requestedLocale), {
     status: response.ok ? 200 : response.status,
     headers: {

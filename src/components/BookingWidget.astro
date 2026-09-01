@@ -1,6 +1,5 @@
 ---
 import routeConfig from 'virtual:bookkit/config';
-import { resolvedPriceTableFor } from '../core/pricing';
 import { defaultLocale, formatMessage, resolveMessages, type BookkitMessages } from '../ui/messages';
 import '../ui/components.css';
 
@@ -9,51 +8,21 @@ interface StartOption {
   label: string;
 }
 
-interface PricingRuleProp {
-  maxQuantity: number;
-  // Any pickup id the service's own pricing rows declare (see core/pricing.ts ResolvedPriceTable),
-  // or absent for a location-less service's tiers-only pricing (plan 023 design decision 2).
-  pickup?: string;
-  priceMinor: number;
-}
-
-// Plan 018 (design decision 9): the widget-prop shape of core/config.ts's PickupOption, minus
-// requiresAddress (Stripe-side collection, not something the widget itself renders or needs).
-interface PickupOptionProp {
-  id: string;
-  label?: string;
-  hint?: string;
-  usesMeetingPoint?: boolean;
-}
-
 interface Props {
   serviceSlug: string;
   checkoutEndpoint?: string;
   availabilityEndpoint?: string;
+  // Plan 027 (design decisions 1 and 6): the two endpoints that replaced this component's config
+  // props. The service's pickup options and meeting points come from the deployment's own catalog,
+  // and every price shown comes from the quote endpoint — the same code path checkout charges on —
+  // so an embed can no longer describe the service differently than the server does.
+  catalogEndpoint?: string;
+  quoteEndpoint?: string;
   availabilityFrom?: string;
   availabilityTo?: string;
   locale?: string;
   quantityOptions?: number[];
-  // @deprecated use `pickupOptions` instead. Kept as an alias mapped onto a fixed default id/custom
-  // id pair so existing embeds keep compiling and keep rendering today's exact markup — see plan
-  // 018 (design decision 9). A location-less service (plan 023) must pass pickupOptions={[]}
-  // explicitly rather than relying on this alias's default.
-  pickupTypes?: Array<'default' | 'custom'>;
-  // Plan 018 (design decision 9): service-declared pickup options, superseding pickupTypes above.
-  // Pass config.services[slug].pickupOptions mapped to {id, label, hint, usesMeetingPoint}. Absent ⇒
-  // pickupTypes is mapped onto the default pair instead, rendering byte-identical markup.
-  pickupOptions?: PickupOptionProp[];
-  // Plan 017 (design decision 5): labels are config-provided plain strings, like
-  // meetingPoint.label today — pass config.services[slug].meetingPoints mapped to {id, label}. 0 or 1
-  // entries render nothing new (single-point services stay byte-identical); 2+ renders a radio group.
-  meetingPoints?: Array<{ id: string; label: string }>;
   startOptions?: StartOption[];
-  // Pass the service's pricing rules (config.services[slug].pricing) to show a live price; omit to hide.
-  pricing?: PricingRuleProp[];
-  currency?: string;
-  // Used when availability is static: fetched availability supplies the server-configured value,
-  // while this fallback preserves scarcity hints for startOptions-only consumers.
-  limitedThreshold?: number;
   // Shown in the <noscript> fallback as a way to book without JavaScript — pass
   // config.business.contact.email / .phone. Either, both, or neither may be supplied.
   contactEmail?: string;
@@ -67,17 +36,13 @@ const {
   serviceSlug,
   checkoutEndpoint = routeConfig.paths.checkout,
   availabilityEndpoint = routeConfig.paths.availability,
+  catalogEndpoint = routeConfig.paths.catalog,
+  quoteEndpoint = routeConfig.paths.quote,
   availabilityFrom,
   availabilityTo,
   locale = defaultLocale,
   quantityOptions = [1, 2, 3, 4],
-  pickupTypes = ['default', 'custom'],
-  pickupOptions,
-  meetingPoints = [],
   startOptions = [],
-  pricing,
-  currency = 'EUR',
-  limitedThreshold = 3,
   contactEmail,
   contactPhone,
   messages: messageOverrides = {},
@@ -87,16 +52,12 @@ const {
 const t: BookkitMessages = { ...resolveMessages(undefined, locale), ...messageOverrides };
 const usesAvailability = availabilityFrom !== undefined && availabilityTo !== undefined;
 const quantityLabel = (n: number): string => formatMessage(n === 1 ? t['widget.person'] : t['widget.quantityCount'], { n });
-const resolvedPrices = pricing ? resolvedPriceTableFor({ pricing }) : null;
 
-// Everything the client script needs that can vary per render (copy, pricing, locale) travels in
-// a JSON data island rather than an inline define:vars script, so no unhashed inline JS is ever
-// emitted and strict script-src CSPs keep working.
+// Everything the client script needs that can vary per render (copy, locale) travels in a JSON
+// data island rather than an inline define:vars script, so no unhashed inline JS is ever emitted
+// and strict script-src CSPs keep working.
 const scriptData = {
   locale,
-  currency,
-  resolvedPrices,
-  limitedThreshold,
   i18n: {
     loadingSlots: t['widget.loadingSlots'],
     noSlots: t['widget.noSlots'],
@@ -105,50 +66,14 @@ const scriptData = {
     soldOut: t['widget.soldOut'],
     limited: t['widget.limited'],
     spotsLeft: t['widget.spotsLeft'],
+    pickup: t['widget.pickup'],
+    meetingPoint: t['widget.meetingPoint'],
     submit: t['widget.submit'],
     submitting: t['widget.submitting'],
     errorAvailability: t['widget.errorAvailability'],
     errorCheckout: t['widget.errorCheckout'],
   },
 };
-
-const pickupCopy: Record<'default' | 'custom', { label: string; hint: string }> = {
-  default: { label: t['widget.pickupDefault'], hint: t['widget.pickupDefaultHint'] },
-  custom: { label: t['widget.pickupCustom'], hint: t['widget.pickupCustomHint'] },
-};
-
-function isDefaultOrCustomId(id: string): id is 'default' | 'custom' {
-  return id === 'default' || id === 'custom';
-}
-
-interface PickupRenderOption {
-  id: string;
-  label: string;
-  hint: string | null;
-  // undefined on the pickupTypes-alias path, so the attribute below is never emitted there (Astro
-  // drops undefined-valued attributes — see data-availability-endpoint above for the same
-  // pattern). That omission is the byte-identity mechanism plan 018 (design decision 9) requires:
-  // a config with no pickupOptions must render exactly like it did before this prop existed.
-  usesMeetingPointAttr: string | undefined;
-}
-
-// Plan 018 (design decision 9): pickupOptions supersedes the deprecated pickupTypes alias. When
-// absent, pickupTypes is mapped onto the same catalog-backed label/hint pair it always used, with
-// no usesMeetingPointAttr — see the fixture-backed byte-identity test in
-// tests/component/booking-widget-pickup-options.test.ts.
-const pickupOptionEntries: PickupRenderOption[] = pickupOptions
-  ? pickupOptions.map((option) => ({
-      id: option.id,
-      label: option.label ?? (isDefaultOrCustomId(option.id) ? pickupCopy[option.id].label : option.id),
-      hint: option.hint ?? (isDefaultOrCustomId(option.id) ? pickupCopy[option.id].hint : null),
-      usesMeetingPointAttr: option.usesMeetingPoint ? 'true' : 'false',
-    }))
-  : pickupTypes.map((id) => ({
-      id,
-      label: pickupCopy[id].label,
-      hint: pickupCopy[id].hint,
-      usesMeetingPointAttr: undefined,
-    }));
 
 // A full UUID (not a truncated slice or a module-scope counter, which would collide across
 // concurrent renders) so two instances of this component on the same page never share an id —
@@ -168,6 +93,8 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
   data-availability-endpoint={usesAvailability ? availabilityEndpoint : undefined}
   data-availability-from={availabilityFrom}
   data-availability-to={availabilityTo}
+  data-catalog-endpoint={catalogEndpoint}
+  data-quote-endpoint={quoteEndpoint}
   aria-label={t['widget.title']}
   hidden
 >
@@ -221,58 +148,19 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     </label>
   )}
 
-  {/* Plan 023 (design decision 3): zero entries means the service declares no location module at
-      all — no hidden input, no radio group, so the submitted FormData naturally has no
-      pickupType field (see the submit handler below, which only sets payload.pickupType when
-      FormData actually carries it — checkout rejects the field's mere presence for such a
-      service). */}
-  {pickupOptionEntries.length === 0 ? null : pickupOptionEntries.length === 1 ? (
-    <input type="hidden" name="pickupType" value={pickupOptionEntries[0].id} data-uses-meeting-point={pickupOptionEntries[0].usesMeetingPointAttr} />
-  ) : (
-    <fieldset class="bkw-field">
-      <legend class="bkw-label">{t['widget.pickup']}</legend>
-      <div class="bkw-pickups">
-        {pickupOptionEntries.map((option, index) => (
-          <label class="bkw-pickup">
-            <input type="radio" name="pickupType" value={option.id} required checked={index === 0} data-uses-meeting-point={option.usesMeetingPointAttr} />
-            <span class="bkw-pickup-body">
-              <span class="bkw-pickup-label">{option.label}</span>
-              {option.hint !== null && <span class="bkw-pickup-hint">{option.hint}</span>}
-            </span>
-          </label>
-        ))}
-      </div>
-    </fieldset>
-  )}
+  {/* Plan 027 (design decision 6): the service's location axes are filled in from the catalog by
+      the script below (see renderLocation), the way slots are filled in from availability — a
+      location-less service leaves both anchors empty, so the submitted FormData carries no
+      pickupType/meetingPointId at all (checkout rejects the fields' mere presence for such a
+      service; plan 023 design decision 3). */}
+  <div data-bookkit-pickup-slot></div>
+  <div data-bookkit-meeting-point-slot></div>
 
-  {/* Plan 017 (design decision 5): 0-1 points render nothing new — a single-point service's markup
-      stays byte-identical to before this prop existed. 2+ mirrors the pickupType group above
-      (same fieldset/legend/bkw-pickup markup and classes). Hidden/disabled client-side while
-      pickupType is 'custom' (see the script below); the server's requirement rule is
-      authoritative regardless of what this toggle does. */}
-  {meetingPoints.length >= 2 && (
-    <fieldset class="bkw-field" data-bookkit-meeting-points>
-      <legend class="bkw-label">{t['widget.meetingPoint']}</legend>
-      <div class="bkw-pickups">
-        {meetingPoints.map((point, index) => (
-          <label class="bkw-pickup">
-            <input type="radio" name="meetingPointId" value={point.id} required checked={index === 0} />
-            <span class="bkw-pickup-body">
-              <span class="bkw-pickup-label">{point.label}</span>
-            </span>
-          </label>
-        ))}
-      </div>
-    </fieldset>
-  )}
-
-  {pricing && (
-    <p class="bkw-price" data-bookkit-price aria-live="polite">
-      <span class="bkw-price-label">{t['common.price']}</span>
-      <strong class="bkw-price-value" data-bookkit-price-value></strong>
-      <span class="bkw-price-note">{t['widget.priceNote']}</span>
-    </p>
-  )}
+  <p class="bkw-price" data-bookkit-price aria-live="polite">
+    <span class="bkw-price-label">{t['common.price']}</span>
+    <strong class="bkw-price-value" data-bookkit-price-value></strong>
+    <span class="bkw-price-note">{t['widget.priceNote']}</span>
+  </p>
 
   {/* In availability mode the button stays disabled until slots render, so a fast click can never
       post an empty start; its label shows the loading state until renderSlots restores the normal
@@ -322,6 +210,18 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
 <script>
   import 'cally';
   import { toMajorUnits } from '../core/currency';
+  // Plan 027 (design decision 2): the shipped widget reads the same exported wire types a consumer
+  // does — if a response shape changes without this component following, it fails to compile here
+  // rather than at a customer's browser.
+  import type {
+    ApiErrorEnvelope,
+    AvailabilityDay,
+    AvailabilityResponse,
+    CatalogResponse,
+    CatalogService,
+    CheckoutResponse,
+    QuoteResponse,
+  } from '../core/api';
 
   interface CalendarDateElement extends HTMLElement {
     value: string;
@@ -329,16 +229,9 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     isDateDisallowed: (date: Date) => boolean;
   }
 
-  interface AvailabilitySlot { start: string; remaining: number | null }
-  interface AvailabilityDay { date: string; status: string; closedReason: string | null; slots: AvailabilitySlot[] }
-  interface AvailabilityResponse { days?: AvailabilityDay[]; limitedThreshold?: number; error?: { message?: string } }
-  // Keyed by whatever pickup ids the service's own pricing rows declare (see core/pricing.ts).
-  type ResolvedPriceTable = Record<string, number[]>;
+  type Fallible<T> = Partial<T> & Partial<ApiErrorEnvelope>;
   interface WidgetData {
     locale: string;
-    currency: string;
-    resolvedPrices: ResolvedPriceTable | null;
-    limitedThreshold: number;
     i18n: Record<string, string>;
   }
 
@@ -371,46 +264,153 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     if (retry) retry.hidden = true;
   }
 
-  function updatePrice(form: HTMLFormElement, data: WidgetData): void {
+  // Plan 027 (design decision 1): the price shown is the price the server quotes, fetched from the
+  // endpoint checkout prices on — the widget no longer carries a price table of its own, so it can
+  // no longer disagree with what the customer is charged. Only the latest request may write to the
+  // DOM: quantity/pickup changes fire in quick succession and an older quote settling last would
+  // display a price for a selection the visitor has already changed.
+  const quoteState = new WeakMap<HTMLFormElement, number>();
+  async function updatePrice(form: HTMLFormElement, data: WidgetData): Promise<void> {
     const target = form.querySelector<HTMLElement>('[data-bookkit-price-value]');
-    if (!target || !data.resolvedPrices) return;
+    const endpoint = form.dataset.quoteEndpoint;
+    if (!target || !endpoint) return;
     const formData = new FormData(form);
-    const quantity = Number(formData.get('quantity'));
-    // Plan 018 (design decision 9): the selected radio's raw value is the table key now — no more
-    // collapsing every non-'custom' id to 'default'. An id with no pricing column (a config bug
-    // elsewhere) behaves like today's missing-price case: optional chaining leaves priceMinor
-    // undefined, which blanks the price rather than throwing.
-    const pickup = String(formData.get('pickupType') ?? '');
-    const priceMinor = data.resolvedPrices[pickup]?.[quantity];
-    target.textContent = priceMinor === undefined
-      ? ''
-      : new Intl.NumberFormat(data.locale, { style: 'currency', currency: data.currency }).format(toMajorUnits(priceMinor, data.currency));
+    const pickup = formData.get('pickupType');
+    const generation = (quoteState.get(form) ?? 0) + 1;
+    quoteState.set(form, generation);
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          serviceSlug: String(formData.get('serviceSlug') ?? ''),
+          quantity: Number(formData.get('quantity')),
+          ...(pickup === null ? {} : { pickup: String(pickup) }),
+          locale: data.locale,
+        }),
+      });
+      const result = await response.json() as Fallible<QuoteResponse>;
+      if (quoteState.get(form) !== generation) return;
+      // A quote the server won't give (an unsupported party size, say) blanks the price rather than
+      // showing a stale one; the submit path surfaces the real error if the visitor books anyway.
+      target.textContent = response.ok && result.priceMinor !== undefined && result.currency !== undefined
+        ? new Intl.NumberFormat(data.locale, { style: 'currency', currency: result.currency }).format(toMajorUnits(result.priceMinor, result.currency))
+        : '';
+    } catch {
+      if (quoteState.get(form) === generation) target.textContent = '';
+    }
+  }
+
+  // Plan 027 (design decision 6): the pickup and meeting-point groups are rendered from the
+  // deployment's catalog, so their ids, labels, hints and usesMeetingPoint flags can't drift from
+  // what checkout accepts. A service with no location module (plan 023) leaves both anchors empty:
+  // no pickupType field is submitted at all.
+  function pickupBody(label: string, hint: string | null): HTMLSpanElement {
+    const body = document.createElement('span');
+    body.className = 'bkw-pickup-body';
+    const labelSpan = document.createElement('span');
+    labelSpan.className = 'bkw-pickup-label';
+    labelSpan.textContent = label;
+    body.append(labelSpan);
+    if (hint !== null) {
+      const hintSpan = document.createElement('span');
+      hintSpan.className = 'bkw-pickup-hint';
+      hintSpan.textContent = hint;
+      body.append(hintSpan);
+    }
+    return body;
+  }
+
+  function radioGroup(legend: string, name: string, entries: Array<{ value: string; label: string; hint: string | null; usesMeetingPoint?: boolean }>): HTMLFieldSetElement {
+    const fieldset = document.createElement('fieldset');
+    fieldset.className = 'bkw-field';
+    const caption = document.createElement('legend');
+    caption.className = 'bkw-label';
+    caption.textContent = legend;
+    const list = document.createElement('div');
+    list.className = 'bkw-pickups';
+    for (const [index, entry] of entries.entries()) {
+      const label = document.createElement('label');
+      label.className = 'bkw-pickup';
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = name;
+      input.value = entry.value;
+      input.required = true;
+      if (index === 0) input.checked = true;
+      if (entry.usesMeetingPoint !== undefined) input.dataset.usesMeetingPoint = String(entry.usesMeetingPoint);
+      label.append(input, pickupBody(entry.label, entry.hint));
+      list.append(label);
+    }
+    fieldset.append(caption, list);
+    return fieldset;
+  }
+
+  function renderLocation(form: HTMLFormElement, service: CatalogService, data: WidgetData): void {
+    const pickupSlot = form.querySelector<HTMLElement>('[data-bookkit-pickup-slot]');
+    const pointSlot = form.querySelector<HTMLElement>('[data-bookkit-meeting-point-slot]');
+    const pickupOptions = service.location?.pickupOptions ?? [];
+    const meetingPoints = service.location?.meetingPoints ?? [];
+    if (pickupSlot && pickupOptions.length === 1) {
+      // A single option is not a choice: submit it as a hidden field, carrying the same flag the
+      // radios do so syncMeetingPoints reads one thing in both shapes.
+      const hidden = document.createElement('input');
+      hidden.type = 'hidden';
+      hidden.name = 'pickupType';
+      hidden.value = pickupOptions[0]!.id;
+      hidden.dataset.usesMeetingPoint = String(pickupOptions[0]!.usesMeetingPoint);
+      pickupSlot.append(hidden);
+    } else if (pickupSlot && pickupOptions.length > 1) {
+      pickupSlot.append(radioGroup(data.i18n.pickup ?? '', 'pickupType', pickupOptions.map((option) => ({
+        value: option.id,
+        label: option.label,
+        hint: option.hint,
+        usesMeetingPoint: option.usesMeetingPoint,
+      }))));
+    }
+    // Plan 017 (design decision 5): 0-1 declared points render nothing — there is nothing for the
+    // visitor to choose, and the server resolves the single point itself.
+    if (pointSlot && meetingPoints.length >= 2) {
+      const group = radioGroup(data.i18n.meetingPoint ?? '', 'meetingPointId', meetingPoints.map((point) => ({
+        value: point.id,
+        label: point.label,
+        hint: null,
+      })));
+      group.dataset.bookkitMeetingPoints = '';
+      pointSlot.append(group);
+    }
   }
 
   // Plan 017 (design decision 5) / Plan 018 (design decision 9): hides AND disables the
   // meeting-point group while the selected pickup option doesn't use one — disabling (not just
   // hiding) is what actually drops its radios from FormData, which is what the submit handler
   // below relies on to omit meetingPointId rather than send it empty. No-ops when the group isn't
-  // in the markup at all (0-1 declared points).
-  //
-  // Re-keyed off the selected pickupType input's data-uses-meeting-point ('true'/'false', set only
-  // on the declared-pickupOptions render path — see BookingWidget.astro's frontmatter; a single
-  // declared option carries it on its hidden input, reached here via the un-suffixed selector
-  // fallback below). Its absence covers the deprecated pickupTypes alias, which falls back to the
-  // pre-018 pickupType === 'custom' heuristic unchanged.
+  // rendered at all (0-1 declared points).
   function syncMeetingPoints(form: HTMLFormElement): void {
     const wrap = form.querySelector<HTMLElement>('[data-bookkit-meeting-points]');
     if (!wrap) return;
     const selected = form.querySelector<HTMLInputElement>('input[name="pickupType"]:checked')
       ?? form.querySelector<HTMLInputElement>('input[name="pickupType"]');
-    const usesMeetingPoint = selected?.dataset.usesMeetingPoint;
-    const hide = usesMeetingPoint === undefined
-      ? new FormData(form).get('pickupType') === 'custom'
-      : usesMeetingPoint !== 'true';
+    const hide = selected?.dataset.usesMeetingPoint !== 'true';
     wrap.hidden = hide;
     for (const input of wrap.querySelectorAll<HTMLInputElement>('input[name="meetingPointId"]')) {
       input.disabled = hide;
     }
+  }
+
+  async function loadCatalog(form: HTMLFormElement, data: WidgetData): Promise<void> {
+    const endpoint = form.dataset.catalogEndpoint;
+    if (!endpoint) throw new Error('Booking form is missing its catalog endpoint');
+    const response = await fetch(`${endpoint}?locale=${encodeURIComponent(data.locale)}`);
+    const result = await response.json() as Fallible<CatalogResponse>;
+    if (!response.ok || !result.services) throw new Error(result.error?.message ?? 'Catalog unavailable');
+    const slug = String(new FormData(form).get('serviceSlug') ?? '');
+    const service = result.services.find((entry) => entry.slug === slug);
+    // A slug this deployment doesn't serve is an embedding mistake, not a runtime condition: fail
+    // the init so the fallback (with its contact details) stays up instead of showing a form whose
+    // every submission would 404.
+    if (!service) throw new Error(`Service "${slug}" is not in this deployment's catalog`);
+    renderLocation(form, service, data);
   }
 
   function dateKey(date: Date): string {
@@ -508,18 +508,12 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     if (!keepError) clearError(form);
     try {
       const response = await fetch(`${availabilityEndpoint}?${query}`, { cache: 'no-store', signal: controller.signal });
-      const result = await response.json() as AvailabilityResponse;
+      const result = await response.json() as Fallible<AvailabilityResponse>;
       // Superseded by a newer party-size/retry request while this one was in flight — its result
       // is stale by definition (see the class comment above), so discard it without touching any
       // UI a newer, possibly-already-rendered request now owns.
       if (!isCurrent()) return;
       if (!response.ok || !result.days) throw new Error(result.error?.message ?? data.i18n.errorAvailability);
-      // Availability is server-configured, so its threshold takes precedence over this render's
-      // fallback prop and keeps slot hints aligned with the day statuses in this same response.
-      const limitedThreshold = result.limitedThreshold;
-      if (typeof limitedThreshold === 'number' && Number.isInteger(limitedThreshold) && limitedThreshold >= 0) {
-        data.limitedThreshold = limitedThreshold;
-      }
       const days = new Map(result.days.map((day) => [day.date, day]));
       // Reassigning the property re-renders the month grid, so sold-out/closed days grey out as
       // soon as availability (or the party size, which changes it) arrives.
@@ -563,93 +557,97 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     }
   }
 
+  async function initInstance(form: HTMLFormElement, fallback: HTMLElement | null): Promise<void> {
+    // readData JSON.parses this instance's data island — a corrupted island throws here, caught
+    // below, before any listener is attached or the form is revealed.
+    const data = readData(form);
+    // Awaited before any listener is bound: the pickup radios it renders are what those listeners
+    // attach to, and a deployment that can't describe its own service can't take a booking.
+    await loadCatalog(form, data);
+    form.querySelector<HTMLSelectElement>('select[name="quantity"]')?.addEventListener('change', () => {
+      void updatePrice(form, data);
+      void loadAvailability(form, data);
+    });
+    for (const pickup of form.querySelectorAll<HTMLInputElement>('input[name="pickupType"]')) {
+      pickup.addEventListener('change', () => {
+        void updatePrice(form, data);
+        syncMeetingPoints(form);
+      });
+    }
+    form.querySelector<HTMLButtonElement>('[data-bookkit-retry]')?.addEventListener('click', () => {
+      void loadAvailability(form, data);
+    });
+    void updatePrice(form, data);
+    syncMeetingPoints(form);
+    void loadAvailability(form, data);
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const formData = new FormData(form);
+      const payload: Record<string, unknown> = {
+        serviceSlug: String(formData.get('serviceSlug') ?? ''),
+        start: String(formData.get('start') ?? ''),
+        quantity: Number(formData.get('quantity')),
+        locale: String(formData.get('locale') ?? ''),
+      };
+      // Plan 023 (design decision 3): a location-less service renders no pickupType field at all
+      // (see renderLocation above) — omit it from the payload rather than sending an empty
+      // string, which checkout now rejects as a present-but-unsupported field.
+      const pickupType = formData.get('pickupType');
+      if (pickupType !== null) payload.pickupType = String(pickupType);
+      // Plan 017 (design decision 5): a disabled meeting-point group (pickupType 'custom', or no
+      // such group at all for a single-point service) naturally drops out of FormData — follow that
+      // rather than sending an empty string the server would reject as an unknown id.
+      const meetingPointId = formData.get('meetingPointId');
+      if (meetingPointId !== null) payload.meetingPointId = String(meetingPointId);
+      const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+      const idleLabel = submit?.textContent ?? '';
+      try {
+        // data-endpoint is always rendered by the component (checkoutEndpoint always has a
+        // resolved default), so a missing value here means the markup was hand-edited or the
+        // form is missing its wrapper — either way, falling back to an unprefixed literal would
+        // silently 404 under a routePrefix, so surface the error instead of guessing a URL.
+        const endpoint = form.dataset.endpoint;
+        if (!endpoint) throw new Error('Booking form is missing its endpoint');
+        clearError(form);
+        if (submit) {
+          submit.disabled = true;
+          submit.textContent = data.i18n.submitting ?? idleLabel;
+        }
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const result = await response.json() as Fallible<CheckoutResponse>;
+        if (!response.ok || !result.checkoutUrl) throw new Error(result.error?.message ?? data.i18n.errorCheckout);
+        window.location.assign(result.checkoutUrl);
+      } catch (cause) {
+        if (submit) {
+          submit.disabled = false;
+          submit.textContent = idleLabel;
+        }
+        showError(form, data, cause, 'errorCheckout');
+        // A checkout rejection usually means the slot list went stale (e.g. it just filled), so
+        // reload the options rather than leaving the dead slot selectable — keeping the error on
+        // screen, since the reload's own clearError would otherwise wipe it instantly.
+        void loadAvailability(form, data, true);
+      }
+    });
+    // Every step above succeeded: only now swap the always-visible fallback for the
+    // now-functional form. Doing this earlier (e.g. before readData, as this used to) risks
+    // revealing a form no listener ever got attached to.
+    if (fallback) fallback.hidden = true;
+    form.hidden = false;
+  }
+
   for (const instance of document.querySelectorAll<HTMLElement>('[data-bookkit-instance]')) {
     const form = instance.querySelector<HTMLFormElement>('[data-bookkit-checkout]');
-    const fallback = instance.querySelector<HTMLElement>('[data-bookkit-fallback]');
     if (!form) continue;
-    try {
-      // readData JSON.parses this instance's data island — a corrupted island throws here, caught
-      // below, before any listener is attached or the form is revealed.
-      const data = readData(form);
-      form.querySelector<HTMLSelectElement>('select[name="quantity"]')?.addEventListener('change', () => {
-        updatePrice(form, data);
-        void loadAvailability(form, data);
-      });
-      for (const pickup of form.querySelectorAll<HTMLInputElement>('input[name="pickupType"]')) {
-        pickup.addEventListener('change', () => {
-          updatePrice(form, data);
-          syncMeetingPoints(form);
-        });
-      }
-      form.querySelector<HTMLButtonElement>('[data-bookkit-retry]')?.addEventListener('click', () => {
-        void loadAvailability(form, data);
-      });
-      updatePrice(form, data);
-      syncMeetingPoints(form);
-      void loadAvailability(form, data);
-      form.addEventListener('submit', async (event) => {
-        event.preventDefault();
-        const formData = new FormData(form);
-        const payload: Record<string, unknown> = {
-          serviceSlug: String(formData.get('serviceSlug') ?? ''),
-          start: String(formData.get('start') ?? ''),
-          quantity: Number(formData.get('quantity')),
-          locale: String(formData.get('locale') ?? ''),
-        };
-        // Plan 023 (design decision 3): a location-less service renders no pickupType field at all
-        // (see pickupOptionEntries.length === 0 above) — omit it from the payload rather than
-        // sending an empty string, which checkout now rejects as a present-but-unsupported field.
-        const pickupType = formData.get('pickupType');
-        if (pickupType !== null) payload.pickupType = String(pickupType);
-        // Plan 017 (design decision 5): a disabled meeting-point group (pickupType 'custom', or no
-        // such group at all for a single-point service) naturally drops out of FormData — follow that
-        // rather than sending an empty string the server would reject as an unknown id.
-        const meetingPointId = formData.get('meetingPointId');
-        if (meetingPointId !== null) payload.meetingPointId = String(meetingPointId);
-        const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
-        const idleLabel = submit?.textContent ?? '';
-        try {
-          // data-endpoint is always rendered by the component (checkoutEndpoint always has a
-          // resolved default), so a missing value here means the markup was hand-edited or the
-          // form is missing its wrapper — either way, falling back to an unprefixed literal would
-          // silently 404 under a routePrefix, so surface the error instead of guessing a URL.
-          const endpoint = form.dataset.endpoint;
-          if (!endpoint) throw new Error('Booking form is missing its endpoint');
-          clearError(form);
-          if (submit) {
-            submit.disabled = true;
-            submit.textContent = data.i18n.submitting ?? idleLabel;
-          }
-          const response = await fetch(endpoint, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(payload),
-          });
-          const result = await response.json() as { checkoutUrl?: string; error?: { message?: string } };
-          if (!response.ok || !result.checkoutUrl) throw new Error(result.error?.message ?? data.i18n.errorCheckout);
-          window.location.assign(result.checkoutUrl);
-        } catch (cause) {
-          if (submit) {
-            submit.disabled = false;
-            submit.textContent = idleLabel;
-          }
-          showError(form, data, cause, 'errorCheckout');
-          // A checkout rejection usually means the slot list went stale (e.g. it just filled), so
-          // reload the options rather than leaving the dead slot selectable — keeping the error on
-          // screen, since the reload's own clearError would otherwise wipe it instantly.
-          void loadAvailability(form, data, true);
-        }
-      });
-      // Every synchronous step above succeeded: only now swap the always-visible fallback for the
-      // now-functional form. Doing this earlier (e.g. before readData, as this used to) risks
-      // revealing a form no listener ever got attached to.
-      if (fallback) fallback.hidden = true;
-      form.hidden = false;
-    } catch (cause) {
-      // One broken instance must not stop its siblings from initializing (this is why the loop
-      // above doesn't hoist a single top-level try/catch) — and this instance's fallback, visible
-      // by default in markup, is left exactly as it started rather than revealing a dead form.
+    // One broken instance must not stop its siblings from initializing (this is why the loop
+    // doesn't await, and why each instance carries its own catch) — and this instance's fallback,
+    // visible by default in markup, is left exactly as it started rather than revealing a dead form.
+    void initInstance(form, instance.querySelector<HTMLElement>('[data-bookkit-fallback]')).catch((cause: unknown) => {
       console.error('[bookkit] widget instance failed to initialize; its fallback stays visible', cause);
-    }
+    });
   }
 </script>

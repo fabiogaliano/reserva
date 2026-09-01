@@ -9,9 +9,6 @@ const title = 'Bookkit local demo';
 const from = new Date().toISOString().slice(0, 10);
 const to = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
 const availabilityUrl = `/api/booking/availability?service=oldTown&quantity=2&from=${from}&to=${to}`;
-// Plan 017 (design decision 5): the widget only needs {id, label} — the config's raw (unvalidated)
-// meetingPoints array (see STOP condition 2) also carries mapsUrl, which the widget doesn't render.
-const meetingPoints = config.services.oldTown.location?.meetingPoints?.map(({ id, label }) => ({ id, label })) ?? [];
 ---
 
 <html lang="en">
@@ -30,7 +27,7 @@ const meetingPoints = config.services.oldTown.location?.meetingPoints?.map(({ id
 
       <section>
         <h2>Create a booking</h2>
-        <BookingWidget serviceSlug="oldTown" availabilityFrom={from} availabilityTo={to} meetingPoints={meetingPoints} locale={config.locales.default} />
+        <BookingWidget serviceSlug="oldTown" availabilityFrom={from} availabilityTo={to} locale={config.locales.default} />
         <p>Submitting redirects through the confirmation route. The simulated payment provider reports the session as paid, which exercises confirmation and every provider seam.</p>
       </section>
 

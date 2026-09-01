@@ -19,8 +19,10 @@ describe('booking confirmation page', () => {
           end: '2026-06-15T10:00:00.000+01:00',
           quantity: 2,
           priceMinor: 10000,
-          meetingPoint: config.services.vintage?.location?.meetingPoints?.[0],
+          currency: 'eur',
+          meetingPoint: { label: 'Praça do Comércio', mapsUrl: 'https://maps.google.com/?q=Praca+do+Comercio' },
           locale: 'en',
+          metadataRows: [],
         },
       },
       'https://example.test/booking-confirmation?session_id=cs_confirmed',
@@ -52,9 +54,12 @@ describe('booking confirmation page', () => {
           end: '2026-06-15T10:00:00.000+01:00',
           quantity: 2,
           priceMinor: 21000,
-          // No meetingPoint: confirmationSummary omits it for a custom_both-shaped option
-          // (requiresAddress, usesMeetingPoint: false).
+          currency: 'eur',
+          // meetingPoint: null for a custom_both-shaped option (requiresAddress,
+          // usesMeetingPoint: false) — always present, never a missing key (plan 023).
+          meetingPoint: null,
           locale: 'en',
+          metadataRows: [],
         },
       },
       'https://example.test/booking-confirmation?session_id=cs_confirmed_both',
@@ -79,7 +84,7 @@ describe('booking confirmation page', () => {
 
     const html = confirmationPage(
       { config, routeConfig: resolveRouteConfig() },
-      { status: 'confirmed' },
+      { status: 'confirmed', booking: null },
       'https://example.test/booking-confirmation?session_id=cs_confirmed',
       null,
     );
@@ -99,7 +104,7 @@ describe('booking confirmation page', () => {
 
     const html = confirmationPage(
       { config, routeConfig: resolveRouteConfig() },
-      { status: 'cancelled' },
+      { status: 'cancelled', booking: null },
       'https://example.test/booking-confirmation?session_id=cs_cancelled',
       null,
     );
@@ -135,8 +140,10 @@ describe('booking confirmation page', () => {
           end: '2026-06-15T10:00:00.000+01:00',
           quantity: 2,
           priceMinor: 10000,
+          currency: 'eur',
           locale: 'en',
-          metadata: [
+          meetingPoint: null,
+          metadataRows: [
             { key: 'dietary_notes', label: 'Dietary notes', value: xssPayload },
             { key: 'vegetarian', label: 'Vegetarian', value: true },
           ],

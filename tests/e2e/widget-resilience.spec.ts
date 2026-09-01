@@ -18,6 +18,18 @@ test('aborting the widget module load keeps the default fallback visible instead
   await expect(form).toBeHidden();
 });
 
+// Plan 027 (design decision 6): initialization now awaits the catalog before binding listeners, so
+// the "reveal only after every step succeeded" guarantee above has a new way to fail — a
+// deployment that can't answer for itself must leave the contact fallback up, not a form whose
+// pickup options were never rendered.
+test('a failing catalog request keeps the fallback visible instead of a form with no pickup options', async ({ page }) => {
+  await page.route('**/api/booking/catalog*', (route) => route.abort());
+  await page.goto('/');
+
+  await expect(page.locator('[data-bookkit-fallback]')).toBeVisible();
+  await expect(page.locator('form.bk-widget')).toBeHidden();
+});
+
 test('a corrupted data island in one instance does not stop the sibling widget from initializing', async ({ page }) => {
   // Rewrites only the first of the two-widgets fixture's two identical data islands (see
   // examples/smoke-site/src/pages/two-widgets.astro) into invalid JSON, simulating a hand-edited or

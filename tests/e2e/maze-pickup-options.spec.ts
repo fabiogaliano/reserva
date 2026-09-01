@@ -88,6 +88,9 @@ test('booking the 210 € custom pick-up & drop-off option shows the server-stor
   await page.getByRole('radiogroup').getByRole('radio').first().check();
 
   await page.locator('input[name="pickupType"][value="custom_both"]').check();
+  // Plan 027 (design decision 1): this number now comes from POST /api/booking/quote — the widget
+  // has no price table of its own — so seeing 210 here proves the quote endpoint prices the same
+  // combination checkout charges for below.
   await expect(page.locator('[data-bookkit-price-value]')).toContainText('210');
 
   let checkoutBody: Record<string, unknown> | undefined;

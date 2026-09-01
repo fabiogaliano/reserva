@@ -1,24 +1,17 @@
 ---
-// Plan 018 (design decision 9, step 6): exercises the widget's pickupOptions prop end-to-end
-// against a real four-option, non-additive-priced service (mazeRiverside in ../config.ts) — the
-// homepage's oldTown service only ever exercises the two-option pickupTypes alias.
+// Exercises a real four-option, non-additive-priced service with two meeting points
+// (mazeRiverside in ../config.ts) end-to-end: a declared option's usesMeetingPoint gating a real
+// multi-point group (plan 019 design decision 5), and per-combination pricing (plan 018).
 //
-// Plan 019 (design decision 5): also passes meetingPoints — mazeRiverside now declares two, so
-// this page is the one browser fixture that exercises both axes together (a declared option's
-// usesMeetingPoint gating a real multi-point group).
+// Plan 027 (design decisions 1 and 6): the page passes none of that — no pickup options, no
+// meeting points, no price table. The widget reads them from the deployment's catalog and quote
+// endpoints, so this fixture proves those endpoints describe the service correctly in a browser.
 import BookingWidget from '../../../../src/components/BookingWidget.astro';
 import config from '../config';
 
 const title = 'Bookkit local demo — Maze Riverside';
 const from = new Date().toISOString().slice(0, 10);
 const to = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
-const service = config.services.mazeRiverside;
-// The widget only needs {id, label, hint, usesMeetingPoint} — the config's raw pickupOptions also
-// carries requiresAddress, which is Stripe-side (see stripe.ts's custom_fields gate), not
-// something the widget itself renders.
-const pickupOptions = service.location!.pickupOptions.map(({ id, label, usesMeetingPoint }) => ({ id, label, usesMeetingPoint }));
-// meetingPoints mapsUrl isn't rendered by the widget (see index.astro's oldTown wiring).
-const meetingPoints = service.location!.meetingPoints!.map(({ id, label }) => ({ id, label }));
 ---
 
 <html lang="en">
@@ -41,9 +34,6 @@ const meetingPoints = service.location!.meetingPoints!.map(({ id, label }) => ({
           serviceSlug="mazeRiverside"
           availabilityFrom={from}
           availabilityTo={to}
-          pickupOptions={pickupOptions}
-          pricing={service.pricing}
-          meetingPoints={meetingPoints}
           locale={config.locales.default}
         />
         <p>Submitting redirects through the confirmation route. The simulated payment provider reports the session as paid, which exercises confirmation and every provider seam.</p>
