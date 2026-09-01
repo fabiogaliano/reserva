@@ -162,12 +162,12 @@ describe('core occupancy', () => {
     expect(intervals[0]?.start).toBe('2026-06-15T09:00:00.000Z');
   });
 
-  it('does not double-count a bookkit-tagged calendar event', () => {
+  it('does not double-count a reserva-tagged calendar event', () => {
     const intervals = getOccupancyIntervals(occupancyOptions({
       bookings: [booking()],
       calendarEvents: [{
         id: 'calendar-copy', start: slotStart, end: slotEnd,
-        extendedProperties: { private: { bookkitBookingId: 'booking-1' } },
+        extendedProperties: { private: { reservaBookingId: 'booking-1' } },
       }],
     }));
     expect(intervals).toHaveLength(1);
@@ -179,7 +179,7 @@ describe('core occupancy', () => {
       bookings: [],
       calendarEvents: [{
         id: 'orphaned-copy', start: slotStart, end: slotEnd,
-        extendedProperties: { private: { bookkitBookingId: 'missing-booking' } },
+        extendedProperties: { private: { reservaBookingId: 'missing-booking' } },
       }],
     }));
     expect(intervals).toHaveLength(1);

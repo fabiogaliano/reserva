@@ -1,19 +1,19 @@
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
-  "name": "bookkit-smoke",
+  "name": "reserva-smoke",
   "compatibility_date": "2026-07-21",
   "d1_databases": [
     {
-      "binding": "BOOKKIT_DB",
-      "database_name": "bookkit-smoke",
+      "binding": "RESERVA_DB",
+      "database_name": "reserva-smoke",
       "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "../../migrations"
     }
   ],
   "vars": {
-    "BOOKKIT_TOKEN_ENC_KEY": "local-demo-token-encryption-key",
-    "BOOKKIT_OPERATOR_SECRET": "local-operator-secret",
-    "BOOKKIT_CSRF_SECRET": "local-demo-csrf-secret"
+    "RESERVA_TOKEN_ENC_KEY": "local-demo-token-encryption-key",
+    "RESERVA_OPERATOR_SECRET": "local-operator-secret",
+    "RESERVA_CSRF_SECRET": "local-demo-csrf-secret"
   },
   // Plan 020 (design decision 15): the reference/smoke Wrangler configuration enables Workers
   // observability with full logs — this booking site is low-volume enough that 100% sampling is

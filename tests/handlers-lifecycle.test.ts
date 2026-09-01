@@ -1,13 +1,13 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import { createBookkitContext } from '../src/context';
+import { createReservaContext } from '../src/context';
 import type { Booking } from '../src/core/booking';
 import type { ClientConfig, ServiceConfig } from '../src/core/config';
 import { handleAvailability, handleCheckout, handleOperatorNoShow, handlePaymentWebhook } from '../src/handlers';
 import { booking, config, service } from './fixtures';
 import { fakeRepository, providers, sideEffectOperation } from './fakes';
 
-describe('Bookkit handlers', () => {
+describe('Reserva handlers', () => {
   it('persists a checkout session and confirms idempotently on webhook replay', async () => {
     const repo = fakeRepository();
     let calendarCreates = 0;
@@ -21,14 +21,14 @@ describe('Bookkit handlers', () => {
       },
       email: { send: async () => { emails += 1; } },
     });
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: sharedProviders,
     });
-    const secondContext = createBookkitContext({
+    const secondContext = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -72,7 +72,7 @@ describe('Bookkit handlers', () => {
     });
     const repo = fakeRepository([seeded]);
     await repo.acquireConfirmationLease(seeded.id, 'stalled-worker', '2026-06-14T08:00:00.000Z', '2026-06-14T08:05:00.000Z');
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -95,7 +95,7 @@ describe('Bookkit handlers', () => {
 
   it('enforces configured hold limits through the repository', async () => {
     const repo = fakeRepository();
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config: { ...config, booking: { ...config.booking, maxHoldsPerIp: 1 } },
       db: {} as D1Database,
       repo,
@@ -130,7 +130,7 @@ describe('Bookkit handlers', () => {
       startsAt: '2026-06-15T10:00:00.000Z',
       endsAt: '2026-06-15T11:00:00.000Z',
     });
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config: multiTourConfig,
       db: {} as D1Database,
       repo: fakeRepository([existing]),
@@ -155,7 +155,7 @@ describe('Bookkit handlers', () => {
     });
     const repo = fakeRepository([seeded]);
     let calendarCreates = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -191,7 +191,7 @@ describe('Bookkit handlers', () => {
     let deliveredEvent: string | undefined;
     let releaseHook = (): void => undefined;
     const blockedHook = new Promise<void>((resolve) => { releaseHook = resolve; });
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -226,7 +226,7 @@ describe('Bookkit handlers', () => {
   });
 
   it('rejects impossible availability dates as validation errors', async () => {
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo: fakeRepository(),
@@ -245,7 +245,7 @@ describe('Bookkit handlers', () => {
       occupancyReads += 1;
       return realListOccupancyBookings(from, to);
     };
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, providers: providers() });
 
     const response = await handleAvailability(new Request('https://example.test/api/booking/availability?service=vintage&quantity=2&from=1000-01-01&to=9999-12-31'), context);
     expect(response.status).toBe(400);
@@ -262,7 +262,7 @@ describe('Bookkit handlers', () => {
   it('rejects operator actions without constant-time shared-secret auth', async () => {
     const seeded = booking({ id: 'b1', status: 'confirmed', startsAt: '2026-06-15T09:00:00.000Z' });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -297,7 +297,7 @@ describe('Bookkit handlers', () => {
       }
       return realInsertHold(input);
     };
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -320,7 +320,7 @@ describe('Bookkit handlers', () => {
   it('logs a warning when a payment confirms an expired hold, but not on the normal hold path', async () => {
     const expiredWarnings: Array<[string, Record<string, unknown> | undefined]> = [];
     const seededExpired = booking({ id: 'b-expired', status: 'expired', holdExpiresAt: null, paymentSessionRef: 'cs_expired' });
-    const expiredContext = createBookkitContext({
+    const expiredContext = createReservaContext({
       config,
       db: {} as D1Database,
       repo: fakeRepository([seededExpired]),
@@ -344,7 +344,7 @@ describe('Bookkit handlers', () => {
 
     const holdWarnings: Array<[string, Record<string, unknown> | undefined]> = [];
     const seededHold = booking({ id: 'b-hold', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', paymentSessionRef: 'cs_hold' });
-    const holdContext = createBookkitContext({
+    const holdContext = createReservaContext({
       config,
       db: {} as D1Database,
       repo: fakeRepository([seededHold]),
@@ -377,7 +377,7 @@ describe('checkout meetingPointId (plan 017 design decision 2)', () => {
 
   function checkoutContext(configOverride = config) {
     const repo = fakeRepository();
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config: configOverride,
       db: {} as D1Database,
       repo,
@@ -473,7 +473,7 @@ describe('checkout pickupType (plan 018 design decision 6)', () => {
 
   function checkoutContext(configOverride: ClientConfig = mazeConfig) {
     const repo = fakeRepository();
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config: configOverride,
       db: {} as D1Database,
       repo,

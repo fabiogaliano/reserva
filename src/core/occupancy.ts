@@ -24,7 +24,7 @@ export interface CalEvent {
     private?: Record<string, string | undefined>;
     [key: string]: unknown;
   };
-  bookkitBookingId?: string;
+  reservaBookingId?: string;
 }
 
 export type OccupancySource = 'booking' | 'calendar';
@@ -109,8 +109,10 @@ function instantFromValue(value: string | CalEventTime): string | undefined {
   return undefined;
 }
 
-function eventBookkitBookingId(event: CalEvent): string | undefined {
-  return event.bookkitBookingId ?? event.extendedProperties?.private?.bookkitBookingId;
+// Secondary dedupe only: an event written by an older release carries a differently-named private
+// property and is still deduped by its id against the booking's stored calendarEventId below.
+function eventReservaBookingId(event: CalEvent): string | undefined {
+  return event.reservaBookingId ?? event.extendedProperties?.private?.reservaBookingId;
 }
 
 function bookingIsActive(
@@ -181,8 +183,8 @@ export function getOccupancyIntervals(options: OccupancyIntervalOptions): Occupa
   const seenCalendarEventIds = new Set<string>();
   for (const event of options.calendarEvents ?? []) {
     if (event.allDay || ('date' in (typeof event.start === 'string' ? {} : event.start))) continue;
-    const bookkitBookingId = eventBookkitBookingId(event);
-    if ((bookkitBookingId && seenBookingIds.has(bookkitBookingId)) || (event.id && calendarEventIds.has(event.id))) continue;
+    const reservaBookingId = eventReservaBookingId(event);
+    if ((reservaBookingId && seenBookingIds.has(reservaBookingId)) || (event.id && calendarEventIds.has(event.id))) continue;
     if (event.id && seenCalendarEventIds.has(event.id)) continue;
     if (event.id) seenCalendarEventIds.add(event.id);
     const start = instantFromValue(event.start);

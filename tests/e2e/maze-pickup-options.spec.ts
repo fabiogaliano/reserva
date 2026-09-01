@@ -91,7 +91,7 @@ test('booking the 210 € custom pick-up & drop-off option shows the server-stor
   // Plan 027 (design decision 1): this number now comes from POST /api/booking/quote — the widget
   // has no price table of its own — so seeing 210 here proves the quote endpoint prices the same
   // combination checkout charges for below.
-  await expect(page.locator('[data-bookkit-price-value]')).toContainText('210');
+  await expect(page.locator('[data-reserva-price-value]')).toContainText('210');
 
   let checkoutBody: Record<string, unknown> | undefined;
   page.on('request', (req) => {
@@ -151,7 +151,7 @@ test('booking the 210 € custom pick-up & drop-off option shows the server-stor
 // (non-default) point survives checkout, D1, confirmation, and the protected manage flow.
 test('custom drop-off carries the selected second meeting point and the collected address through checkout, confirmation, and manage', async ({ page, request }) => {
   await page.goto('/maze');
-  const group = page.locator('[data-bookkit-meeting-points]');
+  const group = page.locator('[data-reserva-meeting-points]');
   await expect(group).toBeVisible();
   const points = group.locator('input[name="meetingPointId"]');
   await expect(points.first()).toBeEnabled();
@@ -187,7 +187,7 @@ test('custom drop-off carries the selected second meeting point and the collecte
 // real meeting points, so the two axes' interaction is exercised in the same browser test.
 test('custom pick-up hides and disables the meeting-point group, and the checkout payload omits meetingPointId', async ({ page }) => {
   await page.goto('/maze');
-  const group = page.locator('[data-bookkit-meeting-points]');
+  const group = page.locator('[data-reserva-meeting-points]');
   const points = group.locator('input[name="meetingPointId"]');
   await expect(group).toBeVisible();
   await expect(points.first()).toBeChecked();

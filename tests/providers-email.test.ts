@@ -163,7 +163,7 @@ describe('email providers', () => {
 
   // BK-SEC-002 (patch-11-r1 LOW 1): a `nohash:`-prefixed token (src/repo.ts placeholderToken) is
   // what a DB-loaded booking's cancelToken/operatorToken looks like when there's no decryptable
-  // blob to regenerate the real link from (no BOOKKIT_TOKEN_ENC_KEY, or a not-yet-backfilled
+  // blob to regenerate the real link from (no RESERVA_TOKEN_ENC_KEY, or a not-yet-backfilled
   // legacy row). Rendering it into a link would produce an href that 403s the instant it's
   // clicked; the manage-link paragraph should be omitted instead.
   it('omits the manage-link paragraph entirely (never renders a dead href) when a token is not presentable', async () => {

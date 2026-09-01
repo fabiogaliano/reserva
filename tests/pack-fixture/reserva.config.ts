@@ -47,6 +47,6 @@ export default {
   locales: { supported: ['en'], default: 'en' },
   // Plan 021: a packed consumer declares outbound webhooks in config; the secret is read from the
   // binding named here, which the runtime must also list in secretBindings.
-  webhooks: [{ name: 'operations', url: 'https://ops.example.test/bookkit', secretBinding: 'OPERATIONS_WEBHOOK_SECRET' }],
+  webhooks: [{ name: 'operations', url: 'https://ops.example.test/reserva', secretBinding: 'OPERATIONS_WEBHOOK_SECRET' }],
   legal: { termsUrl: 'https://fixture.example.test/terms' },
 } satisfies ClientConfig;

@@ -11,17 +11,17 @@ import {
   resolveRouteConfig,
   routePath,
   validateRouteOptions,
-  type BookkitResolvedRouteConfig,
-  type BookkitRouteGroupFlags,
+  type ReservaResolvedRouteConfig,
+  type ReservaRouteGroupFlags,
 } from './routes-manifest';
 
-export interface BookkitIntegrationOptions {
+export interface ReservaIntegrationOptions {
   config: ClientConfig | unknown;
   runtimeEntrypoint: string | URL;
-  // Set to `false` to skip contributing bookkit's secret names to the `astro:env` schema, e.g. if
+  // Set to `false` to skip contributing reserva's secret names to the `astro:env` schema, e.g. if
   // the consumer already declares its own schema for these names. Defaults to on.
   envSchema?: boolean;
-  // Prepended to every injected route pattern, and to every URL bookkit's own components/handlers
+  // Prepended to every injected route pattern, and to every URL reserva's own components/handlers
   // render (widget endpoints, manage/admin page links and form actions, the Stripe webhook path).
   // Normalized via `normalizeRoutePrefix` (leading slash, no trailing slash, ''/'/' => none);
   // validated first via Zod (see `validateRouteOptions`) to reject obviously broken values. This
@@ -30,43 +30,43 @@ export interface BookkitIntegrationOptions {
   routePrefix?: string;
 }
 
-// Canonical secret names for bookkit's optional providers, sourced from scripts/manual-*.ts (the
-// existing hand-rolled env var conventions for Stripe/Brevo/Google) and BOOKKIT_OPERATOR_SECRET
+// Canonical secret names for reserva's optional providers, sourced from scripts/manual-*.ts (the
+// existing hand-rolled env var conventions for Stripe/Brevo/Google) and RESERVA_OPERATOR_SECRET
 // (the operator endpoints' shared secret; see README). All optional: every provider is opt-in, so
 // a consumer wiring up only Stripe must not fail env validation over a missing Brevo/Google key.
 // This only declares the names for typed access and build-time visibility — it does not change how
 // providers or `secrets()` read them; see README "Secrets and astro:env" for the full contract.
-const bookkitSecretEnvSchema = {
+const reservaSecretEnvSchema = {
   STRIPE_SECRET_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
   STRIPE_WEBHOOK_SECRET: envField.string({ context: 'server', access: 'secret', optional: true }),
   BREVO_API_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
-  BOOKKIT_OPERATOR_SECRET: envField.string({ context: 'server', access: 'secret', optional: true }),
+  RESERVA_OPERATOR_SECRET: envField.string({ context: 'server', access: 'secret', optional: true }),
   GOOGLE_SA_EMAIL: envField.string({ context: 'server', access: 'secret', optional: true }),
   GOOGLE_SA_PRIVATE_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
   GOOGLE_IMPERSONATE_EMAIL: envField.string({ context: 'server', access: 'secret', optional: true }),
 };
 
-const virtualRuntimeId = 'virtual:bookkit/runtime';
+const virtualRuntimeId = 'virtual:reserva/runtime';
 const resolvedVirtualRuntimeId = '\0' + virtualRuntimeId;
 
 // Static declaration (no codegen needed): the virtual module always re-exports whatever the
-// consumer's runtimeEntrypoint default-exports, which is a BookkitRuntimeDefinition (aliased
-// as BookkitRuntime) regardless of which entrypoint file is wired up.
+// consumer's runtimeEntrypoint default-exports, which is a ReservaRuntimeDefinition (aliased
+// as ReservaRuntime) regardless of which entrypoint file is wired up.
 const virtualRuntimeTypes = `declare module '${virtualRuntimeId}' {
-  import type { BookkitRuntime } from '@reservajs/astro/runtime';
-  const runtime: BookkitRuntime;
+  import type { ReservaRuntime } from '@reservajs/astro/runtime';
+  const runtime: ReservaRuntime;
   export default runtime;
 }
 `;
 
-const virtualConfigId = 'virtual:bookkit/config';
+const virtualConfigId = 'virtual:reserva/config';
 const resolvedVirtualConfigId = '\0' + virtualConfigId;
 
 // Static declaration, like virtualRuntimeTypes above: the shape is fixed (resolved paths + group
 // flags), only the values differ per-consumer, so this never needs to be regenerated per-build.
 const virtualConfigTypes = `declare module '${virtualConfigId}' {
-  import type { BookkitResolvedRouteConfig } from '@reservajs/astro';
-  const config: BookkitResolvedRouteConfig;
+  import type { ReservaResolvedRouteConfig } from '@reservajs/astro';
+  const config: ReservaResolvedRouteConfig;
   export default config;
 }
 `;
@@ -79,7 +79,7 @@ function runtimePath(root: URL, entrypoint: string | URL): string {
 
 function runtimeVirtualPlugin(entrypoint: string): Plugin {
   return {
-    name: 'bookkit-runtime-entrypoint',
+    name: 'reserva-runtime-entrypoint',
     enforce: 'pre',
     resolveId(id) {
       return id === virtualRuntimeId ? resolvedVirtualRuntimeId : undefined;
@@ -96,11 +96,11 @@ function routeEntrypoint(relativePath: string): string {
 }
 
 // Resolved once per build/dev-server start from the (validated, normalized) prefix + group flags —
-// unlike virtual:bookkit/runtime, this has no dependency on the consumer's runtimeEntrypoint, so it
+// unlike virtual:reserva/runtime, this has no dependency on the consumer's runtimeEntrypoint, so it
 // can be serialized directly instead of re-exporting a file path.
-function routeConfigVirtualPlugin(resolvedRouteConfig: BookkitResolvedRouteConfig): Plugin {
+function routeConfigVirtualPlugin(resolvedRouteConfig: ReservaResolvedRouteConfig): Plugin {
   return {
-    name: 'bookkit-route-config',
+    name: 'reserva-route-config',
     enforce: 'pre',
     resolveId(id) {
       return id === virtualConfigId ? resolvedVirtualConfigId : undefined;
@@ -112,14 +112,14 @@ function routeConfigVirtualPlugin(resolvedRouteConfig: BookkitResolvedRouteConfi
   };
 }
 
-export function bookkit(options: BookkitIntegrationOptions): AstroIntegration {
+export function reserva(options: ReservaIntegrationOptions): AstroIntegration {
   return {
-    name: 'bookkit',
+    name: 'reserva',
     hooks: {
       'astro:config:setup': ({ config, injectRoute, logger, updateConfig }) => {
         // This hook runs during `astro build`/`astro dev` config resolution, a separate
-        // process/lifecycle phase from request-time Worker execution — defineBookkitRuntime /
-        // defineCloudflareBookkitRuntime independently call validateConfig on the consumer's
+        // process/lifecycle phase from request-time Worker execution — defineReservaRuntime /
+        // defineCloudflareReservaRuntime independently call validateConfig on the consumer's
         // runtime entrypoint and thread THAT return value through context.config (see
         // runtime-context.ts), which is what actually backs priceFor/checkout. The validated value
         // captured here is used for exactly one thing below: reading `routes.admin`/`routes.ops` to
@@ -130,7 +130,7 @@ export function bookkit(options: BookkitIntegrationOptions): AstroIntegration {
         try {
           validatedConfig = validateConfig(options.config);
         } catch (error) {
-          logger.error('Invalid Bookkit configuration. Fix the reported fields before building.');
+          logger.error('Invalid Reserva configuration. Fix the reported fields before building.');
           throw error;
         }
 
@@ -138,12 +138,12 @@ export function bookkit(options: BookkitIntegrationOptions): AstroIntegration {
         try {
           routeOptions = validateRouteOptions({ routePrefix: options.routePrefix });
         } catch (error) {
-          logger.error('Invalid Bookkit route options. Fix routePrefix before building.');
+          logger.error('Invalid Reserva route options. Fix routePrefix before building.');
           throw error;
         }
 
         const prefix = normalizeRoutePrefix(routeOptions.routePrefix ?? '');
-        const groupFlags: BookkitRouteGroupFlags = {
+        const groupFlags: ReservaRouteGroupFlags = {
           admin: validatedConfig.routes?.admin ?? true,
           ops: validatedConfig.routes?.ops ?? true,
           manage: validatedConfig.routes?.manage ?? true,
@@ -152,7 +152,7 @@ export function bookkit(options: BookkitIntegrationOptions): AstroIntegration {
 
         const entrypoint = runtimePath(config.root, options.runtimeEntrypoint);
         if (!existsSync(entrypoint)) {
-          throw new Error(`Bookkit runtimeEntrypoint does not exist: ${entrypoint}`);
+          throw new Error(`Reserva runtimeEntrypoint does not exist: ${entrypoint}`);
         }
 
         updateConfig({
@@ -162,7 +162,7 @@ export function bookkit(options: BookkitIntegrationOptions): AstroIntegration {
         });
 
         if (options.envSchema !== false) {
-          updateConfig({ env: { schema: bookkitSecretEnvSchema } });
+          updateConfig({ env: { schema: reservaSecretEnvSchema } });
         }
 
         // Disabled groups are simply never injected; routePath already carries the resolved
@@ -176,12 +176,12 @@ export function bookkit(options: BookkitIntegrationOptions): AstroIntegration {
         }
       },
       'astro:server:setup': ({ logger }) => {
-        // Discoverability only, not the guard: defineCloudflareBookkitRuntime's isolate-time check
+        // Discoverability only, not the guard: defineCloudflareReservaRuntime's isolate-time check
         // is what actually blocks a stale schema. No child-process wrangler here — auto-applying
         // migrations from the integration would be surprising and wrong against a remote database.
         logger.info(
-          'Bookkit: run `bunx bookkit-migrate --local` before your first request to apply bookkit\'s migrations '
-          + '(it points Wrangler at bookkit\'s packaged migrations/ folder itself — no d1_databases[].migrations_dir edit needed).',
+          'Reserva: run `bunx reserva-migrate --local` before your first request to apply reserva\'s migrations '
+          + '(it points Wrangler at reserva\'s packaged migrations/ folder itself — no d1_databases[].migrations_dir edit needed).',
         );
       },
       'astro:config:done': ({ config, injectTypes, logger }) => {
@@ -192,16 +192,16 @@ export function bookkit(options: BookkitIntegrationOptions): AstroIntegration {
         // not a hard gate — untested adapters may still work.
         if (config.adapter?.name !== '@astrojs/cloudflare') {
           logger.warn(
-            `Bookkit is built for @astrojs/cloudflare >= 14 (Workers runtime, D1 bindings via `
+            `Reserva is built for @astrojs/cloudflare >= 14 (Workers runtime, D1 bindings via `
             + `'cloudflare:workers'). Detected adapter: ${config.adapter?.name ?? 'none'}. `
-            + 'Other adapters are untested and may not provide the bindings bookkit expects.',
+            + 'Other adapters are untested and may not provide the bindings reserva expects.',
           );
         }
         // Both output modes work: since Astro 5, 'static' plus an adapter renders
         // prerender:false injected routes on demand, so a static site can mount
-        // Bookkit without switching its own pages to server rendering.
+        // Reserva without switching its own pages to server rendering.
 
-        injectTypes({ filename: 'bookkit.d.ts', content: virtualRuntimeTypes + virtualConfigTypes });
+        injectTypes({ filename: 'reserva.d.ts', content: virtualRuntimeTypes + virtualConfigTypes });
       },
     },
   };
@@ -209,4 +209,4 @@ export function bookkit(options: BookkitIntegrationOptions): AstroIntegration {
 
 export { virtualRuntimeId, virtualConfigId };
 export type { ClientConfig };
-export default bookkit;
+export default reserva;

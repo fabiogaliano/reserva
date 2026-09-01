@@ -2,12 +2,12 @@ import type { Booking } from '../../core/booking';
 import { adminLocaleFor, meetingPointForBooking, pickupOptionFor, pickupPresentationFor, resolveService, type ServiceConfig } from '../../core/config';
 import { defaultCapacityForDate, occupancyFor, type CapacityDefault } from '../../core/occupancy';
 import { enumerateDateKeys, localDateKey, utcToLocalIso } from '../../core/time';
-import type { BookkitContext } from '../../context';
+import type { ReservaContext } from '../../context';
 import { escapeHtml } from '../../http';
 import { isManageableToken } from '../../providers/brevo';
 import { ownerFacingIncidentTitle } from '../../reconciliation-helpers';
 import type { OperationalIncidentRecord } from '../../repo';
-import type { BookkitResolvedRouteConfig } from '../../routes-manifest';
+import type { ReservaResolvedRouteConfig } from '../../routes-manifest';
 import { cssAssetHref, jsAssetHref } from '../asset-hrefs';
 import { formatDateTime, formatDayDate, formatPrice } from '../format';
 import { pageShell, statusBadge, statusToneOf, themeToggle } from '../layout';
@@ -25,7 +25,7 @@ const navIcons = {
 
 // The dark shell contains only destinations that replace the page; in-page section links live
 // beside the dashboard content so their scrolling behavior is not mistaken for page navigation.
-export function adminSidebar(context: BookkitContext, messages: ReturnType<typeof resolveMessages>, active: 'admin' | 'settings'): string {
+export function adminSidebar(context: ReservaContext, messages: ReturnType<typeof resolveMessages>, active: 'admin' | 'settings'): string {
   const adminPath = escapeHtml(context.routeConfig.paths.adminPage);
   const link = (href: string, icon: string, label: string, isActive: boolean): string =>
     `<a href="${href}"${isActive ? ' class="bk-active" aria-current="page"' : ''}>${icon} ${escapeHtml(label)}</a>`;
@@ -36,11 +36,11 @@ export function adminSidebar(context: BookkitContext, messages: ReturnType<typeo
 
 function adminSectionNav(messages: ReturnType<typeof resolveMessages>, hasIncidents: boolean, openIncidentCount: number): string {
   const link = (id: string, label: string, count?: number): string =>
-    `<a href="#${id}" data-bookkit-section-link>${escapeHtml(label)}${count ? ` <span class="bk-section-nav-count">${count}</span>` : ''}</a>`;
+    `<a href="#${id}" data-reserva-section-link>${escapeHtml(label)}${count ? ` <span class="bk-section-nav-count">${count}</span>` : ''}</a>`;
   const links = (hasIncidents ? link('bk-incidents', messages['admin.navIncidents'], openIncidentCount) : '')
     + link('bk-bookings', messages['admin.navBookings'])
     + link('bk-days', messages['admin.navDays']);
-  return `<nav class="bk-section-nav" aria-label="${escapeHtml(messages['admin.onThisPage'])}" data-bookkit-section-nav>`
+  return `<nav class="bk-section-nav" aria-label="${escapeHtml(messages['admin.onThisPage'])}" data-reserva-section-nav>`
     + `<p class="bk-section-nav-title">${escapeHtml(messages['admin.onThisPage'])}</p>`
     + `<div class="bk-section-nav-links">${links}</div></nav>`;
 }
@@ -53,7 +53,7 @@ function adminSectionNav(messages: ReturnType<typeof resolveMessages>, hasIncide
 // for a serviceSlug no longer in the live config (renamed/removed since the booking was made) —
 // degrade to no label rather than 500 the whole admin page, the same tolerance the day-calendar
 // unit aggregation below already applies.
-function adminMeetingPointSubLabel(config: BookkitContext['config'], booking: Booking): string {
+function adminMeetingPointSubLabel(config: ReservaContext['config'], booking: Booking): string {
   try {
     const service = resolveService(config, booking.serviceSlug);
     const presentation = pickupPresentationFor(service, booking);
@@ -64,7 +64,7 @@ function adminMeetingPointSubLabel(config: BookkitContext['config'], booking: Bo
   }
 }
 
-export function matchesAdminFilters(booking: Booking, filters: AdminFilters, config: BookkitContext['config']): boolean {
+export function matchesAdminFilters(booking: Booking, filters: AdminFilters, config: ReservaContext['config']): boolean {
   if (filters.status && booking.status !== filters.status) return false;
   if (filters.q) {
     const needle = filters.q.toLowerCase();
@@ -85,7 +85,7 @@ export function matchesAdminFilters(booking: Booking, filters: AdminFilters, con
 // (config.routes.manage: false) — that route isn't mounted, so every call site must render its
 // existing "unavailable" state rather than a dead link. The whole resolved route config is the
 // argument, not just the path, so the flag and the path can never be read from different places.
-export function manageLinkHref(routeConfig: BookkitResolvedRouteConfig, token: string): string | null {
+export function manageLinkHref(routeConfig: ReservaResolvedRouteConfig, token: string): string | null {
   if (!routeConfig.groups.manage) return null;
   return isManageableToken(token) ? `${routeConfig.paths.managePage}?token=${encodeURIComponent(token)}` : null;
 }
@@ -106,7 +106,7 @@ function formatIncidentSince(iso: string, locale: string, timezone: string): str
 // condition in src/confirmation.ts's retrySideEffectOperation ('oversell' -> 'not_retryable') is
 // mirrored here so the UI never offers an action the server would refuse anyway.
 export function incidentsSection(
-  context: BookkitContext,
+  context: ReservaContext,
   messages: ReturnType<typeof resolveMessages>,
   openIncidents: OperationalIncidentRecord[],
   resolvedIncidents: OperationalIncidentRecord[],
@@ -184,20 +184,20 @@ export function incidentsSection(
 }
 
 export function adminPage(
-  context: BookkitContext,
+  context: ReservaContext,
   bookings: Booking[],
   // The table's source set — same as `bookings` with no filters active, widened to include
   // cancelled/expired/past rows when a search or status filter is applied. Separate from
   // `bookings` because the occupancy calendar and stats below must keep counting only live rows.
   tableBookings: Booking[],
-  overrides: Awaited<ReturnType<BookkitContext['repo']['listDayOverrides']>>,
+  overrides: Awaited<ReturnType<ReservaContext['repo']['listDayOverrides']>>,
   fromDate: string,
   toDate: string,
   filters: AdminFilters,
   editDate: string,
   capacityDefaults: CapacityDefault[],
   saved: string,
-  // undefined when BOOKKIT_CSRF_SECRET isn't configured (src/admin-csrf.ts mintAdminCsrfToken) — the
+  // undefined when RESERVA_CSRF_SECRET isn't configured (src/admin-csrf.ts mintAdminCsrfToken) — the
   // field below then renders empty and verifyAdminCsrfToken is a deliberate no-op on the POST side.
   csrfToken: string | undefined,
   incidentsHtml: string,
@@ -417,7 +417,7 @@ export function adminPage(
   }
   // Strings + day data the admin enhancer needs at runtime, shipped as a non-executable JSON
   // island (same CSP-safe pattern as the manage page's reschedule island).
-  const adminIsland = `<script type="application/json" data-bookkit-i18n>${JSON.stringify({
+  const adminIsland = `<script type="application/json" data-reserva-i18n>${JSON.stringify({
     selectedDays: messages['admin.selectedDays'],
     close: messages['admin.close'],
     closeMany: messages['admin.closeMany'],
@@ -442,7 +442,7 @@ export function adminPage(
       + `${manageMarkup}</li>`;
   };
   const editDayBookings = editDate ? [...bookingsByDate.get(editDate) ?? []].sort(byStart) : [];
-  const dayDetail = `<div class="bk-day-detail" data-bookkit-day-detail>`
+  const dayDetail = `<div class="bk-day-detail" data-reserva-day-detail>`
     + (editDate
       ? editDayBookings.length
         ? `<ul class="bk-day-bookings">${editDayBookings.map(dayBookingItem).join('')}</ul>`
@@ -459,7 +459,7 @@ export function adminPage(
     // admin-enhancer.ts) starts rewriting this text on selection changes, a screen reader
     // announces "N days selected" etc. without focus ever needing to move there. Inert without
     // JS — a static heading whose text only ever changes via a full page reload.
-    + `<h2 data-bookkit-day-title role="status">${escapeHtml(editDate ? formatDayDate(editDate, locale) : messages['admin.overrideTitle'])}</h2>`
+    + `<h2 data-reserva-day-title role="status">${escapeHtml(editDate ? formatDayDate(editDate, locale) : messages['admin.overrideTitle'])}</h2>`
     + savedAlert('day')
     + dayDetail
     + `<p class="bk-hint">${escapeHtml(messages['admin.overrideHint'])} ${escapeHtml(formatMessage(messages['admin.overrideDefault'], { n: editDefault }))}</p>`

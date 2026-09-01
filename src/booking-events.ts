@@ -10,7 +10,7 @@ import {
   type BookingEventEnvelope,
   type BookingEventHook,
 } from './core/events';
-import type { BookkitContext } from './context';
+import type { ReservaContext } from './context';
 import { getSecret } from './context';
 import { ProviderFailure } from './provider-failure';
 import { sideEffectOperationKey, type SideEffectOperationIdentity, type SideEffectOperationRecord, type SideEffectOperationSeed } from './repo';
@@ -22,18 +22,18 @@ function subscribes(events: readonly BookingEvent[] | undefined, event: BookingE
   return events === undefined || events.includes(event);
 }
 
-export function hooksFor(context: BookkitContext, event: BookingEvent, durable: boolean): BookingEventHook[] {
+export function hooksFor(context: ReservaContext, event: BookingEvent, durable: boolean): BookingEventHook[] {
   return (context.hooks ?? []).filter((hook) => Boolean(hook.durable) === durable && subscribes(hook.events, event));
 }
 
-function webhooksFor(context: BookkitContext, event: BookingEvent): WebhookEndpointConfig[] {
+function webhooksFor(context: ReservaContext, event: BookingEvent): WebhookEndpointConfig[] {
   return (context.config.webhooks ?? []).filter((endpoint) => subscribes(endpoint.events, event));
 }
 
 // Every subscriber that gets a durable outbox row for this event: durable hooks plus every webhook
 // endpoint (a webhook is always durable — an HTTP call to somebody else's server is exactly what
 // retries exist for).
-export function durableSubscriberIdentities(context: BookkitContext, event: BookingEvent): SideEffectOperationIdentity[] {
+export function durableSubscriberIdentities(context: ReservaContext, event: BookingEvent): SideEffectOperationIdentity[] {
   return [
     ...hooksFor(context, event, true).map((hook) => ({ family: 'hook' as const, name: hook.name, event })),
     ...webhooksFor(context, event).map((endpoint) => ({ family: 'webhook' as const, name: endpoint.name, event })),
@@ -63,7 +63,7 @@ export function buildBookingEventEnvelope(
 // discriminator-free id so the repository can complete it inside the batch that assigns a
 // reschedule version (see mutationSideEffectInsert).
 export function bookingEventSeeds(
-  context: BookkitContext,
+  context: ReservaContext,
   event: BookingEvent,
   booking: Booking,
   occurredAt: string,
@@ -82,7 +82,7 @@ export function bookingEventSeeds(
 // Non-durable hooks fire post-commit and are never retried: one warning per failure, nothing
 // persisted. This is what v1's ops/analytics sinks actually were.
 export function dispatchNonDurableBookingEvent(
-  context: BookkitContext,
+  context: ReservaContext,
   event: BookingEvent,
   booking: Booking,
   occurredAt: string,
@@ -100,7 +100,7 @@ export function dispatchNonDurableBookingEvent(
           config: context.config,
         });
       } catch (error) {
-        context.logger.warn?.('bookkit booking event hook failed', {
+        context.logger.warn?.('reserva booking event hook failed', {
           event, bookingId: booking.id, hook: hook.name, error: String(error).slice(0, 200),
         });
       }
@@ -128,7 +128,7 @@ function unregisteredSubscriber(identity: SideEffectOperationIdentity): Provider
 // byte-for-byte; only rows migration 0017 converted from the retired ops-sync provider have no
 // snapshot, and they fall back to v1's behavior of describing the booking's current state.
 export async function deliverBookingEventOperation(
-  context: BookkitContext,
+  context: ReservaContext,
   booking: Booking,
   operation: SideEffectOperationRecord,
 ): Promise<void> {

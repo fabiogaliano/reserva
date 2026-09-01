@@ -13,7 +13,7 @@ import { enumerateDateKeys, localDateKey, parseUtcInstant } from '../core/time';
 import { adminOriginAllowed, mintAdminCsrfToken, verifyAdminCsrfToken } from '../admin-csrf';
 import { accessAllowed } from '../admin-access';
 import { retrySideEffectOperation } from '../confirmation';
-import type { BookkitContext } from '../context';
+import type { ReservaContext } from '../context';
 import { nowIso } from '../context';
 import type {
   OperationalIncidentSourceType,
@@ -34,7 +34,7 @@ import {
 } from '../http';
 import { run, runAdminPost } from './shared';
 
-export function handleAdminGet(request: Request, context: BookkitContext): Promise<Response> {
+export function handleAdminGet(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const access = await accessAllowed(request, context);
@@ -117,7 +117,7 @@ export function handleAdminGet(request: Request, context: BookkitContext): Promi
   });
 }
 
-export function handleAdminPost(request: Request, context: BookkitContext): Promise<Response> {
+export function handleAdminPost(request: Request, context: ReservaContext): Promise<Response> {
   return runAdminPost(async () => {
     if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const access = await accessAllowed(request, context);

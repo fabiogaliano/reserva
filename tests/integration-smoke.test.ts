@@ -25,7 +25,7 @@ describe('Astro smoke fixture', () => {
     const wrangler = readFileSync(resolve(fixture, 'wrangler.jsonc'), 'utf8');
     expect(runtime).toContain('amountTotal: session.amountTotal');
     expect(runtime).toContain('currency: session.currency');
-    expect(runtime).toContain("secretBindings: ['BOOKKIT_TOKEN_ENC_KEY', 'BOOKKIT_OPERATOR_SECRET', 'BOOKKIT_CSRF_SECRET']");
-    expect(wrangler).toContain('"BOOKKIT_TOKEN_ENC_KEY"');
+    expect(runtime).toContain("secretBindings: ['RESERVA_TOKEN_ENC_KEY', 'RESERVA_OPERATOR_SECRET', 'RESERVA_CSRF_SECRET']");
+    expect(wrangler).toContain('"RESERVA_TOKEN_ENC_KEY"');
   });
 });

@@ -10,15 +10,15 @@ import type {
 } from './core/events';
 import { validateBookingEventHooks } from './core/events';
 import { createBookingRepository, type BookingRepository } from './repo';
-import { resolvedRoutePaths, type BookkitResolvedRouteConfig } from './routes-manifest';
+import { resolvedRoutePaths, type ReservaResolvedRouteConfig } from './routes-manifest';
 import type { ThemePreference } from './ui/theme';
 
-export interface BookkitCache {
+export interface ReservaCache {
   match(request: any): Promise<Response | undefined | null>;
   put(request: any, response: any): Promise<void>;
 }
 
-export interface BookkitProviders {
+export interface ReservaProviders {
   payments: PaymentProvider;
   calendar?: CalendarProvider;
   email?: EmailProvider;
@@ -29,21 +29,21 @@ export interface BookkitProviders {
 }
 
 export type SecretLookup = (name: string) => string | undefined | Promise<string | undefined>;
-export type BookkitClock = () => Date;
-export interface BookkitLogger {
+export type ReservaClock = () => Date;
+export interface ReservaLogger {
   info?(message: string, data?: Record<string, unknown>): void;
   warn?(message: string, data?: Record<string, unknown>): void;
   error?(message: string, data?: Record<string, unknown>): void;
 }
 
 // Plan 025 (design decision 1): the one admin auth port shape, shared verbatim by
-// BookkitContext.adminAuth and CloudflareBookkitRuntimeOptions.adminAuth (runtime-context.ts) —
+// ReservaContext.adminAuth and CloudflareReservaRuntimeOptions.adminAuth (runtime-context.ts) —
 // "one shared declaration," not a duplicated custom-auth marker. `context` is the already-built
-// BookkitContext, so a custom implementation can read `context.secrets`/`context.config` without
+// ReservaContext, so a custom implementation can read `context.secrets`/`context.config` without
 // bindings plumbing of its own.
-export type AdminAuth = (request: Request, context: BookkitContext) => Promise<AdminIdentity | null>;
+export type AdminAuth = (request: Request, context: ReservaContext) => Promise<AdminIdentity | null>;
 
-export interface BookkitContext {
+export interface ReservaContext {
   config: ClientConfig;
   // The pristine file config, set by createRouteContext when DB-backed setting overrides were
   // merged into `config` (core/settings.ts). The admin settings page reads it to show what each
@@ -51,18 +51,18 @@ export interface BookkitContext {
   baseConfig?: ClientConfig;
   db: D1Database;
   repo: BookingRepository;
-  providers: BookkitProviders;
-  cache?: BookkitCache;
+  providers: ReservaProviders;
+  cache?: ReservaCache;
   secrets?: SecretLookup;
-  clock: BookkitClock;
-  logger: BookkitLogger;
+  clock: ReservaClock;
+  logger: ReservaLogger;
   // Plan 021 (design decision 1): in-process booking-event listeners registered by the consumer's
   // runtime module. Validated (names, uniqueness, subscribed events) when the context is built, so
   // a typo fails at startup rather than by silently never firing.
   hooks?: readonly BookingEventHook[];
   // Plan 025: the admin auth port. `null` means unauthorized. Cloudflare Access is the default
   // implementation (cloudflareAccessAdminAuth, src/access.ts), auto-wired by
-  // defineCloudflareBookkitRuntime only when `config.admin.access` is configured; a consumer
+  // defineCloudflareReservaRuntime only when `config.admin.access` is configured; a consumer
   // registers a custom strategy by passing this exact function shape as `adminAuth` to the runtime
   // factory — there is no second `kind: 'custom'` marker to keep in sync with it. Every admin/ops
   // handler reaches this only through the one shared gate (accessAllowed, src/admin-access.ts),
@@ -71,18 +71,18 @@ export interface BookkitContext {
   // Access implementation resolves it to the verified JWT subject, while a custom implementation
   // with no per-user identity to bind may return the documented empty-string subject — the
   // resulting token is session-agnostic (interchangeable across every admin-authorized caller) but
-  // not weaker, since it's still HMAC'd with the real BOOKKIT_CSRF_SECRET and still gated by the
+  // not weaker, since it's still HMAC'd with the real RESERVA_CSRF_SECRET and still gated by the
   // same-origin check first.
   adminAuth?: AdminAuth;
   waitUntil?: (promise: Promise<unknown>) => void;
   confirmationLocks?: Map<string, Promise<void>>;
   // Resolved (prefix-applied) route paths + group flags, so handlers that render links/redirects
   // (e.g. the admin page's manage links) agree with wherever the integration actually mounted
-  // routes. Always populated by createBookkitContext (defaulted below) — route entrypoints then
-  // overwrite it with the real per-build value from `virtual:bookkit/config` (see
+  // routes. Always populated by createReservaContext (defaulted below) — route entrypoints then
+  // overwrite it with the real per-build value from `virtual:reserva/config` (see
   // src/routes/route-context.ts), since a user-owned runtime module has no way to know the
   // integration's `routePrefix`/`routes` options itself.
-  routeConfig: BookkitResolvedRouteConfig;
+  routeConfig: ReservaResolvedRouteConfig;
   // The viewer's forced light/dark choice, parsed from the bk_theme cookie by createRouteContext so
   // every server-rendered page can set <html data-theme> up front. Absent = follow the OS.
   viewerTheme?: ThemePreference;
@@ -91,23 +91,23 @@ export interface BookkitContext {
 // The unprefixed, all-groups-enabled default: today's behavior for any context built without an
 // explicit routeConfig (every existing test and any runtime module that doesn't go through
 // src/routes/route-context.ts), so adding this field can't change existing behavior.
-const defaultRouteConfig: BookkitResolvedRouteConfig = { paths: resolvedRoutePaths(), groups: { admin: true, ops: true, manage: true } };
+const defaultRouteConfig: ReservaResolvedRouteConfig = { paths: resolvedRoutePaths(), groups: { admin: true, ops: true, manage: true } };
 
-export interface BookkitContextInput extends Omit<BookkitContext, 'repo' | 'clock' | 'logger' | 'providers' | 'routeConfig'> {
-  providers: BookkitProviders;
+export interface ReservaContextInput extends Omit<ReservaContext, 'repo' | 'clock' | 'logger' | 'providers' | 'routeConfig'> {
+  providers: ReservaProviders;
   repo?: BookingRepository;
-  clock?: BookkitClock;
-  logger?: BookkitLogger;
-  routeConfig?: BookkitResolvedRouteConfig;
+  clock?: ReservaClock;
+  logger?: ReservaLogger;
+  routeConfig?: ReservaResolvedRouteConfig;
 }
 
-export function createBookkitContext(input: BookkitContextInput): BookkitContext {
+export function createReservaContext(input: ReservaContextInput): ReservaContext {
   validateBookingEventHooks(input.hooks ?? []);
   return {
     ...input,
     config: validateConfig(input.config),
-    // BK-SEC-002: threads the same secrets accessor the rest of BookkitContext uses through to
-    // the repo, so it can resolve the optional BOOKKIT_TOKEN_ENC_KEY (src/repo.ts) — repo.ts
+    // BK-SEC-002: threads the same secrets accessor the rest of ReservaContext uses through to
+    // the repo, so it can resolve the optional RESERVA_TOKEN_ENC_KEY (src/repo.ts) — repo.ts
     // can't import SecretLookup from here (this module already imports createBookingRepository
     // from repo.ts, and the reverse import would be circular).
     repo: input.repo ?? createBookingRepository(input.db, input.secrets),
@@ -119,10 +119,10 @@ export function createBookkitContext(input: BookkitContextInput): BookkitContext
   };
 }
 
-export async function getSecret(context: BookkitContext, name: string): Promise<string | undefined> {
+export async function getSecret(context: ReservaContext, name: string): Promise<string | undefined> {
   return context.secrets ? context.secrets(name) : undefined;
 }
 
-export function nowIso(context: BookkitContext): string {
+export function nowIso(context: ReservaContext): string {
   return context.clock().toISOString();
 }

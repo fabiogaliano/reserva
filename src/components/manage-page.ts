@@ -2,11 +2,11 @@ import type { ManageBooking } from '../core/api';
 import { escapeHtml } from '../http';
 import { formatDateTime, formatPrice } from '../ui/format';
 import { factList, pageShell, statusBadge, themeToggle } from '../ui/layout';
-import { defaultLocale, formatMessage, resolveMessages, type BookkitMessages } from '../ui/messages';
+import { defaultLocale, formatMessage, resolveMessages, type ReservaMessages } from '../ui/messages';
 import type { ThemePreference } from '../ui/theme';
 
 export interface ManagePageOptions {
-  messages?: BookkitMessages;
+  messages?: ReservaMessages;
   locale?: string;
   timezone?: string;
   currency?: string;
@@ -122,7 +122,7 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
   const successNotice = options.notice === 'rescheduled'
     ? `<p class="bk-alert bk-alert--ok" role="status">${escapeHtml(messages['manage.rescheduled'])}</p>`
     : '';
-  const errorKeyByCode: Record<string, keyof BookkitMessages> = {
+  const errorKeyByCode: Record<string, keyof ReservaMessages> = {
     past_cutoff: 'manage.pastCutoff',
     slot_unavailable: 'manage.errorSlotTaken',
     invalid_transition: 'manage.errorNotChangeable',
@@ -144,7 +144,7 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
     ? ` data-endpoint="${escapeHtml(availability.endpoint)}" data-service="${escapeHtml(availability.serviceSlug)}" data-quantity="${escapeHtml(availability.quantity)}" data-from="${escapeHtml(availability.from)}" data-to="${escapeHtml(availability.to)}" data-locale="${escapeHtml(locale)}"`
     : '';
   const rescheduleIsland = availability
-    ? `<script type="application/json" data-bookkit-i18n>${JSON.stringify({
+    ? `<script type="application/json" data-reserva-i18n>${JSON.stringify({
       loading: messages['widget.loadingSlots'],
       noSlots: messages['widget.noSlots'],
       limited: messages['widget.limited'],
@@ -158,8 +158,8 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
   const rescheduleForm = canReschedule
     ? `<section class="bk-card"><h2>${escapeHtml(messages['manage.rescheduleTitle'])}</h2>`
       + `<p class="bk-hint">${escapeHtml(messages['manage.rescheduleHint'])}</p>`
-      + `<form method="post" action="${action}" data-bookkit-reschedule${rescheduleData}>${rescheduleIsland}<input type="hidden" name="action" value="reschedule">${hiddenToken}`
-      + `<label class="bk-field" data-bookkit-native-start><span>${escapeHtml(messages['manage.newStart'])}</span><input class="bk-input" name="newStart" type="datetime-local" required></label>`
+      + `<form method="post" action="${action}" data-reserva-reschedule${rescheduleData}>${rescheduleIsland}<input type="hidden" name="action" value="reschedule">${hiddenToken}`
+      + `<label class="bk-field" data-reserva-native-start><span>${escapeHtml(messages['manage.newStart'])}</span><input class="bk-input" name="newStart" type="datetime-local" required></label>`
       + `<button type="submit" class="bk-btn">${escapeHtml(messages['manage.rescheduleSubmit'])}</button></form></section>`
     : '';
 

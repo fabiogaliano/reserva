@@ -7,14 +7,14 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { accessAllowed } from '../src/admin-access';
-import { createBookkitContext } from '../src/context';
+import { createReservaContext } from '../src/context';
 import { config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
 const REQUEST = new Request('https://example.test/booking/admin');
 
-function contextWith(adminAuth: NonNullable<Parameters<typeof createBookkitContext>[0]['adminAuth']>) {
-  return createBookkitContext({
+function contextWith(adminAuth: NonNullable<Parameters<typeof createReservaContext>[0]['adminAuth']>) {
+  return createReservaContext({
     config,
     db: {} as D1Database,
     repo: fakeRepository(),
@@ -25,7 +25,7 @@ function contextWith(adminAuth: NonNullable<Parameters<typeof createBookkitConte
 
 describe('accessAllowed (src/admin-access.ts)', () => {
   it('returns null when adminAuth is absent', async () => {
-    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), providers: providers() });
     await expect(accessAllowed(REQUEST, context)).resolves.toBeNull();
   });
 

@@ -6,7 +6,7 @@
 // server reads on the next request. IIFE so nothing leaks into the concatenated bundle.
 
 export const themeToggleJs = `(() => {
-  const button = document.querySelector('[data-bookkit-theme-toggle]');
+  const button = document.querySelector('[data-reserva-theme-toggle]');
   if (!button) return;
   const ds = button.dataset;
   const modes = ['system', 'light', 'dark'];

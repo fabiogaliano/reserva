@@ -11,12 +11,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { createBookingRepository, DuplicatePaymentRefError } from '../../src/repo';
 
 interface TestEnv {
-  BOOKKIT_DB: D1Database;
+  RESERVA_DB: D1Database;
   TEST_MIGRATIONS: D1Migration[];
 }
 
 const bindings = env as unknown as TestEnv;
-const db = bindings.BOOKKIT_DB;
+const db = bindings.RESERVA_DB;
 const repo = createBookingRepository(db);
 
 beforeEach(async () => {

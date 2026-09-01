@@ -1,9 +1,9 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { runOwedMutationSideEffects } from '../src/confirmation';
-import type { BookkitProviders } from '../src/context';
+import type { ReservaProviders } from '../src/context';
 import type { BookingEventHook, EmailBookingEvent, EmailProvider, EmailRecipientRole } from '../src/core/events';
-import { createBookkitContext } from '../src/context';
+import { createReservaContext } from '../src/context';
 import { handleCustomerReschedule, handleOperatorNoShow } from '../src/handlers';
 import { sideEffectOperationKey, type SideEffectOperationIdentity, type SideEffectOperationSeed } from '../src/repo';
 import { booking, config } from './fixtures';
@@ -23,7 +23,7 @@ function rescheduleRequest(token: string, newStart: string): Request {
   });
 }
 
-function providersWithoutEmail(overrides: Omit<Partial<BookkitProviders>, 'email'> = {}): BookkitProviders {
+function providersWithoutEmail(overrides: Omit<Partial<ReservaProviders>, 'email'> = {}): ReservaProviders {
   const configured = providers(overrides);
   delete configured.email;
   return configured;
@@ -78,7 +78,7 @@ describe('mutation side-effect outbox', () => {
     const seeded = booking({ id: 'mutation-drain', startsAt: '2026-06-14T07:00:00.000Z', endsAt: '2026-06-14T08:00:00.000Z' });
     const repo = fakeRepository([seeded]);
     let calls = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo, clock,
       providers: providers({ email: { send: async () => {
         calls += 1;
@@ -105,7 +105,7 @@ describe('mutation side-effect outbox', () => {
     let release = (): void => undefined;
     const releaseSend = new Promise<void>((resolve) => { release = resolve; });
     let sends = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo, clock,
       providers: providers({ email: { send: async () => {
         sends += 1;
@@ -130,7 +130,7 @@ describe('mutation side-effect outbox', () => {
     });
     const repo = fakeRepository([seeded]);
     const sent: string[] = [];
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo, clock,
       providers: providers({ email: { send: async (event) => { sent.push(event); } } }),
     });
@@ -167,7 +167,7 @@ describe('mutation side-effect outbox', () => {
     const seeded = booking({ id: 'mutation-partial-email', startsAt: '2026-06-14T07:00:00.000Z', endsAt: '2026-06-14T08:00:00.000Z' });
     const repo = fakeRepository([seeded]);
     const sent: string[] = [];
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo, clock,
       providers: providers({ email: {
         recipientsForEvent: () => ['customer', 'owner'],
@@ -187,7 +187,7 @@ describe('mutation side-effect outbox', () => {
     const repo = fakeRepository([seeded]);
     await repo.recordMutationSideEffectOperations(seeded.id, [seed({ family: 'email', name: 'customer', event: 'booking.no_show' })], '2026-06-14T08:00:00.000Z');
     let sends = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo, clock,
       providers: providers({ email: { send: async () => { sends += 1; } } }),
     });
@@ -209,7 +209,7 @@ describe('mutation side-effect outbox', () => {
       }
     }
     const email = new StatefulEmailProvider();
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo, clock,
       providers: providers({ email }),
     });
@@ -224,7 +224,7 @@ describe('mutation side-effect outbox', () => {
     const repo = fakeRepository([seeded]);
     const recipients: string[] = [];
     let ownerAttempts = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo, clock,
       providers: providers({ email: {
         recipientsForEvent: () => ['customer', 'owner'],
@@ -247,7 +247,7 @@ describe('mutation side-effect outbox', () => {
     const seeded = booking({ id: 'mutation-hook-retry', startsAt: '2026-06-14T07:00:00.000Z', endsAt: '2026-06-14T08:00:00.000Z' });
     const repo = fakeRepository([seeded]);
     let calls = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo, clock,
       providers: providersWithoutEmail(),
       hooks: [durableHook('ops', async () => {
@@ -267,7 +267,7 @@ describe('mutation side-effect outbox', () => {
     const seeded = booking({ id: 'mutation-log-body', startsAt: '2026-06-14T07:00:00.000Z', endsAt: '2026-06-14T08:00:00.000Z' });
     const repo = fakeRepository([seeded]);
     const warnings: Array<{ message: string; data: Record<string, unknown> | undefined }> = [];
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo, clock,
       logger: { warn: (message, data) => { warnings.push({ message, data }); } },
       providers: providersWithoutEmail(),
@@ -278,7 +278,7 @@ describe('mutation side-effect outbox', () => {
 
     await handleOperatorNoShow(operatorNoShowRequest(seeded.operatorToken), context);
     expect(warnings).toEqual([expect.objectContaining({
-      message: 'bookkit mutation side effect failed',
+      message: 'reserva mutation side effect failed',
       data: expect.objectContaining({ provider: 'hook', status: 503 }),
     })]);
     expect(JSON.stringify(warnings)).not.toContain('private payload');

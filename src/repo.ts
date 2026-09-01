@@ -1002,12 +1002,12 @@ function mapSideEffectOperation(row: SideEffectOperationRow): SideEffectOperatio
 
 // BK-SEC-002: name of the optional Worker secret used to decrypt cancel_token_enc/
 // operator_token_enc back into a usable link (see migrations/0009_token_hashing.sql for the full
-// rationale). Read the same way as BOOKKIT_CSRF_SECRET/BOOKKIT_OPERATOR_SECRET (src/admin-csrf.ts,
+// rationale). Read the same way as RESERVA_CSRF_SECRET/RESERVA_OPERATOR_SECRET (src/admin-csrf.ts,
 // src/handlers/index.ts) — via the SecretLookup passed in below, never through ClientConfig — and,
-// like BOOKKIT_CSRF_SECRET, deliberately NOT added to runtime-context.ts's default
+// like RESERVA_CSRF_SECRET, deliberately NOT added to runtime-context.ts's default
 // secretBindings or integration.ts's astro:env schema: a deployment must opt in by adding its name
 // to secretBindings (see README "Runtime module" / "Admin access and booking tokens").
-const TOKEN_ENC_SECRET_NAME = 'BOOKKIT_TOKEN_ENC_KEY';
+const TOKEN_ENC_SECRET_NAME = 'RESERVA_TOKEN_ENC_KEY';
 
 function base64UrlEncodeBytes(bytes: Uint8Array): string {
   let binary = '';
@@ -1442,7 +1442,7 @@ export function createBookingRepository(
     // unit (see migrations/0008).
     //
     // Known limitation (unchanged from before this task, not a regression): this guard only sees
-    // the bookings table. External (non-bookkit) Google Calendar events are folded into
+    // the bookings table. External (non-reserva) Google Calendar events are folded into
     // availability by checkSlot's pre-check (src/handlers/index.ts, via availabilityForDay) but
     // are NOT part of this atomic statement — checkSlot's calendar read was already a
     // non-atomic, best-effort pre-check before BK-CAP-001, so this is not a new gap. Atomic

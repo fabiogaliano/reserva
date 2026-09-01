@@ -111,11 +111,11 @@ export async function verifyAccessJwt(request: Request, config: AccessAdminConfi
   return parts.claims;
 }
 // Plan 025 (design decision 2): the admin auth port's default implementation. Auto-wired by
-// defineCloudflareBookkitRuntime only when `config.admin.access` is configured — never both this
+// defineCloudflareReservaRuntime only when `config.admin.access` is configured — never both this
 // and a consumer-supplied `adminAuth` at once (validated once, synchronously, at runtime-definition
 // initialization; see src/runtime-context.ts). A single-argument `(request) => ...` function is
 // assignable everywhere the two-argument `AdminAuth` port type (src/context.ts) is expected: this
-// implementation never needs the BookkitContext argument, since Access verification is pure JWT
+// implementation never needs the ReservaContext argument, since Access verification is pure JWT
 // verification against `teamDomain`/`aud`.
 export function cloudflareAccessAdminAuth(teamDomain: string, aud: string): (request: Request) => Promise<AdminIdentity | null> {
   return async (request) => {

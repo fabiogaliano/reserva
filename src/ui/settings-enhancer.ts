@@ -8,14 +8,14 @@ export const settingsEnhancerJs = `(() => {
   const panels = document.querySelector('.bk-settings-sections');
   if (!tabs || !panels) return;
   tabs.addEventListener('click', (event) => {
-    const link = event.target.closest('a[data-bookkit-tab]');
+    const link = event.target.closest('a[data-reserva-tab]');
     if (!link) return;
     event.preventDefault();
-    tabs.querySelectorAll('a[data-bookkit-tab]').forEach((tab) => {
+    tabs.querySelectorAll('a[data-reserva-tab]').forEach((tab) => {
       if (tab === link) tab.setAttribute('aria-current', 'page');
       else tab.removeAttribute('aria-current');
     });
-    for (const panel of panels.children) panel.hidden = panel.id !== 'bk-s-' + link.dataset.bookkitTab;
+    for (const panel of panels.children) panel.hidden = panel.id !== 'bk-s-' + link.dataset.reservaTab;
     history.replaceState(null, '', link.href);
   });
 })();

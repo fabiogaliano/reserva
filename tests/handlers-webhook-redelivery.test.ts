@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import { createBookkitContext } from '../src/context';
+import { createReservaContext } from '../src/context';
 import { handleCustomerCancel, handlePaymentWebhook } from '../src/handlers';
 import { booking, config } from './fixtures';
 import type { SideEffectOperationIdentity } from '../src/repo';
@@ -21,7 +21,7 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
     const repo = fakeRepository([seeded]);
     let calendarCalls = 0;
     let emailCalls = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -93,7 +93,7 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
     });
     const repo = fakeRepository([first, second]);
     let eventIndex = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -142,7 +142,7 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
     const identity: SideEffectOperationIdentity = { family: 'email', event: 'booking.cancelled_by_operator' };
     await repo.recordMutationSideEffectOperations(seeded.id, [{ ...identity, eventPayloadJson: null, eventIdPrefix: null }], '2026-06-14T07:00:00.000Z');
     let emails = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -187,7 +187,7 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
     });
     const repo = fakeRepository([seeded]);
     let deleteAttempts = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -250,7 +250,7 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
     // A non-durable booking-event hook runs fire-and-forget via waitUntil rather than being
     // awaited by the handler; collect it so the test can wait for it to settle.
     const pending: Promise<unknown>[] = [];
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -318,7 +318,7 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
     // response must still be 200, and the failure is only logged.
     await Promise.all(pending);
     expect(hookCalls).toBeGreaterThan(0);
-    expect(warnings.some(([message]) => message === 'bookkit booking event hook failed')).toBe(true);
+    expect(warnings.some(([message]) => message === 'reserva booking event hook failed')).toBe(true);
   });
 
   // The already-cancelled branch of the charge.refunded handler (src/handlers/index.ts ~550-556)
@@ -331,7 +331,7 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
     const paymentRef = 'pi_redelivery_already_cancelled';
     const seeded = booking({ id: 'b-redelivery-already-cancelled', paymentRef: paymentRef });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,

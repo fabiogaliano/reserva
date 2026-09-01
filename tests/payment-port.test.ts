@@ -1,9 +1,9 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import { createBookkitContext } from '../src/context';
+import { createReservaContext } from '../src/context';
 import { PAYMENT_EVENTS, type ClientConfig, type PaymentProvider } from '../src/core';
 import { handleCheckout, handlePaymentWebhook, handleStatus } from '../src/handlers';
-import { defineBookkitRuntime, defineCloudflareBookkitRuntime } from '../src/runtime-context';
+import { defineReservaRuntime, defineCloudflareReservaRuntime } from '../src/runtime-context';
 import { booking, config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
@@ -42,7 +42,7 @@ const vendorNeutralPayments: PaymentProvider = {
 describe('the payment port is implementable without any vendor knowledge (plan 022)', () => {
   it('drives a checkout and a webhook confirmation through an adapter built only from the core seam', async () => {
     const repo = fakeRepository();
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo,
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: providers({ payments: vendorNeutralPayments }),
@@ -77,7 +77,7 @@ describe('the payment port is implementable without any vendor knowledge (plan 0
     // leave the booking exactly where it was, so the provider stops redelivering it.
     const seeded = booking({ id: 'b-port-unknown-event', status: 'hold', paymentSessionRef: 'cs_port_unknown' });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo,
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: providers({
@@ -110,13 +110,13 @@ describe('a payment provider rejects an incompatible config at runtime-definitio
   }
 
   it('fails while the Cloudflare runtime definition is built, before any request is served', () => {
-    expect(() => defineCloudflareBookkitRuntime(config, {
+    expect(() => defineCloudflareReservaRuntime(config, {
       providers: { payments: providerRejecting('usd') },
     })).toThrow(/business\.currency "eur" is not supported by this provider; use "usd"\./);
   });
 
   it('accepts a config the provider supports', () => {
-    expect(() => defineCloudflareBookkitRuntime(config, {
+    expect(() => defineCloudflareReservaRuntime(config, {
       providers: { payments: providerRejecting('eur') },
     })).not.toThrow();
   });
@@ -127,7 +127,7 @@ describe('a payment provider rejects an incompatible config at runtime-definitio
       ...vendorNeutralPayments,
       validateConfig() { validations += 1; },
     };
-    const runtime = defineBookkitRuntime({
+    const runtime = defineReservaRuntime({
       config,
       createContext: ({ config: validated }) => ({
         config: validated, db: {} as D1Database, repo: fakeRepository(), providers: providers({ payments }),
@@ -160,7 +160,7 @@ describe('/status and manage report the same settled confirmation without re-run
 
     let calendarCalls = 0;
     let emailCalls = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo, clock: () => new Date(now),
       providers: providers({
         calendar: {

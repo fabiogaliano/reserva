@@ -4,7 +4,7 @@ import type { PaymentEventParsed } from '../../src/core/events';
 import { renderDefaultEmail, type EmailRenderer, type EmailTemplateContext } from '../../src/email';
 import { handlePaymentWebhook } from '../../src/handlers';
 import { createBookingRepository } from '../../src/repo';
-import { defineCloudflareBookkitRuntime, type BookkitProviders } from '../../src/runtime';
+import { defineCloudflareReservaRuntime, type ReservaProviders } from '../../src/runtime';
 import { booking as bookingFixture, config as baseConfig } from '../fixtures';
 
 // Plan 026 step 5: a from-scratch, non-Brevo transport that imports `renderDefaultEmail` through
@@ -14,8 +14,8 @@ import { booking as bookingFixture, config as baseConfig } from '../fixtures';
 // against real D1 -- to the shipped default template. Proves the public seam is enough to build a
 // working provider without touching src/providers/brevo.ts at all.
 
-interface TestEnv { BOOKKIT_DB: D1Database }
-const db = (env as unknown as TestEnv).BOOKKIT_DB;
+interface TestEnv { RESERVA_DB: D1Database }
+const db = (env as unknown as TestEnv).RESERVA_DB;
 const repo = createBookingRepository(db);
 
 function manageUrl(token: string): string {
@@ -31,7 +31,7 @@ const fakeTransportRenderer: EmailRenderer = (context) => {
 
 let rendered: Array<{ event: string; recipient: string; subject: string; html: string }> = [];
 
-const fakeEmailProvider: NonNullable<BookkitProviders['email']> = {
+const fakeEmailProvider: NonNullable<ReservaProviders['email']> = {
   recipientsForEvent(event) {
     return event === 'booking.confirmed' ? ['customer', 'owner'] : ['customer'];
   },
@@ -49,7 +49,7 @@ const fakeEmailProvider: NonNullable<BookkitProviders['email']> = {
   },
 };
 
-const providers: BookkitProviders = {
+const providers: ReservaProviders = {
   payments: {
     createCheckout: async () => ({ url: '', sessionRef: '' }),
     parseWebhook: async (request) => (await request.json()) as PaymentEventParsed,
@@ -65,10 +65,10 @@ const providers: BookkitProviders = {
   email: fakeEmailProvider,
 };
 
-const runtime = defineCloudflareBookkitRuntime(baseConfig, { providers });
+const runtime = defineCloudflareReservaRuntime(baseConfig, { providers });
 
 function buildContext(request: Request) {
-  return runtime.createContext({ request, locals: { env: { BOOKKIT_DB: db } } });
+  return runtime.createContext({ request, locals: { env: { RESERVA_DB: db } } });
 }
 
 function futureIso(msFromNow: number): string {

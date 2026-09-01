@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import { createBookkitContext } from '../src/context';
+import { createReservaContext } from '../src/context';
 import { handleCustomerCancel, handleCustomerReschedule, handleManage, handleOperatorCancel, handleOperatorNoShow, handleOperatorReschedule, handlePaymentWebhook } from '../src/handlers';
 import type { RefundOperationRecord } from '../src/repo';
 import { booking, config } from './fixtures';
@@ -24,7 +24,7 @@ function rescheduleAsCustomer(token: string, newStart: string): Request {
 }
 
 function contextWithSecret(seed: ReturnType<typeof booking>[], overrides: Parameters<typeof providers>[0] = {}) {
-  return createBookkitContext({
+  return createReservaContext({
     config,
     db: {} as D1Database,
     repo: fakeRepository(seed),
@@ -43,7 +43,7 @@ describe('operator route auth (spec §11 dual-auth resolver)', () => {
   });
 
   it('rejects a missing operator token and missing bearer with 403', async () => {
-    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository([booking({ id: 'b-op-auth-missing' })]), clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository([booking({ id: 'b-op-auth-missing' })]), clock, providers: providers() });
     const response = await handleOperatorCancel(operatorRequest('cancel', { refund: 'none' }), context);
     expect(response.status).toBe(403);
   });
@@ -82,7 +82,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     const seeded = booking({ id: 'b-op-cancel-refund-full', paymentRef: 'pi_refund_full' });
     const repo = fakeRepository([seeded]);
     let refunds = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -114,7 +114,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     });
     const repo = fakeRepository([seeded]);
     let refunds = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -152,7 +152,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     });
     const repo = fakeRepository([seeded]);
     let refunds = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -180,7 +180,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     const seeded = booking({ id: 'b-op-cancel-confirmed-no-payment-intent', paymentRef: null });
     const repo = fakeRepository([seeded]);
     let refunds = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -218,7 +218,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     await repo.claimRefundOperation({
       id: 'op-legacy-no-payment-intent', bookingId: seeded.id, paymentIntent: null, choice: 'full', requestedAt: '2026-06-14T07:00:00.000Z',
     });
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const response = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
     expect(response.status).toBe(409);
@@ -248,7 +248,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     if (!tokenState) throw new Error('Seeded booking token state is missing');
     tokenState.tokensExpireAt = '2026-06-14T07:30:00.000Z';
     let refunds = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo, clock,
       providers: providers({ payments: {
         createCheckout: async () => ({ url: '', sessionRef: '' }),
@@ -296,7 +296,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     const tokenState = repo.tokenState.get(seeded.id);
     if (!tokenState) throw new Error('Seeded booking token state is missing');
     tokenState.tokensExpireAt = '2026-06-14T07:30:00.000Z';
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const response = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
     expect(response.status).toBe(403);
@@ -314,7 +314,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     const tokenState = repo.tokenState.get(seeded.id);
     if (!tokenState) throw new Error('Seeded booking token state is missing');
     tokenState.tokensExpireAt = '2026-06-14T07:30:00.000Z';
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const response = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
     expect(response.status).toBe(403);
@@ -340,7 +340,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     const tokenState = repo.tokenState.get(seeded.id);
     if (!tokenState) throw new Error('Seeded booking token state is missing');
     tokenState.tokensExpireAt = '2026-06-14T07:30:00.000Z';
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const manage = await handleManage(new Request(`https://example.test/api/booking/manage?token=${seeded.operatorToken}`), context);
     expect(manage.status).toBe(403);
@@ -356,7 +356,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     const seeded = booking({ id: 'b-op-cancel-refund-none', paymentRef: 'pi_refund_none' });
     const repo = fakeRepository([seeded]);
     let refunds = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -373,7 +373,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
   it('rejects a missing/invalid refund field with 400 validation_failed', async () => {
     const seeded = booking({ id: 'b-op-cancel-missing-refund' });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const response = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken }), context);
     expect(response.status).toBe(400);
@@ -383,7 +383,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
   it('rejects a cancel on a non-confirmed row with 409 invalid_transition', async () => {
     const seeded = booking({ id: 'b-op-cancel-wrong-state', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z' });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const response = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'none' }), context);
     expect(response.status).toBe(409);
@@ -393,7 +393,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
   it('a throwing refund() surfaces as a non-2xx response, but the cancellation is already durable and the failure is recorded on the operation row (BK-REFUND-001)', async () => {
     const seeded = booking({ id: 'b-op-cancel-refund-throws', paymentRef: 'pi_refund_throws' });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -416,7 +416,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     const seeded = booking({ id: 'b-op-cancel-race', paymentRef: 'pi_refund_race' });
     const repo = fakeRepository([seeded]);
     let refunds = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -465,7 +465,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     const seeded = booking({ id: 'b-op-cancel-crash-recovery', paymentRef: 'pi_refund_crash' });
     const repo = fakeRepository([seeded]);
     let refunds = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -490,7 +490,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     const seeded = booking({ id: 'b-op-cancel-post-stripe-d1-crash', paymentRef: 'pi_post_stripe_crash' });
     const repo = fakeRepository([seeded]);
     const { refund, idempotencyKeys } = fakeRefundTracker(() => ({ refundRef: 're_post_stripe_crash', amountMinor: seeded.priceMinor }));
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -526,7 +526,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     expect(operation?.status).toBe('succeeded');
     expect(operation?.stripeRefundId).toBe('re_post_stripe_crash');
     // Recovery reused the SAME idempotency key rather than minting a fresh one per attempt.
-    expect(idempotencyKeys).toEqual(['bookkit-refund-pi_post_stripe_crash', 'bookkit-refund-pi_post_stripe_crash']);
+    expect(idempotencyKeys).toEqual(['reserva-refund-pi_post_stripe_crash', 'reserva-refund-pi_post_stripe_crash']);
   });
 
   // BK-REFUND-001 (audit requirement 5): the handler must forward the booking's full expected
@@ -537,7 +537,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     const seeded = booking({ id: 'b-op-cancel-expected-amount', paymentRef: 'pi_expected_amount' });
     const repo = fakeRepository([seeded]);
     const { refund, expectedAmounts } = fakeRefundTracker(() => ({ refundRef: 're_expected_amount', amountMinor: seeded.priceMinor }));
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -566,7 +566,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     const freshRepo = fakeRepository([seeded]);
     freshRepo.refundOperations.set(seeded.id, pendingOperation);
     let refunds = 0;
-    const freshContext = createBookkitContext({
+    const freshContext = createReservaContext({
       config,
       db: {} as D1Database,
       repo: freshRepo,
@@ -596,7 +596,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
       return realTransition(id, input);
     };
     let refunds = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -636,7 +636,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
       if (current) repo.rows.set(id, { ...current, startsAt: '2026-06-20T08:00:00.000Z' });
       return realTransition(id, input);
     };
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -663,7 +663,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     const seeded = booking({ id: 'b-op-cancel-lost-cas-customer', paymentRef: 'pi_lost_cas_customer' });
     const repo = fakeRepository([seeded]);
     let refunds = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -693,7 +693,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     const seeded = booking({ id: 'b-op-cancel-lost-cas-webhook', paymentRef: paymentRef });
     const repo = fakeRepository([seeded]);
     let refunds = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -717,13 +717,13 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
 
   // BK-REFUND-001: Stripe is the source of truth for whether money moved — a charge.refunded
   // webhook arriving after an operator recorded refund='none' (e.g. a dashboard-initiated refund
-  // Bookkit didn't drive) must correct that row rather than leave it stating no refund happened.
+  // Reserva didn't drive) must correct that row rather than leave it stating no refund happened.
   it('an authoritative charge.refunded webhook corrects an earlier none/succeeded refund row on an already-cancelled booking, and a follow-up operator refund=full request is idempotent', async () => {
     const paymentRef = 'pi_webhook_corrects_none';
     const seeded = booking({ id: 'b-webhook-corrects-none', paymentRef: paymentRef });
     const repo = fakeRepository([seeded]);
     let refunds = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -774,7 +774,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
       failureStartedAt: null, nextAttemptAt: null,
     });
     const preexisting = repo.refundOperations.get(seeded.id);
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -839,7 +839,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
       if (input.status === 'succeeded') notifyWinnerResolved?.();
     };
     let refunds = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -876,8 +876,8 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
 
     // Two independently-constructed contexts sharing only the same repo/db — the point of the
     // durable operation row: no in-memory Set survives across isolates, but the D1 row does.
-    const contextA = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers({ payments: paymentsOverride }) });
-    const contextB = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers({ payments: paymentsOverride }) });
+    const contextA = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers({ payments: paymentsOverride }) });
+    const contextB = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers({ payments: paymentsOverride }) });
 
     const first = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), contextA);
     expect(first.status).toBe(200);
@@ -894,7 +894,7 @@ describe('POST /operator/reschedule cutoff asymmetry (spec §11)', () => {
     const seeded = booking({ id: 'b-op-reschedule-cutoff', startsAt: '2026-06-14T20:00:00.000Z', endsAt: '2026-06-14T21:00:00.000Z', calendarEventId: 'cal-op-reschedule' });
     const repo = fakeRepository([seeded]);
     let patches = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -923,7 +923,7 @@ describe('POST /operator/no-show (spec §11)', () => {
   it('rejects marking no-show before the start with 409 invalid_transition', async () => {
     const seeded = booking({ id: 'b-op-noshow-before-start', startsAt: '2026-06-14T20:00:00.000Z', endsAt: '2026-06-14T21:00:00.000Z' });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const response = await handleOperatorNoShow(operatorRequest('no-show', { operatorToken: seeded.operatorToken }), context);
     expect(response.status).toBe(409);
@@ -933,7 +933,7 @@ describe('POST /operator/no-show (spec §11)', () => {
   it('rejects marking no-show on a hold row with 409', async () => {
     const seeded = booking({ id: 'b-op-noshow-hold', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', startsAt: '2026-06-14T07:00:00.000Z', endsAt: '2026-06-14T07:30:00.000Z' });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const response = await handleOperatorNoShow(operatorRequest('no-show', { operatorToken: seeded.operatorToken }), context);
     expect(response.status).toBe(409);
@@ -942,7 +942,7 @@ describe('POST /operator/no-show (spec §11)', () => {
   it('rejects marking no-show on a cancelled row with 409', async () => {
     const seeded = booking({ id: 'b-op-noshow-cancelled', status: 'cancelled', cancelledAt: '2026-06-13T08:00:00.000Z', cancelledBy: 'customer', startsAt: '2026-06-14T07:00:00.000Z', endsAt: '2026-06-14T07:30:00.000Z' });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const response = await handleOperatorNoShow(operatorRequest('no-show', { operatorToken: seeded.operatorToken }), context);
     expect(response.status).toBe(409);
@@ -952,7 +952,7 @@ describe('POST /operator/no-show (spec §11)', () => {
     const seeded = booking({ id: 'b-op-noshow-valid', status: 'confirmed', startsAt: '2026-06-14T07:00:00.000Z', endsAt: '2026-06-14T07:30:00.000Z' });
     const repo = fakeRepository([seeded]);
     const emails: string[] = [];
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,

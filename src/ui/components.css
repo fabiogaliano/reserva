@@ -1,6 +1,6 @@
 /* Single source for the embeddable components' styling (BookingWidget, ManageBooking,
    AdminDashboard). Imported from each component's frontmatter so the consumer's Astro build
-   bundles (and CSP-hashes) it once, however many bookkit components a page mounts. The
+   bundles (and CSP-hashes) it once, however many reserva components a page mounts. The
    server-rendered pages use src/ui/theme.ts served from the assetsCss route instead — they never
    pass through a consumer build. Rebrand by overriding the --bk-* tokens in site CSS. */
 

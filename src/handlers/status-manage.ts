@@ -11,7 +11,7 @@ import {
   missingConfirmationEventOperations,
   runOwedMutationSideEffects,
 } from '../confirmation';
-import type { BookkitContext } from '../context';
+import type { ReservaContext } from '../context';
 import { nowIso } from '../context';
 import { HttpError, json } from '../http';
 import { run, withSensitiveHeaders } from './shared';
@@ -22,7 +22,7 @@ import { run, withSensitiveHeaders } from './shared';
 // pulled booking describe the same row differently. What they add on top is presentation only:
 // business-local start/end (the projection's are UTC), the meeting point resolved against the
 // booking's own stored id, and locale-resolved metadata labels.
-function manageBookingPayload(context: BookkitContext, booking: Booking): ManageBooking {
+function manageBookingPayload(context: ReservaContext, booking: Booking): ManageBooking {
   const service = resolveService(context.config, booking.serviceSlug);
   const wire = toWireBooking(booking);
   // Plan 023 (design decision 4): read surfaces gate on the booking ROW's data, not config — a
@@ -61,7 +61,7 @@ function manageBookingPayload(context: BookkitContext, booking: Booking): Manage
   };
 }
 
-function confirmationBookingPayload(context: BookkitContext, booking: Booking): ConfirmationBooking {
+function confirmationBookingPayload(context: ReservaContext, booking: Booking): ConfirmationBooking {
   const service = resolveService(context.config, booking.serviceSlug);
   const wire = toWireBooking(booking);
   // Plan 019 (design decision 2), generalized by plan 023 (design decision 4): gate the meeting
@@ -88,7 +88,7 @@ function confirmationBookingPayload(context: BookkitContext, booking: Booking): 
 // Anchored on immutable createdAt so polling and fulfillment retries cannot renew access; four hours covers the normal hold TTL plus post-payment viewing.
 const STATUS_DETAIL_GRACE_MS = 4 * 60 * 60_000;
 
-export function handleStatus(request: Request, context: BookkitContext): Promise<Response> {
+export function handleStatus(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const sessionRef = new URL(request.url).searchParams.get('session_id');
@@ -176,7 +176,7 @@ export function handleStatus(request: Request, context: BookkitContext): Promise
 // and, for the cancel token, revocation (cancel_token_revoked_at) as part of the same lookup
 // query (src/repo.ts) — an expired or revoked token comes back as a plain null here, identical to
 // an unknown one, so this stays a single `if (!booking) throw 403` with no separate check needed.
-export async function tokenBooking(context: BookkitContext, token: string, operator = false, refundRecovery = false): Promise<Booking> {
+export async function tokenBooking(context: ReservaContext, token: string, operator = false, refundRecovery = false): Promise<Booking> {
   const now = nowIso(context);
   const booking = operator
     ? await (refundRecovery
@@ -193,7 +193,7 @@ export async function tokenBooking(context: BookkitContext, token: string, opera
   return booking;
 }
 
-export function handleManage(request: Request, context: BookkitContext): Promise<Response> {
+export function handleManage(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const token = new URL(request.url).searchParams.get('token');

@@ -1,6 +1,6 @@
 import type { QuoteResponse } from '../core/api';
 import { resolveService } from '../core/config';
-import type { BookkitContext } from '../context';
+import type { ReservaContext } from '../context';
 import { HttpError, json, requestJson, requireInteger, requireString } from '../http';
 import { quotedPriceMinor, resolvePickupAxis } from './checkout';
 import { run } from './shared';
@@ -14,7 +14,7 @@ import { run } from './shared';
 // src/handlers/checkout.ts). This endpoint adds no pricing logic of its own — only the parts of
 // checkout that have nothing to do with money (slot availability, capacity, holds, payment session)
 // are absent.
-export function handleQuote(request: Request, context: BookkitContext): Promise<Response> {
+export function handleQuote(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const body = await requestJson(request);

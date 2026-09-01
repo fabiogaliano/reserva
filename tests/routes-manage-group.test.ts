@@ -5,9 +5,9 @@
 // than asserted on the flag alone.
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it, vi } from 'vitest';
-import { createBookkitContext } from '../src/context';
+import { createReservaContext } from '../src/context';
 import { handleAdminGet } from '../src/handlers';
-import { bookkit } from '../src/integration';
+import { reserva } from '../src/integration';
 import { brevoEmail } from '../src/providers/brevo';
 import { requireEnabledRoutePath, resolveRouteConfig } from '../src/routes-manifest';
 import clientConfig from '../examples/client-config';
@@ -16,7 +16,7 @@ import { fakeRepository, providers } from './fakes';
 
 function injectedPatterns(routes: Record<string, unknown>): string[] {
   const injected: Array<Record<string, unknown>> = [];
-  const integration = bookkit({ config: { ...clientConfig, routes }, runtimeEntrypoint: './examples/runtime.ts' } as never);
+  const integration = reserva({ config: { ...clientConfig, routes }, runtimeEntrypoint: './examples/runtime.ts' } as never);
   const hook = integration.hooks['astro:config:setup'];
   if (!hook) throw new Error('setup hook is missing');
   hook({
@@ -32,14 +32,14 @@ function injectedPatterns(routes: Record<string, unknown>): string[] {
 
 async function adminHtml(manage: boolean): Promise<string> {
   const seeded = booking({ id: 'b-manage-flag', operatorToken: 'op-manage-token', cancelToken: 'cancel-manage-token' });
-  const context = createBookkitContext({
+  const context = createReservaContext({
     config,
     db: {} as D1Database,
     repo: fakeRepository([seeded], { tokenEncryptionKey: 'manage-flag-key' }),
     clock: () => new Date('2026-06-14T08:00:00.000Z'),
     adminAuth: async () => ({ subject: '' }),
     providers: providers(),
-    secrets: async (name) => (name === 'BOOKKIT_TOKEN_ENC_KEY' ? 'manage-flag-key' : undefined),
+    secrets: async (name) => (name === 'RESERVA_TOKEN_ENC_KEY' ? 'manage-flag-key' : undefined),
     routeConfig: resolveRouteConfig('', { admin: true, ops: true, manage }),
   });
   const response = await handleAdminGet(new Request('https://example.test/booking/admin'), context);

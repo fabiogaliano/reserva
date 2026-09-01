@@ -1,4 +1,4 @@
-// Single key set for every string bookkit renders to a customer or operator. English is the
+// Single key set for every string reserva renders to a customer or operator. English is the
 // default and the fallback; European Portuguese ships as a bundled catalog a consumer selects via
 // `config.locales`, and both can be overridden per locale through `config.ui.messages`.
 
@@ -163,7 +163,7 @@ export const defaultMessages = {
   'admin.manage': 'Manage',
   // BK-SEC-002 (patch-11-r1 LOW 1): shown instead of a manage-link href when the booking's
   // operatorToken isn't presentable (see isManageableToken, src/providers/brevo.ts) — a
-  // not-yet-backfilled legacy row, or no BOOKKIT_TOKEN_ENC_KEY configured at all.
+  // not-yet-backfilled legacy row, or no RESERVA_TOKEN_ENC_KEY configured at all.
   'admin.manageUnavailable': 'Manage link unavailable',
   'admin.results': '{n} bookings',
   'admin.resultsOne': '{n} booking',
@@ -186,7 +186,7 @@ export const defaultMessages = {
   'admin.sectionLegal': 'Legal',
   'admin.sectionLegalHint': 'Documents linked from the booking flow.',
   'admin.sectionReadonly': 'Deploy-time settings',
-  'admin.readonlyHint': 'These cannot be changed here. Edit the site’s Bookkit config file and redeploy.',
+  'admin.readonlyHint': 'These cannot be changed here. Edit the site’s Reserva config file and redeploy.',
   'admin.modified': 'Modified',
   'admin.default': 'Default: {v}',
   'admin.resetField': 'Reset',
@@ -258,8 +258,8 @@ export const defaultMessages = {
   'admin.incidentCounts30d': '{opened} opened, {resolved} resolved in the last 30 days',
 } as const;
 
-export type BookkitMessageKey = keyof typeof defaultMessages;
-export type BookkitMessages = Record<BookkitMessageKey, string>;
+export type ReservaMessageKey = keyof typeof defaultMessages;
+export type ReservaMessages = Record<ReservaMessageKey, string>;
 
 // Plan 027 (design decision 4): the availability API returns structured scarcity, never rendered
 // status text — this is the closed set of catalog keys that renders it, exported so a consumer
@@ -268,7 +268,7 @@ export type BookkitMessages = Record<BookkitMessageKey, string>;
 // `widget.spotsLeft` interpolate {n} from a slot's non-null `remaining`.
 export const SLOT_STATUS_MESSAGE_KEYS = [
   'widget.limited', 'widget.spotsLeft', 'widget.soldOut', 'widget.noSlots', 'widget.closed',
-] as const satisfies readonly BookkitMessageKey[];
+] as const satisfies readonly ReservaMessageKey[];
 
 export type SlotStatusMessageKey = (typeof SLOT_STATUS_MESSAGE_KEYS)[number];
 
@@ -277,8 +277,8 @@ export type SlotStatusMessageKey = (typeof SLOT_STATUS_MESSAGE_KEYS)[number];
 // changes behavior for a caller of resolveMessages/the components with no locale argument at all.
 export const defaultLocale = 'en';
 
-const portuguesePortugalMessages: BookkitMessages = portuguesePortugalCatalog;
-const bundledCatalogs: Record<string, BookkitMessages> = {
+const portuguesePortugalMessages: ReservaMessages = portuguesePortugalCatalog;
+const bundledCatalogs: Record<string, ReservaMessages> = {
   'pt-pt': portuguesePortugalMessages,
 };
 
@@ -296,7 +296,7 @@ function catalogFor(catalogs: Record<string, Record<string, string>>, locale: st
 
 // Regional catalogs layer over their base language, and deployment overrides layer over bundled
 // copy so a business can customize wording without maintaining a complete catalog.
-export function resolveMessages(config: ClientConfig | undefined, locale: string | undefined): BookkitMessages {
+export function resolveMessages(config: ClientConfig | undefined, locale: string | undefined): ReservaMessages {
   const merged: Record<string, string> = { ...defaultMessages };
   const candidates = localeCandidates(locale ?? defaultLocale);
   for (const candidate of candidates) {
@@ -310,7 +310,7 @@ export function resolveMessages(config: ClientConfig | undefined, locale: string
       if (overrides) Object.assign(merged, overrides);
     }
   }
-  return merged as BookkitMessages;
+  return merged as ReservaMessages;
 }
 
 export function formatMessage(template: string, vars: Record<string, string | number>): string {

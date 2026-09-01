@@ -26,7 +26,7 @@ test('custom pickup hides and disables the meeting-point group, and the checkout
   await page.getByLabel('How many people?').selectOption('2');
   await expect(page.getByRole('radiogroup').getByRole('radio').first()).toBeVisible();
 
-  const group = page.locator('[data-bookkit-meeting-points]');
+  const group = page.locator('[data-reserva-meeting-points]');
   const points = group.locator('input[name="meetingPointId"]');
   await expect(group).toBeVisible();
   await expect(points.first()).toBeChecked();

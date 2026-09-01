@@ -4,7 +4,7 @@ import { availabilityForDay, capacityForDate, defaultCapacityForDate, type CalEv
 import { priceFor } from '../core/pricing';
 import { generateSlots } from '../core/slots';
 import { addDaysToDateKey, enumerateDateKeys, localDateKey, localDateTimeToUtcIso, parseUtcInstant } from '../core/time';
-import type { BookkitContext } from '../context';
+import type { ReservaContext } from '../context';
 import { nowIso } from '../context';
 import { HttpError, json, parseDate, requireInteger, requireString } from '../http';
 import { run } from './shared';
@@ -25,7 +25,7 @@ function validDateRange(from: string, to: string, maxHorizonDays: number): strin
 }
 
 const CALENDAR_FRESH_SECONDS = 60;
-const CALENDAR_STORED_AT_HEADER = 'x-bookkit-calendar-stored-at';
+const CALENDAR_STORED_AT_HEADER = 'x-reserva-calendar-stored-at';
 const calendarReadFlights = new Map<string, Promise<CalEvent[]>>();
 
 function maxPartySize(service: ReturnType<typeof resolveService>): number {
@@ -70,7 +70,7 @@ function cachedCalendarEvents(value: unknown): CalEvent[] | undefined {
       end,
       ...(typeof item.id === 'string' ? { id: item.id } : {}),
       ...(typeof item.allDay === 'boolean' ? { allDay: item.allDay } : {}),
-      ...(typeof item.bookkitBookingId === 'string' ? { bookkitBookingId: item.bookkitBookingId } : {}),
+      ...(typeof item.reservaBookingId === 'string' ? { reservaBookingId: item.reservaBookingId } : {}),
       ...(privateProperties ? { extendedProperties: { private: privateProperties } } : {}),
     });
   }
@@ -87,8 +87,8 @@ function calendarWindow(fromUtc: string, toUtc: string, timezone: string): { fro
   };
 }
 
-function calendarCacheRequest(context: BookkitContext, calendarKey: string, fromUtc: string, toUtc: string): Request {
-  const url = new URL('/__bookkit/calendar-occupancy', context.config.business.url);
+function calendarCacheRequest(context: ReservaContext, calendarKey: string, fromUtc: string, toUtc: string): Request {
+  const url = new URL('/__reserva/calendar-occupancy', context.config.business.url);
   url.search = new URLSearchParams({ calendar: calendarKey, from: fromUtc, to: toUtc }).toString();
   return new Request(url.toString(), { method: 'GET' });
 }
@@ -98,7 +98,7 @@ interface CalendarEventsResult {
   stale: boolean;
 }
 
-export async function calendarEventsForWindow(context: BookkitContext, fromUtc: string, toUtc: string, now: string): Promise<CalendarEventsResult> {
+export async function calendarEventsForWindow(context: ReservaContext, fromUtc: string, toUtc: string, now: string): Promise<CalendarEventsResult> {
   const calendar = context.providers.calendar;
   if (!calendar) return { events: [], stale: false };
   const window = calendarWindow(fromUtc, toUtc, context.config.business.timezone);
@@ -150,7 +150,7 @@ interface AvailabilityInput {
   service: ReturnType<typeof resolveService>;
 }
 
-function availabilityInput(request: Request, context: BookkitContext): AvailabilityInput {
+function availabilityInput(request: Request, context: ReservaContext): AvailabilityInput {
   const url = new URL(request.url);
   const serviceSlug = requireString(url.searchParams.get('service'), 'service');
   if (!context.config.services[serviceSlug]) throw new HttpError(400, 'validation_failed', 'Unknown service');
@@ -193,7 +193,7 @@ function wireDay(day: DayAvailability, limitedThreshold: number): AvailabilityDa
   };
 }
 
-async function availabilityPayload(context: BookkitContext, now: string, input: AvailabilityInput): Promise<{ payload: AvailabilityResponse; stale: boolean }> {
+async function availabilityPayload(context: ReservaContext, now: string, input: AvailabilityInput): Promise<{ payload: AvailabilityResponse; stale: boolean }> {
   const { quantity, dates, service } = input;
   const firstDay = dates[0];
   const lastDay = dates[dates.length - 1];
@@ -250,7 +250,7 @@ async function availabilityPayload(context: BookkitContext, now: string, input: 
   };
 }
 
-export function handleAvailability(request: Request, context: BookkitContext): Promise<Response> {
+export function handleAvailability(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const input = availabilityInput(request, context);

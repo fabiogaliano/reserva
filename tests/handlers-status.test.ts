@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import { createBookkitContext } from '../src/context';
+import { createReservaContext } from '../src/context';
 import { handleStatus, handlePaymentWebhook } from '../src/handlers';
 import { utcToLocalIso } from '../src/core/time';
 import { booking, config, service } from './fixtures';
@@ -25,7 +25,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     const repo = fakeRepository([seeded]);
     let calendarCreates = 0;
     let emails = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -107,7 +107,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     // treating them as legacy rows owed a repair.
     seedSettledConfirmation(multiPointRepo, chosenSecond.id);
     seedSettledConfirmation(multiPointRepo, removedId.id);
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config: multiPointConfig,
       db: {} as D1Database,
       repo: multiPointRepo,
@@ -158,7 +158,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       // Plan 022: see the multi-point test above — succeeded confirmation rows are how a fixture
       // now says "already delivered".
       for (const row of seed) seedSettledConfirmation(repo, row.id);
-      return createBookkitContext({ config: mazeConfig, db: {} as D1Database, repo, clock, providers: providers() });
+      return createReservaContext({ config: mazeConfig, db: {} as D1Database, repo, clock, providers: providers() });
     }
 
     it('omits meetingPoint for a declared usesMeetingPoint: false option (custom_pickup)', async () => {
@@ -214,7 +214,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     await repo.acquireConfirmationLease(seeded.id, 'other-worker', '2026-06-14T08:00:00.000Z', '2026-06-14T08:05:00.000Z');
     let calendarCreates = 0;
     let emails = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -288,8 +288,8 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     // Separate contexts simulate the two requests landing on different isolates:
     // each has its own in-process confirmationLocks map, so only the shared
     // repository's confirmation lease can serialize the confirm paths.
-    const webhookContext = createBookkitContext({ config, db: {} as D1Database, repo, clock: () => new Date('2026-06-14T08:00:00.000Z'), providers: sharedProviders });
-    const statusContext = createBookkitContext({ config, db: {} as D1Database, repo, clock: () => new Date('2026-06-14T08:00:00.000Z'), providers: sharedProviders });
+    const webhookContext = createReservaContext({ config, db: {} as D1Database, repo, clock: () => new Date('2026-06-14T08:00:00.000Z'), providers: sharedProviders });
+    const statusContext = createReservaContext({ config, db: {} as D1Database, repo, clock: () => new Date('2026-06-14T08:00:00.000Z'), providers: sharedProviders });
 
     const [webhookResponse, statusResponse] = await Promise.all([
       handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST', body: 'raw' }), webhookContext),
@@ -320,7 +320,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       paymentSessionRef: 'cs_status_expiring',
     });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -351,7 +351,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     });
     const repo = fakeRepository([seeded]);
     const warnings: Array<{ message: string; data: Record<string, unknown> | undefined }> = [];
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -386,7 +386,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
 
   it('reports not_found for an unknown session_id', async () => {
     const repo = fakeRepository();
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -409,7 +409,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     });
     const repo = fakeRepository([seeded]);
     let calendarCreates = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -447,7 +447,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     });
     const agedRepo = fakeRepository([seeded]);
     seedSettledConfirmation(agedRepo, seeded.id);
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo: agedRepo,
@@ -479,7 +479,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       status: 'succeeded', attemptCount: 1, attemptedAt: seeded.updatedAt, resolvedAt: seeded.updatedAt,
       createdAt: seeded.updatedAt, updatedAt: seeded.updatedAt,
     });
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -519,7 +519,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
         throw new Error('reschedule retry remains owed');
       },
     } });
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo,
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: configuredProviders,
@@ -534,7 +534,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
   });
 
   it('returns sensitive headers for a missing session_id error', async () => {
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo: fakeRepository(),
@@ -557,7 +557,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       cancelledBy: 'customer',
     });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -578,7 +578,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     await expect(response.json()).resolves.toEqual({ status: 'cancelled', booking: null });
 
     const noShowRepo = fakeRepository([booking({ id: 'b-status-no-show', status: 'no_show', paymentSessionRef: 'cs_status_no_show' })]);
-    const noShowContext = createBookkitContext({
+    const noShowContext = createReservaContext({
       config,
       db: {} as D1Database,
       repo: noShowRepo,

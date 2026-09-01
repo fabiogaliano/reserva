@@ -11,12 +11,12 @@ import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 
 interface TestEnv {
-  BOOKKIT_DB: D1Database;
+  RESERVA_DB: D1Database;
   TEST_MIGRATIONS: D1Migration[];
 }
 
 const bindings = env as unknown as TestEnv;
-const db = bindings.BOOKKIT_DB;
+const db = bindings.RESERVA_DB;
 
 const ALL_REFUND_COLUMNS = [
   'id', 'booking_id', 'payment_intent', 'choice', 'status', 'stripe_refund_id', 'amount_cents',

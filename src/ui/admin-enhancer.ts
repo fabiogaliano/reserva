@@ -19,9 +19,9 @@
 // nothing leaks into the concatenated bundle.
 
 export const adminEnhancerJs = `(() => {
-  const sectionNav = document.querySelector('[data-bookkit-section-nav]');
+  const sectionNav = document.querySelector('[data-reserva-section-nav]');
   if (sectionNav) {
-    const links = [...sectionNav.querySelectorAll('[data-bookkit-section-link]')];
+    const links = [...sectionNav.querySelectorAll('[data-reserva-section-link]')];
     const entries = links.map((link) => {
       const href = link.getAttribute('href') || '';
       return { link, section: href.startsWith('#') ? document.getElementById(href.slice(1)) : null };
@@ -71,9 +71,9 @@ export const adminEnhancerJs = `(() => {
   const reasonDetails = form.querySelector('details');
   const reasonInput = form.querySelector('input[name="reason"]');
   const closeButton = form.querySelector('button[value="close"]');
-  const title = form.querySelector('[data-bookkit-day-title]');
-  const detail = form.querySelector('[data-bookkit-day-detail]');
-  const island = form.querySelector('[data-bookkit-i18n]');
+  const title = form.querySelector('[data-reserva-day-title]');
+  const detail = form.querySelector('[data-reserva-day-detail]');
+  const island = form.querySelector('[data-reserva-i18n]');
   if (!dateInput || !capacityInput) return;
   let i18n = {};
   try { i18n = JSON.parse(island ? island.textContent : '{}'); } catch {}
@@ -122,7 +122,7 @@ export const adminEnhancerJs = `(() => {
   if (i18n.selectHint) {
     const hint = document.createElement('p');
     hint.className = 'bk-hint bk-selection-hint';
-    hint.setAttribute('data-bookkit-select-hint', '');
+    hint.setAttribute('data-reserva-select-hint', '');
     hint.textContent = i18n.selectHint;
     const firstMonth = monthsBox.querySelector('.bk-month');
     monthsBox.insertBefore(hint, firstMonth);
@@ -250,7 +250,7 @@ export const adminEnhancerJs = `(() => {
   // keyboard selection can never leave behind a stale field from an earlier selection.
   const applySelection = () => {
     const sorted = renderCells();
-    form.querySelectorAll('input[data-bookkit-extra-date]').forEach((input) => input.remove());
+    form.querySelectorAll('input[data-reserva-extra-date]').forEach((input) => input.remove());
     if (sorted.length === 0) {
       dateInput.value = '';
       if (toInput) toInput.value = '';
@@ -266,7 +266,7 @@ export const adminEnhancerJs = `(() => {
         hidden.type = 'hidden';
         hidden.name = 'date';
         hidden.value = date;
-        hidden.setAttribute('data-bookkit-extra-date', '');
+        hidden.setAttribute('data-reserva-extra-date', '');
         form.appendChild(hidden);
       }
     }
@@ -312,7 +312,7 @@ export const adminEnhancerJs = `(() => {
   // agree with what's typed) and must never leave a stale hidden extra-date field from an earlier
   // scattered pointer selection lying around to combine with the freshly typed toDate.
   const applyTypedRange = () => {
-    form.querySelectorAll('input[data-bookkit-extra-date]').forEach((input) => input.remove());
+    form.querySelectorAll('input[data-reserva-extra-date]').forEach((input) => input.remove());
     const date = dateInput.value;
     if (!date) { selected = []; anchor = null; renderCells(); return; }
     const toValue = toInput ? toInput.value : '';

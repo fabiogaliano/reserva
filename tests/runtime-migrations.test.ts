@@ -1,8 +1,8 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import config from '../examples/client-config';
-import { BOOKKIT_MIGRATIONS } from '../src/migrations-manifest';
-import { checkBookkitMigrationsApplied, defineCloudflareBookkitRuntime, type MigrationsQueryable } from '../src/runtime-context';
+import { RESERVA_MIGRATIONS } from '../src/migrations-manifest';
+import { checkReservaMigrationsApplied, defineCloudflareReservaRuntime, type MigrationsQueryable } from '../src/runtime-context';
 
 const payments = {
   createCheckout: async () => ({ url: 'https://checkout.test', sessionRef: 'cs_test' }),
@@ -113,25 +113,25 @@ function fakeD1(
   };
 }
 
-describe('checkBookkitMigrationsApplied', () => {
-  it('passes silently when every bookkit migration is applied', async () => {
-    await expect(checkBookkitMigrationsApplied(fakeD1([...BOOKKIT_MIGRATIONS]))).resolves.toBeUndefined();
+describe('checkReservaMigrationsApplied', () => {
+  it('passes silently when every reserva migration is applied', async () => {
+    await expect(checkReservaMigrationsApplied(fakeD1([...RESERVA_MIGRATIONS]))).resolves.toBeUndefined();
   });
 
   it('is tolerant of extra, consumer-owned migrations', async () => {
-    const applied = [...BOOKKIT_MIGRATIONS, '0004_consumer_custom_table.sql'];
-    await expect(checkBookkitMigrationsApplied(fakeD1(applied))).resolves.toBeUndefined();
+    const applied = [...RESERVA_MIGRATIONS, '0004_consumer_custom_table.sql'];
+    await expect(checkReservaMigrationsApplied(fakeD1(applied))).resolves.toBeUndefined();
   });
 
   it('uses a configured migration table for both the probe and applied-names query, then the schema fingerprint', async () => {
     const queries: string[] = [];
-    await expect(checkBookkitMigrationsApplied(
-      fakeD1([...BOOKKIT_MIGRATIONS], { tableName: 'bookkit_migrations', queries }),
-      'bookkit_migrations',
+    await expect(checkReservaMigrationsApplied(
+      fakeD1([...RESERVA_MIGRATIONS], { tableName: 'reserva_migrations', queries }),
+      'reserva_migrations',
     )).resolves.toBeUndefined();
     expect(queries).toEqual([
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='bookkit_migrations'",
-      'SELECT name FROM bookkit_migrations',
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='reserva_migrations'",
+      'SELECT name FROM reserva_migrations',
       'PRAGMA table_info(bookings)',
       "SELECT type, name, sql FROM sqlite_master WHERE name IN ('bookings', 'idx_bookings_payment_ref')",
       "SELECT type, name, sql FROM sqlite_master WHERE name IN ('side_effect_operations', 'idx_side_effect_operations_pending', 'idx_side_effect_operations_reconciliation', 'idx_side_effect_operations_identity')",
@@ -144,50 +144,50 @@ describe('checkBookkitMigrationsApplied', () => {
 
   it('reports missing migrations after querying a configured migration table', async () => {
     const queries: string[] = [];
-    await expect(checkBookkitMigrationsApplied(
-      fakeD1([], { tableName: 'bookkit_migrations', queries }),
-      'bookkit_migrations',
+    await expect(checkReservaMigrationsApplied(
+      fakeD1([], { tableName: 'reserva_migrations', queries }),
+      'reserva_migrations',
     )).rejects.toThrow(/is missing/);
     expect(queries).toEqual([
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='bookkit_migrations'",
-      'SELECT name FROM bookkit_migrations',
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='reserva_migrations'",
+      'SELECT name FROM reserva_migrations',
     ]);
   });
 
   it('fails with a distinct collision error when the ledger is satisfied but the schema fingerprint is missing', async () => {
-    const db = fakeD1([...BOOKKIT_MIGRATIONS], { schemaFingerprint: false });
-    await expect(checkBookkitMigrationsApplied(db)).rejects.toThrow(/migration ledger reports every migration applied, but the schema itself/);
-    await expect(checkBookkitMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
+    const db = fakeD1([...RESERVA_MIGRATIONS], { schemaFingerprint: false });
+    await expect(checkReservaMigrationsApplied(db)).rejects.toThrow(/migration ledger reports every migration applied, but the schema itself/);
+    await expect(checkReservaMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
     // Must not be conflated with the missing-migrations ledger error above.
-    await expect(checkBookkitMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
+    await expect(checkReservaMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
   });
 
   it('rejects an unsafe configured migration table name', () => {
-    expect(() => defineCloudflareBookkitRuntime(config, {
+    expect(() => defineCloudflareReservaRuntime(config, {
       providers: { payments },
       migrationsTable: 'd1_migrations; DROP TABLE bookings',
     })).toThrow(/migrationsTable.*SQLite identifier/);
   });
 
   it('names the missing migration and the apply command when one is unapplied', async () => {
-    const applied = BOOKKIT_MIGRATIONS.filter((name) => name !== '0003_hold_ip.sql');
-    await expect(checkBookkitMigrationsApplied(fakeD1(applied))).rejects.toThrow(
-      /0003_hold_ip\.sql.*wrangler d1 migrations apply <database_name> --local.*wrangler d1 migrations apply <database_name>.*bookkit-migrate/s,
+    const applied = RESERVA_MIGRATIONS.filter((name) => name !== '0003_hold_ip.sql');
+    await expect(checkReservaMigrationsApplied(fakeD1(applied))).rejects.toThrow(
+      /0003_hold_ip\.sql.*wrangler d1 migrations apply <database_name> --local.*wrangler d1 migrations apply <database_name>.*reserva-migrate/s,
     );
   });
 
   it('names every migration and the same guidance when d1_migrations does not exist yet', async () => {
-    await expect(checkBookkitMigrationsApplied(fakeD1([], { missingTable: true }))).rejects.toThrow(
-      new RegExp(BOOKKIT_MIGRATIONS.map((name) => name.replace(/\./g, '\\.')).join('.*'), 's'),
+    await expect(checkReservaMigrationsApplied(fakeD1([], { missingTable: true }))).rejects.toThrow(
+      new RegExp(RESERVA_MIGRATIONS.map((name) => name.replace(/\./g, '\\.')).join('.*'), 's'),
     );
   });
 
   it('propagates a transient error from the d1_migrations select as-is, rather than reporting missing migrations', async () => {
     const transientError = new Error('D1_ERROR: network connection lost');
     const db = fakeD1([], { selectError: transientError });
-    await expect(checkBookkitMigrationsApplied(db)).rejects.toThrow(transientError);
+    await expect(checkReservaMigrationsApplied(db)).rejects.toThrow(transientError);
     // Specifically must NOT be recast as the missing-migrations guidance message.
-    await expect(checkBookkitMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
+    await expect(checkReservaMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
   });
 });
 
@@ -248,13 +248,13 @@ describe('migration check memoization', () => {
           if (query.includes('sqlite_master')) return { results: [{ name: 'd1_migrations' }] };
           selectCalls += 1;
           if (selectCalls === 1) throw new Error('D1_ERROR: network connection lost');
-          return { results: BOOKKIT_MIGRATIONS.map((name) => ({ name })) };
+          return { results: RESERVA_MIGRATIONS.map((name) => ({ name })) };
         },
       }),
     } as unknown as D1Database;
-    const definition = defineCloudflareBookkitRuntime(config, { providers: { payments } });
+    const definition = defineCloudflareReservaRuntime(config, { providers: { payments } });
     const request = new Request('https://example.test/api/booking/status');
-    const locals = { env: { BOOKKIT_DB: db } };
+    const locals = { env: { RESERVA_DB: db } };
 
     await expect(definition.createContext({ request, locals })).rejects.toThrow('network connection lost');
     // If the failed check were still memoized, this second request would replay the same rejection

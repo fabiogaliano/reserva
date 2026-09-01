@@ -22,8 +22,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { rmSync } from 'node:fs';
 
-const persistDir = process.env.BOOKKIT_E2E_PERSIST;
-if (!persistDir) throw new Error('e2e-dev-server.ts requires BOOKKIT_E2E_PERSIST to be set');
+const persistDir = process.env.RESERVA_E2E_PERSIST;
+if (!persistDir) throw new Error('e2e-dev-server.ts requires RESERVA_E2E_PERSIST to be set');
 
 // Fresh per run: wrangler and @cloudflare/vite-plugin both nest the actual sqlite state under
 // <dir>/v3, so removing the whole isolated dir guarantees migrations replay against an empty
@@ -32,11 +32,11 @@ rmSync(new URL(persistDir, import.meta.url), { recursive: true, force: true });
 
 const migrateResult = spawnSync(
   'bun',
-  ['../../scripts/bookkit-migrate.ts', '--local', '--persist-to', persistDir],
+  ['../../scripts/reserva-migrate.ts', '--local', '--persist-to', persistDir],
   { stdio: 'inherit' },
 );
 if (migrateResult.status !== 0) {
-  throw new Error(`bookkit-migrate exited with status ${migrateResult.status}`);
+  throw new Error(`reserva-migrate exited with status ${migrateResult.status}`);
 }
 
 const astroBin = fileURLToPath(new URL('../../node_modules/.bin/astro', import.meta.url));

@@ -3,10 +3,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { createBookingRepository } from '../../src/repo';
 
 interface TestEnv {
-  BOOKKIT_DB: D1Database;
+  RESERVA_DB: D1Database;
 }
 
-const db = (env as unknown as TestEnv).BOOKKIT_DB;
+const db = (env as unknown as TestEnv).RESERVA_DB;
 const repo = createBookingRepository(db);
 
 beforeEach(async () => {

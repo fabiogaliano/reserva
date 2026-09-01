@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import { createBookkitContext } from '../src/context';
+import { createReservaContext } from '../src/context';
 import { DEFAULT_TOKEN_EXPIRY_DAYS } from '../src/core/config';
 import {
   handleAvailability,
@@ -41,7 +41,7 @@ describe('POST /cancel (customer, spec §11)', () => {
     const repo = fakeRepository([seeded]);
     let deletes = 0;
     const emails: string[] = [];
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -77,7 +77,7 @@ describe('POST /cancel (customer, spec §11)', () => {
     const repo = fakeRepository([seeded]);
     let deletes = 0;
     const emails: string[] = [];
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -101,7 +101,7 @@ describe('POST /cancel (customer, spec §11)', () => {
   it('rejects a cancel inside the cutoff with 403 past_cutoff, leaving the row unchanged', async () => {
     const seeded = booking({ id: 'b-cancel-cutoff', startsAt: '2026-06-14T20:00:00.000Z', endsAt: '2026-06-14T21:00:00.000Z' });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const response = await handleCustomerCancel(cancelRequest(seeded.cancelToken), context);
     expect(response.status).toBe(403);
@@ -113,7 +113,7 @@ describe('POST /cancel (customer, spec §11)', () => {
     const seeded = booking({ id: 'b-cancel-calendar-fails', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z', calendarEventId: 'cal-fails' });
     const repo = fakeRepository([seeded]);
     let attempts = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -156,7 +156,7 @@ describe('POST /cancel (customer, spec §11)', () => {
     const repo = fakeRepository([seeded]);
     let eventDeleted = false;
     let deleteAttempts = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config: singleCapacityConfig,
       db: {} as D1Database,
       repo,
@@ -213,7 +213,7 @@ describe('POST /cancel (customer, spec §11)', () => {
   it('rejects cancel on a wrong-state (hold) row with 409 invalid_transition', async () => {
     const seeded = booking({ id: 'b-cancel-wrong-state', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z' });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const response = await handleCustomerCancel(cancelRequest(seeded.cancelToken), context);
     expect(response.status).toBe(409);
@@ -227,7 +227,7 @@ describe('POST /operator/cancel (spec §11)', () => {
     const seeded = booking({ id: 'b-operator-cancel-calendar-debt', calendarEventId: 'cal-operator-cancel-debt' });
     const repo = fakeRepository([seeded]);
     let attempts = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -269,7 +269,7 @@ describe('POST /reschedule (customer, spec §11)', () => {
     const repo = fakeRepository([seeded]);
     let patches = 0;
     const emails: string[] = [];
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -311,7 +311,7 @@ describe('POST /reschedule (customer, spec §11)', () => {
       capacityWrites += 1;
       return realRescheduleWithCapacity(id, input);
     };
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo, clock,
       providers: providers({
         calendar: {
@@ -363,7 +363,7 @@ describe('POST /reschedule (customer, spec §11)', () => {
       capacityWrites += 1;
       return realRescheduleWithCapacity(id, input);
     };
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo, clock,
       providers: providers({
         calendar: {
@@ -398,7 +398,7 @@ describe('POST /reschedule (customer, spec §11)', () => {
     // occupied window (which extends to 10:30 local with the 30-min turnaround).
     const seeded = booking({ id: 'b-reschedule-own-occupancy', startsAt: '2026-06-15T08:00:00.000Z', endsAt: '2026-06-15T09:00:00.000Z' });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({ config: singleCapacityConfig, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config: singleCapacityConfig, db: {} as D1Database, repo, clock, providers: providers() });
 
     const response = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, '2026-06-15T08:30:00.000Z'), context);
     expect(response.status).toBe(200);
@@ -416,7 +416,7 @@ describe('POST /reschedule (customer, spec §11)', () => {
       endsAt: '2026-06-15T09:30:00.000Z',
     });
     const repo = fakeRepository([seeded, blocker]);
-    const context = createBookkitContext({ config: singleCapacityConfig, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config: singleCapacityConfig, db: {} as D1Database, repo, clock, providers: providers() });
 
     const response = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, '2026-06-15T08:30:00.000Z'), context);
     expect(response.status).toBe(409);
@@ -427,7 +427,7 @@ describe('POST /reschedule (customer, spec §11)', () => {
   it('rejects a reschedule inside the cutoff with 403 past_cutoff', async () => {
     const seeded = booking({ id: 'b-reschedule-cutoff', startsAt: '2026-06-14T20:00:00.000Z', endsAt: '2026-06-14T21:00:00.000Z' });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const response = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, validNewStart), context);
     expect(response.status).toBe(403);
@@ -438,7 +438,7 @@ describe('POST /reschedule (customer, spec §11)', () => {
     const disabledConfig: typeof config = { ...config, booking: { ...config.booking, reschedule: { ...config.booking.reschedule, enabled: false } } };
     const seeded = booking({ id: 'b-reschedule-disabled', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z' });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({ config: disabledConfig, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config: disabledConfig, db: {} as D1Database, repo, clock, providers: providers() });
 
     const response = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, validNewStart), context);
     expect(response.status).toBe(403);
@@ -448,7 +448,7 @@ describe('POST /reschedule (customer, spec §11)', () => {
   it('rejects an off-grid newStart with 409 slot_unavailable', async () => {
     const seeded = booking({ id: 'b-reschedule-off-grid', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z' });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const response = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, '2026-06-15T08:15:00.000Z'), context);
     expect(response.status).toBe(409);
@@ -458,7 +458,7 @@ describe('POST /reschedule (customer, spec §11)', () => {
   it('rejects a wrong-state (hold) row with 409 invalid_transition', async () => {
     const seeded = booking({ id: 'b-reschedule-wrong-state', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z' });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const response = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, validNewStart), context);
     expect(response.status).toBe(409);
@@ -473,7 +473,7 @@ describe('POST /reschedule (customer, spec §11)', () => {
   it('moves tokens_expire_at to (new endsAt + tokenExpiryDays) on a LATER reschedule', async () => {
     const seeded = booking({ id: 'b-reschedule-expiry-later', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z' });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const newStart = '2026-06-15T10:00:00.000Z'; // later than the original 09:00 start, still on-grid
     const response = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, newStart), context);
@@ -487,7 +487,7 @@ describe('POST /reschedule (customer, spec §11)', () => {
   it('moves tokens_expire_at to (new endsAt + tokenExpiryDays) on an EARLIER reschedule', async () => {
     const seeded = booking({ id: 'b-reschedule-expiry-earlier', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z' });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const newStart = '2026-06-15T08:00:00.000Z'; // earlier than the original 09:00 start, still on-grid
     const response = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, newStart), context);

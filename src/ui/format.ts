@@ -87,9 +87,9 @@ export function icsDataUrl(event: CalendarEvent): string {
   const ics = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//bookkit//EN',
+    'PRODID:-//reserva//EN',
     'BEGIN:VEVENT',
-    `UID:${calendarStamp(event.start)}-bookkit`,
+    `UID:${calendarStamp(event.start)}-reserva`,
     `DTSTAMP:${calendarStamp(event.start)}`,
     `DTSTART:${calendarStamp(event.start)}`,
     `DTEND:${calendarStamp(event.end)}`,

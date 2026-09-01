@@ -6,7 +6,7 @@ import { pickupOptionFor, resolveService } from '../core/config';
 import type { PaymentProvider, SessionStatus, PaymentEventParsed } from '../core/events';
 import { priceFor } from '../core/pricing';
 import { requestText, STRIPE_WEBHOOK_BODY_LIMIT_BYTES } from '../http';
-import type { BookkitResolvedRouteConfig } from '../routes-manifest';
+import type { ReservaResolvedRouteConfig } from '../routes-manifest';
 
 export interface StripeClient {
   checkout: { sessions: {
@@ -227,7 +227,7 @@ function isChargeAlreadyRefundedError(error: unknown): boolean {
   return error instanceof Stripe.errors.StripeInvalidRequestError && error.code === 'charge_already_refunded';
 }
 
-function defaultSuccessUrl(config: ClientConfig, routePaths?: BookkitResolvedRouteConfig['paths']): string {
+function defaultSuccessUrl(config: ClientConfig, routePaths?: ReservaResolvedRouteConfig['paths']): string {
   return `${config.business.url.replace(/\/$/, '')}${routePaths?.confirmationPage ?? '/booking-confirmation'}?session_id=${checkoutSessionPlaceholder}`;
 }
 
@@ -337,7 +337,7 @@ export class StripeProvider implements PaymentProvider {
   async createCheckout(
     booking: Booking,
     config: ClientConfig,
-    routePaths?: BookkitResolvedRouteConfig['paths'],
+    routePaths?: ReservaResolvedRouteConfig['paths'],
   ): Promise<{ url: string; sessionRef: string }> {
     const service = resolveService(config, booking.serviceSlug);
     const nameCallback = this.options.getServiceName
@@ -383,7 +383,7 @@ export class StripeProvider implements PaymentProvider {
     }
     // BK-PAY-002: a deterministic key per hold (not per call) so a lost response and a retried
     // call both land on the same Stripe session instead of minting a second, orphaned one.
-    const idempotencyKey = `bookkit-checkout-${booking.id}`;
+    const idempotencyKey = `reserva-checkout-${booking.id}`;
     const session = await this.createSession(params, idempotencyKey);
     if (!session.url) throw new Error('Stripe Checkout Session did not include a URL');
     return { url: session.url, sessionRef: session.id };
@@ -457,11 +457,15 @@ export class StripeProvider implements PaymentProvider {
   }
 
   async refund(paymentRef: string, expectedAmountMinor: number): Promise<{ refundRef: string; amountMinor: number }> {
-    const idempotencyKey = `bookkit-refund-${paymentRef}`;
+    // This marker is persisted on the Stripe Refund object and is the only evidence
+    // findExistingRefund can match after a crash mid-create, so its shape is an external contract:
+    // a refund created under a previous marker shape stays unmatchable and surfaces as an operator
+    // incident instead of a silent double refund (Stripe refuses to over-refund a charge).
+    const idempotencyKey = `reserva-refund-${paymentRef}`;
     let created: Stripe.Refund;
     try {
       created = await this.stripe.refunds.create(
-        { payment_intent: paymentRef, metadata: { bookkit_refund_key: idempotencyKey } },
+        { payment_intent: paymentRef, metadata: { reserva_refund_key: idempotencyKey } },
         { idempotencyKey },
       );
     } catch (error) {
@@ -492,7 +496,7 @@ export class StripeProvider implements PaymentProvider {
       const matched = list.data.find((candidate) => (
         candidate.status === 'succeeded'
         && candidate.amount === expectedAmountMinor
-        && candidate.metadata?.bookkit_refund_key === idempotencyKey
+        && candidate.metadata?.reserva_refund_key === idempotencyKey
       ));
       return matched ? { refundRef: matched.id, amountMinor: expectedAmountMinor } : null;
     } catch {

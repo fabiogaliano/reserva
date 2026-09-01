@@ -2,18 +2,18 @@ import { env } from 'cloudflare:workers';
 import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { runOwedMutationSideEffects } from '../../src/confirmation';
-import { createBookkitContext } from '../../src/context';
+import { createReservaContext } from '../../src/context';
 import { createBookingRepository, HoldLimitExceededError, type SideEffectOperationIdentity, type SideEffectOperationSeed } from '../../src/repo';
 import { config } from '../fixtures';
 import { providers } from '../fakes';
 
 interface TestEnv {
-  BOOKKIT_DB: D1Database;
+  RESERVA_DB: D1Database;
   TEST_MIGRATIONS: D1Migration[];
 }
 
 const bindings = env as unknown as TestEnv;
-const db = bindings.BOOKKIT_DB;
+const db = bindings.RESERVA_DB;
 const repo = createBookingRepository(db);
 
 beforeEach(async () => {
@@ -344,13 +344,13 @@ describe('D1 booking repository', () => {
 
   // BK-SEC-002: manage-token hashing, expiry, and revocation, against real SQLite (D1).
   describe('token hashing, expiry, and revocation (BK-SEC-002)', () => {
-    // A second repository instance bound to the SAME D1 database but with BOOKKIT_TOKEN_ENC_KEY
+    // A second repository instance bound to the SAME D1 database but with RESERVA_TOKEN_ENC_KEY
     // configured, so these tests can exercise the full "encrypt at insert, decrypt at read" round
     // trip that lets a later DB-loaded read (a confirmation email, the admin dashboard) regenerate
     // a working manage link — see migrations/0009_token_hashing.sql for why that's needed at all.
-    const encRepo = createBookingRepository(db, (name) => (name === 'BOOKKIT_TOKEN_ENC_KEY' ? 'test-only-token-encryption-secret' : undefined));
+    const encRepo = createBookingRepository(db, (name) => (name === 'RESERVA_TOKEN_ENC_KEY' ? 'test-only-token-encryption-secret' : undefined));
 
-    it('never stores a plaintext token for a new booking, even without BOOKKIT_TOKEN_ENC_KEY configured, and lookup still authenticates', async () => {
+    it('never stores a plaintext token for a new booking, even without RESERVA_TOKEN_ENC_KEY configured, and lookup still authenticates', async () => {
       const created = await repo.insertHold({
         id: 'booking-noenc-1', reference: 'BKT-2026-NOENC1', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
         startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
@@ -371,7 +371,7 @@ describe('D1 booking repository', () => {
       await expect(repo.getBookingByCancelToken('noenc-cancel-token', '2026-07-21T10:00:00.000Z')).resolves.toMatchObject({ id: created.id });
     });
 
-    it('with BOOKKIT_TOKEN_ENC_KEY configured: hashes for lookup, encrypts for link regeneration, denies the hash presented as a token, and enforces expiry + cancel-token-only revocation', async () => {
+    it('with RESERVA_TOKEN_ENC_KEY configured: hashes for lookup, encrypts for link regeneration, denies the hash presented as a token, and enforces expiry + cancel-token-only revocation', async () => {
       const created = await encRepo.insertHold({
         id: 'booking-hash-1', reference: 'BKT-2026-HASH1', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
         startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
@@ -646,10 +646,10 @@ describe('D1 booking repository', () => {
       expect(corruptRead!.cancelToken).toBe(original.cancel_token);
 
       // Foreign-key: restore the untouched ciphertext, then read the SAME row through a DIFFERENT
-      // repository instance configured with a different BOOKKIT_TOKEN_ENC_KEY. AES-GCM's auth tag
+      // repository instance configured with a different RESERVA_TOKEN_ENC_KEY. AES-GCM's auth tag
       // rejects it just as decisively as a tampered blob.
       await db.prepare('UPDATE bookings SET cancel_token_enc = ? WHERE id = ?').bind(original.cancel_token_enc, created.id).run();
-      const wrongKeyRepo = createBookingRepository(db, (name) => (name === 'BOOKKIT_TOKEN_ENC_KEY' ? 'a-totally-different-secret' : undefined));
+      const wrongKeyRepo = createBookingRepository(db, (name) => (name === 'RESERVA_TOKEN_ENC_KEY' ? 'a-totally-different-secret' : undefined));
       const foreignRead = await wrongKeyRepo.getBookingById(created.id);
       expect(foreignRead).not.toBeNull();
       expect(foreignRead!.cancelToken).not.toBe('corrupt-cancel-token');
@@ -707,7 +707,7 @@ describe('mutation side-effect outbox on real D1', () => {
     const current = await repo.getBookingById('mutation-stale-drain');
     if (!current) throw new Error('seed booking missing');
     let sends = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db, repo, clock: () => new Date('2026-07-21T08:06:00.000Z'),
       providers: providers({ email: { send: async () => { sends += 1; } } }),
     });

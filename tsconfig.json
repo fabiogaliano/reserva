@@ -10,7 +10,7 @@
   },
   "include": ["src", "tests", "examples", "scripts", "vitest.config.ts", "vitest.workers.config.ts", "vitest.component.config.ts"],
   // tests/pack-fixture is a standalone consumer project (its own tsconfig.json, typechecked by
-  // scripts/pack-test.ts against the packed tarball) whose files import the bare `bookkit`
+  // scripts/pack-test.ts against the packed tarball) whose files import the bare `@reservajs/astro`
   // specifier on purpose, exercising package self-resolution the way a real install would rather
   // than this repo's own source — that would not resolve under the root project's tsconfig.
   "exclude": ["tests/pack-fixture"]

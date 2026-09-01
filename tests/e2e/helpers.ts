@@ -89,7 +89,7 @@ export async function createBooking(page: Page, opts: BookingOpts) {
 // ships it when a reschedule is possible, so the native datetime-local fallback is not reachable
 // from a JS-enabled browser and isn't exercised here.
 export async function rescheduleViaManagePage(page: Page, currentStart: string): Promise<{ newStart: string }> {
-  const form = page.locator('[data-bookkit-reschedule]');
+  const form = page.locator('[data-reserva-reschedule]');
   const service = await form.getAttribute('data-service');
   const quantity = await form.getAttribute('data-quantity');
   const from = await form.getAttribute('data-from');

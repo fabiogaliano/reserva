@@ -5,13 +5,13 @@
 // with cally's module-scope identifiers in the concatenated file.
 
 export const manageEnhancerJs = `(() => {
-  const form = document.querySelector('[data-bookkit-reschedule]');
+  const form = document.querySelector('[data-reserva-reschedule]');
   if (!form || !('customElements' in window)) return;
   const ds = form.dataset;
   const input = form.querySelector('input[name="newStart"]');
-  const nativeField = form.querySelector('[data-bookkit-native-start]');
+  const nativeField = form.querySelector('[data-reserva-native-start]');
   const submit = form.querySelector('button[type="submit"]');
-  const island = form.querySelector('[data-bookkit-i18n]');
+  const island = form.querySelector('[data-reserva-i18n]');
   if (!input || !nativeField || !submit || !ds.endpoint) return;
   let i18n = {};
   try { i18n = JSON.parse(island ? island.textContent : '{}'); } catch {}

@@ -10,7 +10,7 @@ import { createRouteContext } from '../../../../../src/routes/route-context';
 // e2e suite would need precise hold-expiry/capacity-race timing unrelated to what this fixture is
 // proving — the admin UI's "no Retry button for oversell" rendering and the server-side rejection
 // of a forged retry, both driven from real incident-ledger state. Never copied into a real
-// bookkit site — see outbox.json.ts's header comment for the same convention.
+// reserva site — see outbox.json.ts's header comment for the same convention.
 export const POST: APIRoute = async ({ request, locals }: APIContext) => {
   const context = await createRouteContext({ request, locals });
   // Callers hold the customer-visible reference, not the internal id (the feed endpoint that

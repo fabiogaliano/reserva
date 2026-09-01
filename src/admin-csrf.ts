@@ -10,7 +10,7 @@
 //      every rendered admin form and required on every admin POST. Covers the case where
 //      Sec-Fetch-Site/Origin don't survive whatever sits between the browser and this Worker (that
 //      Cloudflare Access preserves them unmodified is not documented as a guarantee — UNVERIFIED).
-//      Requires a real secret (BOOKKIT_CSRF_SECRET) to be active at all — see csrfSecret below for
+//      Requires a real secret (RESERVA_CSRF_SECRET) to be active at all — see csrfSecret below for
 //      why, and for what happens when one isn't configured.
 // Both are wired only into the admin mutation route — never the public booking API
 // (checkout/status), which is intentionally cross-origin-embeddable (the widget can be embedded on
@@ -19,7 +19,7 @@
 import { constantTimeEqual } from './http';
 
 const CSRF_TOKEN_TTL_MS = 60 * 60_000; // Outlives a normal admin editing session; short enough to bound a leaked-token window.
-const CSRF_SECRET_ENV_NAME = 'BOOKKIT_CSRF_SECRET';
+const CSRF_SECRET_ENV_NAME = 'RESERVA_CSRF_SECRET';
 
 // Exported so tests can compute "just expired"/"still valid" boundaries without duplicating the
 // constant.
@@ -27,7 +27,7 @@ export const ADMIN_CSRF_TOKEN_TTL_MS = CSRF_TOKEN_TTL_MS;
 
 export type AdminCsrfSecretLookup = (name: string) => string | undefined | Promise<string | undefined>;
 
-// Deliberately narrower than BookkitContext (just the two fields this module actually reads) so it
+// Deliberately narrower than ReservaContext (just the two fields this module actually reads) so it
 // stays independently testable and has no dependency on ./context.
 export interface AdminCsrfContext {
   config: { admin: { access?: { aud: string } } };
@@ -56,10 +56,10 @@ async function hmacSign(secret: string, message: string): Promise<string> {
 // alone to a stable derivation of whichever admin auth strategy is actually configured — the Access
 // application's Audience tag when `config.admin.access` is set, or the literal 'custom' otherwise,
 // so a deployment using a custom `adminAuth` still gets a distinct key from an Access deployment
-// sharing the same BOOKKIT_CSRF_SECRET. Neither value is secret: `aud` appears in the `aud` claim of
+// sharing the same RESERVA_CSRF_SECRET. Neither value is secret: `aud` appears in the `aud` claim of
 // every Access-issued JWT and in checked-in config, and 'custom' is a fixed literal — an attacker
 // does not need to compromise anything to learn either. An earlier version of this function used
-// accessAud as the HMAC key on its own whenever BOOKKIT_CSRF_SECRET was unset, which made the
+// accessAud as the HMAC key on its own whenever RESERVA_CSRF_SECRET was unset, which made the
 // "signed" token forgeable by anyone who knew the deployment's accessAud (i.e. effectively
 // everyone), defeating layer 2 while looking like a defense. This derivation is only ever mixed into
 // the key alongside a real secret below, for cheap extra domain separation — never as a substitute
@@ -69,15 +69,15 @@ function csrfDomainSeparator(context: AdminCsrfContext): string {
 }
 
 // No other genuinely-secret value is reachable here. Checked at the mint/verify call sites
-// (handleAdminGet/handleAdminPost in src/handlers/index.ts, both fed by BookkitContext):
+// (handleAdminGet/handleAdminPost in src/handlers/index.ts, both fed by ReservaContext):
 //   - Stripe's secretKey/webhookSecret are constructor options passed straight into StripeProvider
-//     (src/providers/stripe.ts) — they never surface on BookkitContext or ClientConfig, so they are
+//     (src/providers/stripe.ts) — they never surface on ReservaContext or ClientConfig, so they are
 //     not reachable from here without reaching into a specific payment provider's internals (which
 //     would break for any non-Stripe or fake PaymentProvider).
-//   - context.secrets can read BOOKKIT_OPERATOR_SECRET, but it's optional (unset for any deployment
+//   - context.secrets can read RESERVA_OPERATOR_SECRET, but it's optional (unset for any deployment
 //     that doesn't use the operator endpoints) and mixing an unrelated feature's secret into CSRF signing
 //     crosses trust domains for no real gain (see docs/decisions.md #4).
-// So the only fit-for-purpose secret is BOOKKIT_CSRF_SECRET itself. When it isn't configured, there
+// So the only fit-for-purpose secret is RESERVA_CSRF_SECRET itself. When it isn't configured, there
 // is no secret to sign with — this returns undefined and mint/verify below take the token layer
 // fully offline (see their comments) rather than emit or accept a token that only *looks* signed.
 // Layer 1 (adminOriginAllowed) is unconditional and keeps blocking the attack on its own either way.
@@ -101,7 +101,7 @@ function isCsrfPayload(value: unknown): value is CsrfPayload {
 //
 // Returns undefined when no real secret is configured (see csrfSecret above) — the token layer is
 // then inert: handleAdminGet still renders the form (with no/empty token field, see
-// src/handlers/index.ts) and relies on layer 1 (adminOriginAllowed) alone. BOOKKIT_CSRF_SECRET must
+// src/handlers/index.ts) and relies on layer 1 (adminOriginAllowed) alone. RESERVA_CSRF_SECRET must
 // be set for layer 2 to actually run.
 export async function mintAdminCsrfToken(context: AdminCsrfContext, sub: string, now: number): Promise<string | undefined> {
   const secret = await csrfSecret(context);

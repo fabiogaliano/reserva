@@ -163,7 +163,7 @@
   "admin.sectionLegal": "Informação legal",
   "admin.sectionLegalHint": "Documentos associados ao processo de reserva.",
   "admin.sectionReadonly": "Definições de implementação",
-  "admin.readonlyHint": "Estas definições não podem ser alteradas aqui. Edite o ficheiro de configuração do Bookkit e volte a implementar o site.",
+  "admin.readonlyHint": "Estas definições não podem ser alteradas aqui. Edite o ficheiro de configuração do Reserva e volte a implementar o site.",
   "admin.modified": "Alterado",
   "admin.default": "Predefinição: {v}",
   "admin.resetField": "Repor",

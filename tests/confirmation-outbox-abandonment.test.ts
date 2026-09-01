@@ -1,8 +1,8 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { runOwedMutationSideEffects } from '../src/confirmation';
-import type { BookkitLogger, BookkitProviders } from '../src/context';
-import { createBookkitContext } from '../src/context';
+import type { ReservaLogger, ReservaProviders } from '../src/context';
+import { createReservaContext } from '../src/context';
 import { handleStatus, handlePaymentWebhook } from '../src/handlers';
 import { ProviderFailure } from '../src/provider-failure';
 import { booking, config } from './fixtures';
@@ -11,7 +11,7 @@ import { fakeRepository, providers, sideEffectOperation, seedSettledConfirmation
 
 const seedFor = (identity: SideEffectOperationIdentity) => ({ ...identity, eventPayloadJson: null, eventIdPrefix: null });
 
-function paidWebhookProviders(bookingId: string, sessionRef: string, overrides: Partial<BookkitProviders> = {}): BookkitProviders {
+function paidWebhookProviders(bookingId: string, sessionRef: string, overrides: Partial<ReservaProviders> = {}): ReservaProviders {
   return providers({
     payments: {
       createCheckout: async () => ({ url: '', sessionRef: '' }),
@@ -26,7 +26,7 @@ function paidWebhookProviders(bookingId: string, sessionRef: string, overrides: 
   });
 }
 
-function capturingLogger(): { logger: BookkitLogger; errors: Array<[string, Record<string, unknown> | undefined]> } {
+function capturingLogger(): { logger: ReservaLogger; errors: Array<[string, Record<string, unknown> | undefined]> } {
   const errors: Array<[string, Record<string, unknown> | undefined]> = [];
   return {
     errors,
@@ -47,7 +47,7 @@ describe('outbox permanent-failure classification and attempt cap (plan 016)', (
     let emailCalls = 0;
     let hookCalls = 0;
     const { logger, errors } = capturingLogger();
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo, logger,
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: paidWebhookProviders(seeded.id, 'cs_abandon_401', {
@@ -64,7 +64,7 @@ describe('outbox permanent-failure classification and attempt cap (plan 016)', (
     expect(hookCalls).toBe(1);
     expect(sideEffectOperation(repo, seeded.id, { family: 'email_confirmation' })).toMatchObject({ status: 'abandoned', attemptCount: 1 });
     expect(errors).toHaveLength(1);
-    expect(errors[0]?.[0]).toBe('bookkit side effect operation abandoned');
+    expect(errors[0]?.[0]).toBe('reserva side effect operation abandoned');
     expect(errors[0]?.[1]).toMatchObject({
       bookingId: seeded.id, operation: 'email_confirmation', provider: 'email', status: 401, attemptCount: 1, reason: 'permanent_failure',
     });
@@ -91,7 +91,7 @@ describe('outbox permanent-failure classification and attempt cap (plan 016)', (
     await repo.recordMutationSideEffectOperations(seeded.id, [seedFor(identity)], '2026-06-14T08:00:00.000Z');
     let calls = 0;
     const { logger, errors } = capturingLogger();
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo, logger,
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: providers({ email: { send: async () => { calls += 1; throw new ProviderFailure({ status: 503, message: 'gateway timeout' }); } } }),
@@ -125,7 +125,7 @@ describe('outbox permanent-failure classification and attempt cap (plan 016)', (
     Object.assign(operation, { status: 'failed', attemptCount: 8 });
 
     let calls = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo,
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: providers({ email: { send: async () => { calls += 1; throw new ProviderFailure({ status: 503, message: 'gateway timeout' }); } } }),
@@ -153,7 +153,7 @@ describe('outbox permanent-failure classification and attempt cap (plan 016)', (
     const identity: SideEffectOperationIdentity = { family: 'hook', name: 'ops', event: 'booking.cancelled_by_customer' };
     await repo.recordMutationSideEffectOperations(seeded.id, [seedFor(identity)], '2026-06-14T08:00:00.000Z');
     let calls = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo,
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: providers(),
@@ -177,7 +177,7 @@ describe('outbox permanent-failure classification and attempt cap (plan 016)', (
     const identity: SideEffectOperationIdentity = { family: 'hook', name: 'ops', event: 'booking.confirmed' };
     let pushCalls = 0;
     const { logger, errors } = capturingLogger();
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo, logger,
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: providers(),

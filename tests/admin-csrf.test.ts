@@ -4,10 +4,10 @@ import { ADMIN_CSRF_TOKEN_TTL_MS, adminOriginAllowed, mintAdminCsrfToken, verify
 const ADMIN_URL = 'https://example.test/api/booking/admin';
 const now = Date.parse('2026-06-14T08:00:00.000Z');
 
-// BOOKKIT_CSRF_SECRET configured: this is the "layer 2 active" fixture used by most of this file —
+// RESERVA_CSRF_SECRET configured: this is the "layer 2 active" fixture used by most of this file —
 // production deployments must set this secret for the token to actually protect anything (see
 // src/admin-csrf.ts csrfSecret).
-const secrets = async (name: string) => (name === 'BOOKKIT_CSRF_SECRET' ? 'unit-test-secret' : undefined);
+const secrets = async (name: string) => (name === 'RESERVA_CSRF_SECRET' ? 'unit-test-secret' : undefined);
 const context = { config: { admin: { access: { aud: 'test-audience' } } }, secrets };
 
 function requestWith(headers: HeadersInit): Request {
@@ -72,7 +72,7 @@ describe('adminOriginAllowed (BK-SEC-001 layer 1: Fetch-Metadata / Origin enforc
   });
 });
 
-describe('mintAdminCsrfToken / verifyAdminCsrfToken (BK-SEC-001 layer 2: per-session CSRF token, BOOKKIT_CSRF_SECRET configured)', () => {
+describe('mintAdminCsrfToken / verifyAdminCsrfToken (BK-SEC-001 layer 2: per-session CSRF token, RESERVA_CSRF_SECRET configured)', () => {
   it('verifies a freshly minted token for the same subject', async () => {
     const token = await mintAdminCsrfToken(context, 'ops@example.test', now);
     await expect(verifyAdminCsrfToken(context, token, 'ops@example.test', now)).resolves.toBe(true);
@@ -94,8 +94,8 @@ describe('mintAdminCsrfToken / verifyAdminCsrfToken (BK-SEC-001 layer 2: per-ses
     await expect(verifyAdminCsrfToken(context, token, 'someone-else@example.test', now)).resolves.toBe(false);
   });
 
-  it('rejects a token minted under a different BOOKKIT_CSRF_SECRET (different key material)', async () => {
-    const otherSecretContext = { config: context.config, secrets: async (name: string) => (name === 'BOOKKIT_CSRF_SECRET' ? 'a-different-secret' : undefined) };
+  it('rejects a token minted under a different RESERVA_CSRF_SECRET (different key material)', async () => {
+    const otherSecretContext = { config: context.config, secrets: async (name: string) => (name === 'RESERVA_CSRF_SECRET' ? 'a-different-secret' : undefined) };
     const token = await mintAdminCsrfToken(otherSecretContext, 'ops@example.test', now);
     await expect(verifyAdminCsrfToken(context, token, 'ops@example.test', now)).resolves.toBe(false);
   });
@@ -108,7 +108,7 @@ describe('mintAdminCsrfToken / verifyAdminCsrfToken (BK-SEC-001 layer 2: per-ses
 
   // Plan 025 (design decision 5): a deployment with no `config.admin.access` at all (a custom
   // `adminAuth`) derives the literal 'custom' instead of an aud — proves it gets genuinely distinct
-  // key material from an Access deployment sharing the same BOOKKIT_CSRF_SECRET, not an accidental
+  // key material from an Access deployment sharing the same RESERVA_CSRF_SECRET, not an accidental
   // collision (e.g. both resolving to the empty string).
   it('derives a distinct key for a custom (no admin.access) deployment than for an Access deployment sharing the same secret', async () => {
     const customContext = { config: { admin: {} }, secrets };
@@ -133,7 +133,7 @@ describe('mintAdminCsrfToken / verifyAdminCsrfToken (BK-SEC-001 layer 2: per-ses
   });
 
   // [P1 finding] BK-SEC-001 review: the token used to be HMAC'd with accessAud alone whenever
-  // BOOKKIT_CSRF_SECRET was unset. accessAud is not secret (it's the Access JWT `aud` claim, visible
+  // RESERVA_CSRF_SECRET was unset. accessAud is not secret (it's the Access JWT `aud` claim, visible
   // to anyone who has ever completed an Access login), so that key was forgeable by any attacker who
   // could read a JWT. This proves a token forged that way — signed using ONLY the (public)
   // accessAud as the HMAC key — is rejected once a real secret is configured, i.e. the real
@@ -144,7 +144,7 @@ describe('mintAdminCsrfToken / verifyAdminCsrfToken (BK-SEC-001 layer 2: per-ses
   });
 });
 
-describe('mintAdminCsrfToken / verifyAdminCsrfToken without BOOKKIT_CSRF_SECRET (BK-SEC-001 finding 1 fix: layer 2 fails open, layer 1 does not)', () => {
+describe('mintAdminCsrfToken / verifyAdminCsrfToken without RESERVA_CSRF_SECRET (BK-SEC-001 finding 1 fix: layer 2 fails open, layer 1 does not)', () => {
   const noSecretContext = { config: { admin: { access: { aud: 'test-audience' } } } };
 
   it('mintAdminCsrfToken returns undefined — no real secret means no token is emitted', async () => {

@@ -1,12 +1,12 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { ConfirmationInProgressError, confirmBookingFromPayment } from '../src/confirmation';
-import { createBookkitContext, type BookkitProviders } from '../src/context';
+import { createReservaContext, type ReservaProviders } from '../src/context';
 import { handleStatus, handlePaymentWebhook } from '../src/handlers';
 import { booking, config } from './fixtures';
 import { fakeRepository, providers, seedSideEffectOperation, sideEffectOperation } from './fakes';
 
-function paidWebhookProviders(bookingId: string, sessionRef: string, overrides: Partial<BookkitProviders> = {}) {
+function paidWebhookProviders(bookingId: string, sessionRef: string, overrides: Partial<ReservaProviders> = {}) {
   return providers({
     payments: {
       createCheckout: async () => ({ url: '', sessionRef: '' }),
@@ -36,7 +36,7 @@ describe('confirmation side-effect outbox', () => {
     };
     const eventIds = new Set<string>();
     let calendarCalls = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -77,7 +77,7 @@ describe('confirmation side-effect outbox', () => {
       return resolveOperation(input);
     };
     let emailCalls = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -104,7 +104,7 @@ describe('confirmation side-effect outbox', () => {
       status: 'succeeded', attemptCount: 1, attemptedAt: createdAt, resolvedAt: createdAt, createdAt, updatedAt: createdAt,
     });
     let calendarCalls = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -130,7 +130,7 @@ describe('confirmation side-effect outbox', () => {
   it('records an oversell incident when an expired paid hold cannot be capacity-checked', async () => {
     const seeded = booking({ id: 'b-expired-capacity-outage', status: 'expired', holdExpiresAt: null });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -156,7 +156,7 @@ describe('confirmation side-effect outbox', () => {
     const seeded = booking({ id: 'b-pre-confirmation-lease-loss', status: 'expired', holdExpiresAt: null });
     const repo = fakeRepository([seeded]);
     repo.confirmWithSideEffectOperations = async () => null;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -177,7 +177,7 @@ describe('confirmation side-effect outbox', () => {
       customerEmail: null,
     });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -236,7 +236,7 @@ describe('confirmation side-effect outbox', () => {
         deleteEvent: async () => undefined,
       },
     });
-    const context = () => createBookkitContext({
+    const context = () => createReservaContext({
       config,
       db: {} as D1Database,
       repo,

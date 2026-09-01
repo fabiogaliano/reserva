@@ -1,5 +1,5 @@
 import { escapeHtml } from '../http';
-import type { BookkitMessages } from './messages';
+import type { ReservaMessages } from './messages';
 import type { ThemePreference } from './theme';
 
 export interface PageShellOptions {
@@ -28,7 +28,7 @@ export interface PageShellOptions {
   skipLabel?: string;
 }
 
-// Shared document chrome for every server-rendered bookkit page. Styling comes exclusively from
+// Shared document chrome for every server-rendered reserva page. Styling comes exclusively from
 // the linked stylesheet (the assetsCss route) — no inline styles or scripts — so these pages work
 // unchanged under a strict style-src/script-src 'self' CSP.
 export function pageShell(options: PageShellOptions): string {
@@ -54,9 +54,9 @@ export function pageShell(options: PageShellOptions): string {
 // Builds the per-viewer theme toggle: a button the enhancer reveals and wires (see ui/theme-toggle).
 // Rendered hidden with the current mode + labels as data-* so the enhancer needs no separate i18n
 // island. `theme` is the viewer's forced choice; undefined renders as "System" (follow the OS).
-export function themeToggle(messages: BookkitMessages, theme: ThemePreference | undefined): string {
+export function themeToggle(messages: ReservaMessages, theme: ThemePreference | undefined): string {
   const mode = theme ?? 'system';
-  return `<button type="button" class="bk-theme-toggle" data-bookkit-theme-toggle hidden`
+  return `<button type="button" class="bk-theme-toggle" data-reserva-theme-toggle hidden`
     + ` data-mode="${mode}"`
     + ` data-aria="${escapeHtml(messages['theme.toggle'])}"`
     + ` data-l-system="${escapeHtml(messages['theme.system'])}"`
@@ -76,8 +76,8 @@ export function statusToneOf(status: string): string | undefined {
   return statusTone[status];
 }
 
-export function statusBadge(status: string, messages: BookkitMessages): string {
-  const key = `status.${status}` as keyof BookkitMessages;
+export function statusBadge(status: string, messages: ReservaMessages): string {
+  const key = `status.${status}` as keyof ReservaMessages;
   const label = (messages[key] as string | undefined) ?? status;
   const tone = statusTone[status];
   return `<span class="bk-badge${tone ? ` bk-badge--${tone}` : ''}">${escapeHtml(label)}</span>`;

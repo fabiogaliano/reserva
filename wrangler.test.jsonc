@@ -1,11 +1,11 @@
 {
-  "name": "bookkit-tests",
+  "name": "reserva-tests",
   "main": "tests/workers/worker.ts",
   "compatibility_date": "2026-07-21",
   "d1_databases": [
     {
-      "binding": "BOOKKIT_DB",
-      "database_name": "bookkit-tests",
+      "binding": "RESERVA_DB",
+      "database_name": "reserva-tests",
       "database_id": "00000000-0000-0000-0000-000000000000"
     }
   ]

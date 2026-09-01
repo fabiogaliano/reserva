@@ -2,7 +2,7 @@
 // server-rendered pages (confirmation/manage/admin) can reference it as an external same-origin
 // file — no inline <style>, which keeps consumers' hash- or 'self'-based CSP policies intact.
 // Every value routes through a --bk-* custom property so a client site can rebrand by overriding
-// tokens in its own CSS without touching bookkit.
+// tokens in its own CSS without touching reserva.
 //
 // Visual direction: Linear-style — indigo #5E6AD2 accent, cool neutral surfaces, hairline
 // borders, tight sans typography, restrained shadows, and a near-black masthead with a soft

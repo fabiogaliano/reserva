@@ -1,7 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import type { MetadataField } from '../src/core/config';
-import { createBookkitContext } from '../src/context';
+import { createReservaContext } from '../src/context';
 import { handleManage } from '../src/handlers';
 import { renderManagePage } from '../src/components/manage-page';
 import { utcToLocalIso } from '../src/core/time';
@@ -11,7 +11,7 @@ import { fakeRepository, providers } from './fakes';
 const clock = () => new Date('2026-06-14T08:00:00.000Z');
 
 function manageContext(seed: ReturnType<typeof booking>[]) {
-  return createBookkitContext({
+  return createReservaContext({
     config,
     db: {} as D1Database,
     repo: fakeRepository(seed),
@@ -88,7 +88,7 @@ describe('GET /manage (spec §11)', () => {
       startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
       meetingPointId: 'no-longer-declared', meetingPointLabel: 'The Old Dock',
     });
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config: multiPointConfig,
       db: {} as D1Database,
       repo: fakeRepository([chosenSecond, removedId]),
@@ -137,7 +137,7 @@ describe('GET /manage (spec §11)', () => {
     };
 
     function mazeContext(seed: ReturnType<typeof booking>[]) {
-      return createBookkitContext({ config: mazeConfig, db: {} as D1Database, repo: fakeRepository(seed), clock, providers: providers() });
+      return createReservaContext({ config: mazeConfig, db: {} as D1Database, repo: fakeRepository(seed), clock, providers: providers() });
     }
 
     it('reports the declared option\'s requiresAddress/usesMeetingPoint in the summary', async () => {
@@ -291,7 +291,7 @@ describe('metadata on the manage page (plan 024)', () => {
   const XSS_PAYLOAD = '<script>window.__xss = true;</script>"><img src=x onerror=alert(1)>';
 
   function metadataContext(seed: ReturnType<typeof booking>[]) {
-    return createBookkitContext({ config: metadataConfig, db: {} as D1Database, repo: fakeRepository(seed), clock, providers: providers() });
+    return createReservaContext({ config: metadataConfig, db: {} as D1Database, repo: fakeRepository(seed), clock, providers: providers() });
   }
 
   it('shows labeled metadata rows (boolean as the existing yes/no copy pair) for both customer and operator roles', async () => {

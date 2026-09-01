@@ -1,13 +1,13 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "bookkit-pack-fixture-scheduled",
+  "name": "reserva-pack-fixture-scheduled",
   "main": "scheduled.ts",
   "compatibility_date": "2026-08-14",
   "compatibility_flags": ["nodejs_compat"],
   "d1_databases": [
     {
-      "binding": "BOOKKIT_DB",
-      "database_name": "bookkit-pack-fixture",
+      "binding": "RESERVA_DB",
+      "database_name": "reserva-pack-fixture",
       "database_id": "00000000-0000-0000-0000-000000000000"
     }
   ],

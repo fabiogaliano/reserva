@@ -5,8 +5,8 @@ import { escapeHtml } from '../http';
 import { cssAssetHref } from '../ui/asset-hrefs';
 import { formatDateParts, formatDateTime, formatPrice, googleCalendarUrl, icsDataUrl } from '../ui/format';
 import { factList, pageShell, themeToggle } from '../ui/layout';
-import { formatMessage, resolveMessages, type BookkitMessages } from '../ui/messages';
-import type { BookkitContext } from '../context';
+import { formatMessage, resolveMessages, type ReservaMessages } from '../ui/messages';
+import type { ReservaContext } from '../context';
 import { createRouteContext } from './route-context';
 
 export const prerender = false;
@@ -16,11 +16,11 @@ export const prerender = false;
 // here at compile time instead of silently dropping a row from the ticket.
 type ConfirmedBooking = NonNullable<StatusResponse['booking']>;
 
-function brandLine(context: Pick<BookkitContext, 'config'>): string {
+function brandLine(context: Pick<ReservaContext, 'config'>): string {
   return `<p class="bk-brand"><a href="${escapeHtml(context.config.business.url)}">${escapeHtml(context.config.business.name)}</a></p>`;
 }
 
-function confirmedBody(context: Pick<BookkitContext, 'config'>, messages: BookkitMessages, booking: ConfirmedBooking, locale: string): string {
+function confirmedBody(context: Pick<ReservaContext, 'config'>, messages: ReservaMessages, booking: ConfirmedBooking, locale: string): string {
   const timezone = context.config.business.timezone;
   const start = typeof booking.start === 'string' ? booking.start : '';
   const end = typeof booking.end === 'string' ? booking.end : start;
@@ -85,7 +85,7 @@ function simpleBody(body: string, options: { pending?: boolean; actionHtml?: str
 }
 
 export function confirmationPage(
-  context: Pick<BookkitContext, 'config' | 'routeConfig' | 'viewerTheme'>,
+  context: Pick<ReservaContext, 'config' | 'routeConfig' | 'viewerTheme'>,
   payload: StatusResponse,
   requestUrl: string,
   requestedLocale: string | null,

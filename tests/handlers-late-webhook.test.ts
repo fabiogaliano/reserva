@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import { createBookkitContext } from '../src/context';
+import { createReservaContext } from '../src/context';
 import { handlePaymentWebhook } from '../src/handlers';
 import { booking, config } from './fixtures';
 import { fakeRepository, providers, seedSettledConfirmation } from './fakes';
@@ -28,7 +28,7 @@ describe('late checkout.session.completed on an already-expired hold (spec §6)'
     let calendarCreates = 0;
     let emails = 0;
     const warnings: Array<[string, Record<string, unknown> | undefined]> = [];
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config: { ...config, capacity: { default: 1 } },
       db: {} as D1Database,
       repo,

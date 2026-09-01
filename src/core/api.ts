@@ -1,7 +1,7 @@
 // Plan 027 (design decision 2): the HTTP contract, in one place. Every handler response type and
 // the error envelope live here and are exported from `@reservajs/astro/core`, so a consumer types
 // its client against the same declarations the handlers return instead of re-declaring them (the
-// first consumer's BookkitClient.ts re-declared all of them, which is what let them drift).
+// first consumer's ReservaClient.ts re-declared all of them, which is what let them drift).
 //
 // Rules this file follows (direction doc §8):
 // - one truth per fact: booking-bearing payloads are expressed in terms of `WireBooking`, the one

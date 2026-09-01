@@ -11,7 +11,7 @@ import { DEFAULT_TOKEN_EXPIRY_DAYS } from '../core/config';
 import { occupancyFor } from '../core/occupancy';
 import { localDateKey, parseUtcInstant } from '../core/time';
 import { cancellationSideEffectSeeds, dispatchMutation, mutationSideEffectSeeds, runOwedMutationSideEffects } from '../confirmation';
-import type { BookkitContext } from '../context';
+import type { ReservaContext } from '../context';
 import { getSecret, nowIso } from '../context';
 import { resumeClaimedOperatorCancellation } from '../operator-cancellation';
 import type { RefundChoice } from '../repo';
@@ -24,15 +24,15 @@ import { tokenBooking } from './status-manage';
 // The shared-secret alternative to a per-booking operator token on the operator endpoints. Declared
 // in the astro:env schema (src/integration.ts) and read through the same SecretLookup every other
 // secret uses; a deployment must still list it in the runtime's `secretBindings`.
-export const OPERATOR_SECRET_NAME = 'BOOKKIT_OPERATOR_SECRET';
+export const OPERATOR_SECRET_NAME = 'RESERVA_OPERATOR_SECRET';
 
-async function calendarPatch(context: BookkitContext, booking: Booking): Promise<void> {
+async function calendarPatch(context: ReservaContext, booking: Booking): Promise<void> {
   if (booking.calendarEventId && context.providers.calendar) {
     await context.providers.calendar.patchEvent(booking.calendarEventId, booking, context.config);
   }
 }
 
-export function handleCustomerCancel(request: Request, context: BookkitContext): Promise<Response> {
+export function handleCustomerCancel(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const body = await requestJson(request);
@@ -66,7 +66,7 @@ async function readNewStart(body: Record<string, unknown>): Promise<string> {
   return requireString(body.newStart, 'newStart');
 }
 
-async function rescheduleWithToken(context: BookkitContext, booking: Booking, newStart: string, operator: boolean): Promise<Booking> {
+async function rescheduleWithToken(context: ReservaContext, booking: Booking, newStart: string, operator: boolean): Promise<Booking> {
   const now = nowIso(context);
   if (booking.status !== 'confirmed') throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be rescheduled');
   if (!operator && !canRescheduleBooking(booking, now, context.config.booking.reschedule.cutoffHours, context.config.booking.reschedule.enabled)) throw new HttpError(403, 'past_cutoff', 'The reschedule deadline has passed');
@@ -117,7 +117,7 @@ async function rescheduleWithToken(context: BookkitContext, booking: Booking, ne
   return updated;
 }
 
-export function handleCustomerReschedule(request: Request, context: BookkitContext): Promise<Response> {
+export function handleCustomerReschedule(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const body = await requestJson(request);
@@ -128,7 +128,7 @@ export function handleCustomerReschedule(request: Request, context: BookkitConte
 }
 
 async function operatorBooking(
-  context: BookkitContext,
+  context: ReservaContext,
   request: Request,
   body: Record<string, unknown>,
   refundRecovery = false,
@@ -155,7 +155,7 @@ async function operatorBooking(
 // Plan 020: a thin HTTP-facing wrapper around the shared attemptRefund executor (src/refund-executor.ts)
 // — see that module's header comment for why the HTTP path calls it with no execution claim.
 async function resolvePendingRefund(
-  context: BookkitContext,
+  context: ReservaContext,
   booking: Booking,
   operationId: string,
   choice: RefundChoice,
@@ -177,7 +177,7 @@ async function resolvePendingRefund(
 // matches this request's own — a different-choice request must never drive (or silently agree
 // with) another request's Stripe call.
 async function reconcileCancelledRefund(
-  context: BookkitContext,
+  context: ReservaContext,
   booking: Booking,
   refund: 'full' | 'none',
 ): Promise<Response> {
@@ -218,7 +218,7 @@ async function reconcileCancelledRefund(
 }
 
 async function completeClaimedOperatorCancellation(
-  context: BookkitContext,
+  context: ReservaContext,
   booking: Booking,
   operationId: string,
   refund: 'full' | 'none',
@@ -240,7 +240,7 @@ async function completeClaimedOperatorCancellation(
   return json<ManageActionResponse>({ ok: true });
 }
 
-export function handleOperatorCancel(request: Request, context: BookkitContext): Promise<Response> {
+export function handleOperatorCancel(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const body = await requestJson(request);
@@ -298,7 +298,7 @@ export function handleOperatorCancel(request: Request, context: BookkitContext):
   }).then(withSensitiveHeaders);
 }
 
-export function handleOperatorReschedule(request: Request, context: BookkitContext): Promise<Response> {
+export function handleOperatorReschedule(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const body = await requestJson(request);
@@ -308,7 +308,7 @@ export function handleOperatorReschedule(request: Request, context: BookkitConte
   }).then(withSensitiveHeaders);
 }
 
-export function handleOperatorNoShow(request: Request, context: BookkitContext): Promise<Response> {
+export function handleOperatorNoShow(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const body = await requestJson(request);

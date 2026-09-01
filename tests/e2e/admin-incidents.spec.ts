@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { createBooking } from './helpers';
 
 const TOUR = 'oldTown';
-// Astro's built-in checkOrigin middleware (distinct from bookkit's own admin CSRF layer) rejects
+// Astro's built-in checkOrigin middleware (distinct from reserva's own admin CSRF layer) rejects
 // any cross-site POST with "Cross-site POST form submissions are forbidden" unless its Origin
 // header matches the request's own origin — the browser sets this automatically for the real
 // admin-form POSTs below (page.click), but the API request context used for these dev-only test

@@ -9,7 +9,7 @@
 // considered and rejected: it would have to be re-applied by a bespoke post-build step on every
 // deploy, and any mistake in that step risks losing the adapter's injected routes, static assets,
 // or bindings — exactly the failure this plan's STOP conditions call out. A standalone cron Worker
-// that only shares the BOOKKIT_DB D1 binding (see ./wrangler.jsonc) never touches the site's own
+// that only shares the RESERVA_DB D1 binding (see ./wrangler.jsonc) never touches the site's own
 // entrypoint at all, so the site's HTTP serving cannot regress by construction.
 //
 // This is installed and deployed once by the technical operator (`wrangler deploy` from this
@@ -27,11 +27,11 @@ import runtime from '../src/runtime';
 export default {
   async scheduled(_controller: ScheduledController, _env: unknown, _ctx: ExecutionContext): Promise<void> {
     try {
-      const context = await runtime.createContext({ request: new Request('https://bookkit-scheduled.invalid/') });
+      const context = await runtime.createContext({ request: new Request('https://reserva-scheduled.invalid/') });
       const summary = await runReconciliation(context, { requireAlertSink: true });
-      context.logger.info?.('bookkit scheduled reconciliation summary', { ...summary });
+      context.logger.info?.('reserva scheduled reconciliation summary', { ...summary });
     } catch (error) {
-      console.error('bookkit scheduled reconciliation failed', { lifecycle: 'failed', error: String(error) });
+      console.error('reserva scheduled reconciliation failed', { lifecycle: 'failed', error: String(error) });
       throw error;
     }
   },

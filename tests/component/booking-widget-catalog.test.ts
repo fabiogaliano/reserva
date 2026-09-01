@@ -23,7 +23,7 @@ async function render(props: Record<string, unknown> = baseProps): Promise<strin
 }
 
 function island(html: string): Record<string, any> {
-  const match = html.match(/<script type="application\/json" data-bookkit-data>([^<]+)<\/script>/);
+  const match = html.match(/<script type="application\/json" data-reserva-data>([^<]+)<\/script>/);
   if (!match?.[1]) throw new Error('widget rendered no data island');
   return JSON.parse(match[1]);
 }
@@ -42,8 +42,8 @@ describe('BookingWidget.astro is catalog- and quote-driven (plan 027)', () => {
     expect(html).not.toContain('name="meetingPointId"');
     // The service's own axes could differ per deployment and per settings edit, so the markup
     // commits to nothing beyond where they go.
-    expect(html).toContain('data-bookkit-pickup-slot');
-    expect(html).toContain('data-bookkit-meeting-point-slot');
+    expect(html).toContain('data-reserva-pickup-slot');
+    expect(html).toContain('data-reserva-meeting-point-slot');
   });
 
   it('wires both new endpoints from the resolved route table, alongside checkout and availability', async () => {
@@ -62,9 +62,9 @@ describe('BookingWidget.astro is catalog- and quote-driven (plan 027)', () => {
 
   it('always renders the price element, since the deployment can always quote', async () => {
     const html = await render();
-    expect(html).toContain('data-bookkit-price-value');
+    expect(html).toContain('data-reserva-price-value');
     // Empty until the first quote answers — never a server-guessed amount.
-    expect(html).toContain('<strong class="bkw-price-value" data-bookkit-price-value></strong>');
+    expect(html).toContain('<strong class="bkw-price-value" data-reserva-price-value></strong>');
   });
 
   it('carries the legends the client-rendered groups need, in the requested locale', async () => {

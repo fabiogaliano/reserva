@@ -4,7 +4,7 @@ import type { EmailBookingEvent, EmailProvider, EmailRecipientRole } from '../co
 import { renderDefaultEmail, type EmailRenderer, type EmailTemplateContext, type RenderedEmail } from '../email';
 import { formatLocaleFor } from '../email/render';
 import { ProviderFailure } from '../provider-failure';
-import type { BookkitResolvedRouteConfig } from '../routes-manifest';
+import type { ReservaResolvedRouteConfig } from '../routes-manifest';
 
 export const BREVO_TRANSACTIONAL_EMAIL_URL = 'https://api.brevo.com/v3/smtp/email';
 export const BREVO_API_URL = BREVO_TRANSACTIONAL_EMAIL_URL;
@@ -51,13 +51,13 @@ const ownerEvents = new Set<EmailBookingEvent>(['booking.confirmed', 'booking.ca
 // Plan 027 (design decision 8): '' when the deployment turned the built-in manage page off — the
 // renderer omits the button for an empty URL, so disabling `routes.manage` can't leave a 404 link
 // in a customer's inbox. The APIs behind the page stay mounted; only this page is gone.
-function manageUrl(config: ClientConfig, token: string, routeConfig?: BookkitResolvedRouteConfig): string {
+function manageUrl(config: ClientConfig, token: string, routeConfig?: ReservaResolvedRouteConfig): string {
   if (routeConfig && !routeConfig.groups.manage) return '';
   return `${config.business.url.replace(/\/$/, '')}${routeConfig?.paths.managePage ?? '/booking/manage'}?token=${encodeURIComponent(token)}`;
 }
 // BK-SEC-002 (patch-11-r1 LOW 1): a `nohash:`-prefixed value (src/repo.ts placeholderToken) is
 // what a DB-loaded Booking.cancelToken/operatorToken looks like when the row has no decryptable
-// cancel_token_enc/operator_token_enc — either BOOKKIT_TOKEN_ENC_KEY isn't configured, or the row
+// cancel_token_enc/operator_token_enc — either RESERVA_TOKEN_ENC_KEY isn't configured, or the row
 // predates that secret being set. A link built from it would 403 the instant it's clicked; better
 // to omit the link entirely than render one that looks live but is already dead.
 export function isManageableToken(token: string): boolean { return !token.startsWith('nohash:'); }
@@ -109,7 +109,7 @@ export class BrevoEmailProvider implements EmailProvider {
     event: EmailBookingEvent,
     booking: Booking,
     config: ClientConfig,
-    routeConfig?: BookkitResolvedRouteConfig,
+    routeConfig?: ReservaResolvedRouteConfig,
   ): Promise<void> {
     const address = addressFor(recipient, booking, config, this.owner);
     if (!address) return;
@@ -131,7 +131,7 @@ export class BrevoEmailProvider implements EmailProvider {
     event: EmailBookingEvent,
     booking: Booking,
     config: ClientConfig,
-    routeConfig?: BookkitResolvedRouteConfig,
+    routeConfig?: ReservaResolvedRouteConfig,
   ): Promise<void> {
     for (const recipient of this.recipientsForEvent(event)) {
       await this.sendToRecipient(recipient, event, booking, config, routeConfig);

@@ -24,8 +24,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import type { D1Database } from '@cloudflare/workers-types';
 import { getPlatformProxy } from 'wrangler';
-import { createBookkitContext } from '../src/context';
-import type { BookkitProviders } from '../src/context';
+import { createReservaContext } from '../src/context';
+import type { ReservaProviders } from '../src/context';
 
 const smokeSiteRoot = fileURLToPath(new URL('../examples/smoke-site/', import.meta.url));
 const workerConfigPath = fileURLToPath(new URL('../examples/smoke-site/worker/wrangler.jsonc', import.meta.url));
@@ -35,7 +35,7 @@ const workerConfigPath = fileURLToPath(new URL('../examples/smoke-site/worker/wr
 const PERSIST_DIR = '.wrangler-scheduled-test';
 const persistPath = fileURLToPath(new URL(PERSIST_DIR, `file://${smokeSiteRoot}`));
 // getPlatformProxy's own persist root does NOT auto-append 'v3' the way wrangler's CLI
-// --persist-to (used by bookkit-migrate.ts and 'wrangler dev' below) does -- append it by hand so
+// --persist-to (used by reserva-migrate.ts and 'wrangler dev' below) does -- append it by hand so
 // both tools agree on the same on-disk D1 file.
 const apiPersistPath = `${persistPath}/v3`;
 const HOST = '127.0.0.1';
@@ -50,12 +50,12 @@ function run(command: string, args: string[]): void {
 }
 
 rmSync(persistPath, { recursive: true, force: true });
-run('bun', ['../../scripts/bookkit-migrate.ts', '--local', '--persist-to', PERSIST_DIR]);
+run('bun', ['../../scripts/reserva-migrate.ts', '--local', '--persist-to', PERSIST_DIR]);
 
 // Never actually called: seeding uses only repo methods that don't dispatch to providers
 // (insertHold/transitionToConfirmed), and the recovery itself runs inside the separately spawned
 // cron Worker process, with its own real provider wiring (examples/smoke-site/src/runtime.ts).
-const unusedProviders: BookkitProviders = {
+const unusedProviders: ReservaProviders = {
   payments: {
     createCheckout: async () => { throw new Error('unused'); },
     parseWebhook: async () => { throw new Error('unused'); },
@@ -67,10 +67,10 @@ const unusedProviders: BookkitProviders = {
 async function seedAndAssert(): Promise<void> {
   const proxy = await getPlatformProxy({ configPath: workerConfigPath, persist: { path: apiPersistPath } });
   try {
-    const db = proxy.env.BOOKKIT_DB as unknown as D1Database;
+    const db = proxy.env.RESERVA_DB as unknown as D1Database;
     const config = (await import('../examples/smoke-site/src/config')).default;
     const now = '2026-08-14T10:00:00.000Z';
-    const context = createBookkitContext({ config, db, providers: unusedProviders, clock: () => new Date(now) });
+    const context = createReservaContext({ config, db, providers: unusedProviders, clock: () => new Date(now) });
     const id = 'smoke-scheduled-recovery';
 
     await context.repo.insertHold({
@@ -118,7 +118,7 @@ async function waitForScheduledTrigger(timeoutMs: number): Promise<void> {
 async function assertRecovered(): Promise<void> {
   const proxy = await getPlatformProxy({ configPath: workerConfigPath, persist: { path: apiPersistPath } });
   try {
-    const db = proxy.env.BOOKKIT_DB as unknown as D1Database;
+    const db = proxy.env.RESERVA_DB as unknown as D1Database;
     const id = 'smoke-scheduled-recovery';
     // Plan 022: the retired bookings.calendar_synced flag is gone; the event id the recovery wrote
     // is the record that the calendar entry now exists, alongside the row's own 'succeeded' status.
@@ -158,7 +158,7 @@ try {
   const stopDeadline = Date.now() + 5_000;
   while (!exited && Date.now() < stopDeadline) await delay(100);
   if (!exited) cronWorker.kill('SIGKILL');
-  if (!process.env.BOOKKIT_SCHEDULED_TEST_KEEP && existsSync(persistPath)) {
+  if (!process.env.RESERVA_SCHEDULED_TEST_KEEP && existsSync(persistPath)) {
     rmSync(persistPath, { recursive: true, force: true });
   }
 }

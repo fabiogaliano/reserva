@@ -9,12 +9,12 @@ import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 
 interface TestEnv {
-  BOOKKIT_DB: D1Database;
+  RESERVA_DB: D1Database;
   TEST_MIGRATIONS: D1Migration[];
 }
 
 const bindings = env as unknown as TestEnv;
-const db = bindings.BOOKKIT_DB;
+const db = bindings.RESERVA_DB;
 
 // Plan 017 (design decision 3): repo.insertHold now always writes meeting_point_id/-label
 // (migration 0014), so it can't seed the FK-parent rows below against this test's deliberately

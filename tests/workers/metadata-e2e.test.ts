@@ -16,8 +16,8 @@ function isD1Database(value: unknown): value is D1Database {
   return typeof value === 'object' && value !== null && typeof Reflect.get(value, 'prepare') === 'function';
 }
 
-const databaseBinding: unknown = Reflect.get(env, 'BOOKKIT_DB');
-if (!isD1Database(databaseBinding)) throw new Error('BOOKKIT_DB test binding is unavailable');
+const databaseBinding: unknown = Reflect.get(env, 'RESERVA_DB');
+if (!isD1Database(databaseBinding)) throw new Error('RESERVA_DB test binding is unavailable');
 const db = databaseBinding;
 
 function requireStringProperty(value: unknown, key: string): string {
@@ -48,9 +48,9 @@ describe('consumer-declared metadata through the real smoke runtime + D1 (plan 0
     const context = await smokeRuntime.createContext({
       request,
       locals: { env: {
-        BOOKKIT_DB: db,
-        BOOKKIT_TOKEN_ENC_KEY: 'local-demo-token-encryption-key',
-        BOOKKIT_OPERATOR_SECRET: 'local-operator-secret',
+        RESERVA_DB: db,
+        RESERVA_TOKEN_ENC_KEY: 'local-demo-token-encryption-key',
+        RESERVA_OPERATOR_SECRET: 'local-operator-secret',
       } },
     });
     const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined);
@@ -116,9 +116,9 @@ describe('consumer-declared metadata through the real smoke runtime + D1 (plan 0
     const context = await smokeRuntime.createContext({
       request,
       locals: { env: {
-        BOOKKIT_DB: db,
-        BOOKKIT_TOKEN_ENC_KEY: 'local-demo-token-encryption-key',
-        BOOKKIT_OPERATOR_SECRET: 'local-operator-secret',
+        RESERVA_DB: db,
+        RESERVA_TOKEN_ENC_KEY: 'local-demo-token-encryption-key',
+        RESERVA_OPERATOR_SECRET: 'local-operator-secret',
       } },
     });
 

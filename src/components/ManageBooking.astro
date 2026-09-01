@@ -1,14 +1,14 @@
 ---
-import routeConfig from 'virtual:bookkit/config';
+import routeConfig from 'virtual:reserva/config';
 import { requireEnabledRoutePath } from '../routes-manifest';
-import { defaultLocale, resolveMessages, type BookkitMessages } from '../ui/messages';
+import { defaultLocale, resolveMessages, type ReservaMessages } from '../ui/messages';
 import '../ui/components.css';
 
 interface Props {
   token?: string;
   endpoint?: string;
   locale?: string;
-  messages?: Partial<BookkitMessages>;
+  messages?: Partial<ReservaMessages>;
 }
 
 const { token = '', endpoint, locale = defaultLocale, messages: messageOverrides = {} } = Astro.props;
@@ -17,10 +17,10 @@ const { token = '', endpoint, locale = defaultLocale, messages: messageOverrides
 // error AdminDashboard already throws — naming the flag and the explicit-endpoint escape hatch — is
 // the only honest option; passing a consumer-owned endpoint stays supported.
 const action = endpoint === undefined ? requireEnabledRoutePath(routeConfig, 'managePage') : endpoint;
-const t: BookkitMessages = { ...resolveMessages(undefined, locale), ...messageOverrides };
+const t: ReservaMessages = { ...resolveMessages(undefined, locale), ...messageOverrides };
 // A full UUID per render so two instances of this component on the same page never share an id —
 // see plan 014 item A.
-const titleId = `bookkit-manage-title-${crypto.randomUUID()}`;
+const titleId = `reserva-manage-title-${crypto.randomUUID()}`;
 ---
 
 <section class="bk-embed" aria-labelledby={titleId}>

@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import { createBookkitContext } from '../src/context';
+import { createReservaContext } from '../src/context';
 import { verifyPayment, type VerifiedPaymentFacts } from '../src/core/payment-verification';
 import { handleStatus, handlePaymentWebhook } from '../src/handlers';
 import { booking, config } from './fixtures';
@@ -52,7 +52,7 @@ describe('payment verification parity', () => {
     expect(verifyPayment(current, factsFor(scenario)).allowed).toBe(scenario.allowed);
 
     const webhookRepo = fakeRepository([current]);
-    const webhookContext = createBookkitContext({
+    const webhookContext = createReservaContext({
       config,
       db: {} as D1Database,
       repo: webhookRepo,
@@ -79,7 +79,7 @@ describe('payment verification parity', () => {
     const webhookResponse = await handlePaymentWebhook(new Request('https://example.test/webhook', { method: 'POST' }), webhookContext);
 
     const statusRepo = fakeRepository([current]);
-    const statusContext = createBookkitContext({
+    const statusContext = createReservaContext({
       config,
       db: {} as D1Database,
       repo: statusRepo,

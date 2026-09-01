@@ -40,7 +40,7 @@ function eventToCalEvent(event: GoogleEvent): CalEvent {
     end,
     allDay,
     ...(event.extendedProperties ? { extendedProperties: event.extendedProperties } : {}),
-    ...(event.extendedProperties?.private?.bookkitBookingId ? { bookkitBookingId: event.extendedProperties.private.bookkitBookingId } : {}),
+    ...(event.extendedProperties?.private?.reservaBookingId ? { reservaBookingId: event.extendedProperties.private.reservaBookingId } : {}),
   };
 }
 function eventPayload(booking: Booking, config: ClientConfig | undefined, _timezone: string): GoogleEvent {
@@ -69,7 +69,7 @@ function eventPayload(booking: Booking, config: ClientConfig | undefined, _timez
     ...(usesMeetingPoint ? [resolvedPoint?.mapsUrl] : []),
   ].filter(Boolean).join('\n');
   const attendee = booking.customerEmail ? { email: booking.customerEmail, ...(booking.customerName ? { displayName: booking.customerName } : {}) } : undefined;
-  return { id: booking.id.replaceAll('-', ''), summary: title, description, start: { dateTime: booking.startsAt }, end: { dateTime: booking.endsAt }, ...(attendee ? { attendees: [attendee] } : {}), extendedProperties: { private: { bookkitBookingId: booking.id } } };
+  return { id: booking.id.replaceAll('-', ''), summary: title, description, start: { dateTime: booking.startsAt }, end: { dateTime: booking.endsAt }, ...(attendee ? { attendees: [attendee] } : {}), extendedProperties: { private: { reservaBookingId: booking.id } } };
 }
 
 export class GoogleCalendarProvider implements CalendarProvider {

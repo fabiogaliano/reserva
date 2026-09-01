@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import { createBookkitContext } from '../src/context';
+import { createReservaContext } from '../src/context';
 import { handleCustomerCancel, handleManage } from '../src/handlers';
 import { booking, config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
@@ -38,7 +38,7 @@ describe('manage-token expiry and revocation (BK-SEC-002)', () => {
     const state = repo.tokenState.get(seeded.id);
     if (!state) throw new Error('Seeded token state is missing');
     repo.tokenState.set(seeded.id, { ...state, tokensExpireAt: '2026-06-01T00:00:00.000Z' });
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const response = await handleManage(manageRequest(seeded.cancelToken), context);
     expect(response.status).toBe(403);
@@ -51,7 +51,7 @@ describe('manage-token expiry and revocation (BK-SEC-002)', () => {
     const state = repo.tokenState.get(seeded.id);
     if (!state) throw new Error('Seeded token state is missing');
     repo.tokenState.set(seeded.id, { ...state, tokensExpireAt: '2026-06-01T00:00:00.000Z' });
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const response = await handleManage(manageRequest(seeded.operatorToken), context);
     expect(response.status).toBe(403);
@@ -66,7 +66,7 @@ describe('manage-token expiry and revocation (BK-SEC-002)', () => {
       operatorToken: 'revoke-operator-token',
     });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const cancelResponse = await handleCustomerCancel(cancelRequest(seeded.cancelToken), context);
     expect(cancelResponse.status).toBe(200);
@@ -87,7 +87,7 @@ describe('manage-token expiry and revocation (BK-SEC-002)', () => {
   it('authenticates a legacy plaintext-era row once via the compat fallback, then upgrades it — the stored hash is not the presented token and cannot itself be presented to authenticate', async () => {
     const seeded = booking({ id: 'b-token-legacy', cancelToken: 'legacy-plaintext-cancel-token' });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     expect(repo.tokenState.get(seeded.id)?.cancelTokenHash).toBeNull();
 
@@ -112,7 +112,7 @@ describe('manage-token expiry and revocation (BK-SEC-002)', () => {
 
   it('rejects an unknown token with the same 403 shape used for expired/revoked tokens', async () => {
     const repo = fakeRepository([booking({ id: 'b-token-baseline' })]);
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
     const response = await handleManage(manageRequest('never-issued-token'), context);
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toMatchObject({ error: { code: 'forbidden' } });

@@ -1,12 +1,12 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import type { BookkitCache } from '../src/context';
-import { createBookkitContext } from '../src/context';
+import type { ReservaCache } from '../src/context';
+import { createReservaContext } from '../src/context';
 import { handleAvailability, handleCheckout } from '../src/handlers';
 import { config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
-function memoryCache(): BookkitCache {
+function memoryCache(): ReservaCache {
   const entries = new Map<string, Response>();
   const keyFor = (request: unknown): string => request instanceof Request ? request.url : String(request);
   return {
@@ -33,7 +33,7 @@ function checkoutRequest(): Request {
 describe('calendar availability hardening', () => {
   it('shares normalized calendar occupancy across availability queries with different services and party sizes', async () => {
     let calls = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config: {
         ...config,
         services: {
@@ -71,7 +71,7 @@ describe('calendar availability hardening', () => {
     let now = new Date('2026-06-14T08:00:00.000Z');
     let calls = 0;
     let unavailable = false;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo: fakeRepository(),
@@ -86,7 +86,7 @@ describe('calendar availability hardening', () => {
               id: 'calendar-event-1',
               start: { dateTime: '2026-06-15T08:00:00.000Z' },
               end: { dateTime: '2026-06-15T10:00:00.000Z' },
-              extendedProperties: { private: { bookkitBookingId: 'booking-from-calendar' } },
+              extendedProperties: { private: { reservaBookingId: 'booking-from-calendar' } },
             }];
           },
           createEvent: async () => 'cal_1',
@@ -112,7 +112,7 @@ describe('calendar availability hardening', () => {
   });
 
   it('returns calendar_unavailable rather than a generic error on a cold availability cache', async () => {
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo: fakeRepository(),
@@ -136,7 +136,7 @@ describe('calendar availability hardening', () => {
     let now = new Date('2026-06-14T08:00:00.000Z');
     let calls = 0;
     let unavailable = false;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo: fakeRepository(),
@@ -167,7 +167,7 @@ describe('calendar availability hardening', () => {
 
   it('fails checkout closed before creating a hold when calendar occupancy cannot be verified', async () => {
     const repo = fakeRepository();
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -190,7 +190,7 @@ describe('calendar availability hardening', () => {
 
   it('rejects party sizes above the configured pricing maximum before calendar reads', async () => {
     let calls = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo: fakeRepository(),
@@ -213,7 +213,7 @@ describe('calendar availability hardening', () => {
   // pricing rows declare — a Maze-shaped service has no 'default'/'custom' rows at all, so the old
   // literal-pair probe would have 400'd every availability request for it.
   it('serves availability for a service whose pricing uses only declared non-enum pickup ids', async () => {
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config: {
         ...config,
         services: {

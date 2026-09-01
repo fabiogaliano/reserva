@@ -6,7 +6,7 @@
 // the shared function, which would prove nothing about the endpoints.
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import { createBookkitContext, type BookkitContext } from '../src/context';
+import { createReservaContext, type ReservaContext } from '../src/context';
 import type { ClientConfig, ServiceConfig } from '../src/core/config';
 import { handleCheckout, handleQuote } from '../src/handlers';
 import { config, service } from './fixtures';
@@ -28,8 +28,8 @@ const matrixConfig: ClientConfig = { ...config, services: { vintage: service, cr
 
 const START = '2026-06-15T08:00:00.000Z';
 
-function context(): BookkitContext {
-  return createBookkitContext({
+function context(): ReservaContext {
+  return createReservaContext({
     config: matrixConfig,
     db: {} as D1Database,
     repo: fakeRepository(),
@@ -49,7 +49,7 @@ async function quote(body: Record<string, unknown>, ctx = context()): Promise<Re
 // Returns the price the booking row was actually created with — what the customer is charged.
 async function chargedPriceMinor(body: Record<string, unknown>): Promise<number | undefined> {
   const repo = fakeRepository();
-  const ctx = createBookkitContext({
+  const ctx = createReservaContext({
     config: matrixConfig,
     db: {} as D1Database,
     repo,

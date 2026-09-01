@@ -4,7 +4,7 @@
 // to the quote and availability endpoints.
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import { createBookkitContext, type BookkitContext } from '../src/context';
+import { createReservaContext, type ReservaContext } from '../src/context';
 import type { ClientConfig, ServiceConfig } from '../src/core/config';
 import { handleCatalog } from '../src/handlers';
 import { config, service } from './fixtures';
@@ -36,8 +36,8 @@ const catalogConfig: ClientConfig = {
   services: { vintage: { ...service, title: 'Vintage Tour' }, cruise },
 };
 
-function context(overrides: Partial<ClientConfig> = {}): BookkitContext {
-  return createBookkitContext({
+function context(overrides: Partial<ClientConfig> = {}): ReservaContext {
+  return createReservaContext({
     config: { ...catalogConfig, ...overrides },
     db: {} as D1Database,
     repo: fakeRepository(),

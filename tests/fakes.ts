@@ -1,4 +1,4 @@
-import type { BookkitProviders } from '../src/context';
+import type { ReservaProviders } from '../src/context';
 import type { Booking } from '../src/core/booking';
 import type { PaymentProvider } from '../src/core/events';
 import {
@@ -1062,7 +1062,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
 }
 
 // Records the idempotency key and expected amount each refund() call would carry (mirroring
-// StripeProvider's own deterministic `bookkit-refund-<paymentRef>` derivation) so tests can
+// StripeProvider's own deterministic `reserva-refund-<paymentRef>` derivation) so tests can
 // assert a retried refund reuses the same key instead of minting a fresh one per attempt
 // (BK-REFUND-001 F10), and that callers forward the booking's full expected amount. `resultFor`
 // lets a test control the returned refund ref/amount, or throw to simulate a provider-side failure.
@@ -1075,7 +1075,7 @@ export function fakeRefundTracker(
     idempotencyKeys,
     expectedAmounts,
     refund: async (paymentRef, expectedAmountMinor) => {
-      idempotencyKeys.push(`bookkit-refund-${paymentRef}`);
+      idempotencyKeys.push(`reserva-refund-${paymentRef}`);
       expectedAmounts.push(expectedAmountMinor);
       return resultFor(paymentRef, idempotencyKeys.length);
     },
@@ -1140,7 +1140,7 @@ export function sideEffectOperation(
     .find((row) => row.bookingId === bookingId && sameSideEffectOperation(row, identity));
 }
 
-export function providers(overrides: Partial<BookkitProviders> = {}): BookkitProviders {
+export function providers(overrides: Partial<ReservaProviders> = {}): ReservaProviders {
   return {
     payments: {
       createCheckout: async () => ({ url: 'https://checkout.test/cs_1', sessionRef: 'cs_1' }),

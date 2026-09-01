@@ -6,7 +6,7 @@ import { themeToggleJs } from '../../ui/theme-toggle';
 
 export const prerender = false;
 
-// Like the assetsCss route: bookkit's server-rendered pages can't rely on the consumer's bundler,
+// Like the assetsCss route: reserva's server-rendered pages can't rely on the consumer's bundler,
 // so the calendar web component (cally, vendored self-contained ESM — see scripts/vendor-cally.ts)
 // plus the manage-page and admin enhancers are served as one first-party module — loadable under
 // script-src 'self' with no inline scripts. Each enhancer no-ops on pages missing its markup.

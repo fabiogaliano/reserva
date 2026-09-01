@@ -19,7 +19,7 @@ export default {
   admin: {
     access: {
       teamDomain: 'https://example.cloudflareaccess.com',
-      aud: 'example-bookkit',
+      aud: 'example-reserva',
     },
     locale: 'en',
   },

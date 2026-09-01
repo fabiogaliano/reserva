@@ -4,13 +4,13 @@
 // public availability cache. The key must be built from the four validated parameters only.
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import type { BookkitCache } from '../src/context';
-import { createBookkitContext } from '../src/context';
+import type { ReservaCache } from '../src/context';
+import { createReservaContext } from '../src/context';
 import { handleAvailability } from '../src/handlers';
 import { config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
-function memoryCache(): BookkitCache & { keys: () => string[] } {
+function memoryCache(): ReservaCache & { keys: () => string[] } {
   const entries = new Map<string, Response>();
   const keyFor = (request: unknown): string => request instanceof Request ? request.url : String(request);
   return {
@@ -23,14 +23,14 @@ function memoryCache(): BookkitCache & { keys: () => string[] } {
   };
 }
 
-function contextWithoutCalendar(cache: BookkitCache, listOccupancyBookings: () => void) {
+function contextWithoutCalendar(cache: ReservaCache, listOccupancyBookings: () => void) {
   const repo = fakeRepository();
   const originalListOccupancyBookings = repo.listOccupancyBookings.bind(repo);
   repo.listOccupancyBookings = (from, to) => {
     listOccupancyBookings();
     return originalListOccupancyBookings(from, to);
   };
-  return createBookkitContext({
+  return createReservaContext({
     config,
     db: {} as D1Database,
     repo,
@@ -38,7 +38,7 @@ function contextWithoutCalendar(cache: BookkitCache, listOccupancyBookings: () =
     clock: () => new Date('2026-06-14T08:00:00.000Z'),
     // availabilityInput's own request-scope cache (handleAvailability) only engages when there's
     // no calendar provider — calendarEventsForWindow has a separate cache path when one exists.
-    // The key must be omitted, not set to undefined: BookkitProviders.calendar is optional under
+    // The key must be omitted, not set to undefined: ReservaProviders.calendar is optional under
     // exactOptionalPropertyTypes, which rejects an explicit `undefined` value for it.
     providers: (({ calendar: _calendar, ...rest }) => rest)(providers()),
   });

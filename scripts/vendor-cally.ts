@@ -1,6 +1,6 @@
 // Regenerates src/ui/vendor/cally-bundle.ts from the installed cally package. The served
-// /booking/assets/bookkit.js route can't use a Vite `?raw` import: in a consumer's dev server the
-// Cloudflare module runner denies file ids outside the consumer project root (bookkit lives in
+// /booking/assets/reserva.js route can't use a Vite `?raw` import: in a consumer's dev server the
+// Cloudflare module runner denies file ids outside the consumer project root (reserva lives in
 // node_modules, or behind a symlink), so the bundle is vendored as a plain string module instead.
 // Run after bumping the cally dependency: bun scripts/vendor-cally.ts
 

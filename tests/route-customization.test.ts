@@ -1,7 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it, vi } from 'vitest';
-import { bookkit, virtualConfigId } from '../src/integration';
-import { createBookkitContext } from '../src/context';
+import { reserva, virtualConfigId } from '../src/integration';
+import { createReservaContext } from '../src/context';
 import { handleAdminGet } from '../src/handlers';
 import { renderManagePage } from '../src/components/manage-page';
 import {
@@ -20,7 +20,7 @@ import { fakeRepository, providers } from './fakes';
 function setup(options: Record<string, unknown>) {
   const routes: Array<Record<string, unknown>> = [];
   let viteConfig: Record<string, unknown> = {};
-  const integration = bookkit(options as never);
+  const integration = reserva(options as never);
   const hook = integration.hooks['astro:config:setup'];
   if (!hook) throw new Error('setup hook is missing');
   hook({
@@ -123,7 +123,7 @@ describe('route table generation (astro:config:setup)', () => {
   });
 
   // Plan 025 (design decision 3): routes.admin/routes.ops now live on `config.routes`, not on
-  // BookkitIntegrationOptions — the integration reads the same validated config the runtime factory
+  // ReservaIntegrationOptions — the integration reads the same validated config the runtime factory
   // reads for admin-auth selection, instead of two independently-settable options.
   it('config.routes: { ops: false } omits every operator route and nothing else', () => {
     const { routes } = setup({ ...baseOptions, config: { ...config, routes: { ops: false } } });
@@ -148,7 +148,7 @@ describe('route table generation (astro:config:setup)', () => {
     expect(() => setup({ ...baseOptions, routePrefix: '/en service' })).toThrow(/whitespace/);
   });
 
-  it('exposes the resolved (prefixed) paths and group flags through virtual:bookkit/config', () => {
+  it('exposes the resolved (prefixed) paths and group flags through virtual:reserva/config', () => {
     const { viteConfig } = setup({ ...baseOptions, routePrefix: '/en', config: { ...config, routes: { ops: false } } });
     const plugins = (viteConfig.vite as { plugins: Array<{ resolveId(id: string): string | undefined; load(id: string): string | undefined }> }).plugins;
     const plugin = plugins.find((candidate) => candidate.resolveId(virtualConfigId) !== undefined);
@@ -172,14 +172,14 @@ describe('server-rendered HTML URL consistency', () => {
   it('admin page manage links use the resolved (prefixed) manage path, never the unprefixed default', async () => {
     const clock = () => new Date('2026-06-14T08:00:00.000Z');
     const seeded = booking({ id: 'b-route-admin', operatorToken: 'op-route-token', cancelToken: 'cancel-route-token' });
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo: fakeRepository([seeded], { tokenEncryptionKey: 'route-token-key' }),
       clock,
       adminAuth: async () => ({ subject: '' }),
       providers: providers(),
-      secrets: async (name) => (name === 'BOOKKIT_TOKEN_ENC_KEY' ? 'route-token-key' : undefined),
+      secrets: async (name) => (name === 'RESERVA_TOKEN_ENC_KEY' ? 'route-token-key' : undefined),
       routeConfig: resolveRouteConfig('/en', { admin: true, ops: true, manage: true }),
     });
 
@@ -192,14 +192,14 @@ describe('server-rendered HTML URL consistency', () => {
   it('a context built without an explicit routeConfig defaults to the unprefixed, all-groups-enabled table (no behavior change)', async () => {
     const clock = () => new Date('2026-06-14T08:00:00.000Z');
     const seeded = booking({ id: 'b-route-default', operatorToken: 'op-default-token', cancelToken: 'cancel-default-token' });
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo: fakeRepository([seeded], { tokenEncryptionKey: 'route-token-key' }),
       clock,
       adminAuth: async () => ({ subject: '' }),
       providers: providers(),
-      secrets: async (name) => (name === 'BOOKKIT_TOKEN_ENC_KEY' ? 'route-token-key' : undefined),
+      secrets: async (name) => (name === 'RESERVA_TOKEN_ENC_KEY' ? 'route-token-key' : undefined),
     });
 
     expect(context.routeConfig.groups).toEqual({ admin: true, ops: true, manage: true });
@@ -210,14 +210,14 @@ describe('server-rendered HTML URL consistency', () => {
 });
 
 describe('createRouteContext (route entrypoint seam)', () => {
-  it('overwrites the runtime-provided context.routeConfig with the resolved per-build one from virtual:bookkit/config', async () => {
+  it('overwrites the runtime-provided context.routeConfig with the resolved per-build one from virtual:reserva/config', async () => {
     const unprefixedDefault = resolveRouteConfig('', { admin: true, ops: true, manage: true });
     const prefixedFromIntegration = resolveRouteConfig('/en', { admin: true, ops: false, manage: true });
-    vi.doMock('virtual:bookkit/runtime', () => ({
+    vi.doMock('virtual:reserva/runtime', () => ({
       default: {
         config,
         async createContext() {
-          return createBookkitContext({
+          return createReservaContext({
             config,
             db: {} as D1Database,
             repo: fakeRepository(),
@@ -227,13 +227,13 @@ describe('createRouteContext (route entrypoint seam)', () => {
         },
       },
     }));
-    vi.doMock('virtual:bookkit/config', () => ({ default: prefixedFromIntegration }));
+    vi.doMock('virtual:reserva/config', () => ({ default: prefixedFromIntegration }));
 
     const { createRouteContext } = await import('../src/routes/route-context');
     const context = await createRouteContext({ request: new Request('https://example.test/en/booking/admin') });
     expect(context.routeConfig).toEqual(prefixedFromIntegration);
 
-    vi.doUnmock('virtual:bookkit/runtime');
-    vi.doUnmock('virtual:bookkit/config');
+    vi.doUnmock('virtual:reserva/runtime');
+    vi.doUnmock('virtual:reserva/config');
   });
 });

@@ -13,7 +13,7 @@ test('aborting the widget module load keeps the default fallback visible instead
   await page.goto('/');
 
   const form = page.locator('form.bk-widget');
-  const fallback = page.locator('[data-bookkit-fallback]');
+  const fallback = page.locator('[data-reserva-fallback]');
   await expect(fallback).toBeVisible();
   await expect(form).toBeHidden();
 });
@@ -26,7 +26,7 @@ test('a failing catalog request keeps the fallback visible instead of a form wit
   await page.route('**/api/booking/catalog*', (route) => route.abort());
   await page.goto('/');
 
-  await expect(page.locator('[data-bookkit-fallback]')).toBeVisible();
+  await expect(page.locator('[data-reserva-fallback]')).toBeVisible();
   await expect(page.locator('form.bk-widget')).toBeHidden();
 });
 
@@ -43,7 +43,7 @@ test('a corrupted data island in one instance does not stop the sibling widget f
     const original = await response.text();
     let seen = 0;
     const corrupted = original.replace(
-      /(<script type="application\/json" data-bookkit-data>)([^<]*)(<\/script>)/g,
+      /(<script type="application\/json" data-reserva-data>)([^<]*)(<\/script>)/g,
       (match, open: string, _json: string, close: string) => {
         seen += 1;
         return seen === 1 ? `${open}{not valid json${close}` : match;
@@ -58,11 +58,11 @@ test('a corrupted data island in one instance does not stop the sibling widget f
   const instanceB = page.locator('[data-widget-index="1"]');
 
   // Instance A: corrupted data island — its own fallback stays visible, its form stays hidden.
-  await expect(instanceA.locator('[data-bookkit-fallback]')).toBeVisible();
+  await expect(instanceA.locator('[data-reserva-fallback]')).toBeVisible();
   await expect(instanceA.locator('form.bk-widget')).toBeHidden();
 
   // Instance B: unaffected by its sibling's failure — initializes normally and stays fully operable.
-  await expect(instanceB.locator('[data-bookkit-fallback]')).toBeHidden();
+  await expect(instanceB.locator('[data-reserva-fallback]')).toBeHidden();
   await expect(instanceB.locator('form.bk-widget')).toBeVisible();
   await expect(instanceB.getByRole('radiogroup').getByRole('radio').first()).toBeVisible();
 });

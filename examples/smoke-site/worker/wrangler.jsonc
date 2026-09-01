@@ -3,24 +3,24 @@
   // Plan 020 (step 7): a separate, minimal Worker whose only job is the scheduled reconciliation
   // sweep — see scheduled.ts's header comment for why this lives outside the Astro site's own
   // build/deploy instead of wrapping @astrojs/cloudflare's generated entrypoint. It shares the same
-  // BOOKKIT_DB database (same database_name/id as ../wrangler.jsonc) so both Workers read/write one
+  // RESERVA_DB database (same database_name/id as ../wrangler.jsonc) so both Workers read/write one
   // D1 instance; it does not need HTTP-only ASSETS/SESSION/IMAGES bindings. Production copies do
   // need their own payment/calendar/email/ops/alert credentials because Worker secrets are not
   // inherited — see ../README.md.
-  "name": "bookkit-smoke-scheduled",
+  "name": "reserva-smoke-scheduled",
   "compatibility_date": "2026-07-21",
   "main": "scheduled.ts",
   "d1_databases": [
     {
-      "binding": "BOOKKIT_DB",
-      "database_name": "bookkit-smoke",
+      "binding": "RESERVA_DB",
+      "database_name": "reserva-smoke",
       "database_id": "00000000-0000-0000-0000-000000000000"
     }
   ],
   "vars": {
-    "BOOKKIT_TOKEN_ENC_KEY": "local-demo-token-encryption-key",
-    "BOOKKIT_OPERATOR_SECRET": "local-operator-secret",
-    "BOOKKIT_CSRF_SECRET": "local-demo-csrf-secret"
+    "RESERVA_TOKEN_ENC_KEY": "local-demo-token-encryption-key",
+    "RESERVA_OPERATOR_SECRET": "local-operator-secret",
+    "RESERVA_CSRF_SECRET": "local-demo-csrf-secret"
   },
   "triggers": {
     // Every 5 minutes: matches this plan's 5/10/20/40/60-minute backoff schedule closely enough

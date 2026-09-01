@@ -3,18 +3,18 @@ import type { BookingEventHook } from '../../src/core/events';
 import type { CalEvent } from '../../src/core/occupancy';
 import { handlePaymentWebhook } from '../../src/handlers';
 import { StripeProvider } from '../../src/providers/stripe';
-import { defineCloudflareBookkitRuntime, type BookkitProviders } from '../../src/runtime';
+import { defineCloudflareReservaRuntime, type ReservaProviders } from '../../src/runtime';
 import config from '../../examples/client-config';
 
 // Plan 015: this is `main` in wrangler.test.jsonc -- a real worker entrypoint that assembles the
-// production stack (defineCloudflareBookkitRuntime against the real D1 binding, a real
+// production stack (defineCloudflareReservaRuntime against the real D1 binding, a real
 // StripeProvider doing real HMAC signature verification) and dispatches the exact production route
 // to handlePaymentWebhook, so tests/workers/webhook.test.ts exercises runtime + handler + D1
 // together instead of any one layer in isolation. Never contacts Stripe's API: parseWebhook only
 // verifies a signature against WEBHOOK_SECRET locally, and this worker never calls
 // createCheckout/getSession/refund, so a fixed, non-secret test key is fine here.
-export const WEBHOOK_SECRET = 'whsec_test_bookkit_worker_stripe';
-const STRIPE_TEST_SECRET_KEY = 'sk_test_bookkit_worker';
+export const WEBHOOK_SECRET = 'whsec_test_reserva_worker_stripe';
+const STRIPE_TEST_SECRET_KEY = 'sk_test_reserva_worker';
 
 // In-memory outboxes the test file asserts against and resets between cases -- module-scoped
 // (rather than per-request) because this worker's provider instances are constructed once, same as
@@ -30,7 +30,7 @@ export function resetWebhookWorkerOutboxes(): void {
   hookOutbox.length = 0;
 }
 
-const providers: BookkitProviders = {
+const providers: ReservaProviders = {
   payments: new StripeProvider({ secretKey: STRIPE_TEST_SECRET_KEY, webhookSecret: WEBHOOK_SECRET }),
   calendar: {
     async listEvents() {
@@ -38,11 +38,11 @@ const providers: BookkitProviders = {
     },
     async createEvent(booking: Booking) {
       const id = `cal_${booking.id}`;
-      calendarEvents.set(id, { id, start: booking.startsAt, end: booking.endsAt, bookkitBookingId: booking.id });
+      calendarEvents.set(id, { id, start: booking.startsAt, end: booking.endsAt, reservaBookingId: booking.id });
       return id;
     },
     async patchEvent(eventId: string, booking: Booking) {
-      calendarEvents.set(eventId, { id: eventId, start: booking.startsAt, end: booking.endsAt, bookkitBookingId: booking.id });
+      calendarEvents.set(eventId, { id: eventId, start: booking.startsAt, end: booking.endsAt, reservaBookingId: booking.id });
     },
     async deleteEvent(eventId: string) {
       calendarEvents.delete(eventId);
@@ -65,7 +65,7 @@ const hooks: BookingEventHook[] = [{
   },
 }];
 
-const runtime = defineCloudflareBookkitRuntime(config, { providers, hooks });
+const runtime = defineCloudflareReservaRuntime(config, { providers, hooks });
 
 export default {
   // Standard modules-format signature (env/ctx unused: getWorkerEnv/getWorkerWaitUntil in

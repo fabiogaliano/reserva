@@ -1,7 +1,7 @@
 import type { ClientConfig } from './config';
 import type { Booking, WireBooking } from './booking';
 import type { CalEvent } from './occupancy';
-import type { BookkitResolvedRouteConfig } from '../routes-manifest';
+import type { ReservaResolvedRouteConfig } from '../routes-manifest';
 
 // Plan 021 (design decision 1): the closed set of emittable booking events, exported as a runtime
 // VALUE (not only a type) so a consumer — or an agent reading the package — can enumerate every
@@ -97,7 +97,7 @@ export interface EmailProvider {
     event: EmailBookingEvent,
     booking: Booking,
     config: ClientConfig,
-    routeConfig?: BookkitResolvedRouteConfig,
+    routeConfig?: ReservaResolvedRouteConfig,
   ): Promise<void>;
   // Optional per-recipient split (BK-SIDE-001): a provider that implements both of these lets the
   // mutation dispatcher record + retry each recipient as its own durable outbox operation, so an
@@ -110,7 +110,7 @@ export interface EmailProvider {
     event: EmailBookingEvent,
     booking: Booking,
     config: ClientConfig,
-    routeConfig?: BookkitResolvedRouteConfig,
+    routeConfig?: ReservaResolvedRouteConfig,
   ): Promise<void>;
 }
 
@@ -132,7 +132,7 @@ export interface PaymentProvider {
   createCheckout(
     booking: Booking,
     config: ClientConfig,
-    routePaths?: BookkitResolvedRouteConfig['paths'],
+    routePaths?: ReservaResolvedRouteConfig['paths'],
   ): Promise<{ url: string; sessionRef: string }>;
   parseWebhook(request: Request): Promise<PaymentEventParsed>;
   getSession(sessionRef: string): Promise<SessionStatus>;

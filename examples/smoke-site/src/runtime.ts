@@ -1,7 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import type { CalEvent } from '../../../src/core/occupancy';
 import type { BookingEventHook, OperationalAlert, PaymentEventParsed } from '../../../src/core/events';
-import { defineCloudflareBookkitRuntime, type BookkitProviders } from '../../../src/runtime';
+import { defineCloudflareReservaRuntime, type ReservaProviders } from '../../../src/runtime';
 import { pickupOptionFor, resolveService } from '../../../src/core/config';
 import config from './config';
 
@@ -9,12 +9,12 @@ import config from './config';
 // bindings in wrangler.jsonc. A real consumer runs `wrangler types` (see README) and imports the
 // generated `Env` from worker-configuration.d.ts instead of declaring it by hand.
 interface Env {
-  BOOKKIT_DB: D1Database;
-  BOOKKIT_TOKEN_ENC_KEY: string;
-  BOOKKIT_OPERATOR_SECRET: string;
+  RESERVA_DB: D1Database;
+  RESERVA_TOKEN_ENC_KEY: string;
+  RESERVA_OPERATOR_SECRET: string;
   // Plan 009: configured so the e2e suite exercises the admin CSRF layer (src/admin-csrf.ts) the
   // way the README recommends for production, instead of its fail-open "no secret configured" path.
-  BOOKKIT_CSRF_SECRET: string;
+  RESERVA_CSRF_SECRET: string;
 }
 
 const calendarEvents = new Map<string, CalEvent>();
@@ -33,7 +33,7 @@ export const emailOutbox: Array<{ event: string; reference: string; customerMana
 
 // Plan 020 (design decisions 10/11, step 8): the independent operator alert sink, captured
 // in-memory the same way emailOutbox captures the confirmation-email provider above — proves the
-// scheduled reconciler's alert-drain call actually reaches a configured `BookkitProviders.alerts`
+// scheduled reconciler's alert-drain call actually reaches a configured `ReservaProviders.alerts`
 // and delivers exactly the seven-field `OperationalAlert` shape, no more, no less.
 export const alertOutbox: OperationalAlert[] = [];
 
@@ -49,7 +49,7 @@ export function armNextCalendarFailure(): void {
   forceNextCalendarFailure = true;
 }
 
-const providers: BookkitProviders = {
+const providers: ReservaProviders = {
   payments: {
     async createCheckout(booking, checkoutConfig) {
       const sessionRef = `local_session_${booking.id}`;
@@ -89,7 +89,7 @@ const providers: BookkitProviders = {
       };
     },
     async refund(paymentRef, expectedAmountMinor) {
-      console.info('[bookkit demo] refund', { paymentRef, expectedAmountMinor });
+      console.info('[reserva demo] refund', { paymentRef, expectedAmountMinor });
       return { refundRef: `local_refund_${paymentRef}`, amountMinor: expectedAmountMinor };
     },
   },
@@ -109,9 +109,9 @@ const providers: BookkitProviders = {
         id,
         start: booking.startsAt,
         end: booking.endsAt,
-        bookkitBookingId: booking.id,
+        reservaBookingId: booking.id,
       });
-      console.info('[bookkit demo] calendar created', { id, bookingId: booking.id });
+      console.info('[reserva demo] calendar created', { id, bookingId: booking.id });
       return id;
     },
     async patchEvent(eventId, booking) {
@@ -119,13 +119,13 @@ const providers: BookkitProviders = {
         id: eventId,
         start: booking.startsAt,
         end: booking.endsAt,
-        bookkitBookingId: booking.id,
+        reservaBookingId: booking.id,
       });
-      console.info('[bookkit demo] calendar updated', { eventId, bookingId: booking.id });
+      console.info('[reserva demo] calendar updated', { eventId, bookingId: booking.id });
     },
     async deleteEvent(eventId) {
       calendarEvents.delete(eventId);
-      console.info('[bookkit demo] calendar deleted', { eventId });
+      console.info('[reserva demo] calendar deleted', { eventId });
     },
   },
   email: {
@@ -137,7 +137,7 @@ const providers: BookkitProviders = {
         operatorManageUrl: manageUrl(booking.operatorToken),
         sentAt: new Date().toISOString(),
       });
-      console.info('[bookkit demo] email', {
+      console.info('[reserva demo] email', {
         event,
         reference: booking.reference,
         customerManageUrl: manageUrl(booking.cancelToken),
@@ -148,7 +148,7 @@ const providers: BookkitProviders = {
   alerts: {
     async send(alert) {
       alertOutbox.push(alert);
-      console.info('[bookkit demo] operational alert', alert);
+      console.info('[reserva demo] operational alert', alert);
     },
   },
 };
@@ -159,15 +159,15 @@ const hooks: BookingEventHook[] = [
   {
     name: 'demo-log',
     async handler(event, booking, hookContext) {
-      console.info('[bookkit demo] booking event', { event, id: hookContext.id, reference: booking.reference });
+      console.info('[reserva demo] booking event', { event, id: hookContext.id, reference: booking.reference });
     },
   },
 ];
 
-export default defineCloudflareBookkitRuntime<Env>(config, {
+export default defineCloudflareReservaRuntime<Env>(config, {
   providers,
   hooks,
-  secretBindings: ['BOOKKIT_TOKEN_ENC_KEY', 'BOOKKIT_OPERATOR_SECRET', 'BOOKKIT_CSRF_SECRET'],
+  secretBindings: ['RESERVA_TOKEN_ENC_KEY', 'RESERVA_OPERATOR_SECRET', 'RESERVA_CSRF_SECRET'],
   // Plan 025: the local demo's custom admin auth strategy — config declares no `admin.access`
   // (Access cannot protect `localhost`), so this unconditionally admits every request as an
   // anonymous admin. A real deployment must not do this; see README "Admin access and booking

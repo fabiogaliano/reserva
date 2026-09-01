@@ -107,7 +107,7 @@ test.describe('reschedule calendar in a timezone behind UTC (regression: manage-
     // The enhancer inserts .bk-cal-wrap only after its availability fetch resolves, so this wait
     // guarantees isDateDisallowed is already assigned when the probe below calls it.
     await page.locator('.bk-cal-wrap').waitFor();
-    const form = page.locator('[data-bookkit-reschedule]');
+    const form = page.locator('[data-reserva-reschedule]');
     const service = await form.getAttribute('data-service');
     const quantity = await form.getAttribute('data-quantity');
     const from = await form.getAttribute('data-from');

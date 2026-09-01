@@ -9,7 +9,7 @@ import {
   isSlotAvailable,
 } from './core/occupancy';
 import { localDateKey, parseUtcInstant } from './core/time';
-import type { BookkitContext } from './context';
+import type { ReservaContext } from './context';
 import { nowIso } from './context';
 import { classifyProviderError } from './provider-failure';
 import {
@@ -93,7 +93,7 @@ export function classifyAttemptOutcome(attemptNumber: number, error: unknown): A
 // Plan 021: `operation` is the built display string (never parsed back), and `error` carries the
 // remediating message — for an unregistered hook/webhook name that message is the only place a
 // deployment learns which registration is missing.
-function logAbandonment(context: BookkitContext, input: {
+function logAbandonment(context: ReservaContext, input: {
   bookingId: string;
   operation: string;
   provider: string;
@@ -102,7 +102,7 @@ function logAbandonment(context: BookkitContext, input: {
   reason: 'permanent_failure' | 'max_attempts_exceeded';
   error: string;
 }): void {
-  context.logger.error?.('bookkit side effect operation abandoned', {
+  context.logger.error?.('reserva side effect operation abandoned', {
     bookingId: input.bookingId, operation: input.operation, provider: input.provider,
     ...(input.status !== undefined ? { status: input.status } : {}),
     attemptCount: input.attemptCount, reason: input.reason, error: input.error,
@@ -123,7 +123,7 @@ export class ConfirmationInProgressError extends Error {
   }
 }
 
-async function expiredHoldOversold(context: BookkitContext, booking: Booking, now: string): Promise<boolean> {
+async function expiredHoldOversold(context: ReservaContext, booking: Booking, now: string): Promise<boolean> {
   const service = resolveService(context.config, booking.serviceSlug);
   const date = localDateKey(booking.startsAt, context.config.business.timezone);
   const [override, capacityDefaults] = await Promise.all([
@@ -156,7 +156,7 @@ async function expiredHoldOversold(context: BookkitContext, booking: Booking, no
   });
 }
 
-async function renewConfirmationLease(context: BookkitContext, bookingId: string, token: string): Promise<void> {
+async function renewConfirmationLease(context: ReservaContext, bookingId: string, token: string): Promise<void> {
   const now = context.clock();
   const renewed = await context.repo.renewConfirmationLease(
     bookingId,
@@ -168,8 +168,8 @@ async function renewConfirmationLease(context: BookkitContext, bookingId: string
 }
 
 async function resolveOperation(
-  context: BookkitContext,
-  input: Parameters<BookkitContext['repo']['resolveSideEffectOperation']>[0],
+  context: ReservaContext,
+  input: Parameters<ReservaContext['repo']['resolveSideEffectOperation']>[0],
 ): Promise<void> {
   if (!await context.repo.resolveSideEffectOperation(input)) throw new ConfirmationInProgressError();
 }
@@ -186,7 +186,7 @@ function confirmationEmailRecipient(operation: SideEffectOperationIdentity): Ema
 // (both recipients in one call, content unchanged), and a split row calls sendToRecipient for
 // exactly the one recipient its kind encodes, so an owner-recipient failure can never re-trigger
 // the customer's already-delivered send on retry.
-async function runConfirmationOperation(context: BookkitContext, booking: Booking, operation: SideEffectOperationIdentity): Promise<string | null> {
+async function runConfirmationOperation(context: ReservaContext, booking: Booking, operation: SideEffectOperationIdentity): Promise<string | null> {
   if (operation.family === 'calendar_create') {
     return context.providers.calendar ? await context.providers.calendar.createEvent(booking, context.config) : null;
   }
@@ -202,7 +202,7 @@ async function runConfirmationOperation(context: BookkitContext, booking: Bookin
 }
 
 async function executeOperation(
-  context: BookkitContext,
+  context: ReservaContext,
   booking: Booking,
   operation: SideEffectOperationRecord,
   token: string,
@@ -257,7 +257,7 @@ async function executeOperation(
 }
 
 async function confirmBookingFromPaymentUnlocked(
-  context: BookkitContext,
+  context: ReservaContext,
   booking: Booking,
   token: string,
   paymentRef?: string | null,
@@ -360,13 +360,13 @@ async function confirmBookingFromPaymentUnlocked(
   return current;
 }
 
-async function confirmationFullySettled(context: BookkitContext, bookingId: string): Promise<boolean> {
+async function confirmationFullySettled(context: ReservaContext, bookingId: string): Promise<boolean> {
   const operations = (await context.repo.listSideEffectOperations(bookingId)).filter(isConfirmationSideEffectOperation);
   return operations.length > 0 && !operations.some((operation) => isActionableSideEffectStatus(operation.status));
 }
 
 async function confirmBookingWithLease(
-  context: BookkitContext,
+  context: ReservaContext,
   booking: Booking,
   paymentRef: string | null | undefined,
   details: PaymentCustomerDetails,
@@ -397,7 +397,7 @@ async function confirmBookingWithLease(
 }
 
 export async function confirmBookingFromPayment(
-  context: BookkitContext,
+  context: ReservaContext,
   booking: Booking,
   paymentRef?: string | null,
   details: PaymentCustomerDetails = {},
@@ -422,7 +422,7 @@ export async function confirmBookingFromPayment(
 // into per-recipient debt when the current provider actually implements BOTH recipientsForEvent
 // and sendToRecipient (so each recipient can be retried independently); a provider with only
 // send() keeps the single combined email_confirmation row.
-function confirmationEmailRecipients(context: BookkitContext): EmailRecipientRole[] | undefined {
+function confirmationEmailRecipients(context: ReservaContext): EmailRecipientRole[] | undefined {
   const email = context.providers.email;
   if (!email?.recipientsForEvent || !email.sendToRecipient) return undefined;
   return email.recipientsForEvent('booking.confirmed');
@@ -432,7 +432,7 @@ function confirmationEmailRecipients(context: BookkitContext): EmailRecipientRol
 // resolves each booking.confirmed subscriber row through its OWN row lease — never the confirmation
 // lease, which the caller may already have released by the time this runs detached. With the v1
 // per-provider sync flag gone, the row transition is the single atomic record of delivery.
-async function runConfirmationEventSideEffects(context: BookkitContext, booking: Booking): Promise<void> {
+async function runConfirmationEventSideEffects(context: ReservaContext, booking: Booking): Promise<void> {
   const operations = await context.repo.listSideEffectOperations(booking.id);
   for (const operation of operations) {
     if (!isConfirmationEventOperation(operation) || !isActionableSideEffectStatus(operation.status)) continue;
@@ -442,12 +442,12 @@ async function runConfirmationEventSideEffects(context: BookkitContext, booking:
 
 // Plan 011 (design decision 3): the detached first attempt, scheduled right after the rows are
 // minted, so the confirming request never waits on an external endpoint.
-function detach(context: BookkitContext, task: Promise<void>): void {
+function detach(context: ReservaContext, task: Promise<void>): void {
   if (context.waitUntil) context.waitUntil(task);
   else void task;
 }
 
-function scheduleConfirmationEventDelivery(context: BookkitContext, booking: Booking): void {
+function scheduleConfirmationEventDelivery(context: ReservaContext, booking: Booking): void {
   detach(context, runConfirmationEventSideEffects(context, booking));
 }
 
@@ -456,7 +456,7 @@ function scheduleConfirmationEventDelivery(context: BookkitContext, booking: Boo
 // the record, keyed by the payment event id as its discriminator: a Stripe redelivery of the same
 // dispute conflicts with the existing row instead of minting a second delivery, and two genuinely
 // different disputes on one booking still get distinct event ids.
-export async function dispatchDisputeEvent(context: BookkitContext, booking: Booking, occurrenceId: string): Promise<void> {
+export async function dispatchDisputeEvent(context: ReservaContext, booking: Booking, occurrenceId: string): Promise<void> {
   const now = nowIso(context);
   const seeds = bookingEventSeeds(context, 'payment.dispute_created', booking, now, occurrenceId);
   if (seeds.length > 0) {
@@ -471,7 +471,7 @@ export async function dispatchDisputeEvent(context: BookkitContext, booking: Boo
 // registering a hook. Derived from the rows plus the current registration, never from an entity
 // flag (direction doc invariant 2).
 export function missingConfirmationEventOperations(
-  context: BookkitContext,
+  context: ReservaContext,
   operations: readonly SideEffectOperationRecord[],
 ): boolean {
   return durableSubscriberIdentities(context, 'booking.confirmed')
@@ -484,7 +484,7 @@ export function missingConfirmationEventOperations(
 // Terminal events need no discriminator (each happens once per booking); reschedule rows receive
 // their strictly increasing version inside the winning repository batch.
 export function mutationSideEffectSeeds(
-  context: BookkitContext,
+  context: ReservaContext,
   event: EmailBookingEvent,
   snapshot: Booking,
   occurredAt: string,
@@ -507,7 +507,7 @@ export function mutationSideEffectSeeds(
 // occurrence identically — including the refund path, whose CAS also accepts hold/expired and so
 // cannot go through the domain's confirmed-only cancelBooking.
 export function cancellationSideEffectSeeds(
-  context: BookkitContext,
+  context: ReservaContext,
   booking: Booking,
   event: 'booking.cancelled_by_customer' | 'booking.cancelled_by_operator',
   occurredAt: string,
@@ -536,7 +536,7 @@ interface MutationSideEffectAttempt {
 // request. A hook/webhook row is the deliberate exception — an unregistered name is a permanent
 // failure raised by the delivery itself, so it abandons with a remediating log instead of sitting
 // pending forever.
-function attemptForOperation(context: BookkitContext, booking: Booking, operation: SideEffectOperationRecord): MutationSideEffectAttempt | null {
+function attemptForOperation(context: ReservaContext, booking: Booking, operation: SideEffectOperationRecord): MutationSideEffectAttempt | null {
   if (operation.family === 'calendar_delete') {
     const calendar = context.providers.calendar;
     if (!calendar) return null;
@@ -571,7 +571,7 @@ function attemptForOperation(context: BookkitContext, booking: Booking, operatio
 // side-effect failure must never turn the customer's already-durable cancel/reschedule/no-show
 // into a 500; it leaves a 'failed' row for a later request touching this booking to retry.
 async function runMutationSideEffect(
-  context: BookkitContext,
+  context: ReservaContext,
   booking: Booking,
   operation: SideEffectOperationRecord,
 ): Promise<void> {
@@ -594,7 +594,7 @@ async function runMutationSideEffect(
       bookingId: booking.id, identity: operation, status: outcome.status, claimedAt: attemptedAt,
       error: outcome.error, resolvedAt: nowIso(context),
     });
-    context.logger.warn?.('bookkit mutation side effect failed', {
+    context.logger.warn?.('reserva mutation side effect failed', {
       event: operation.event ?? operation.family, bookingId: booking.id, provider: attempt.provider, operation: key,
       ...(outcome.statusCode !== undefined ? { status: outcome.statusCode } : {}),
     });
@@ -617,7 +617,7 @@ async function runMutationSideEffect(
 // (crashed between claim and resolve, or between record and attempt) still get delivered on a LATER
 // request. Plan 021: this now covers the booking.confirmed subscriber rows too, which v1's single
 // ops row needed a dedicated drain for.
-export async function runOwedMutationSideEffects(context: BookkitContext, booking: Booking): Promise<void> {
+export async function runOwedMutationSideEffects(context: ReservaContext, booking: Booking): Promise<void> {
   const operations = await context.repo.listSideEffectOperations(booking.id);
   for (const operation of operations) {
     if (!isActionableSideEffectStatus(operation.status) || !isRowLeaseOperation(operation)) continue;
@@ -629,7 +629,7 @@ export async function runOwedMutationSideEffects(context: BookkitContext, bookin
 // exactly that row. Reusing the operation-specific claim/run/resolve primitives here prevents one
 // due row from pulling a sibling out of backoff through a booking-wide drain.
 export async function runScheduledSideEffectOperation(
-  context: BookkitContext,
+  context: ReservaContext,
   booking: Booking,
   operation: SideEffectOperationRecord,
 ): Promise<void> {
@@ -670,7 +670,7 @@ export type SideEffectRetryOutcome = 'succeeded' | 'failed' | 'nothing_to_retry'
 // hand-rolled dispatch table — the exact same call an ordinary drain would have made, just claimed
 // through the *ForRetry variant (ignores backoff/cap, still refuses a live lease).
 export async function retrySideEffectOperation(
-  context: BookkitContext,
+  context: ReservaContext,
   booking: Booking,
   operation: SideEffectOperationRecord,
 ): Promise<SideEffectRetryOutcome> {
@@ -680,7 +680,7 @@ export async function retrySideEffectOperation(
 }
 
 async function retryConfirmationSideEffectOperation(
-  context: BookkitContext,
+  context: ReservaContext,
   booking: Booking,
   operation: SideEffectOperationRecord,
 ): Promise<SideEffectRetryOutcome> {
@@ -711,7 +711,7 @@ async function retryConfirmationSideEffectOperation(
 }
 
 async function retryMutationSideEffectOperation(
-  context: BookkitContext,
+  context: ReservaContext,
   booking: Booking,
   operation: SideEffectOperationRecord,
 ): Promise<SideEffectRetryOutcome> {
@@ -743,7 +743,7 @@ async function retryMutationSideEffectOperation(
 }
 
 export async function dispatchMutation(
-  context: BookkitContext,
+  context: ReservaContext,
   event: EmailBookingEvent,
   booking: Booking,
 ): Promise<void> {

@@ -5,7 +5,7 @@
 // examples/smoke-site/worker/README.md for the investigation) — patching that generated file would
 // be re-fought on every build and risks silently losing the adapter's injected routes/static
 // assets/bindings (the exact STOP condition this plan calls out). A standalone cron Worker sharing
-// the same BOOKKIT_DB D1 binding avoids the adapter entirely: the site's own entrypoint (and every
+// the same RESERVA_DB D1 binding avoids the adapter entirely: the site's own entrypoint (and every
 // route/asset/binding it injects) is never touched.
 //
 // runtime.createContext falls back to the `cloudflare:workers` env/waitUntil globals whenever no
@@ -18,11 +18,11 @@ import runtime from './runtime';
 export default {
   async scheduled(_controller: ScheduledController, _env: unknown, _ctx: ExecutionContext): Promise<void> {
     try {
-      const context = await runtime.createContext({ request: new Request('https://bookkit-scheduled.invalid/') });
+      const context = await runtime.createContext({ request: new Request('https://reserva-scheduled.invalid/') });
       const summary = await runReconciliation(context, { requireAlertSink: true });
-      context.logger.info?.('bookkit scheduled reconciliation summary', { ...summary });
+      context.logger.info?.('reserva scheduled reconciliation summary', { ...summary });
     } catch (error) {
-      console.error('bookkit scheduled reconciliation failed', { lifecycle: 'failed', error: String(error) });
+      console.error('reserva scheduled reconciliation failed', { lifecycle: 'failed', error: String(error) });
       throw error;
     }
   },

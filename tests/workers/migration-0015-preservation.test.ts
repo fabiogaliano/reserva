@@ -9,12 +9,12 @@ import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 
 interface TestEnv {
-  BOOKKIT_DB: D1Database;
+  RESERVA_DB: D1Database;
   TEST_MIGRATIONS: D1Migration[];
 }
 
 const bindings = env as unknown as TestEnv;
-const db = bindings.BOOKKIT_DB;
+const db = bindings.RESERVA_DB;
 
 // The full 44-column physical checklist post-0014: 0011's 42 (see that migration's header) plus
 // 0014's meeting_point_id/meeting_point_label. Ground truth for "did 0015's INSERT...SELECT drop

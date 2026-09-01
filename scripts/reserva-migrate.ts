@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-// Thin wrapper around `wrangler d1 migrations apply`, published as the `bookkit-migrate` bin so
-// consumers can run `bunx bookkit-migrate --local` instead of hand-writing a db:migrate script.
+// Thin wrapper around `wrangler d1 migrations apply`, published as the `reserva-migrate` bin so
+// consumers can run `bunx reserva-migrate --local` instead of hand-writing a db:migrate script.
 // Node builtins only for JSON/JSONC configs (no runtime dependency for the common case): it shells
 // out to whatever `wrangler` is on PATH (the consumer's own devDependency) rather than bundling or
 // vendoring wrangler itself. `smol-toml` is loaded dynamically, only for TOML configs.
@@ -96,18 +96,18 @@ interface WranglerConfigRoot {
 
 class CliFailure extends Error {}
 
-const usage = `Usage: bookkit-migrate [database_name] [options]
+const usage = `Usage: reserva-migrate [database_name] [options]
 
 Value options: -c, --config; --cwd; -e, --env; --env-file; --profile; --persist-to
 Boolean options: --local; --remote; --preview; --install-skills; -h, --help; -v, --version
 Use -- to pass all remaining arguments to wrangler verbatim.`;
 
 function fail(message: string): never {
-  throw new CliFailure(`bookkit-migrate: ${message}\n${usage}`);
+  throw new CliFailure(`reserva-migrate: ${message}\n${usage}`);
 }
 
-// Resolved from the script's own location, not the consumer's cwd: at `bin.bookkit-migrate`,
-// `../migrations` relative to this file is bookkit's packaged migrations/ directory both in this
+// Resolved from the script's own location, not the consumer's cwd: at `bin.reserva-migrate`,
+// `../migrations` relative to this file is reserva's packaged migrations/ directory both in this
 // repo (scripts/ -> repo root) and in an installed package (`files` ships both scripts/ and
 // migrations/ at the package root — see package.json).
 function resolvePackagedMigrationsDir(): string {
@@ -123,7 +123,7 @@ function configFormat(configPath: string): ConfigFormat {
 async function parseConfig(configPath: string, source: string): Promise<WranglerConfigRoot> {
   try {
     if (configFormat(configPath) === 'toml') {
-      // Dynamic import: bookkit's first runtime dependency, loaded only for TOML consumers so
+      // Dynamic import: reserva's first runtime dependency, loaded only for TOML consumers so
       // JSON/JSONC consumers (the common case) never pull it into their module graph.
       const { parse } = await import('smol-toml');
       return parse(source) as WranglerConfigRoot;
@@ -150,7 +150,7 @@ async function writeDerivedConfig(configPath: string, root: WranglerConfigRoot):
 // "derived-config location" design decision. randomUUID() makes concurrent invocations collision-
 // resistant without a retry loop.
 function uniqueSiblingConfigPath(configPath: string): string {
-  return resolve(dirname(configPath), `.bookkit-migrate.${randomUUID()}${extname(configPath)}`);
+  return resolve(dirname(configPath), `.reserva-migrate.${randomUUID()}${extname(configPath)}`);
 }
 
 type DatabaseSelection =
@@ -182,8 +182,8 @@ function selectDatabaseEntry(root: WranglerConfigRoot, environment: string | und
     if (matches.length === 0) return { kind: 'name-not-found', name: explicitName, candidates: candidateNames };
     return { kind: 'name-ambiguous', name: explicitName, candidates: candidateNames };
   }
-  const bookkitDatabase = databases.find((database) => database.binding === 'BOOKKIT_DB');
-  if (bookkitDatabase?.database_name) return { kind: 'selected', entry: bookkitDatabase };
+  const reservaDatabase = databases.find((database) => database.binding === 'RESERVA_DB');
+  if (reservaDatabase?.database_name) return { kind: 'selected', entry: reservaDatabase };
   if (databases.length === 1 && databases[0]?.database_name) return { kind: 'selected', entry: databases[0] };
   return { kind: 'ambiguous', candidates: candidateNames };
 }
@@ -306,10 +306,10 @@ async function run(): Promise<number> {
       fail(`environment \`${selection.environment}\` in ${configPath} has no d1_databases binding; pass the database name explicitly`);
     }
     if (selection.kind === 'no-databases') {
-      fail(`could not read a D1 database_name from ${configPath}; pass it explicitly, e.g. \`bookkit-migrate <database_name> --local\``);
+      fail(`could not read a D1 database_name from ${configPath}; pass it explicitly, e.g. \`reserva-migrate <database_name> --local\``);
     }
     if (selection.kind === 'ambiguous') {
-      fail(`multiple D1 databases found in ${configPath}: ${selection.candidates.join(', ')}. Pass one explicitly, e.g. \`bookkit-migrate <database_name> --local\``);
+      fail(`multiple D1 databases found in ${configPath}: ${selection.candidates.join(', ')}. Pass one explicitly, e.g. \`reserva-migrate <database_name> --local\``);
     }
     if (selection.kind === 'name-not-found') {
       fail(`\`${selection.name}\` does not match any configured D1 entry's binding or database_name in ${configPath}. Configured: ${selection.candidates.join(', ') || '(none)'}`);
@@ -321,7 +321,7 @@ async function run(): Promise<number> {
     const { entry } = selection;
     const databaseName = entry.database_name;
     if (!databaseName) {
-      fail(`the selected D1 entry in ${configPath} has no database_name; pass one explicitly, e.g. \`bookkit-migrate <database_name> --local\``);
+      fail(`the selected D1 entry in ${configPath} has no database_name; pass one explicitly, e.g. \`reserva-migrate <database_name> --local\``);
     }
 
     const packagedMigrationsDir = resolve(resolvePackagedMigrationsDir());
@@ -337,10 +337,10 @@ async function run(): Promise<number> {
       } else {
         fail(
           `the selected D1 database's migrations_dir (\`${entry.migrations_dir}\`, resolved to ${configuredDir}) does not `
-          + `point at bookkit's packaged migrations (${packagedMigrationsDir}). Silently overriding a migrations_dir that `
-          + `points elsewhere would risk applying the wrong migrations under bookkit's name — it may be your own migration `
+          + `point at reserva's packaged migrations (${packagedMigrationsDir}). Silently overriding a migrations_dir that `
+          + `points elsewhere would risk applying the wrong migrations under reserva's name — it may be your own migration `
           + `pipeline. Point ${configPath}'s selected d1_databases entry's migrations_dir at ${packagedMigrationsDir}, or `
-          + 'remove the field so bookkit-migrate can derive it automatically.',
+          + 'remove the field so reserva-migrate can derive it automatically.',
         );
       }
     } else {
@@ -356,13 +356,13 @@ async function run(): Promise<number> {
       effectiveConfigPath = derivedConfigPath;
     }
 
-    console.log(`bookkit-migrate: applying bookkit's packaged migrations from ${effectiveMigrationsDir}`);
+    console.log(`reserva-migrate: applying reserva's packaged migrations from ${effectiveMigrationsDir}`);
 
     const wranglerArgs = ['d1', 'migrations', 'apply', databaseName, '--config', effectiveConfigPath, ...passthrough];
     const result = spawnSync('wrangler', wranglerArgs, { stdio: 'inherit' });
     if (result.error) {
       if ((result.error as NodeJS.ErrnoException).code === 'ENOENT') {
-        fail('`wrangler` was not found on PATH; add it as a devDependency and run this through your package manager (e.g. `bunx bookkit-migrate`)');
+        fail('`wrangler` was not found on PATH; add it as a devDependency and run this through your package manager (e.g. `bunx reserva-migrate`)');
       }
       throw result.error;
     }

@@ -1,6 +1,6 @@
-// Plan 008 (audit finding #6): checkBookkitMigrationsApplied's filename ledger alone is fooled by
-// a consumer migration that happens to reuse one of bookkit's filenames without ever running
-// bookkit's SQL. These tests prove the schema fingerprint added on top of the ledger catches
+// Plan 008 (audit finding #6): checkReservaMigrationsApplied's filename ledger alone is fooled by
+// a consumer migration that happens to reuse one of reserva's filenames without ever running
+// reserva's SQL. These tests prove the schema fingerprint added on top of the ledger catches
 // exactly that, against real D1 -- a real, fully migrated schema passes; a forged ledger over a
 // bare schema fails distinctly; and a real schema stopped before the LATEST side_effect_operations
 // rebuild (0013, plan 016) with a colliding ledger row for it also fails distinctly (not silently
@@ -38,45 +38,45 @@
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
-import { BOOKKIT_MIGRATIONS } from '../../src/migrations-manifest';
-import { checkBookkitMigrationsApplied } from '../../src/runtime-context';
+import { RESERVA_MIGRATIONS } from '../../src/migrations-manifest';
+import { checkReservaMigrationsApplied } from '../../src/runtime-context';
 
 interface TestEnv {
-  BOOKKIT_DB: D1Database;
+  RESERVA_DB: D1Database;
   TEST_MIGRATIONS: D1Migration[];
 }
 
 const bindings = env as unknown as TestEnv;
-const db = bindings.BOOKKIT_DB;
+const db = bindings.RESERVA_DB;
 
 // Every table any of the 12 real migrations creates, so each test can tear the schema back to
 // nothing before rebuilding exactly the state its scenario needs -- self-contained regardless of
 // whether the pool isolates storage per test.
-const BOOKKIT_TABLES = ['admin_change_history', 'operational_incidents', 'side_effect_operations', 'refund_operations', 'settings', 'capacity_defaults', 'day_overrides', 'bookings'];
+const RESERVA_TABLES = ['admin_change_history', 'operational_incidents', 'side_effect_operations', 'refund_operations', 'settings', 'capacity_defaults', 'day_overrides', 'bookings'];
 
 async function resetSchema() {
-  for (const table of BOOKKIT_TABLES) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
+  for (const table of RESERVA_TABLES) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
   await db.prepare('DROP TABLE IF EXISTS d1_migrations').run();
 }
 
-describe('checkBookkitMigrationsApplied schema fingerprint against real D1', () => {
+describe('checkReservaMigrationsApplied schema fingerprint against real D1', () => {
   it('passes against a real, fully migrated schema', async () => {
     await resetSchema();
     await applyD1Migrations(db, bindings.TEST_MIGRATIONS, 'd1_migrations');
 
-    await expect(checkBookkitMigrationsApplied(db)).resolves.toBeUndefined();
+    await expect(checkReservaMigrationsApplied(db)).resolves.toBeUndefined();
   });
 
   it('fails distinctly (not "missing migrations") when the ledger is forged over a bare schema', async () => {
     await resetSchema();
     // d1_migrations is normally created by wrangler's own migration runner; create it directly
     // since no migration is actually being applied in this scenario -- nothing else in the
-    // database was ever built, simulating a consumer database bookkit was never really pointed at.
+    // database was ever built, simulating a consumer database reserva was never really pointed at.
     await db.prepare('CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)').run();
-    for (const name of BOOKKIT_MIGRATIONS) await db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').bind(name).run();
+    for (const name of RESERVA_MIGRATIONS) await db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').bind(name).run();
 
-    await expect(checkBookkitMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
-    await expect(checkBookkitMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
+    await expect(checkReservaMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
+    await expect(checkReservaMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
   });
 
   it('fails distinctly when a real schema stopped before 0013 has a colliding "0013" ledger row', async () => {
@@ -90,16 +90,16 @@ describe('checkBookkitMigrationsApplied schema fingerprint against real D1', () 
       migration.name !== '0013_side_effect_operations_abandoned.sql' && migration.name !== '0015_pickup_options.sql'
       && migration.name !== '0018_v2_domain_rename.sql');
     await applyD1Migrations(db, before0013, 'd1_migrations');
-    // Simulates a consumer's own migration file reusing bookkit's 0013 filename: the ledger row
-    // exists, but bookkit's widened `status` CHECK (admitting 'abandoned') never ran, so a
+    // Simulates a consumer's own migration file reusing reserva's 0013 filename: the ledger row
+    // exists, but reserva's widened `status` CHECK (admitting 'abandoned') never ran, so a
     // fingerprint that only checked for 'calendar_delete' (already present here, from the real
     // 0012 that DID run) would wrongly pass.
     for (const name of ['0013_side_effect_operations_abandoned.sql', '0015_pickup_options.sql', '0018_v2_domain_rename.sql']) {
       await db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').bind(name).run();
     }
 
-    await expect(checkBookkitMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
-    await expect(checkBookkitMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
+    await expect(checkReservaMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
+    await expect(checkReservaMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
   });
 
   it('fails distinctly when 0011 was skipped even though the later side-effect rebuilds were applied', async () => {
@@ -118,12 +118,12 @@ describe('checkBookkitMigrationsApplied schema fingerprint against real D1', () 
 
     // 0012/0013 recreated the latest side-effect shape, but cannot recreate 0011's bookings CHECKs
     // or partial unique payment-intent index.
-    await expect(checkBookkitMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
-    await expect(checkBookkitMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
+    await expect(checkReservaMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
+    await expect(checkReservaMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
   });
 
   // Plan 017 (design decision 6): a consumer migration reusing the '0014_meeting_points.sql'
-  // filename without ever running bookkit's ALTER TABLE would otherwise satisfy the ledger while
+  // filename without ever running reserva's ALTER TABLE would otherwise satisfy the ledger while
   // leaving `bookings` without meeting_point_id/meeting_point_label -- REQUIRED_BOOKINGS_COLUMNS
   // (src/runtime-context.ts) must catch that collision the same way it already does for 0008-0010.
   it('fails distinctly when a real schema stopped before 0014 has a colliding "0014" ledger row', async () => {
@@ -140,12 +140,12 @@ describe('checkBookkitMigrationsApplied schema fingerprint against real D1', () 
       await db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').bind(name).run();
     }
 
-    await expect(checkBookkitMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
-    await expect(checkBookkitMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
+    await expect(checkReservaMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
+    await expect(checkReservaMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
   });
 
   // Plan 018 (design decision 5): a consumer migration reusing the '0015_pickup_options.sql'
-  // filename without ever running bookkit's rebuild would satisfy the ledger while `bookings` still
+  // filename without ever running reserva's rebuild would satisfy the ledger while `bookings` still
   // carries 0011's pickup_type CHECK -- bookingsSchemaPresent's negative assertion (it must NOT find
   // that CHECK) must catch this the same way the positive-presence checks catch every other collision.
   it('fails distinctly when a real schema stopped before 0015 has a colliding "0015" ledger row (old pickup_type CHECK still present)', async () => {
@@ -159,12 +159,12 @@ describe('checkBookkitMigrationsApplied schema fingerprint against real D1', () 
       await db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').bind(name).run();
     }
 
-    await expect(checkBookkitMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
-    await expect(checkBookkitMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
+    await expect(checkReservaMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
+    await expect(checkReservaMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
   });
 
   // Plan 020 (design decision 7): a consumer migration reusing the '0016_...sql' filename without
-  // ever running bookkit's refund_operations rebuild / operational_incidents CREATE would satisfy
+  // ever running reserva's refund_operations rebuild / operational_incidents CREATE would satisfy
   // the ledger while the widened status CHECK, execution-lease columns, and the incident table are
   // all still absent — refundOperationsSchemaPresent/operationalIncidentsSchemaPresent must catch
   // this the same way every other rebuild-collision scenario above is caught.
@@ -181,12 +181,12 @@ describe('checkBookkitMigrationsApplied schema fingerprint against real D1', () 
       await db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').bind(name).run();
     }
 
-    await expect(checkBookkitMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
-    await expect(checkBookkitMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
+    await expect(checkReservaMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
+    await expect(checkReservaMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
   });
 
   // Plan 021: a consumer migration reusing the '0017_...sql' filename without ever running
-  // bookkit's identity rebuild leaves the whole outbox addressed by the retired `kind` column —
+  // reserva's identity rebuild leaves the whole outbox addressed by the retired `kind` column —
   // every enqueue and every claim would fail at runtime, so sideEffectOperationsSchemaPresent has
   // to catch it here instead.
   it('fails distinctly when a real schema stopped before 0017 has a colliding "0017" ledger row', async () => {
@@ -199,11 +199,11 @@ describe('checkBookkitMigrationsApplied schema fingerprint against real D1', () 
       await db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').bind(name).run();
     }
 
-    await expect(checkBookkitMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
-    await expect(checkBookkitMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
+    await expect(checkReservaMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
+    await expect(checkReservaMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
   });
 
-  // Plan 022: a consumer migration reusing '0018_v2_domain_rename.sql' without running bookkit's
+  // Plan 022: a consumer migration reusing '0018_v2_domain_rename.sql' without running reserva's
   // rebuild leaves `bookings` on the pre-v2 shape — tour_slug/people/price_cents and the sync flags
   // still there, currency absent. Every read in src/repo.ts would fail on the first request, so
   // bookingsSchemaPresent's REMOVED_BOOKINGS_COLUMNS assertion has to catch the collision here.
@@ -213,7 +213,7 @@ describe('checkBookkitMigrationsApplied schema fingerprint against real D1', () 
     await applyD1Migrations(db, before0018, 'd1_migrations');
     await db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').bind('0018_v2_domain_rename.sql').run();
 
-    await expect(checkBookkitMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
-    await expect(checkBookkitMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
+    await expect(checkReservaMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
+    await expect(checkReservaMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
   });
 });

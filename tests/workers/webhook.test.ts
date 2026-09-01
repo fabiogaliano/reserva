@@ -10,10 +10,10 @@ import worker, { WEBHOOK_SECRET, calendarEvents, emailOutbox, hookOutbox, resetW
 // Plan 015 (audit finding #16): the money path -- a signed checkout.session.completed reaching
 // the webhook route and confirming a booking with durable side effects -- was never proven
 // assembled. Every request below goes through the real worker (./worker.ts): real
-// defineCloudflareBookkitRuntime, a real StripeProvider doing real HMAC signature verification
+// defineCloudflareReservaRuntime, a real StripeProvider doing real HMAC signature verification
 // (no mocked constructEventAsync anywhere in this file), the real handlePaymentWebhook, and real D1.
 
-const db = (env as unknown as { BOOKKIT_DB: D1Database }).BOOKKIT_DB;
+const db = (env as unknown as { RESERVA_DB: D1Database }).RESERVA_DB;
 const repo = createBookingRepository(db);
 
 // A throwaway client used only to mint Stripe's own test signature headers -- never used to talk

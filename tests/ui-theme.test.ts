@@ -1,15 +1,15 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import { createBookkitContext } from '../src/context';
+import { createReservaContext } from '../src/context';
 import { handleAdminGet } from '../src/handlers';
 import { adminEnhancerJs } from '../src/ui/admin-enhancer';
 import { pageShell, themeToggle } from '../src/ui/layout';
-import { defaultMessages, type BookkitMessages } from '../src/ui/messages';
+import { defaultMessages, type ReservaMessages } from '../src/ui/messages';
 import { readThemePreference, themeCss, themeCookieName } from '../src/ui/theme';
 import { config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
-const messages = defaultMessages as BookkitMessages;
+const messages = defaultMessages as ReservaMessages;
 const cookieRequest = (cookie: string) => new Request('https://example.test/', { headers: { cookie } });
 
 describe('readThemePreference (bk_theme cookie → forced theme)', () => {
@@ -71,7 +71,7 @@ describe('admin section navigation enhancement', () => {
 describe('themeToggle (server-rendered control)', () => {
   it('renders hidden, in System mode, carrying the labels the enhancer needs', () => {
     const html = themeToggle(messages, undefined);
-    expect(html).toContain('data-bookkit-theme-toggle');
+    expect(html).toContain('data-reserva-theme-toggle');
     expect(html).toContain('hidden');
     expect(html).toContain('data-mode="system"');
     expect(html).toContain('data-l-system="System"');
@@ -90,29 +90,29 @@ describe('pageShell (data-theme + toggle placement)', () => {
   it('leaves <html> untouched and still mounts the toggle when the viewer follows the OS', () => {
     const html = pageShell({ lang: 'en', title: 'T', cssHref: '/c', header: '<h1>Hi</h1>', body: '<p>b</p>', themeToggle: themeToggle(messages, undefined) });
     expect(html).not.toContain('data-theme=');
-    expect(html).toContain('data-bookkit-theme-toggle');
+    expect(html).toContain('data-reserva-theme-toggle');
   });
 
   it('reflects a forced theme onto <html> for a masthead page (first paint, no flash)', () => {
     const html = pageShell({ lang: 'en', title: 'T', cssHref: '/c', header: '<h1>Hi</h1>', body: '<p>b</p>', theme: 'dark', themeToggle: themeToggle(messages, 'dark') });
     expect(html).toContain('<html lang="en" data-theme="dark">');
     // The toggle sits inside the masthead band for customer-facing pages.
-    expect(html).toMatch(/bk-masthead-inner[^>]*>.*data-bookkit-theme-toggle/s);
+    expect(html).toMatch(/bk-masthead-inner[^>]*>.*data-reserva-theme-toggle/s);
   });
 
   it('reflects a forced theme and mounts the toggle in the sidebar for admin shells', () => {
     const html = pageShell({ lang: 'en', title: 'T', cssHref: '/c', sidebar: '<a href="#">Nav</a>', body: '<p>b</p>', theme: 'light', themeToggle: themeToggle(messages, 'light') });
     expect(html).toContain('<html lang="en" data-theme="light">');
-    expect(html).toMatch(/bk-sidebar[^>]*>.*data-bookkit-theme-toggle/s);
+    expect(html).toMatch(/bk-sidebar[^>]*>.*data-reserva-theme-toggle/s);
   });
 });
 
 describe('admin handler wiring (context.viewerTheme → rendered page)', () => {
   it('emits the toggle and reflects the cookie-derived theme on the admin page', async () => {
-    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock: () => new Date('2026-06-14T08:00:00.000Z'), adminAuth: async () => ({ subject: '' }), providers: providers(), viewerTheme: 'dark' });
+    const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock: () => new Date('2026-06-14T08:00:00.000Z'), adminAuth: async () => ({ subject: '' }), providers: providers(), viewerTheme: 'dark' });
     const response = await handleAdminGet(new Request('https://example.test/api/booking/admin'), context);
     const body = await response.text();
     expect(body).toContain('data-theme="dark"');
-    expect(body).toContain('data-bookkit-theme-toggle');
+    expect(body).toContain('data-reserva-theme-toggle');
   });
 });

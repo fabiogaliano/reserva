@@ -5,11 +5,11 @@
 // admin/ops handler consumes, never per-route wiring, so a route added later in either protected
 // group (e.g. plan 027's ops-health endpoint) inherits it automatically.
 import type { AdminIdentity } from './access';
-import type { BookkitContext } from './context';
+import type { ReservaContext } from './context';
 
 export type { AdminIdentity } from './access';
 
-export async function accessAllowed(request: Request, context: BookkitContext): Promise<AdminIdentity | null> {
+export async function accessAllowed(request: Request, context: ReservaContext): Promise<AdminIdentity | null> {
   if (!context.adminAuth) return null;
   try {
     return (await context.adminAuth(request, context)) ?? null;

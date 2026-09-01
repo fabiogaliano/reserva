@@ -4,18 +4,18 @@
 // workerd against real D1, over a 365-day horizon with a year of bookings seeded across it.
 import { env } from 'cloudflare:workers';
 import { beforeAll, describe, expect, it } from 'vitest';
-import type { BookkitContext } from '../../src/context';
+import type { ReservaContext } from '../../src/context';
 import type { AvailabilityResponse } from '../../src/core/api';
 import { handleAvailability } from '../../src/handlers';
-import { defineCloudflareBookkitRuntime } from '../../src/runtime-context';
+import { defineCloudflareReservaRuntime } from '../../src/runtime-context';
 import { config as baseConfig } from '../fixtures';
 import { providers } from '../fakes';
 
 interface TestEnv {
-  BOOKKIT_DB: D1Database;
+  RESERVA_DB: D1Database;
 }
 
-const db = (env as unknown as TestEnv).BOOKKIT_DB;
+const db = (env as unknown as TestEnv).RESERVA_DB;
 const HORIZON_DAYS = 365;
 
 // minNoticeHours: 0 so today's slots are in range too — the point is the size of the window, not
@@ -27,17 +27,17 @@ const horizonConfig = {
 
 // Cloudflare Access stays configured (baseConfig's admin.access) — this test only drives the
 // public availability endpoint, and plan 025 allows exactly one admin auth path.
-const runtime = defineCloudflareBookkitRuntime(horizonConfig, {
+const runtime = defineCloudflareReservaRuntime(horizonConfig, {
   providers: providers(),
-  secretBindings: ['BOOKKIT_OPERATOR_SECRET'],
+  secretBindings: ['RESERVA_OPERATOR_SECRET'],
 });
 
 function dateKey(offsetDays: number): string {
   return new Date(Date.now() + offsetDays * 86_400_000).toISOString().slice(0, 10);
 }
 
-async function buildContext(request: Request): Promise<BookkitContext> {
-  return runtime.createContext({ request, locals: { env: { BOOKKIT_DB: db } } });
+async function buildContext(request: Request): Promise<ReservaContext> {
+  return runtime.createContext({ request, locals: { env: { RESERVA_DB: db } } });
 }
 
 // This deployment's documented scale is ~50 bookings a year (docs/decisions.md), spread across the

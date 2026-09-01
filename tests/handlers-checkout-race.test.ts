@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import { createBookkitContext } from '../src/context';
+import { createReservaContext } from '../src/context';
 import { handleCheckout } from '../src/handlers';
 import { booking, config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
@@ -33,7 +33,7 @@ describe('checkout race for the last slot (BK-CAP-001 / AR-001 — was spec §11
       await bothRead;
       return result;
     };
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config: singleCapacityConfig,
       db: {} as D1Database,
       repo,
@@ -56,7 +56,7 @@ describe('checkout race for the last slot (BK-CAP-001 / AR-001 — was spec §11
   it('rejects the second sequential checkout for the last slot with 409 slot_unavailable', async () => {
     const repo = fakeRepository();
     const singleCapacityConfig = { ...config, capacity: { default: 1 } };
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config: singleCapacityConfig,
       db: {} as D1Database,
       repo,
@@ -87,7 +87,7 @@ describe('checkout race for the last slot (BK-CAP-001 / AR-001 — was spec §11
       paymentSessionRef: null,
     });
     const repo = fakeRepository([existingHold]);
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,

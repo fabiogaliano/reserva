@@ -1,6 +1,6 @@
 import { cancelBooking, type Booking } from './core/booking';
 import { cancellationSideEffectSeeds, dispatchMutation } from './confirmation';
-import type { BookkitContext } from './context';
+import type { ReservaContext } from './context';
 import { nowIso } from './context';
 
 export type ClaimedOperatorCancellationResult =
@@ -11,7 +11,7 @@ export type ClaimedOperatorCancellationResult =
 // A durable refund decision is not permission to move money. This shared gate first makes the
 // cancellation durable, and only returns a booking that is safe for the refund executor to use.
 export async function resumeClaimedOperatorCancellation(
-  context: BookkitContext,
+  context: ReservaContext,
   booking: Booking,
   operationId: string,
 ): Promise<ClaimedOperatorCancellationResult> {

@@ -105,7 +105,7 @@ export interface ServiceConfig {
 export interface WebhookEndpointConfig {
   name: string;
   url: string;
-  // Must also be listed in the runtime's `secretBindings` for bookkit to be allowed to read it.
+  // Must also be listed in the runtime's `secretBindings` for reserva to be allowed to read it.
   secretBinding: string;
   // Defaults to every event in BOOKING_EVENTS.
   events?: BookingEvent[];
@@ -178,7 +178,7 @@ export interface ClientConfig {
   // webhook may share one: outbox rows tell them apart by their `family` column, not by a
   // qualified key.
   webhooks?: WebhookEndpointConfig[];
-  // Plan 025 (design decision 3): moved here from the Astro-only `BookkitIntegrationOptions.routes`
+  // Plan 025 (design decision 3): moved here from the Astro-only `ReservaIntegrationOptions.routes`
   // so the same declared intent drives both route injection (the integration reads it during
   // astro:config:setup) and admin-auth selection (the runtime factory reads it at
   // runtime-definition initialization) — one shared declaration instead of two independent
@@ -195,7 +195,7 @@ export interface ClientConfig {
     manage?: boolean;
   };
   ui?: {
-    // Per-locale overrides for Bookkit's rendered copy, merged over its bundled catalog and
+    // Per-locale overrides for Reserva's rendered copy, merged over its bundled catalog and
     // English fallback. Keys are locale tags ('pt-PT', 'fr', …); values are partial message maps.
     messages?: Record<string, Record<string, string>>;
   };

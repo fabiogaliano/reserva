@@ -1,6 +1,6 @@
 ---
-import routeConfig from 'virtual:bookkit/config';
-import { defaultLocale, formatMessage, resolveMessages, type BookkitMessages } from '../ui/messages';
+import routeConfig from 'virtual:reserva/config';
+import { defaultLocale, formatMessage, resolveMessages, type ReservaMessages } from '../ui/messages';
 import '../ui/components.css';
 
 interface StartOption {
@@ -28,7 +28,7 @@ interface Props {
   contactEmail?: string;
   contactPhone?: string;
   // Partial overrides merged over the catalog selected by `locale`.
-  messages?: Partial<BookkitMessages>;
+  messages?: Partial<ReservaMessages>;
   showTitle?: boolean;
 }
 
@@ -49,7 +49,7 @@ const {
   showTitle = true,
 } = Astro.props;
 
-const t: BookkitMessages = { ...resolveMessages(undefined, locale), ...messageOverrides };
+const t: ReservaMessages = { ...resolveMessages(undefined, locale), ...messageOverrides };
 const usesAvailability = availabilityFrom !== undefined && availabilityTo !== undefined;
 const quantityLabel = (n: number): string => formatMessage(n === 1 ? t['widget.person'] : t['widget.quantityCount'], { n });
 
@@ -85,10 +85,10 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     several instances on one page — see below) can pair each form with its own fallback rather
     than a global lookup, and so one broken instance's fallback can never be confused for a
     sibling's. */}
-<div class="bkw-instance" data-bookkit-instance>
+<div class="bkw-instance" data-reserva-instance>
 <form
   class="bk-widget"
-  data-bookkit-checkout
+  data-reserva-checkout
   data-endpoint={checkoutEndpoint}
   data-availability-endpoint={usesAvailability ? availabilityEndpoint : undefined}
   data-availability-from={availabilityFrom}
@@ -98,7 +98,7 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
   aria-label={t['widget.title']}
   hidden
 >
-  <script type="application/json" data-bookkit-data set:html={JSON.stringify(scriptData).replace(/</g, '\\u003c')} />
+  <script type="application/json" data-reserva-data set:html={JSON.stringify(scriptData).replace(/</g, '\\u003c')} />
   <input type="hidden" name="serviceSlug" value={serviceSlug} />
   <input type="hidden" name="locale" value={locale} />
 
@@ -121,17 +121,17 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
           max={availabilityTo}
           locale={locale}
           aria-labelledby={dateLabelId}
-          data-bookkit-calendar
+          data-reserva-calendar
         >
           <svg aria-hidden="true" slot="previous" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
           <svg aria-hidden="true" slot="next" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6" /></svg>
           <calendar-month></calendar-month>
         </calendar-date>
-        <p class="bkw-cal-status" data-bookkit-cal-status role="status">{t['widget.loadingSlots']}</p>
+        <p class="bkw-cal-status" data-reserva-cal-status role="status">{t['widget.loadingSlots']}</p>
       </div>
-      <fieldset class="bkw-field bkw-slots-field" data-bookkit-slots-wrap hidden>
+      <fieldset class="bkw-field bkw-slots-field" data-reserva-slots-wrap hidden>
         <legend class="bkw-label">{t['widget.time']}</legend>
-        <div class="bkw-slots" data-bookkit-slots role="radiogroup" aria-label={t['widget.time']}></div>
+        <div class="bkw-slots" data-reserva-slots role="radiogroup" aria-label={t['widget.time']}></div>
       </fieldset>
     </>
   ) : startOptions.length > 0 ? (
@@ -153,12 +153,12 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
       location-less service leaves both anchors empty, so the submitted FormData carries no
       pickupType/meetingPointId at all (checkout rejects the fields' mere presence for such a
       service; plan 023 design decision 3). */}
-  <div data-bookkit-pickup-slot></div>
-  <div data-bookkit-meeting-point-slot></div>
+  <div data-reserva-pickup-slot></div>
+  <div data-reserva-meeting-point-slot></div>
 
-  <p class="bkw-price" data-bookkit-price aria-live="polite">
+  <p class="bkw-price" data-reserva-price aria-live="polite">
     <span class="bkw-price-label">{t['common.price']}</span>
-    <strong class="bkw-price-value" data-bookkit-price-value></strong>
+    <strong class="bkw-price-value" data-reserva-price-value></strong>
     <span class="bkw-price-note">{t['widget.priceNote']}</span>
   </p>
 
@@ -166,11 +166,11 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
       post an empty start; its label shows the loading state until renderSlots restores the normal
       submit label and re-enables it. */}
   <button type="submit" class="bkw-submit" disabled={usesAvailability}>{usesAvailability ? t['widget.loadingSlots'] : t['widget.submit']}</button>
-  <p class="bkw-error" data-bookkit-error role="alert" hidden>
+  <p class="bkw-error" data-reserva-error role="alert" hidden>
     <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><path d="M12 8v4" /><path d="M12 16h.01" /></svg>
-    <span data-bookkit-error-text></span>
+    <span data-reserva-error-text></span>
   </p>
-  <button type="button" class="bkw-retry" data-bookkit-retry hidden>{t['widget.retry']}</button>
+  <button type="button" class="bkw-retry" data-reserva-retry hidden>{t['widget.retry']}</button>
 </form>
 
 {/* Visible by default — not `hidden` — because a hidden fallback cannot help when the widget
@@ -178,7 +178,7 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     reaches the point where it hides this and reveals the form (see that script: only a fully
     successful init does so). A visitor briefly seeing this before a healthy widget finishes
     initializing is the intended progressive-enhancement baseline, not a bug. */}
-<div class="bkw-fallback" data-bookkit-fallback>
+<div class="bkw-fallback" data-reserva-fallback>
   <p>{t['widget.noscript']}</p>
   {(contactEmail || contactPhone) && (
     <p class="bkw-noscript-contact">
@@ -236,7 +236,7 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
   }
 
   function readData(form: HTMLFormElement): WidgetData {
-    const island = form.querySelector<HTMLScriptElement>('[data-bookkit-data]');
+    const island = form.querySelector<HTMLScriptElement>('[data-reserva-data]');
     return JSON.parse(island?.textContent ?? '{}') as WidgetData;
   }
 
@@ -245,22 +245,22 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
   }
 
   function showError(form: HTMLFormElement, data: WidgetData, cause: unknown, fallbackKey: string): void {
-    const error = form.querySelector<HTMLElement>('[data-bookkit-error]');
+    const error = form.querySelector<HTMLElement>('[data-reserva-error]');
     if (!error) return;
-    const text = error.querySelector<HTMLElement>('[data-bookkit-error-text]') ?? error;
+    const text = error.querySelector<HTMLElement>('[data-reserva-error-text]') ?? error;
     text.textContent = cause instanceof Error && cause.message ? cause.message : data.i18n[fallbackKey] ?? '';
     error.hidden = false;
   }
 
   function showRetry(form: HTMLFormElement): void {
-    const retry = form.querySelector<HTMLElement>('[data-bookkit-retry]');
+    const retry = form.querySelector<HTMLElement>('[data-reserva-retry]');
     if (retry) retry.hidden = false;
   }
 
   function clearError(form: HTMLFormElement): void {
-    const error = form.querySelector<HTMLElement>('[data-bookkit-error]');
+    const error = form.querySelector<HTMLElement>('[data-reserva-error]');
     if (error) error.hidden = true;
-    const retry = form.querySelector<HTMLElement>('[data-bookkit-retry]');
+    const retry = form.querySelector<HTMLElement>('[data-reserva-retry]');
     if (retry) retry.hidden = true;
   }
 
@@ -271,7 +271,7 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
   // display a price for a selection the visitor has already changed.
   const quoteState = new WeakMap<HTMLFormElement, number>();
   async function updatePrice(form: HTMLFormElement, data: WidgetData): Promise<void> {
-    const target = form.querySelector<HTMLElement>('[data-bookkit-price-value]');
+    const target = form.querySelector<HTMLElement>('[data-reserva-price-value]');
     const endpoint = form.dataset.quoteEndpoint;
     if (!target || !endpoint) return;
     const formData = new FormData(form);
@@ -347,8 +347,8 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
   }
 
   function renderLocation(form: HTMLFormElement, service: CatalogService, data: WidgetData): void {
-    const pickupSlot = form.querySelector<HTMLElement>('[data-bookkit-pickup-slot]');
-    const pointSlot = form.querySelector<HTMLElement>('[data-bookkit-meeting-point-slot]');
+    const pickupSlot = form.querySelector<HTMLElement>('[data-reserva-pickup-slot]');
+    const pointSlot = form.querySelector<HTMLElement>('[data-reserva-meeting-point-slot]');
     const pickupOptions = service.location?.pickupOptions ?? [];
     const meetingPoints = service.location?.meetingPoints ?? [];
     if (pickupSlot && pickupOptions.length === 1) {
@@ -376,7 +376,7 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
         label: point.label,
         hint: null,
       })));
-      group.dataset.bookkitMeetingPoints = '';
+      group.dataset.reservaMeetingPoints = '';
       pointSlot.append(group);
     }
   }
@@ -387,7 +387,7 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
   // below relies on to omit meetingPointId rather than send it empty. No-ops when the group isn't
   // rendered at all (0-1 declared points).
   function syncMeetingPoints(form: HTMLFormElement): void {
-    const wrap = form.querySelector<HTMLElement>('[data-bookkit-meeting-points]');
+    const wrap = form.querySelector<HTMLElement>('[data-reserva-meeting-points]');
     if (!wrap) return;
     const selected = form.querySelector<HTMLInputElement>('input[name="pickupType"]:checked')
       ?? form.querySelector<HTMLInputElement>('input[name="pickupType"]');
@@ -418,19 +418,19 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
   }
 
   function calStatus(form: HTMLFormElement, text: string): void {
-    const status = form.querySelector<HTMLElement>('[data-bookkit-cal-status]');
+    const status = form.querySelector<HTMLElement>('[data-reserva-cal-status]');
     if (status) status.textContent = text;
   }
 
   function renderSlots(form: HTMLFormElement, day: AvailabilityDay | undefined, data: WidgetData): void {
-    const wrap = form.querySelector<HTMLElement>('[data-bookkit-slots-wrap]');
-    const container = form.querySelector<HTMLElement>('[data-bookkit-slots]');
+    const wrap = form.querySelector<HTMLElement>('[data-reserva-slots-wrap]');
+    const container = form.querySelector<HTMLElement>('[data-reserva-slots]');
     const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
     if (!wrap || !container) return;
     container.replaceChildren();
     const slots = day?.slots ?? [];
     wrap.hidden = false;
-    // The button's initial label is a loading affordance (data-bookkit-checkout only becomes
+    // The button's initial label is a loading affordance (data-reserva-checkout only becomes
     // visible once this script runs); once availability actually resolves, restore its normal
     // label regardless of whether a slot ends up selectable.
     if (submit) submit.textContent = data.i18n.submit ?? submit.textContent;
@@ -480,7 +480,7 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
   // read) in place while the slot list refreshes underneath it.
   async function loadAvailability(form: HTMLFormElement, data: WidgetData, keepError = false): Promise<void> {
     const { availabilityEndpoint, availabilityFrom, availabilityTo } = form.dataset;
-    const calendar = form.querySelector<CalendarDateElement>('[data-bookkit-calendar]');
+    const calendar = form.querySelector<CalendarDateElement>('[data-reserva-calendar]');
     if (!availabilityEndpoint || !availabilityFrom || !availabilityTo || !calendar) return;
     const formData = new FormData(form);
     const query = new URLSearchParams({
@@ -574,7 +574,7 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
         syncMeetingPoints(form);
       });
     }
-    form.querySelector<HTMLButtonElement>('[data-bookkit-retry]')?.addEventListener('click', () => {
+    form.querySelector<HTMLButtonElement>('[data-reserva-retry]')?.addEventListener('click', () => {
       void loadAvailability(form, data);
     });
     void updatePrice(form, data);
@@ -640,14 +640,14 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     form.hidden = false;
   }
 
-  for (const instance of document.querySelectorAll<HTMLElement>('[data-bookkit-instance]')) {
-    const form = instance.querySelector<HTMLFormElement>('[data-bookkit-checkout]');
+  for (const instance of document.querySelectorAll<HTMLElement>('[data-reserva-instance]')) {
+    const form = instance.querySelector<HTMLFormElement>('[data-reserva-checkout]');
     if (!form) continue;
     // One broken instance must not stop its siblings from initializing (this is why the loop
     // doesn't await, and why each instance carries its own catch) — and this instance's fallback,
     // visible by default in markup, is left exactly as it started rather than revealing a dead form.
-    void initInstance(form, instance.querySelector<HTMLElement>('[data-bookkit-fallback]')).catch((cause: unknown) => {
-      console.error('[bookkit] widget instance failed to initialize; its fallback stays visible', cause);
+    void initInstance(form, instance.querySelector<HTMLElement>('[data-reserva-fallback]')).catch((cause: unknown) => {
+      console.error('[reserva] widget instance failed to initialize; its fallback stays visible', cause);
     });
   }
 </script>

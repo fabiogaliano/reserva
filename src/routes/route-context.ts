@@ -1,9 +1,9 @@
-import runtime from 'virtual:bookkit/runtime';
-import routeConfig from 'virtual:bookkit/config';
-import type { BookkitContext } from '../context';
+import runtime from 'virtual:reserva/runtime';
+import routeConfig from 'virtual:reserva/config';
+import type { ReservaContext } from '../context';
 import { loadMergedConfig } from '../core/settings';
 import { readThemePreference } from '../ui/theme';
-import type { BookkitRuntimeRequest } from '../runtime-context';
+import type { ReservaRuntimeRequest } from '../runtime-context';
 
 // Every route entrypoint must see the SAME resolved (prefixed) route table + group flags the
 // integration injected it under. `runtime.createContext` is authored by the consumer's own
@@ -11,7 +11,7 @@ import type { BookkitRuntimeRequest } from '../runtime-context';
 // it has no way to know about them — this seam overwrites the context's default (unprefixed)
 // routeConfig with the real per-build one right after creation, uniformly, so no entrypoint file
 // can forget it and end up rendering a half-prefixed URL.
-export async function createRouteContext(input: BookkitRuntimeRequest): Promise<BookkitContext> {
+export async function createRouteContext(input: ReservaRuntimeRequest): Promise<ReservaContext> {
   const context = await runtime.createContext(input);
   // The viewer's theme choice rides on the request cookie, resolved here so every page renders
   // <html data-theme> without an inline script (strict CSP).
@@ -26,7 +26,7 @@ export async function createRouteContext(input: BookkitRuntimeRequest): Promise<
   // invalid config or take the whole site down — loadMergedConfig drops offending rows and reports
   // them here so they show up in logs instead of silently persisting.
   const merged = loadMergedConfig(context.config, overrides, (warning) => {
-    context.logger.warn?.('bookkit.settings.invalid_override', { key: warning.key, reason: warning.reason });
+    context.logger.warn?.('reserva.settings.invalid_override', { key: warning.key, reason: warning.reason });
   });
   return { ...context, routeConfig, viewerTheme, baseConfig: context.config, config: merged };
 }

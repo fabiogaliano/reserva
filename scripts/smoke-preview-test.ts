@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 const smokeSiteRoot = fileURLToPath(new URL('../examples/smoke-site/', import.meta.url));
 // Isolated from both the interactive `bun run demo` state (.wrangler/state) and the Playwright e2e
-// suite's own state (.wrangler-e2e) -- see astro.config.ts's BOOKKIT_PREVIEW_PERSIST wiring -- and
+// suite's own state (.wrangler-e2e) -- see astro.config.ts's RESERVA_PREVIEW_PERSIST wiring -- and
 // on a different port than Playwright's fixed 4399, so the two probes can never collide.
 const PERSIST_DIR = '.wrangler-preview-test';
 const HOST = '127.0.0.1';
@@ -30,13 +30,13 @@ function run(command: string, args: string[], env: NodeJS.ProcessEnv = process.e
 // Fresh D1 state every run -- mirrors e2e-dev-server.ts's own reset, and for the same reason: a
 // stale prior run's schema/rows must never leak into this run's readiness/availability assertions.
 rmSync(new URL(PERSIST_DIR, `file://${smokeSiteRoot}`), { recursive: true, force: true });
-run('bun', ['../../scripts/bookkit-migrate.ts', '--local', '--persist-to', PERSIST_DIR]);
+run('bun', ['../../scripts/reserva-migrate.ts', '--local', '--persist-to', PERSIST_DIR]);
 run('bun', ['run', 'build']);
 
 const astroBin = fileURLToPath(new URL('../node_modules/.bin/astro', import.meta.url));
 const previewEnv: NodeJS.ProcessEnv = {
   ...process.env,
-  BOOKKIT_PREVIEW_PERSIST: PERSIST_DIR,
+  RESERVA_PREVIEW_PERSIST: PERSIST_DIR,
   // Astro's CLI auto-backgrounds `preview` when it thinks an agent is driving it (isRunByAgent()
   // in astro/dist/cli/agent.js) -- any truthy value here defeats that heuristic, so this stays the
   // plain foreground server this script spawns, probes, and terminates itself, the same lifecycle
@@ -83,7 +83,7 @@ try {
   const from = new Date().toISOString().slice(0, 10);
   const to = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
   await requestOk(`/api/booking/availability?service=oldTown&quantity=2&from=${from}&to=${to}`); // a valid availability URL
-  await requestOk('/booking/assets/bookkit.js'); // one Bookkit asset route
+  await requestOk('/booking/assets/reserva.js'); // one Reserva asset route
 
   console.log('smoke-preview-test: built smoke-site output served successfully through `astro preview`');
 } finally {

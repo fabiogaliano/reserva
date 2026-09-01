@@ -50,7 +50,7 @@ test('a contiguous 3-day pointer selection gets button semantics, aria-pressed, 
   await expect(cell2).toHaveAttribute('aria-pressed', 'true');
   await expect(cell3).toHaveAttribute('aria-pressed', 'true');
 
-  const title = page.locator('[data-bookkit-day-title]');
+  const title = page.locator('[data-reserva-day-title]');
   await expect(title).toHaveAttribute('role', 'status');
   await expect(title).toHaveText('3 days selected');
 
@@ -59,7 +59,7 @@ test('a contiguous 3-day pointer selection gets button semantics, aria-pressed, 
   await expect(overrideForm.locator('input[name="toDate"]')).toHaveValue(day3);
   // Contiguous shape: date+toDate only, no repeated hidden date fields (the STOP condition this
   // item's decision guards against — the two shapes must never both be populated).
-  await expect(overrideForm.locator('input[data-bookkit-extra-date]')).toHaveCount(0);
+  await expect(overrideForm.locator('input[data-reserva-extra-date]')).toHaveCount(0);
 
   await overrideForm.getByRole('button', { name: 'Close 3 days' }).click();
   await expect(page).toHaveURL(new RegExp(`date=${day1}`));
@@ -91,10 +91,10 @@ test('a scattered ctrl/cmd-click selection keeps repeated hidden date fields, bl
 
   const overrideForm = page.locator('#bk-override');
   await expect(overrideForm.locator('input[name="toDate"]')).toHaveValue('');
-  // The visible date input, not the hidden data-bookkit-extra-date field the scattered shape adds
+  // The visible date input, not the hidden data-reserva-extra-date field the scattered shape adds
   // — both share name="date", so scope by type to avoid a strict-mode ambiguity.
   await expect(overrideForm.locator('input[name="date"][type="date"]')).toHaveValue(day1);
-  await expect(overrideForm.locator('input[data-bookkit-extra-date]')).toHaveValue(day3);
+  await expect(overrideForm.locator('input[data-reserva-extra-date]')).toHaveValue(day3);
 
   await overrideForm.getByRole('button', { name: 'Close 2 days' }).click();
   await expect(page).toHaveURL(new RegExp(`date=${day1}`));
@@ -118,7 +118,7 @@ test('toggling the final selected day off clears every submitted date field', as
   const overrideForm = page.locator('#bk-override');
   await expect(overrideForm.locator('input[name="date"][type="date"]')).toHaveValue('');
   await expect(overrideForm.locator('input[name="toDate"]')).toHaveValue('');
-  await expect(overrideForm.locator('input[data-bookkit-extra-date]')).toHaveCount(0);
+  await expect(overrideForm.locator('input[data-reserva-extra-date]')).toHaveCount(0);
 });
 
 test('keyboard-only: Space toggles a day, and typing a range into the two date inputs produces the same server-side result as pointer selection', async ({ page }) => {
@@ -153,7 +153,7 @@ test('keyboard-only: Space toggles a day, and typing a range into the two date i
   await expect(rangeStartCell).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator(`.bk-day[data-date="${rangeMid}"]`)).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator(`.bk-day[data-date="${rangeEnd}"]`)).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.locator('[data-bookkit-day-title]')).toHaveText('3 days selected');
+  await expect(page.locator('[data-reserva-day-title]')).toHaveText('3 days selected');
 
   await form2.getByRole('button', { name: 'Close 3 days' }).click();
   await expect(page).toHaveURL(new RegExp(`date=${rangeStart}`));

@@ -25,7 +25,7 @@ describe('AdminDashboard.astro (plan 009: works with CSRF enabled)', () => {
     expect(html).toMatch(/<input type="hidden" name="csrf_token" value="[^"]+"/);
   });
 
-  it('renders the form with no csrf_token field when BOOKKIT_CSRF_SECRET is not configured (mirrors the built-in admin page\'s fail-open)', async () => {
+  it('renders the form with no csrf_token field when RESERVA_CSRF_SECRET is not configured (mirrors the built-in admin page\'s fail-open)', async () => {
     const html = await render({ [ACCESS_HEADER]: 'allow' });
     expect(html).toContain('<form method="post"');
     expect(html).not.toContain('name="csrf_token"');

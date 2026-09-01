@@ -1,14 +1,14 @@
-// Bookkit's own compiler needs this declaration; integration.ts injects the equivalent consumer type during Astro builds.
-declare module 'virtual:bookkit/runtime' {
-  import type { BookkitRuntimeDefinition } from './runtime';
+// Reserva's own compiler needs this declaration; integration.ts injects the equivalent consumer type during Astro builds.
+declare module 'virtual:reserva/runtime' {
+  import type { ReservaRuntimeDefinition } from './runtime';
 
-  const runtime: BookkitRuntimeDefinition;
+  const runtime: ReservaRuntimeDefinition;
   export default runtime;
 }
 
-declare module 'virtual:bookkit/config' {
-  import type { BookkitResolvedRouteConfig } from './routes-manifest';
+declare module 'virtual:reserva/config' {
+  import type { ReservaResolvedRouteConfig } from './routes-manifest';
 
-  const routeConfig: BookkitResolvedRouteConfig;
+  const routeConfig: ReservaResolvedRouteConfig;
   export default routeConfig;
 }

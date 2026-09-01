@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import { createBookkitContext } from '../src/context';
+import { createReservaContext } from '../src/context';
 import { attemptRefund } from '../src/refund-executor';
 import { SIDE_EFFECT_MAX_ATTEMPTS } from '../src/repo';
 import { booking, config } from './fixtures';
@@ -15,7 +15,7 @@ const clock = () => new Date('2026-08-14T10:00:00.000Z');
 describe('attemptRefund with an execution claim (the scheduled-reconciler branch)', () => {
   function contextFor(seed: ReturnType<typeof booking>[], overrides: Parameters<typeof providers>[0] = {}) {
     const repo = fakeRepository(seed);
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers(overrides) });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers(overrides) });
     return { repo, context };
   }
 

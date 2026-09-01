@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { bookkit, virtualRuntimeId } from '../src/integration';
+import { reserva, virtualRuntimeId } from '../src/integration';
 import config from '../examples/client-config';
 
 function setup(options: Record<string, unknown> = { config, runtimeEntrypoint: './examples/runtime.ts' }) {
@@ -9,7 +9,7 @@ function setup(options: Record<string, unknown> = { config, runtimeEntrypoint: '
   // astro:config:setup calls updateConfig once per concern (vite plugin, env schema); merge every
   // call into one view rather than keeping only the last, matching Astro's own accumulating behavior.
   let viteConfig: Record<string, unknown> = {};
-  const integration = bookkit(options as never);
+  const integration = reserva(options as never);
   const hook = integration.hooks['astro:config:setup'];
   if (!hook) throw new Error('setup hook is missing');
   hook({
@@ -68,7 +68,7 @@ describe('Astro integration entry', () => {
     const plugins = viteConfig?.vite && typeof viteConfig.vite === 'object' ? (viteConfig.vite as { plugins?: unknown[] }).plugins : undefined;
     const plugin = plugins?.[0] as { resolveId: (id: string) => string | undefined; load: (id: string) => string | undefined };
     const resolved = plugin.resolveId(virtualRuntimeId);
-    expect(resolved).toBe('\0virtual:bookkit/runtime');
+    expect(resolved).toBe('\0virtual:reserva/runtime');
     const source = plugin.load(resolved as string);
     expect(source).toContain('examples/runtime.ts');
     expect(source).not.toContain('ECT');
@@ -82,6 +82,6 @@ describe('Astro integration entry', () => {
   });
 
   it('rejects a missing runtime entrypoint during setup', () => {
-    expect(() => setup({ config, runtimeEntrypoint: resolve('/tmp/no-bookkit-runtime.ts') })).toThrow(/runtimeEntrypoint/);
+    expect(() => setup({ config, runtimeEntrypoint: resolve('/tmp/no-reserva-runtime.ts') })).toThrow(/runtimeEntrypoint/);
   });
 });

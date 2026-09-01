@@ -1,7 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import Stripe from 'stripe';
 import { describe, expect, it, vi } from 'vitest';
-import { createBookkitContext } from '../src/context';
+import { createReservaContext } from '../src/context';
 import { handleCheckout } from '../src/handlers';
 import { booking, config, service } from './fixtures';
 import { fakeRepository, providers } from './fakes';
@@ -119,7 +119,7 @@ describe('StripeProvider', () => {
       custom_fields: [{ key: 'pickup_address', label: { type: 'custom', custom: 'Pickup address' }, type: 'text' }],
       line_items: [{ quantity: 1, price_data: { currency: 'eur', unit_amount: 12000, product_data: { name: 'Vintage service (en)' } } }],
       // BK-PAY-002: every checkout.sessions.create call carries a deterministic idempotency key.
-    }), { idempotencyKey: 'bookkit-checkout-booking-1' });
+    }), { idempotencyKey: 'reserva-checkout-booking-1' });
   });
 
   it('maps the pt-PT application locale to Stripe’s European Portuguese locale', async () => {
@@ -238,8 +238,8 @@ describe('StripeProvider', () => {
     });
     await expect(provider.refund('pi_1', 10000)).resolves.toEqual({ refundRef: 're_1', amountMinor: 10000 });
     expect(client.refunds.create).toHaveBeenCalledWith(
-      { payment_intent: 'pi_1', metadata: { bookkit_refund_key: 'bookkit-refund-pi_1' } },
-      { idempotencyKey: 'bookkit-refund-pi_1' },
+      { payment_intent: 'pi_1', metadata: { reserva_refund_key: 'reserva-refund-pi_1' } },
+      { idempotencyKey: 'reserva-refund-pi_1' },
     );
   });
 
@@ -267,7 +267,7 @@ describe('StripeProvider', () => {
       checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
       refunds: {
         create: vi.fn(async () => { throw new Error('Charge ch_1 has already been refunded.'); }),
-        list: vi.fn(async () => ({ data: [stripeRefund('re_existing', 10000, { metadata: { bookkit_refund_key: 'bookkit-refund-pi_1' } })] })),
+        list: vi.fn(async () => ({ data: [stripeRefund('re_existing', 10000, { metadata: { reserva_refund_key: 'reserva-refund-pi_1' } })] })),
       },
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
@@ -285,7 +285,7 @@ describe('StripeProvider', () => {
       checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
       refunds: {
         create: vi.fn(async () => { throw new Error('Request failed with status code 500'); }),
-        list: vi.fn(async () => ({ data: [stripeRefund('re_from_cache', 10000, { metadata: { bookkit_refund_key: 'bookkit-refund-pi_1' } })] })),
+        list: vi.fn(async () => ({ data: [stripeRefund('re_from_cache', 10000, { metadata: { reserva_refund_key: 'reserva-refund-pi_1' } })] })),
       },
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
@@ -299,7 +299,7 @@ describe('StripeProvider', () => {
       checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
       refunds: {
         create: vi.fn(async () => { throw new Error('Request failed with status code 500'); }),
-        list: vi.fn(async () => ({ data: [stripeRefund('re_partial', 2000, { metadata: { bookkit_refund_key: 'other-request' } })] })),
+        list: vi.fn(async () => ({ data: [stripeRefund('re_partial', 2000, { metadata: { reserva_refund_key: 'other-request' } })] })),
       },
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
@@ -326,7 +326,7 @@ describe('StripeProvider', () => {
       refunds: {
         create: vi.fn(async () => { throw new Error('Request failed with status code 500'); }),
         list: vi.fn(async () => ({ data: [
-          stripeRefund('re_marked_partial', 8000, { metadata: { bookkit_refund_key: 'bookkit-refund-pi_1' } }),
+          stripeRefund('re_marked_partial', 8000, { metadata: { reserva_refund_key: 'reserva-refund-pi_1' } }),
           stripeRefund('re_historical_partial', 2000, { metadata: { source: 'dashboard' } }),
         ] })),
       },
@@ -389,7 +389,7 @@ describe('StripeProvider', () => {
         create: vi.fn(async () => {
           throw new Stripe.errors.StripeInvalidRequestError({ message: 'Charge ch_1 has already been refunded.', code: 'charge_already_refunded' });
         }),
-        list: vi.fn(async () => ({ data: [stripeRefund('re_recovered', 10000, { metadata: { bookkit_refund_key: 'bookkit-refund-pi_1' } })] })),
+        list: vi.fn(async () => ({ data: [stripeRefund('re_recovered', 10000, { metadata: { reserva_refund_key: 'reserva-refund-pi_1' } })] })),
       },
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
@@ -405,7 +405,7 @@ describe('StripeProvider', () => {
         create: vi.fn(async () => {
           throw new Stripe.errors.StripeInvalidRequestError({ message: 'Charge ch_1 has already been refunded.', code: 'charge_already_refunded' });
         }),
-        // Wrong amount and no bookkit_refund_key marker — not proof this request's refund succeeded.
+        // Wrong amount and no reserva_refund_key marker — not proof this request's refund succeeded.
         list: vi.fn(async () => ({ data: [stripeRefund('re_unrelated', 4000)] })),
       },
       webhooks: { constructEventAsync: vi.fn() },
@@ -512,7 +512,7 @@ describe('Checkout idempotency (BK-PAY-002)', () => {
     await provider.createCheckout(booking({ id: 'booking-1' }), config);
     await provider.createCheckout(booking({ id: 'booking-2' }), config);
     const keys = sessions.create.mock.calls.map((call) => call[1]?.idempotencyKey);
-    expect(keys).toEqual(['bookkit-checkout-booking-1', 'bookkit-checkout-booking-1', 'bookkit-checkout-booking-2']);
+    expect(keys).toEqual(['reserva-checkout-booking-1', 'reserva-checkout-booking-1', 'reserva-checkout-booking-2']);
   });
 
   it('retries once with the same idempotency key and byte-identical params after an ambiguous (network-ish) failure, replaying the original session', async () => {
@@ -532,7 +532,7 @@ describe('Checkout idempotency (BK-PAY-002)', () => {
       }
       // A real Stripe retry only replays the cached session when the key AND params match the
       // original request exactly; assert that here too, not just that a key was supplied.
-      expect(options?.idempotencyKey).toBe('bookkit-checkout-booking-1');
+      expect(options?.idempotencyKey).toBe('reserva-checkout-booking-1');
       expect(params).toEqual(paramsPerCall[0]);
       return original;
     });
@@ -557,8 +557,8 @@ describe('Checkout idempotency (BK-PAY-002)', () => {
     // replaying — pin exact equality, not just that both calls happened to succeed.
     expect(paramsPerCall[1]).toEqual(paramsPerCall[0]);
     expect(paramsPerCall[1]?.expires_at).toBe(paramsPerCall[0]?.expires_at);
-    expect(create.mock.calls[0]?.[1]).toEqual({ idempotencyKey: 'bookkit-checkout-booking-1' });
-    expect(create.mock.calls[1]?.[1]).toEqual({ idempotencyKey: 'bookkit-checkout-booking-1' });
+    expect(create.mock.calls[0]?.[1]).toEqual({ idempotencyKey: 'reserva-checkout-booking-1' });
+    expect(create.mock.calls[1]?.[1]).toEqual({ idempotencyKey: 'reserva-checkout-booking-1' });
   });
 
   it('handleCheckout: an ambiguous createCheckout failure that recovers on retry does not expire the hold, and paymentSessionRef lands on the booking', async () => {
@@ -577,7 +577,7 @@ describe('Checkout idempotency (BK-PAY-002)', () => {
     } as unknown as StripeClient;
     const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     const repo = fakeRepository();
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -606,7 +606,7 @@ describe('Checkout idempotency (BK-PAY-002)', () => {
     } as unknown as StripeClient;
     const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     const repo = fakeRepository();
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -619,7 +619,7 @@ describe('Checkout idempotency (BK-PAY-002)', () => {
     // Exactly one attempt: Stripe would replay the same cached rejection on a retry, so retrying
     // buys nothing and the hold is expired immediately instead.
     expect(create).toHaveBeenCalledTimes(1);
-    expect(create.mock.calls[0]?.[1]).toEqual({ idempotencyKey: expect.stringMatching(/^bookkit-checkout-/) });
+    expect(create.mock.calls[0]?.[1]).toEqual({ idempotencyKey: expect.stringMatching(/^reserva-checkout-/) });
     expect([...repo.rows.values()]).toHaveLength(1);
     expect([...repo.rows.values()].every((row) => row.status === 'expired')).toBe(true);
   });
@@ -635,7 +635,7 @@ describe('Checkout idempotency (BK-PAY-002)', () => {
     } as unknown as StripeClient;
     const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     const repo = fakeRepository();
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,

@@ -12,7 +12,7 @@ import { createRouteContext } from '../../../../../src/routes/route-context';
 // through the exact same context-construction seam every other route uses
 // (createRouteContext) — the only thing missing compared to a real cron tick is the
 // Cron-Trigger-to-invocation wiring itself, which scripts/smoke-scheduled-test.ts already proves
-// against real workerd/D1. Never copied into a real bookkit site — see outbox.json.ts's header
+// against real workerd/D1. Never copied into a real reserva site — see outbox.json.ts's header
 // comment for the same convention; a production deployment must never expose an unauthenticated
 // route that runs the reconciliation sweep on demand.
 export const POST: APIRoute = async ({ request, locals }: APIContext) => {

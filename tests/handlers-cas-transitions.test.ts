@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import { createBookkitContext } from '../src/context';
+import { createReservaContext } from '../src/context';
 import {
   handleCustomerCancel,
   handleCustomerReschedule,
@@ -58,7 +58,7 @@ describe('stale compare-and-set transitions', () => {
       return realTransition(id, input);
     };
     let deletes = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -86,7 +86,7 @@ describe('stale compare-and-set transitions', () => {
       return realTransition(id, input);
     };
     let deletes = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -114,7 +114,7 @@ describe('stale compare-and-set transitions', () => {
       if (current) repo.rows.set(id, { ...current, status: 'cancelled', cancelledAt: '2026-06-14T08:00:00.000Z', cancelledBy: 'customer' });
       return realTransition(id, input);
     };
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const response = await handleOperatorNoShow(operatorRequest('no-show', { operatorToken: seeded.operatorToken }), context);
     expect(response.status).toBe(409);
@@ -135,7 +135,7 @@ describe('stale compare-and-set transitions', () => {
       if (current) repo.rows.set(id, { ...current, status: 'cancelled', cancelledAt: '2026-06-14T08:00:00.000Z', cancelledBy: 'customer' });
       return realTransition(id, input);
     };
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const response = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, validNewStart), context);
     expect(response.status).toBe(409);
@@ -159,7 +159,7 @@ describe('stale compare-and-set transitions', () => {
       if (current) repo.rows.set(id, { ...current, status: 'cancelled', cancelledAt: '2026-06-14T08:00:00.000Z', cancelledBy: 'operator' });
       return realTransition(id, input);
     };
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const response = await handleOperatorReschedule(operatorRequest('reschedule', { operatorToken: seeded.operatorToken, newStart: validNewStart }), context);
     expect(response.status).toBe(409);
@@ -187,7 +187,7 @@ describe('stale compare-and-set transitions', () => {
       }
       return realTransition(id, input);
     };
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const response = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, validNewStart), context);
     expect(response.status).toBe(409);
@@ -233,7 +233,7 @@ describe('stale compare-and-set transitions', () => {
     const opsEvents: string[] = [];
     let emailAttempts = 0;
     let calendarDeletes = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
@@ -318,7 +318,7 @@ describe('stale compare-and-set transitions', () => {
     };
     let calendarCreates = 0;
     let emails = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,

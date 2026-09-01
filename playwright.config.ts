@@ -36,7 +36,7 @@ export default defineConfig({
     // see data that was verifiably on disk).
     command: 'bun e2e-dev-server.ts',
     cwd: 'examples/smoke-site',
-    env: { BOOKKIT_E2E_PERSIST: '.wrangler-e2e' },
+    env: { RESERVA_E2E_PERSIST: '.wrangler-e2e' },
     url: `http://localhost:4399/api/booking/availability?tour=oldTown&people=2&from=${readinessFrom}&to=${readinessTo}`,
     reuseExistingServer: false,
     timeout: 120_000,

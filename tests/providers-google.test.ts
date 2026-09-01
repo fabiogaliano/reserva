@@ -87,8 +87,8 @@ describe('Google Calendar provider', () => {
     expect(posts).toBe(1);
   });
 
-  it('maps timed and all-day Calendar events while preserving Bookkit ownership metadata', () => {
-    expect(mapGoogleCalendarEvent({ id: 'event-1', start: { dateTime: '2026-07-21T09:00:00Z' }, end: { dateTime: '2026-07-21T10:00:00Z' }, extendedProperties: { private: { bookkitBookingId: 'booking-1' } } })).toEqual(expect.objectContaining({ id: 'event-1', start: '2026-07-21T09:00:00Z', end: '2026-07-21T10:00:00Z', bookkitBookingId: 'booking-1' }));
+  it('maps timed and all-day Calendar events while preserving Reserva ownership metadata', () => {
+    expect(mapGoogleCalendarEvent({ id: 'event-1', start: { dateTime: '2026-07-21T09:00:00Z' }, end: { dateTime: '2026-07-21T10:00:00Z' }, extendedProperties: { private: { reservaBookingId: 'booking-1' } } })).toEqual(expect.objectContaining({ id: 'event-1', start: '2026-07-21T09:00:00Z', end: '2026-07-21T10:00:00Z', reservaBookingId: 'booking-1' }));
     expect(mapGoogleCalendarEvent({ id: 'day-1', start: { date: '2026-07-21' }, end: { date: '2026-07-22' } })).toEqual(expect.objectContaining({ allDay: true, start: '2026-07-21', end: '2026-07-22' }));
   });
 
@@ -106,7 +106,7 @@ describe('Google Calendar provider', () => {
     expect(String(createCall?.[0])).toContain('sendUpdates=all');
     expect(JSON.parse(String(createCall?.[1]?.body))).toEqual(expect.objectContaining({
       id: 'booking1',
-      extendedProperties: { private: expect.objectContaining({ bookkitBookingId: 'booking-1' }) },
+      extendedProperties: { private: expect.objectContaining({ reservaBookingId: 'booking-1' }) },
     }));
     await provider.patchEvent('created', booking({ startsAt: '2026-07-21T11:00:00.000Z', endsAt: '2026-07-21T12:00:00.000Z' }), config);
     await provider.deleteEvent('created');

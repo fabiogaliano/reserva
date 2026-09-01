@@ -6,17 +6,17 @@
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { AdminIdentity } from '../../src/access';
-import type { BookkitContext } from '../../src/context';
+import type { ReservaContext } from '../../src/context';
 import { handleAdminGet, handleAdminPost, handleOperatorNoShow } from '../../src/handlers';
-import { defineCloudflareBookkitRuntime } from '../../src/runtime-context';
+import { defineCloudflareReservaRuntime } from '../../src/runtime-context';
 import { config as baseConfig } from '../fixtures';
 import { providers } from '../fakes';
 
 interface TestEnv {
-  BOOKKIT_DB: D1Database;
+  RESERVA_DB: D1Database;
 }
 
-const db = (env as unknown as TestEnv).BOOKKIT_DB;
+const db = (env as unknown as TestEnv).RESERVA_DB;
 const ADMIN_TOKEN_SECRET = 'TEST_ADMIN_TOKEN';
 const ADMIN_TOKEN_VALUE = 'header-token-admin-secret';
 const CSRF_SECRET_VALUE = 'admin-auth-port-csrf-secret';
@@ -31,17 +31,17 @@ function configWithoutAccess(): typeof baseConfig {
 // A plausible custom admin auth strategy: compares a caller-supplied header against a secret
 // resolved through `context.secrets` (proving the port's `context` argument is real and usable,
 // not just accepted and ignored) — no Cloudflare Access, no JWKS, no `Cf-Access-Jwt-Assertion`.
-async function headerTokenAdminAuth(request: Request, context: BookkitContext): Promise<AdminIdentity | null> {
+async function headerTokenAdminAuth(request: Request, context: ReservaContext): Promise<AdminIdentity | null> {
   const expected = await context.secrets?.(ADMIN_TOKEN_SECRET);
   const supplied = request.headers.get('x-admin-token');
   if (!expected || !supplied || supplied !== expected) return null;
   return { subject: 'header-token-admin' };
 }
 
-const runtime = defineCloudflareBookkitRuntime(configWithoutAccess(), {
+const runtime = defineCloudflareReservaRuntime(configWithoutAccess(), {
   providers: providers(),
   adminAuth: headerTokenAdminAuth,
-  secretBindings: ['BOOKKIT_OPERATOR_SECRET', ADMIN_TOKEN_SECRET, 'BOOKKIT_CSRF_SECRET', 'BOOKKIT_TOKEN_ENC_KEY'],
+  secretBindings: ['RESERVA_OPERATOR_SECRET', ADMIN_TOKEN_SECRET, 'RESERVA_CSRF_SECRET', 'RESERVA_TOKEN_ENC_KEY'],
 });
 
 function buildContext(request: Request) {
@@ -49,12 +49,12 @@ function buildContext(request: Request) {
     request,
     locals: {
       env: {
-        BOOKKIT_DB: db,
+        RESERVA_DB: db,
         [ADMIN_TOKEN_SECRET]: ADMIN_TOKEN_VALUE,
-        BOOKKIT_CSRF_SECRET: CSRF_SECRET_VALUE,
+        RESERVA_CSRF_SECRET: CSRF_SECRET_VALUE,
         // So the admin table can regenerate an operator manage link from its stored hash — see
-        // README "Admin access and booking tokens" (BOOKKIT_TOKEN_ENC_KEY).
-        BOOKKIT_TOKEN_ENC_KEY: TOKEN_ENC_KEY_VALUE,
+        // README "Admin access and booking tokens" (RESERVA_TOKEN_ENC_KEY).
+        RESERVA_TOKEN_ENC_KEY: TOKEN_ENC_KEY_VALUE,
       },
     },
   });
@@ -86,7 +86,7 @@ const PAST_STARTS_AT = new Date(Date.now() - 30 * 86_400_000).toISOString();
 const PAST_ENDS_AT = new Date(Date.now() - 30 * 86_400_000 + 3_600_000).toISOString();
 const PAST_HOLD_EXPIRES_AT = new Date(Date.now() - 30 * 86_400_000 - 1_500_000).toISOString();
 const PAST_REFERENCE = `BKT-PAST-${PAST_BOOKING_ID}`;
-async function seedConfirmedPastBooking(context: BookkitContext): Promise<void> {
+async function seedConfirmedPastBooking(context: ReservaContext): Promise<void> {
   await context.repo.insertHold({
     id: PAST_BOOKING_ID,
     reference: PAST_REFERENCE,

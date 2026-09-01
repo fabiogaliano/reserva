@@ -1,6 +1,6 @@
 import { defineConfig } from 'astro/config';
 import cloudflare from '@astrojs/cloudflare';
-import bookkit from '../src/index';
+import reserva from '../src/index';
 import config from './client-config';
 
 export default defineConfig({
@@ -8,6 +8,6 @@ export default defineConfig({
   adapter: cloudflare(),
   integrations: [
     // The explicit runtime module keeps provider instances and secrets out of serialized Astro config.
-    bookkit({ config, runtimeEntrypoint: './runtime.ts' }),
+    reserva({ config, runtimeEntrypoint: './runtime.ts' }),
   ],
 });

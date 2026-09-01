@@ -9,7 +9,7 @@
 //   1. every non-`.astro` `exports` subpath resolves and typechecks under `tsc --noEmit`
 //   2. every `.astro` export resolves and compiles under `astro build` (plain tsc can't parse it)
 //   3. `astro build` succeeds and every injected route pattern appears in the built worker
-//   4. the installed `bookkit-migrate` bin applies bookkit's packaged migrations (plan 008)
+//   4. the installed `reserva-migrate` bin applies reserva's packaged migrations (plan 008)
 //
 // Run: `bun run test:pack` (also folded into `bun run verify` and CI's `pack` job).
 
@@ -18,7 +18,7 @@ import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, sta
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BOOKKIT_MIGRATIONS } from '../src/migrations-manifest';
+import { RESERVA_MIGRATIONS } from '../src/migrations-manifest';
 import { routeManifest } from '../src/routes-manifest';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -166,7 +166,7 @@ function astroBuild(consumerDir: string): void {
   }
 
   // Assert the manifest's JSON field form, not a whole-dist grep: the compiled
-  // `virtual:bookkit/config` chunk (chunks/config_*.mjs) contains every route path regardless of
+  // `virtual:reserva/config` chunk (chunks/config_*.mjs) contains every route path regardless of
   // whether it was actually injected, so a tree-wide grep would false-pass a missing route. The
   // `deserializeManifest(` payload is the injection truth, and this form matches the old inlined
   // layout too, so it's layout-independent and strictly stronger than the old check.
@@ -183,22 +183,22 @@ function astroBuild(consumerDir: string): void {
   }
 }
 
-// Pins plan 008: an installed consumer with no `migrations_dir` must still get bookkit's packaged
-// migrations applied, via the `bookkit-migrate` bin resolved from node_modules/.bin.
-function bookkitMigrate(consumerDir: string): void {
+// Pins plan 008: an installed consumer with no `migrations_dir` must still get reserva's packaged
+// migrations applied, via the `reserva-migrate` bin resolved from node_modules/.bin.
+function reservaMigrate(consumerDir: string): void {
   const binDir = resolve(consumerDir, 'node_modules/.bin');
-  const result = run('bunx', ['bookkit-migrate', '--local'], {
+  const result = run('bunx', ['reserva-migrate', '--local'], {
     cwd: consumerDir,
     env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}` },
   });
-  if (result.status !== 0) fail('migrate', `\`bunx bookkit-migrate --local\` failed:\n${result.stdout}\n${result.stderr}`);
-  for (const name of BOOKKIT_MIGRATIONS) {
+  if (result.status !== 0) fail('migrate', `\`bunx reserva-migrate --local\` failed:\n${result.stdout}\n${result.stderr}`);
+  for (const name of RESERVA_MIGRATIONS) {
     if (!result.stdout.includes(name)) fail('migrate', `expected migration \`${name}\` was not applied; wrangler output:\n${result.stdout}`);
   }
 }
 
 async function main(): Promise<void> {
-  const workDir = mkdtempSync(resolve(tmpdir(), 'bookkit-pack-'));
+  const workDir = mkdtempSync(resolve(tmpdir(), 'reserva-pack-'));
   const consumerDir = resolve(workDir, 'consumer');
   try {
     console.log(`pack-test: packing tarball into ${workDir}`);
@@ -211,7 +211,7 @@ async function main(): Promise<void> {
     console.log('pack-test: bun install (fixture devDependencies)');
     bunInstall(consumerDir);
 
-    console.log('pack-test: bun add <tarball> (installs bookkit the way a real consumer would)');
+    console.log('pack-test: bun add <tarball> (installs reserva the way a real consumer would)');
     bunAddTarball(consumerDir, tarballPath);
 
     console.log('pack-test: asserting the scheduled Worker template is included');
@@ -227,8 +227,8 @@ async function main(): Promise<void> {
     console.log('pack-test: astro build (compiles .astro exports, mounts injected routes)');
     astroBuild(consumerDir);
 
-    console.log('pack-test: bunx bookkit-migrate --local (packaged migrations, plan 008)');
-    bookkitMigrate(consumerDir);
+    console.log('pack-test: bunx reserva-migrate --local (packaged migrations, plan 008)');
+    reservaMigrate(consumerDir);
 
     console.log('pack-test: OK');
   } catch (error) {
@@ -239,8 +239,8 @@ async function main(): Promise<void> {
     }
     throw error;
   } finally {
-    if (process.env.BOOKKIT_PACK_TEST_KEEP) {
-      console.log(`pack-test: BOOKKIT_PACK_TEST_KEEP set, leaving ${workDir}`);
+    if (process.env.RESERVA_PACK_TEST_KEEP) {
+      console.log(`pack-test: RESERVA_PACK_TEST_KEEP set, leaving ${workDir}`);
     } else {
       rmSync(workDir, { recursive: true, force: true });
     }

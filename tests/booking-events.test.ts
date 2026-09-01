@@ -8,10 +8,10 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { Webhook } from 'standardwebhooks';
 import { describe, expect, it, vi } from 'vitest';
 import { runOwedMutationSideEffects } from '../src/confirmation';
-import { createBookkitContext, type BookkitProviders } from '../src/context';
+import { createReservaContext, type ReservaProviders } from '../src/context';
 import type { BookingEventEnvelope, BookingEventHook } from '../src/core/events';
 import { validateConfig, type ClientConfig } from '../src/core/config';
-import { defineCloudflareBookkitRuntime } from '../src/runtime-context';
+import { defineCloudflareReservaRuntime } from '../src/runtime-context';
 import { handleCustomerReschedule, handleStatus, handlePaymentWebhook } from '../src/handlers';
 import { booking, config } from './fixtures';
 import { fakeRepository, providers, sideEffectOperation, type FakeRepository } from './fakes';
@@ -31,7 +31,7 @@ function webhookConfig(events?: string[]): ClientConfig {
   });
 }
 
-function paidWebhookProviders(bookingId: string, sessionRef: string, overrides: Partial<BookkitProviders> = {}): BookkitProviders {
+function paidWebhookProviders(bookingId: string, sessionRef: string, overrides: Partial<ReservaProviders> = {}): ReservaProviders {
   return providers({
     payments: {
       createCheckout: async () => ({ url: '', sessionRef: '' }),
@@ -88,7 +88,7 @@ function recordingFetch(outcome: () => Response | Promise<Response>) {
 }
 
 async function confirmedBookingWithWebhook(repo: FakeRepository, seededId: string, sessionRef: string, fetchImpl: unknown, pending: Promise<unknown>[]) {
-  const context = createBookkitContext({
+  const context = createReservaContext({
     config: webhookConfig(),
     db: {} as D1Database,
     repo,
@@ -113,7 +113,7 @@ describe('non-durable booking event hooks', () => {
     const repo = fakeRepository([seeded]);
     const received: string[] = [];
     const pending: Promise<unknown>[] = [];
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo, clock,
       waitUntil: (task) => pending.push(task),
       providers: providers(),
@@ -126,7 +126,7 @@ describe('non-durable booking event hooks', () => {
 
     const held = booking({ id: 'hook-subscription-hold', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', paymentSessionRef: 'cs_hook_subscription' });
     repo.rows.set(held.id, held);
-    await expect(handlePaymentWebhook(stripeWebhookRequest(), createBookkitContext({
+    await expect(handlePaymentWebhook(stripeWebhookRequest(), createReservaContext({
       config, db: {} as D1Database, repo, clock,
       waitUntil: (task) => pending.push(task),
       providers: paidWebhookProviders(held.id, 'cs_hook_subscription'),
@@ -143,7 +143,7 @@ describe('non-durable booking event hooks', () => {
     const warnings: Array<[string, Record<string, unknown> | undefined]> = [];
     const pending: Promise<unknown>[] = [];
     let calls = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo, clock,
       logger: { warn: (message, data) => { warnings.push([message, data]); } },
       waitUntil: (task) => pending.push(task),
@@ -155,7 +155,7 @@ describe('non-durable booking event hooks', () => {
     await Promise.all(pending.splice(0));
 
     expect(calls).toBe(1);
-    expect(warnings.filter(([message]) => message === 'bookkit booking event hook failed')).toHaveLength(1);
+    expect(warnings.filter(([message]) => message === 'reserva booking event hook failed')).toHaveLength(1);
     expect(warnings[0]?.[1]).toMatchObject({ event: 'booking.rescheduled', hook: 'flaky', bookingId: seeded.id });
     // Never retried: a non-durable hook leaves no outbox row behind.
     expect([...repo.sideEffectOperations.values()].some((row) => row.family === 'hook')).toBe(false);
@@ -166,18 +166,18 @@ describe('subscriber registration validation', () => {
   const runtimeOptions = { providers: providers() };
 
   it('rejects an unknown event name in hooks at startup, listing the whole valid vocabulary', () => {
-    expect(() => defineCloudflareBookkitRuntime(config, {
+    expect(() => defineCloudflareReservaRuntime(config, {
       ...runtimeOptions,
       hooks: [{ name: 'typo', events: ['booking.canceled'] as never, handler: async () => undefined }],
     })).toThrow(/Unknown booking event "booking\.canceled"\. Valid events: booking\.confirmed, booking\.cancelled_by_customer, booking\.cancelled_by_operator, booking\.rescheduled, booking\.no_show, payment\.dispute_created\./);
   });
 
   it('rejects an invalid or duplicated hook name at startup', () => {
-    expect(() => defineCloudflareBookkitRuntime(config, {
+    expect(() => defineCloudflareReservaRuntime(config, {
       ...runtimeOptions,
       hooks: [{ name: 'Not Valid', handler: async () => undefined }],
     })).toThrow(/Invalid name "Not Valid"/);
-    expect(() => defineCloudflareBookkitRuntime(config, {
+    expect(() => defineCloudflareReservaRuntime(config, {
       ...runtimeOptions,
       hooks: [
         { name: 'twice', handler: async () => undefined },
@@ -254,7 +254,7 @@ describe('durable webhook delivery on the confirmation path', () => {
     await confirmedBookingWithWebhook(repo, withMetadata.id, 'cs_webhook_metadata', fetchImpl, pending);
     vi.stubGlobal('fetch', fetchImpl);
     try {
-      const secondContext = createBookkitContext({
+      const secondContext = createReservaContext({
         config: webhookConfig(), db: {} as D1Database, repo, clock,
         secrets: async (name) => (name === 'PARTNER_WEBHOOK_SECRET' ? WEBHOOK_SECRET : undefined),
         waitUntil: (task) => pending.push(task),
@@ -298,7 +298,7 @@ describe('durable webhook delivery on the confirmation path', () => {
 
     vi.stubGlobal('fetch', fetchImpl);
     try {
-      const rescheduleContext = createBookkitContext({
+      const rescheduleContext = createReservaContext({
         config: context.config, db: {} as D1Database, repo, clock,
         secrets: async (name) => (name === 'PARTNER_WEBHOOK_SECRET' ? WEBHOOK_SECRET : undefined),
         waitUntil: (task) => pending.push(task),
@@ -328,7 +328,7 @@ describe('durable webhook delivery on the confirmation path', () => {
     const repo = fakeRepository([seeded]);
     const { sent, fetchImpl } = recordingFetch(() => new Response(null, { status: 204 }));
     const pending: Promise<unknown>[] = [];
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config: webhookConfig(), db: {} as D1Database, repo, clock,
       secrets: async (name) => (name === 'PARTNER_WEBHOOK_SECRET' ? WEBHOOK_SECRET : undefined),
       waitUntil: (task) => pending.push(task),
@@ -368,7 +368,7 @@ describe('durable in-process hooks', () => {
         delivered.push({ id: hookContext.id, startsAt: wireBooking.startsAt, status: wireBooking.status });
       },
     };
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo, clock,
       waitUntil: (task) => pending.push(task),
       providers: paidWebhookProviders(seeded.id, 'cs_durable_snapshot'),
@@ -401,7 +401,7 @@ describe('durable in-process hooks', () => {
     const identity = { family: 'hook' as const, name: 'ops', event: 'booking.confirmed' };
 
     // Confirmed while the hook was registered...
-    const withHook = createBookkitContext({
+    const withHook = createReservaContext({
       config, db: {} as D1Database, repo, clock,
       waitUntil: (task) => pending.push(task),
       providers: paidWebhookProviders(seeded.id, 'cs_unregistered'),
@@ -412,7 +412,7 @@ describe('durable in-process hooks', () => {
     expect(sideEffectOperation(repo, seeded.id, identity)).toMatchObject({ status: 'failed' });
 
     // ...and the deployment then removed it, leaving a row nothing can ever deliver.
-    const withoutHook = createBookkitContext({
+    const withoutHook = createReservaContext({
       config, db: {} as D1Database, repo, clock,
       logger: { error: (message, data) => { errors.push([message, data]); } },
       providers: providers(),
@@ -422,7 +422,7 @@ describe('durable in-process hooks', () => {
     await runOwedMutationSideEffects(withoutHook, confirmed);
 
     expect(sideEffectOperation(repo, seeded.id, identity)).toMatchObject({ status: 'abandoned' });
-    expect(errors.filter(([message]) => message === 'bookkit side effect operation abandoned')).toHaveLength(1);
+    expect(errors.filter(([message]) => message === 'reserva side effect operation abandoned')).toHaveLength(1);
     expect(String(errors[0]?.[1]?.error)).toContain('register a durable booking-event hook named "ops"');
   });
 });

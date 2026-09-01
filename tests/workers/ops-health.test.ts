@@ -5,18 +5,18 @@
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { AdminIdentity } from '../../src/access';
-import type { BookkitContext } from '../../src/context';
+import type { ReservaContext } from '../../src/context';
 import type { OpsHealthResponse } from '../../src/core/api';
 import { handleOpsHealth } from '../../src/handlers';
-import { defineCloudflareBookkitRuntime } from '../../src/runtime-context';
+import { defineCloudflareReservaRuntime } from '../../src/runtime-context';
 import { config as baseConfig } from '../fixtures';
 import { providers } from '../fakes';
 
 interface TestEnv {
-  BOOKKIT_DB: D1Database;
+  RESERVA_DB: D1Database;
 }
 
-const db = (env as unknown as TestEnv).BOOKKIT_DB;
+const db = (env as unknown as TestEnv).RESERVA_DB;
 const ADMIN_TOKEN_SECRET = 'TEST_OPS_HEALTH_TOKEN';
 const ADMIN_TOKEN_VALUE = 'ops-health-admin-secret';
 
@@ -25,17 +25,17 @@ function configWithoutAccess(): typeof baseConfig {
   return { ...baseConfig, admin: adminWithoutAccess };
 }
 
-async function headerTokenAdminAuth(request: Request, context: BookkitContext): Promise<AdminIdentity | null> {
+async function headerTokenAdminAuth(request: Request, context: ReservaContext): Promise<AdminIdentity | null> {
   const expected = await context.secrets?.(ADMIN_TOKEN_SECRET);
   const supplied = request.headers.get('x-admin-token');
   if (!expected || !supplied || supplied !== expected) return null;
   return { subject: 'ops-health-admin' };
 }
 
-const runtime = defineCloudflareBookkitRuntime(configWithoutAccess(), {
+const runtime = defineCloudflareReservaRuntime(configWithoutAccess(), {
   providers: providers(),
   adminAuth: headerTokenAdminAuth,
-  secretBindings: ['BOOKKIT_OPERATOR_SECRET', ADMIN_TOKEN_SECRET],
+  secretBindings: ['RESERVA_OPERATOR_SECRET', ADMIN_TOKEN_SECRET],
 });
 
 const HEALTH_URL = 'https://example.test/api/booking/ops/health';
@@ -44,17 +44,17 @@ function healthRequest(headers: HeadersInit = {}): Request {
   return new Request(HEALTH_URL, { headers });
 }
 
-async function buildContext(request: Request): Promise<BookkitContext> {
+async function buildContext(request: Request): Promise<ReservaContext> {
   return runtime.createContext({
     request,
-    locals: { env: { BOOKKIT_DB: db, [ADMIN_TOKEN_SECRET]: ADMIN_TOKEN_VALUE } },
+    locals: { env: { RESERVA_DB: db, [ADMIN_TOKEN_SECRET]: ADMIN_TOKEN_VALUE } },
   });
 }
 
 const BOOKING_ID = 'ops-health-booking';
 const OLDEST_PENDING_AT = new Date(Date.now() - 3 * 3_600_000).toISOString();
 
-async function seedDebt(context: BookkitContext): Promise<void> {
+async function seedDebt(context: ReservaContext): Promise<void> {
   const startsAt = new Date(Date.now() + 5 * 86_400_000).toISOString();
   await context.repo.insertHold({
     id: BOOKING_ID,

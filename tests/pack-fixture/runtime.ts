@@ -2,16 +2,16 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { BrevoEmailProvider } from '@reservajs/astro/providers/email-brevo';
 import { GoogleCalendarProvider } from '@reservajs/astro/providers/calendar-google';
 import { StripeProvider } from '@reservajs/astro/providers/payments-stripe';
-import { defineCloudflareBookkitRuntime, type BookkitProviders } from '@reservajs/astro/runtime';
-import config from './bookkit.config';
+import { defineCloudflareReservaRuntime, type ReservaProviders } from '@reservajs/astro/runtime';
+import config from './reserva.config';
 
 // A packed consumer's site and scheduled Worker both instantiate this factory. Every credential
 // used by reconciliation is therefore represented in the consumer's Env contract rather than
 // accidentally relying on secrets attached only to the HTTP Worker.
 interface Env {
-  BOOKKIT_DB: D1Database;
-  BOOKKIT_TOKEN_ENC_KEY: string;
-  BOOKKIT_CSRF_SECRET: string;
+  RESERVA_DB: D1Database;
+  RESERVA_TOKEN_ENC_KEY: string;
+  RESERVA_CSRF_SECRET: string;
   STRIPE_SECRET_KEY: string;
   STRIPE_WEBHOOK_SECRET: string;
   BREVO_API_KEY: string;
@@ -24,7 +24,7 @@ interface Env {
   OPERATIONS_ALERT_TOKEN: string;
 }
 
-function providers(env: Env): BookkitProviders {
+function providers(env: Env): ReservaProviders {
   return {
     payments: new StripeProvider({
       secretKey: env.STRIPE_SECRET_KEY,
@@ -56,7 +56,7 @@ function providers(env: Env): BookkitProviders {
   };
 }
 
-export default defineCloudflareBookkitRuntime<Env>(config, {
+export default defineCloudflareReservaRuntime<Env>(config, {
   providers: ({ env }) => providers(env),
-  secretBindings: ['BOOKKIT_TOKEN_ENC_KEY', 'BOOKKIT_CSRF_SECRET', 'OPERATIONS_WEBHOOK_SECRET'],
+  secretBindings: ['RESERVA_TOKEN_ENC_KEY', 'RESERVA_CSRF_SECRET', 'OPERATIONS_WEBHOOK_SECRET'],
 });

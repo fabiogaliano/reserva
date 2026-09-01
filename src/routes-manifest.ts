@@ -4,18 +4,18 @@
 
 import { z } from 'astro/zod';
 
-export type BookkitRouteGroup = 'customer' | 'ops' | 'admin' | 'webhook' | 'manage';
+export type ReservaRouteGroup = 'customer' | 'ops' | 'admin' | 'webhook' | 'manage';
 
-export interface BookkitRouteEntry {
+export interface ReservaRouteEntry {
   readonly id: string;
-  readonly group: BookkitRouteGroup;
+  readonly group: ReservaRouteGroup;
   readonly pattern: string;
   readonly entrypoint: string;
 }
 
-// `satisfies` (not a `readonly BookkitRouteEntry[]` annotation) so the literal `id`/`group` values
+// `satisfies` (not a `readonly ReservaRouteEntry[]` annotation) so the literal `id`/`group` values
 // survive into `typeof routeManifest` — an explicit interface-typed annotation would widen `id` to
-// `string`, which under `noUncheckedIndexedAccess` turns every `Record<BookkitRouteId, string>`
+// `string`, which under `noUncheckedIndexedAccess` turns every `Record<ReservaRouteId, string>`
 // property read (e.g. `routeConfig.paths.checkout`) into `string | undefined` throughout the
 // codebase, forcing every call site to re-null-check a value that can never actually be missing.
 export const routeManifest = [
@@ -32,73 +32,73 @@ export const routeManifest = [
   { id: 'operatorReschedule', group: 'ops', pattern: '/api/booking/operator/reschedule', entrypoint: './routes/api/booking/operator/reschedule.ts' },
   { id: 'operatorNoShow', group: 'ops', pattern: '/api/booking/operator/no-show', entrypoint: './routes/api/booking/operator/no-show.ts' },
   { id: 'opsHealth', group: 'ops', pattern: '/api/booking/ops/health', entrypoint: './routes/api/booking/ops/health.ts' },
-  { id: 'assetsCss', group: 'customer', pattern: '/booking/assets/bookkit.css', entrypoint: './routes/booking/assets.ts' },
-  { id: 'assetsJs', group: 'customer', pattern: '/booking/assets/bookkit.js', entrypoint: './routes/booking/assets-js.ts' },
+  { id: 'assetsCss', group: 'customer', pattern: '/booking/assets/reserva.css', entrypoint: './routes/booking/assets.ts' },
+  { id: 'assetsJs', group: 'customer', pattern: '/booking/assets/reserva.js', entrypoint: './routes/booking/assets-js.ts' },
   { id: 'adminPage', group: 'admin', pattern: '/booking/admin', entrypoint: './routes/booking/admin.ts' },
   { id: 'managePage', group: 'manage', pattern: '/booking/manage', entrypoint: './routes/booking/manage.ts' },
   { id: 'confirmationPage', group: 'customer', pattern: '/booking-confirmation', entrypoint: './routes/booking-confirmation.ts' },
-] as const satisfies readonly BookkitRouteEntry[];
+] as const satisfies readonly ReservaRouteEntry[];
 
-export type BookkitRouteId = (typeof routeManifest)[number]['id'];
+export type ReservaRouteId = (typeof routeManifest)[number]['id'];
 
 // Feature groups a consumer can turn off via `config.routes: { admin, ops, manage }` (plan 025 —
-// moved here from the Astro-only BookkitIntegrationOptions.routes, since admin-auth selection needs
+// moved here from the Astro-only ReservaIntegrationOptions.routes, since admin-auth selection needs
 // the same declared intent). `customer` and `webhook` are absent here on purpose: the booking API
 // is load-bearing, so it is never disableable.
 //
 // Plan 027 (design decision 8): `manage` holds exactly ONE entry — Reserva's server-rendered
 // /booking/manage page. The manage, cancel and reschedule APIs stay in `customer` precisely so a
 // headless consumer can switch the built-in page off and build its own UI on the same endpoints.
-export interface BookkitRouteGroupFlags {
+export interface ReservaRouteGroupFlags {
   admin: boolean;
   ops: boolean;
   manage: boolean;
 }
 
-export function isRouteEnabled(entry: BookkitRouteEntry, groups: BookkitRouteGroupFlags): boolean {
+export function isRouteEnabled(entry: ReservaRouteEntry, groups: ReservaRouteGroupFlags): boolean {
   if (entry.group === 'admin') return groups.admin;
   if (entry.group === 'ops') return groups.ops;
   if (entry.group === 'manage') return groups.manage;
   return true;
 }
 
-export function enabledRouteManifest(groups: BookkitRouteGroupFlags): readonly BookkitRouteEntry[] {
+export function enabledRouteManifest(groups: ReservaRouteGroupFlags): readonly ReservaRouteEntry[] {
   return routeManifest.filter((entry) => isRouteEnabled(entry, groups));
 }
 
 // The seam a `routePrefix` option rewrites through: `prefix` must already be normalized (see
 // normalizeRoutePrefix below) so every call site produces a consistently-prefixed pattern instead
 // of half-prefixed strings assembled ad hoc at each URL-producing site.
-export function routePath(entry: BookkitRouteEntry, prefix = ''): string {
+export function routePath(entry: ReservaRouteEntry, prefix = ''): string {
   return prefix + entry.pattern;
 }
 
-// The full { routeId -> resolved pattern } table exposed through `virtual:bookkit/config` so
+// The full { routeId -> resolved pattern } table exposed through `virtual:reserva/config` so
 // components and handlers read their URL defaults from one resolved source instead of each
 // re-deriving `prefix + pattern` themselves.
-export function resolvedRoutePaths(prefix = ''): Record<BookkitRouteId, string> {
+export function resolvedRoutePaths(prefix = ''): Record<ReservaRouteId, string> {
   return Object.fromEntries(
     routeManifest.map((entry) => [entry.id, routePath(entry, prefix)]),
-  ) as Record<BookkitRouteId, string>;
+  ) as Record<ReservaRouteId, string>;
 }
 
-// The single object threaded through `virtual:bookkit/config` (and, at request time, onto
-// `BookkitContext.routeConfig` — see context.ts) so every URL-producing site (components, the
+// The single object threaded through `virtual:reserva/config` (and, at request time, onto
+// `ReservaContext.routeConfig` — see context.ts) so every URL-producing site (components, the
 // server-rendered manage/admin HTML, route redirects) reads the same resolved paths *and* the
 // same group flags, instead of some sites seeing a prefix and others not.
-export interface BookkitResolvedRouteConfig {
-  paths: Record<BookkitRouteId, string>;
-  groups: BookkitRouteGroupFlags;
+export interface ReservaResolvedRouteConfig {
+  paths: Record<ReservaRouteId, string>;
+  groups: ReservaRouteGroupFlags;
 }
 
-export function resolveRouteConfig(prefix = '', groups: BookkitRouteGroupFlags = { admin: true, ops: true, manage: true }): BookkitResolvedRouteConfig {
+export function resolveRouteConfig(prefix = '', groups: ReservaRouteGroupFlags = { admin: true, ops: true, manage: true }): ReservaResolvedRouteConfig {
   return { paths: resolvedRoutePaths(prefix), groups };
 }
 
-export function requireEnabledRoutePath(routeConfig: BookkitResolvedRouteConfig, id: BookkitRouteId): string {
+export function requireEnabledRoutePath(routeConfig: ReservaResolvedRouteConfig, id: ReservaRouteId): string {
   const entry = routeManifest.find((candidate) => candidate.id === id);
   if (entry && !isRouteEnabled(entry, routeConfig.groups)) {
-    throw new Error(`Bookkit route "${id}" is disabled by routes: { ${entry.group}: false }. Enable routes.${entry.group} or provide an explicit endpoint.`);
+    throw new Error(`Reserva route "${id}" is disabled by routes: { ${entry.group}: false }. Enable routes.${entry.group} or provide an explicit endpoint.`);
   }
   return routeConfig.paths[id];
 }
@@ -134,9 +134,9 @@ const routeOptionsSchema = z.object({
   routePrefix: routePrefixSchema.optional(),
 });
 
-export type BookkitRouteOptions = z.infer<typeof routeOptionsSchema>;
+export type ReservaRouteOptions = z.infer<typeof routeOptionsSchema>;
 
-export function validateRouteOptions(input: unknown): BookkitRouteOptions {
+export function validateRouteOptions(input: unknown): ReservaRouteOptions {
   const parsed = routeOptionsSchema.safeParse(input);
   if (!parsed.success) throw parsed.error;
   return parsed.data;

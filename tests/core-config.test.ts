@@ -11,7 +11,7 @@ describe('core config and pricing validation', () => {
     expect(priceFor(service, 5, 'custom')).toBe(20000);
   });
 
-  it('stays idempotent when re-validated (defineBookkitRuntime/defineCloudflareBookkitRuntime validate once at definition and createBookkitContext validates again on every request)', () => {
+  it('stays idempotent when re-validated (defineReservaRuntime/defineCloudflareReservaRuntime validate once at definition and createReservaContext validates again on every request)', () => {
     const validated = validateConfig(config);
     expect(() => validateConfig(validated)).not.toThrow();
     expect(validateConfig(validated)).toEqual(validated);
@@ -376,7 +376,7 @@ describe('core config and pricing validation', () => {
   });
 
   // Plan 025 (design decision 3): routes.admin/routes.ops moved here from the Astro-only
-  // BookkitIntegrationOptions.routes — both are optional booleans, defaulted (`?? true`) by
+  // ReservaIntegrationOptions.routes — both are optional booleans, defaulted (`?? true`) by
   // whoever reads them (the integration and the runtime factory), not by this schema.
   it('accepts routes.admin/routes.ops as optional booleans, and rejects a non-boolean value', () => {
     expect(validateConfig({ ...config, routes: { admin: false, ops: false } }).routes).toEqual({ admin: false, ops: false });

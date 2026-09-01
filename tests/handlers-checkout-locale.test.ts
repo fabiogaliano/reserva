@@ -4,7 +4,7 @@
 // its copy from that value, so it must always be one of the deployment's supported locales.
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import { createBookkitContext } from '../src/context';
+import { createReservaContext } from '../src/context';
 import { handleCheckout } from '../src/handlers';
 import { config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
@@ -20,7 +20,7 @@ function checkoutWithLocale(locale: string): Request {
 
 async function storedLocaleFor(locale: string): Promise<string | undefined> {
   const repo = fakeRepository();
-  const context = createBookkitContext({
+  const context = createReservaContext({
     config,
     db: {} as D1Database,
     repo,
@@ -48,7 +48,7 @@ describe('checkout locale negotiation (plan 027 design decision 5)', () => {
 
   it('still requires the field itself', async () => {
     const repo = fakeRepository();
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,

@@ -60,7 +60,7 @@ test('closing a day override removes it from availability, and clearing the over
 
 // Plan 009: proves the exported AdminDashboard.astro component (embedded on the smoke site's home
 // page, distinct from the built-in /booking/admin page exercised above) actually works end to end
-// under the recommended production configuration — BOOKKIT_CSRF_SECRET set (see
+// under the recommended production configuration — RESERVA_CSRF_SECRET set (see
 // examples/smoke-site/wrangler.jsonc) — instead of its POST always 403ing, which was the bug this
 // plan fixes. A distinct target date (offset 27, vs. 25 above) keeps this independent of the other
 // day-override spec sharing the same database.

@@ -3,17 +3,17 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { createBookingRepository, type BookingInsert, type BookingRepository } from '../../src/repo';
 
 interface TestEnv {
-  BOOKKIT_DB: D1Database;
+  RESERVA_DB: D1Database;
 }
 
 // Plan 003: real-D1 coverage for the capacity feature (per-day overrides + capacity defaults) and
 // the two hottest list queries (listOccupancyBookings/listUpcoming), none of which ran against
 // actual SQL before this file existed — see tests/workers/repo-d1.test.ts for the established
-// pattern this file follows (createBookingRepository(db) on the BOOKKIT_DB binding, beforeEach
+// pattern this file follows (createBookingRepository(db) on the RESERVA_DB binding, beforeEach
 // DELETEs, encRepo for the token-encryption round trip).
-const db = (env as unknown as TestEnv).BOOKKIT_DB;
+const db = (env as unknown as TestEnv).RESERVA_DB;
 const repo = createBookingRepository(db);
-const encRepo = createBookingRepository(db, (name) => (name === 'BOOKKIT_TOKEN_ENC_KEY' ? 'test-only-token-encryption-secret' : undefined));
+const encRepo = createBookingRepository(db, (name) => (name === 'RESERVA_TOKEN_ENC_KEY' ? 'test-only-token-encryption-secret' : undefined));
 
 beforeEach(async () => {
   await db.prepare('DELETE FROM bookings').run();

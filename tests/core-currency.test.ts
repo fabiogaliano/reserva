@@ -1,7 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import Stripe from 'stripe';
 import { describe, expect, it, vi } from 'vitest';
-import { createBookkitContext } from '../src/context';
+import { createReservaContext } from '../src/context';
 import { validateConfig } from '../src/core/config';
 import { minorUnitFactor, toMajorUnits } from '../src/core/currency';
 import { handleCheckout } from '../src/handlers';
@@ -71,7 +71,7 @@ describe('currency plumbing (plan 022 design decision 2)', () => {
       getCancelUrl: () => 'https://example.test/',
     });
     const repo = fakeRepository();
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config: jpyConfig, db: {} as D1Database, repo,
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: providers({ payments: provider }),

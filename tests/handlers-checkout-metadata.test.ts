@@ -1,7 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import type { MetadataField } from '../src/core/config';
-import { createBookkitContext } from '../src/context';
+import { createReservaContext } from '../src/context';
 import { handleCheckout } from '../src/handlers';
 import { config, service } from './fixtures';
 import { fakeRepository, providers } from './fakes';
@@ -40,7 +40,7 @@ function checkoutRequest(body: Record<string, unknown>): Request {
 
 function contextFor(clientConfig: typeof config) {
   const repo = fakeRepository();
-  const context = createBookkitContext({
+  const context = createReservaContext({
     config: clientConfig,
     db: {} as D1Database,
     repo,

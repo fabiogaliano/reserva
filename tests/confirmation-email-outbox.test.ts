@@ -1,7 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { runOwedMutationSideEffects } from '../src/confirmation';
-import { createBookkitContext, type BookkitProviders } from '../src/context';
+import { createReservaContext, type ReservaProviders } from '../src/context';
 import { handleStatus, handlePaymentWebhook } from '../src/handlers';
 import { booking, config } from './fixtures';
 import { sameSideEffectOperation, type SideEffectOperationIdentity } from '../src/repo';
@@ -10,7 +10,7 @@ import { fakeRepository, providers, seedSideEffectOperation, sideEffectOperation
 const CUSTOMER: SideEffectOperationIdentity = { family: 'email', name: 'customer', event: 'booking.confirmed' };
 const OWNER: SideEffectOperationIdentity = { family: 'email', name: 'owner', event: 'booking.confirmed' };
 
-function paidWebhookProviders(bookingId: string, sessionRef: string, overrides: Partial<BookkitProviders> = {}) {
+function paidWebhookProviders(bookingId: string, sessionRef: string, overrides: Partial<ReservaProviders> = {}) {
   return providers({
     payments: {
       createCheckout: async () => ({ url: '', sessionRef: '' }),
@@ -34,7 +34,7 @@ describe('confirmation-path per-recipient email outbox (plan 012)', () => {
     const repo = fakeRepository([seeded]);
     const recipients: string[] = [];
     let ownerAttempts = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo,
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: paidWebhookProviders(seeded.id, 'cs_email_owner_fails', {
@@ -78,7 +78,7 @@ describe('confirmation-path per-recipient email outbox (plan 012)', () => {
       }
       return result;
     };
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo,
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: paidWebhookProviders(seeded.id, 'cs_email_both_succeed', {
@@ -100,7 +100,7 @@ describe('confirmation-path per-recipient email outbox (plan 012)', () => {
     const seeded = booking({ id: 'b-email-combined-unchanged', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', paymentSessionRef: 'cs_email_combined' });
     const repo = fakeRepository([seeded]);
     let sendCalls = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo,
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: paidWebhookProviders(seeded.id, 'cs_email_combined', {
@@ -131,7 +131,7 @@ describe('confirmation-path per-recipient email outbox (plan 012)', () => {
     });
     let sendCalls = 0;
     let sendToRecipientCalls = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo, clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: providers({
         email: {
@@ -158,7 +158,7 @@ describe('confirmation-path per-recipient email outbox (plan 012)', () => {
     const now = '2026-06-14T08:00:00.000Z';
     await repo.recordMutationSideEffectOperations(seeded.id, [CUSTOMER, OWNER].map((identity) => ({ ...identity, eventPayloadJson: null, eventIdPrefix: null })), now);
     let calls = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo, clock: () => new Date(now),
       providers: providers({ email: {
         recipientsForEvent: () => ['customer', 'owner'],
@@ -187,7 +187,7 @@ describe('confirmation-path per-recipient email outbox (plan 012)', () => {
       return resolveOperation(input);
     };
     const recipients: string[] = [];
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db: {} as D1Database, repo,
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: paidWebhookProviders(seeded.id, 'cs_email_repo_write_fails', {

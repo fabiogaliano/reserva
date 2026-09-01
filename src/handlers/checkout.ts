@@ -7,7 +7,7 @@ import { resolveLocale } from '../core/locale';
 import { generateUniqueReference } from '../core/reference';
 import { generateSlots } from '../core/slots';
 import { localDateKey, parseUtcInstant } from '../core/time';
-import type { BookkitContext } from '../context';
+import type { ReservaContext } from '../context';
 import { nowIso } from '../context';
 import { HoldLimitExceededError } from '../repo';
 import { HttpError, json, requestJson, requireInteger, requireString, tokenBytes } from '../http';
@@ -167,7 +167,7 @@ function validateCheckoutMetadata(service: ServiceConfig, serviceSlug: string, r
   return Object.keys(result).length > 0 ? result : null;
 }
 
-function assertSlot(config: BookkitContext['config'], serviceSlug: string, start: string, now: string): { service: ReturnType<typeof resolveService>; startsAt: string; endsAt: string } {
+function assertSlot(config: ReservaContext['config'], serviceSlug: string, start: string, now: string): { service: ReturnType<typeof resolveService>; startsAt: string; endsAt: string } {
   const service = resolveService(config, serviceSlug);
   let instant: Date;
   try {
@@ -188,7 +188,7 @@ function assertSlot(config: BookkitContext['config'], serviceSlug: string, start
 }
 
 export async function checkSlot(
-  context: BookkitContext,
+  context: ReservaContext,
   serviceSlug: string,
   quantity: number,
   start: string,
@@ -230,7 +230,7 @@ function clientIp(request: Request): string {
   return request.headers.get('cf-connecting-ip') ?? request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
 }
 
-export function handleCheckout(request: Request, context: BookkitContext): Promise<Response> {
+export function handleCheckout(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const body = await requestJson(request);

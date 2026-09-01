@@ -20,7 +20,7 @@
 // double-attempts from the scheduled path, not to gate correctness.
 import { classifyAttemptOutcome } from './confirmation';
 import type { Booking } from './core/booking';
-import type { BookkitContext } from './context';
+import type { ReservaContext } from './context';
 import { nowIso } from './context';
 import { computeNextAttemptAt } from './reconciliation-helpers';
 import type { RefundChoice } from './repo';
@@ -49,7 +49,7 @@ export interface RefundExecutionClaim {
 }
 
 export async function attemptRefund(
-  context: BookkitContext,
+  context: ReservaContext,
   booking: Booking,
   operationId: string,
   choice: RefundChoice,

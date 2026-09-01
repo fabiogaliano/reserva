@@ -4,8 +4,8 @@ import { resolveRouteConfig } from '../src/routes-manifest';
 
 describe('booking confirmation page', () => {
   it('renders a confirmed booking from the minimized status payload', async () => {
-    vi.doMock('virtual:bookkit/runtime', () => ({ default: {} }));
-    vi.doMock('virtual:bookkit/config', () => ({ default: resolveRouteConfig() }));
+    vi.doMock('virtual:reserva/runtime', () => ({ default: {} }));
+    vi.doMock('virtual:reserva/config', () => ({ default: resolveRouteConfig() }));
     const { confirmationPage } = await import('../src/routes/booking-confirmation');
 
     const html = confirmationPage(
@@ -34,13 +34,13 @@ describe('booking confirmation page', () => {
     expect(html).toContain('€100.00');
     expect(html).toContain('Praça do Comércio');
 
-    vi.doUnmock('virtual:bookkit/runtime');
-    vi.doUnmock('virtual:bookkit/config');
+    vi.doUnmock('virtual:reserva/runtime');
+    vi.doUnmock('virtual:reserva/config');
   });
 
   it('omits the meeting-point fact and calendar location when the payload has no meetingPoint (plan 019 decision 2)', async () => {
-    vi.doMock('virtual:bookkit/runtime', () => ({ default: {} }));
-    vi.doMock('virtual:bookkit/config', () => ({ default: resolveRouteConfig() }));
+    vi.doMock('virtual:reserva/runtime', () => ({ default: {} }));
+    vi.doMock('virtual:reserva/config', () => ({ default: resolveRouteConfig() }));
     const { confirmationPage } = await import('../src/routes/booking-confirmation');
 
     const html = confirmationPage(
@@ -73,13 +73,13 @@ describe('booking confirmation page', () => {
     const decodedHtml = html.replace(/&amp;/g, '&');
     expect(decodedHtml).not.toContain(encodeURIComponent('Praça do Comércio'));
 
-    vi.doUnmock('virtual:bookkit/runtime');
-    vi.doUnmock('virtual:bookkit/config');
+    vi.doUnmock('virtual:reserva/runtime');
+    vi.doUnmock('virtual:reserva/config');
   });
 
   it('renders a status-only confirmed page without a blank ticket', async () => {
-    vi.doMock('virtual:bookkit/runtime', () => ({ default: {} }));
-    vi.doMock('virtual:bookkit/config', () => ({ default: resolveRouteConfig() }));
+    vi.doMock('virtual:reserva/runtime', () => ({ default: {} }));
+    vi.doMock('virtual:reserva/config', () => ({ default: resolveRouteConfig() }));
     const { confirmationPage } = await import('../src/routes/booking-confirmation');
 
     const html = confirmationPage(
@@ -93,13 +93,13 @@ describe('booking confirmation page', () => {
     expect(html).not.toContain('class="bk-ticket"');
     expect(html).not.toContain('bk-ticket-date');
 
-    vi.doUnmock('virtual:bookkit/runtime');
-    vi.doUnmock('virtual:bookkit/config');
+    vi.doUnmock('virtual:reserva/runtime');
+    vi.doUnmock('virtual:reserva/config');
   });
 
   it('renders a cancelled booking as cancelled with a start-over action', async () => {
-    vi.doMock('virtual:bookkit/runtime', () => ({ default: {} }));
-    vi.doMock('virtual:bookkit/config', () => ({ default: resolveRouteConfig() }));
+    vi.doMock('virtual:reserva/runtime', () => ({ default: {} }));
+    vi.doMock('virtual:reserva/config', () => ({ default: resolveRouteConfig() }));
     const { confirmationPage } = await import('../src/routes/booking-confirmation');
 
     const html = confirmationPage(
@@ -116,16 +116,16 @@ describe('booking confirmation page', () => {
     expect(html).not.toContain('Booking not found');
     expect(html).not.toContain('We could not find a booking for this link.');
 
-    vi.doUnmock('virtual:bookkit/runtime');
-    vi.doUnmock('virtual:bookkit/config');
+    vi.doUnmock('virtual:reserva/runtime');
+    vi.doUnmock('virtual:reserva/config');
   });
 
   // Plan 024 (design decision 3): the confirmationSummary payload's labeled metadata rows, and the
   // XSS surface — a customer-supplied text field is the first fully attacker-controlled free text
   // to reach this page, so a hostile payload must never reach the DOM unescaped.
   it('renders labeled metadata rows (boolean as the existing yes/no copy pair) and escapes a hostile value', async () => {
-    vi.doMock('virtual:bookkit/runtime', () => ({ default: {} }));
-    vi.doMock('virtual:bookkit/config', () => ({ default: resolveRouteConfig() }));
+    vi.doMock('virtual:reserva/runtime', () => ({ default: {} }));
+    vi.doMock('virtual:reserva/config', () => ({ default: resolveRouteConfig() }));
     const { confirmationPage } = await import('../src/routes/booking-confirmation');
     const xssPayload = '<script>window.__xss = true;</script>"><img src=x onerror=alert(1)>';
 
@@ -160,7 +160,7 @@ describe('booking confirmation page', () => {
     expect(html).not.toContain(xssPayload);
     expect(html).toContain('&lt;script&gt;');
 
-    vi.doUnmock('virtual:bookkit/runtime');
-    vi.doUnmock('virtual:bookkit/config');
+    vi.doUnmock('virtual:reserva/runtime');
+    vi.doUnmock('virtual:reserva/config');
   });
 });

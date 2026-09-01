@@ -1,11 +1,11 @@
 ---
-import routeConfig from 'virtual:bookkit/config';
+import routeConfig from 'virtual:reserva/config';
 import { requireEnabledRoutePath } from '../routes-manifest';
 import { createRouteContext } from '../routes/route-context';
 import { accessAllowed } from '../admin-access';
 import { mintAdminCsrfToken } from '../admin-csrf';
 import { adminLocaleFor } from '../core/config';
-import { resolveMessages, type BookkitMessages } from '../ui/messages';
+import { resolveMessages, type ReservaMessages } from '../ui/messages';
 import '../ui/components.css';
 
 // Embeddable fragment for setting day-capacity overrides from a consumer's own admin page. The
@@ -13,7 +13,7 @@ import '../ui/components.css';
 // this fragment links there and only duplicates the quick override form.
 //
 // Plan 009: this component's POST target (the injected admin route) requires Cloudflare Access
-// AND a signed CSRF token (src/admin-csrf.ts) once BOOKKIT_CSRF_SECRET is configured, so it mints
+// AND a signed CSRF token (src/admin-csrf.ts) once RESERVA_CSRF_SECRET is configured, so it mints
 // its own token at render time from the same Access check the built-in admin page uses —
 // mirroring handleAdminGet in src/handlers/index.ts exactly. That makes this a request-time
 // component: it must be rendered on a server-rendered page behind Cloudflare Access (see README).
@@ -21,24 +21,24 @@ import '../ui/components.css';
 interface Props {
   endpoint?: string;
   locale?: string;
-  messages?: Partial<BookkitMessages>;
+  messages?: Partial<ReservaMessages>;
 }
 
 const { endpoint, locale, messages: messageOverrides = {} } = Astro.props;
 const action = endpoint === undefined ? requireEnabledRoutePath(routeConfig, 'adminPage') : endpoint;
 const context = await createRouteContext({ request: Astro.request, locals: Astro.locals });
-const t: BookkitMessages = {
+const t: ReservaMessages = {
   ...resolveMessages(context.config, locale ?? adminLocaleFor(context.config)),
   ...messageOverrides,
 };
 const access = await accessAllowed(Astro.request, context);
-// undefined when BOOKKIT_CSRF_SECRET isn't configured (src/admin-csrf.ts mintAdminCsrfToken) — the
+// undefined when RESERVA_CSRF_SECRET isn't configured (src/admin-csrf.ts mintAdminCsrfToken) — the
 // hidden field below is then omitted entirely and the POST verifier is a deliberate no-op, exactly
 // mirroring the built-in admin page's csrfField (src/handlers/index.ts adminPage).
 const csrfToken = access ? await mintAdminCsrfToken(context, access.subject, context.clock().getTime()) : undefined;
 // A full UUID per render so two instances of this component on the same page never share an id —
 // see plan 014 item A.
-const titleId = `bookkit-admin-title-${crypto.randomUUID()}`;
+const titleId = `reserva-admin-title-${crypto.randomUUID()}`;
 ---
 
 <section class="bk-embed bk-embed--admin" aria-labelledby={titleId}>

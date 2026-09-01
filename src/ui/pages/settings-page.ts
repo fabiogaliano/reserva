@@ -6,7 +6,7 @@ import {
   type SettingSection,
   type SettingValue,
 } from '../../core/settings';
-import type { BookkitContext } from '../../context';
+import type { ReservaContext } from '../../context';
 import { escapeHtml } from '../../http';
 import { cssAssetHref, jsAssetHref } from '../asset-hrefs';
 import { factList, pageShell, themeToggle } from '../layout';
@@ -18,8 +18,8 @@ import { adminSidebar } from './admin-page';
 // section (multi-column forms measurably hurt comprehension), plain-language helper text per
 // setting, switches for booleans, a per-field "Reset" where a value deviates from the file config,
 // and a visible saved confirmation after POST. Tabs degrade to plain links without JS.
-// csrfToken is undefined when BOOKKIT_CSRF_SECRET isn't configured — see adminPage's csrfToken param above.
-export function settingsPage(context: BookkitContext, storedRows: Record<string, string>, saved: boolean, sectionParam: string, csrfToken: string | undefined): string {
+// csrfToken is undefined when RESERVA_CSRF_SECRET isn't configured — see adminPage's csrfToken param above.
+export function settingsPage(context: ReservaContext, storedRows: Record<string, string>, saved: boolean, sectionParam: string, csrfToken: string | undefined): string {
   const locale = adminLocaleFor(context.config);
   const messages = resolveMessages(context.config, locale);
   const catalog = messages as Record<string, string>;
@@ -108,7 +108,7 @@ export function settingsPage(context: BookkitContext, storedRows: Record<string,
     + `</section>`;
 
   const tabLink = (id: string, label: string): string =>
-    `<a href="?view=settings&section=${id}" data-bookkit-tab="${id}"${id === activeSection ? ' aria-current="page"' : ''}>${escapeHtml(label)}</a>`;
+    `<a href="?view=settings&section=${id}" data-reserva-tab="${id}"${id === activeSection ? ' aria-current="page"' : ''}>${escapeHtml(label)}</a>`;
   const tabs = `<nav class="bk-tabs" aria-label="${escapeHtml(messages['admin.settings'])}">`
     + settingSections.map((section) => tabLink(section, sectionTitles[section])).join('')
     + tabLink('config', messages['admin.sectionReadonly'])

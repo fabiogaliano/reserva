@@ -1,9 +1,9 @@
 import type { OpsHealthOutbox, OpsHealthResponse } from '../core/api';
 import { parseUtcInstant } from '../core/time';
 import { accessAllowed } from '../admin-access';
-import type { BookkitContext } from '../context';
+import type { ReservaContext } from '../context';
 import { nowIso } from '../context';
-import { bookkitMigrationStatus } from '../runtime-context';
+import { reservaMigrationStatus } from '../runtime-context';
 import type { SideEffectDebtByFamily } from '../repo';
 import { HttpError, json } from '../http';
 import { run, withSensitiveHeaders } from './shared';
@@ -37,7 +37,7 @@ function outboxSummary(debt: readonly SideEffectDebtByFamily[], now: string): Op
   };
 }
 
-export function handleOpsHealth(request: Request, context: BookkitContext): Promise<Response> {
+export function handleOpsHealth(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     // The ops group's shared, fail-closed gate (plan 025) — this route inherits admin auth by
@@ -45,7 +45,7 @@ export function handleOpsHealth(request: Request, context: BookkitContext): Prom
     if (!(await accessAllowed(request, context))) throw new HttpError(403, 'forbidden', 'Admin authorization required');
     const now = nowIso(context);
     const [schema, debt, openIncidents] = await Promise.all([
-      bookkitMigrationStatus(context.db),
+      reservaMigrationStatus(context.db),
       context.repo.countSideEffectDebtByFamily(),
       context.repo.countOpenIncidents(),
     ]);

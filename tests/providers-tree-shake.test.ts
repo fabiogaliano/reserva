@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import packageJson from '../package.json';
 
-// Guards the tree-shake story documented in README's "Providers" section: `bookkit/providers` is a
+// Guards the tree-shake story documented in README's "Providers" section: `@reservajs/astro/providers` is a
 // convenience barrel (it pulls every provider SDK import, e.g. `stripe`, into the graph), so the
 // real narrow-import contract is the per-provider subpaths below. Two structural checks stand in
 // for "narrow subpaths are actually narrow": `sideEffects: false` licenses bundlers to drop unused

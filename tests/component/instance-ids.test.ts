@@ -38,8 +38,8 @@ describe('per-instance element IDs (plan 014 item A)', () => {
     const container = await AstroContainer.create();
     const htmlA = await container.renderToString(ManageBooking, {});
     const htmlB = await container.renderToString(ManageBooking, {});
-    const a = labelPair(htmlA, 'bookkit-manage-title');
-    const b = labelPair(htmlB, 'bookkit-manage-title');
+    const a = labelPair(htmlA, 'reserva-manage-title');
+    const b = labelPair(htmlB, 'reserva-manage-title');
     expect(a.id).not.toBe(b.id);
     expect(a.labelledby).toBe(a.id);
     expect(b.labelledby).toBe(b.id);
@@ -52,8 +52,8 @@ describe('per-instance element IDs (plan 014 item A)', () => {
     const request = new Request('https://example.test/');
     const htmlA = await container.renderToString(AdminDashboard, { request });
     const htmlB = await container.renderToString(AdminDashboard, { request });
-    const a = labelPair(htmlA, 'bookkit-admin-title');
-    const b = labelPair(htmlB, 'bookkit-admin-title');
+    const a = labelPair(htmlA, 'reserva-admin-title');
+    const b = labelPair(htmlB, 'reserva-admin-title');
     expect(a.id).not.toBe(b.id);
     expect(a.labelledby).toBe(a.id);
     expect(b.labelledby).toBe(b.id);

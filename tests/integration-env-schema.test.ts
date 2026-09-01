@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { bookkit } from '../src/integration';
+import { reserva } from '../src/integration';
 import config from '../examples/client-config';
 
 function updateConfigCalls(options: Record<string, unknown>): Array<Record<string, unknown>> {
   const calls: Array<Record<string, unknown>> = [];
-  const integration = bookkit(options as never);
+  const integration = reserva(options as never);
   const hook = integration.hooks['astro:config:setup'];
   if (!hook) throw new Error('setup hook is missing');
   hook({
@@ -29,7 +29,7 @@ function envSchemaFrom(calls: Array<Record<string, unknown>>): Record<string, un
 
 const baseOptions = { config, runtimeEntrypoint: './examples/runtime.ts' };
 
-describe('bookkit() astro:env schema contribution', () => {
+describe('reserva() astro:env schema contribution', () => {
   it('declares every provider secret as an optional server secret string field by default', () => {
     const schema = envSchemaFrom(updateConfigCalls(baseOptions));
     expect(schema).toBeDefined();
@@ -37,7 +37,7 @@ describe('bookkit() astro:env schema contribution', () => {
       'STRIPE_SECRET_KEY',
       'STRIPE_WEBHOOK_SECRET',
       'BREVO_API_KEY',
-      'BOOKKIT_OPERATOR_SECRET',
+      'RESERVA_OPERATOR_SECRET',
       'GOOGLE_SA_EMAIL',
       'GOOGLE_SA_PRIVATE_KEY',
       'GOOGLE_IMPERSONATE_EMAIL',

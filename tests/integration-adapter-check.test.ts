@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { bookkit } from '../src/integration';
+import { reserva } from '../src/integration';
 import config from '../examples/client-config';
 
 const baseOptions = { config, runtimeEntrypoint: './examples/runtime.ts' };
@@ -8,7 +8,7 @@ const baseOptions = { config, runtimeEntrypoint: './examples/runtime.ts' };
 // stub the rest as unused so this stays a narrow unit test of the adapter check.
 function runConfigDone(adapterName: string | undefined) {
   const warn = vi.fn();
-  const integration = bookkit(baseOptions as never);
+  const integration = reserva(baseOptions as never);
   const hook = integration.hooks['astro:config:done'];
   if (!hook) throw new Error('config:done hook is missing');
   hook({
@@ -19,7 +19,7 @@ function runConfigDone(adapterName: string | undefined) {
   return { warn };
 }
 
-describe('bookkit() astro:config:done adapter check', () => {
+describe('reserva() astro:config:done adapter check', () => {
   it('proceeds silently for the exact @astrojs/cloudflare adapter', () => {
     const { warn } = runConfigDone('@astrojs/cloudflare');
     expect(warn).not.toHaveBeenCalled();

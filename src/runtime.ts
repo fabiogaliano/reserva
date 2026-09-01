@@ -1,19 +1,19 @@
 export {
-  defineBookkitRuntime,
-  defineCloudflareBookkitRuntime,
+  defineReservaRuntime,
+  defineCloudflareReservaRuntime,
   getCache,
   getEnv,
   type AdminAuth,
-  type BookkitContext,
-  type BookkitContextInput,
-  type BookkitEnvShape,
-  type BookkitProviders,
-  type BookkitRuntime,
-  type BookkitRuntimeDefinition,
-  type BookkitRuntimeFactoryOptions,
-  type BookkitRuntimeRequest,
+  type ReservaContext,
+  type ReservaContextInput,
+  type ReservaEnvShape,
+  type ReservaProviders,
+  type ReservaRuntime,
+  type ReservaRuntimeDefinition,
+  type ReservaRuntimeFactoryOptions,
+  type ReservaRuntimeRequest,
   type CloudflareBinding,
-  type CloudflareBookkitRuntimeOptions,
+  type CloudflareReservaRuntimeOptions,
   type CloudflareRuntimeBindings,
 } from './runtime-context';
 // Plan 025: the admin auth port's default implementation, exported so a consumer's custom
@@ -21,7 +21,7 @@ export {
 export { cloudflareAccessAdminAuth } from './access';
 export type { AdminIdentity } from './access';
 // Plan 020 (design decision 1): the typed reconciliation function a consumer's own custom Worker
-// entrypoint's `scheduled()` calls — `runtime.createContext` builds the BookkitContext (a
+// entrypoint's `scheduled()` calls — `runtime.createContext` builds the ReservaContext (a
 // scheduled event has no incoming Request; pass a synthetic same-origin one), then this function
 // runs the bounded sweep/claim/incident/alert pass. Exported without any internal repo record type
 // (ReconciliationSummary is plain counts) so a consumer never needs src/repo.ts's shapes.

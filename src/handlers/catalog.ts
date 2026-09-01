@@ -11,9 +11,9 @@ import {
   type ServiceConfig,
 } from '../core/config';
 import { resolveLocale } from '../core/locale';
-import type { BookkitContext } from '../context';
+import type { ReservaContext } from '../context';
 import { HttpError, json } from '../http';
-import { resolveMessages, type BookkitMessages } from '../ui/messages';
+import { resolveMessages, type ReservaMessages } from '../ui/messages';
 import { run } from './shared';
 
 // Plan 027 (design decision 6): the rendering contract — everything a consumer needs to build a
@@ -29,7 +29,7 @@ import { run } from './shared';
 // Plan 018 kept `label`/`hint` optional on a declared pickup option, falling back to the message
 // catalog for the historical `default`/`custom` ids. That fallback chain lived in the widget; it
 // belongs here, so every consumer resolves the same copy from one place.
-function pickupCopy(option: PickupOption, messages: BookkitMessages): { label: string; hint: string | null } {
+function pickupCopy(option: PickupOption, messages: ReservaMessages): { label: string; hint: string | null } {
   if (option.id === 'default') {
     return { label: option.label ?? messages['widget.pickupDefault'], hint: option.hint ?? messages['widget.pickupDefaultHint'] };
   }
@@ -39,7 +39,7 @@ function pickupCopy(option: PickupOption, messages: BookkitMessages): { label: s
   return { label: option.label ?? option.id, hint: option.hint ?? null };
 }
 
-function catalogLocation(service: ServiceConfig, messages: BookkitMessages): CatalogLocation | null {
+function catalogLocation(service: ServiceConfig, messages: ReservaMessages): CatalogLocation | null {
   if (!service.location) return null;
   return {
     // Empty (not absent) for a location-ful service that collects only a custom address.
@@ -69,7 +69,7 @@ function catalogMetadataFields(service: ServiceConfig, locale: string, defaultLo
   }));
 }
 
-export function catalogPayload(config: ClientConfig, locale: string, messages: BookkitMessages): CatalogResponse {
+export function catalogPayload(config: ClientConfig, locale: string, messages: ReservaMessages): CatalogResponse {
   const services: CatalogService[] = Object.entries(config.services).map(([slug, service]) => ({
     slug,
     // A service with no declared title is identified by its slug — the same fallback emails use.
@@ -86,7 +86,7 @@ export function catalogPayload(config: ClientConfig, locale: string, messages: B
   };
 }
 
-export function handleCatalog(request: Request, context: BookkitContext): Promise<Response> {
+export function handleCatalog(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const locale = resolveLocale(context.config.locales, new URL(request.url).searchParams.get('locale'));

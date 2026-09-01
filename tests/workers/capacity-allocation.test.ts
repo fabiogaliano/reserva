@@ -6,7 +6,7 @@ import { createBookingRepository } from '../../src/repo';
 import { config, service } from '../fixtures';
 
 interface TestEnv {
-  BOOKKIT_DB: D1Database;
+  RESERVA_DB: D1Database;
 }
 
 // BK-CAP-001 / AR-001 (handoff 05): the decisive layer for the atomic capacity guard —
@@ -21,7 +21,7 @@ interface TestEnv {
 // citation), so a fixed ordering already proves "at most one winner" for either interleaving;
 // running both orderings (where the pair is genuinely symmetric) covers whichever request reaches
 // D1 first in production.
-const db = (env as unknown as TestEnv).BOOKKIT_DB;
+const db = (env as unknown as TestEnv).RESERVA_DB;
 const repo = createBookingRepository(db);
 
 const TOUR_SLUG = 'vintage';

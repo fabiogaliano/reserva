@@ -1,15 +1,15 @@
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createBookkitContext } from '../../src/context';
+import { createReservaContext } from '../../src/context';
 import { runReconciliation } from '../../src/reconciliation';
 import { config } from '../fixtures';
 import { providers } from '../fakes';
 
 interface TestEnv {
-  BOOKKIT_DB: D1Database;
+  RESERVA_DB: D1Database;
 }
 
-const db = (env as unknown as TestEnv).BOOKKIT_DB;
+const db = (env as unknown as TestEnv).RESERVA_DB;
 const clock = () => new Date('2026-08-14T10:00:00.000Z');
 
 beforeEach(async () => {
@@ -20,7 +20,7 @@ beforeEach(async () => {
 });
 
 async function seedConfirmed(id: string): Promise<void> {
-  const context = createBookkitContext({ config, db, clock, providers: providers() });
+  const context = createReservaContext({ config, db, clock, providers: providers() });
   await context.repo.insertHold({
     id,
     reference: `BKT-2026-${id}`,
@@ -46,7 +46,7 @@ async function seedConfirmed(id: string): Promise<void> {
 // real workerd/D1, not just the in-memory fake exercised by tests/reconciliation.test.ts.
 describe('runReconciliation against real D1', () => {
   it('sweeps an expired hold', async () => {
-    const context = createBookkitContext({ config, db, clock, providers: providers() });
+    const context = createReservaContext({ config, db, clock, providers: providers() });
     await context.repo.insertHold({
       id: 'recon-d1-expired', reference: 'BKT-2026-recon-d1-expired', serviceSlug: 'vintage', quantity: 2,
       pickupType: 'default', startsAt: '2026-08-20T09:00:00.000Z', endsAt: '2026-08-20T10:00:00.000Z',
@@ -63,7 +63,7 @@ describe('runReconciliation against real D1', () => {
   it('resumes a stuck cancelled-booking refund via the real claim and shared executor', async () => {
     const id = 'recon-d1-refund';
     await seedConfirmed(id);
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db, clock,
       providers: providers({
         payments: {
@@ -99,7 +99,7 @@ describe('runReconciliation against real D1', () => {
     let shouldFail = true;
     let now = '2026-08-14T10:00:00.000Z';
     const scanClock = () => new Date(now);
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db, clock: scanClock,
       providers: providers({ calendar: { listEvents: async () => [], createEvent: async () => { calendarCalls += 1; if (shouldFail) throw new Error('calendar still down'); return 'cal_recon_d1'; }, deleteEvent: async () => undefined, patchEvent: async () => undefined } }),
     });
@@ -130,7 +130,7 @@ describe('runReconciliation against real D1', () => {
     const id = 'recon-d1-refund-before-cancel';
     await seedConfirmed(id);
     let refunds = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db, clock,
       providers: providers({
         payments: {
@@ -167,7 +167,7 @@ describe('runReconciliation against real D1', () => {
        VALUES ('recon-d1-actionable', 'calendar_create', 'pending', NULL, 0, NULL, NULL, NULL, ?, ?, NULL, NULL)`,
     ).bind('2026-08-14T09:59:00.000Z', '2026-08-14T09:59:00.000Z').run();
     let calendarCalls = 0;
-    const context = createBookkitContext({
+    const context = createReservaContext({
       config, db, clock,
       providers: providers({ calendar: { listEvents: async () => [], createEvent: async () => { calendarCalls += 1; return 'cal_fair_d1'; }, deleteEvent: async () => undefined, patchEvent: async () => undefined } }),
     });
@@ -184,7 +184,7 @@ describe('runReconciliation against real D1', () => {
   it('reports an unreported oversell marker as a persisted, real-D1 incident row', async () => {
     const id = 'recon-d1-oversell';
     await seedConfirmed(id);
-    const context = createBookkitContext({ config, db, clock, providers: providers() });
+    const context = createReservaContext({ config, db, clock, providers: providers() });
     await db.prepare(
       `INSERT INTO side_effect_operations (booking_id, family, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at)
        VALUES (?, 'oversell', 'succeeded', 'capacity_exceeded', 1, ?, ?, NULL, ?, ?)`,

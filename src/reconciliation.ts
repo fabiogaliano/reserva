@@ -8,7 +8,7 @@
 import { classifyAttemptOutcome, runScheduledSideEffectOperation } from './confirmation';
 import type { Booking } from './core/booking';
 import type { OperationalAlert } from './core/events';
-import type { BookkitContext } from './context';
+import type { ReservaContext } from './context';
 import { nowIso } from './context';
 import { resumeClaimedOperatorCancellation } from './operator-cancellation';
 import { attemptRefund } from './refund-executor';
@@ -79,7 +79,7 @@ function addTally(target: IncidentTally, projection: IncidentProjection): void {
 // Applies one signal/existing-row pair's projection to the incident ledger and tallies the result.
 // Shared by every source kind (side-effect, refund, oversell) below.
 async function applyIncidentProjection(
-  context: BookkitContext,
+  context: ReservaContext,
   tally: IncidentTally,
   bookingId: string,
   sourceType: OperationalIncidentSourceType,
@@ -105,13 +105,13 @@ async function applyIncidentProjection(
       now,
       escalate: projection.escalate,
     });
-    context.logger.info?.('bookkit reconciliation incident projected', {
+    context.logger.info?.('reserva reconciliation incident projected', {
       incidentId, sourceType, action, severity: signal.severity,
       lifecycle: projection.action, escalated: projection.escalate,
     });
   } else if (projection.action === 'resolve-automatic') {
     await context.repo.resolveIncidentAutomatic(sourceType, sourceKey, now);
-    context.logger.info?.('bookkit reconciliation incident resolved', {
+    context.logger.info?.('reserva reconciliation incident resolved', {
       incidentId: existing?.id, sourceType, action, lifecycle: 'resolved_automatic',
     });
   }
@@ -138,7 +138,7 @@ function sideEffectSignal(operation: SideEffectOperationRecord, nowIsoValue: str
   return { detected: false, severity: 'delayed', action, attemptCount: operation.attemptCount, sourceUpdatedAt: operation.updatedAt };
 }
 
-async function projectSideEffectIncidentsForBooking(context: BookkitContext, tally: IncidentTally, bookingId: string): Promise<void> {
+async function projectSideEffectIncidentsForBooking(context: ReservaContext, tally: IncidentTally, bookingId: string): Promise<void> {
   const operations = await context.repo.listSideEffectOperations(bookingId);
   const now = nowIso(context);
   for (const operation of operations) {
@@ -156,7 +156,7 @@ function refundSignal(operation: RefundOperationRecord, booking: Booking | null)
   return { detected, severity: 'action_required', action: 'refund', attemptCount: operation.attemptCount, sourceUpdatedAt: operation.resolvedAt ?? operation.requestedAt };
 }
 
-async function projectRefundIncidentForBooking(context: BookkitContext, tally: IncidentTally, bookingId: string): Promise<void> {
+async function projectRefundIncidentForBooking(context: ReservaContext, tally: IncidentTally, bookingId: string): Promise<void> {
   const [operation, booking] = await Promise.all([
     context.repo.getRefundOperationByBookingId(bookingId),
     context.repo.getBookingById(bookingId),
@@ -166,7 +166,7 @@ async function projectRefundIncidentForBooking(context: BookkitContext, tally: I
     if (existing?.status === 'open') {
       await context.repo.resolveIncidentAutomatic('refund', bookingId, nowIso(context));
       tally.resolved += 1;
-      context.logger.info?.('bookkit reconciliation incident resolved', {
+      context.logger.info?.('reserva reconciliation incident resolved', {
         incidentId: existing.id, sourceType: 'refund', action: 'refund', lifecycle: 'resolved_automatic',
       });
     }
@@ -180,7 +180,7 @@ async function projectRefundIncidentForBooking(context: BookkitContext, tally: I
 // independent source-change page now provides the equivalent safety net for ordinary status,
 // manage, and webhook recovery that happens outside reconciliation.
 export async function reprojectIncidentAfterAdminRetry(
-  context: BookkitContext,
+  context: ReservaContext,
   sourceType: 'side_effect' | 'refund',
   bookingId: string,
 ): Promise<void> {
@@ -192,7 +192,7 @@ export async function reprojectIncidentAfterAdminRetry(
 // Plan 020 (design decision 3/6): oversell markers are permanent (never retried) and always
 // action_required the first time they're observed unreported — listUnreportedOversellMarkers
 // already excludes markers with an existing incident row, so this is always a fresh 'open'.
-async function reportUnreportedOversellMarkers(context: BookkitContext, tally: IncidentTally, limit: number): Promise<void> {
+async function reportUnreportedOversellMarkers(context: ReservaContext, tally: IncidentTally, limit: number): Promise<void> {
   const markers = await context.repo.listUnreportedOversellMarkers(limit);
   const now = nowIso(context);
   for (const marker of markers) {
@@ -210,14 +210,14 @@ async function reportUnreportedOversellMarkers(context: BookkitContext, tally: I
       escalate: false,
     });
     tally.opened += 1;
-    context.logger.info?.('bookkit reconciliation incident projected', {
+    context.logger.info?.('reserva reconciliation incident projected', {
       incidentId, sourceType: 'oversell', action: 'oversell', severity: 'action_required', lifecycle: 'open', escalated: false,
     });
   }
 }
 
 async function processSideEffectCandidate(
-  context: BookkitContext,
+  context: ReservaContext,
   operation: SideEffectOperationRecord,
 ): Promise<void> {
   const booking = await context.repo.getBookingById(operation.bookingId);
@@ -225,7 +225,7 @@ async function processSideEffectCandidate(
   try {
     await runScheduledSideEffectOperation(context, booking, operation);
   } catch (error) {
-    context.logger.warn?.('bookkit reconciliation side effect attempt failed', {
+    context.logger.warn?.('reserva reconciliation side effect attempt failed', {
       bookingId: operation.bookingId, operation: sideEffectOperationKey(operation), error: String(error),
     });
   }
@@ -234,7 +234,7 @@ async function processSideEffectCandidate(
 // The same cancellation CAS used by HTTP recovery is resumed before an execution claim. A crash
 // after claimRefundOperation therefore cannot strand a confirmed booking, and Stripe remains
 // unreachable until the returned booking is durably cancelled.
-async function processRefundCandidate(context: BookkitContext, bookingId: string): Promise<void> {
+async function processRefundCandidate(context: ReservaContext, bookingId: string): Promise<void> {
   const [initialBooking, operation] = await Promise.all([
     context.repo.getBookingById(bookingId),
     context.repo.getRefundOperationByBookingId(bookingId),
@@ -255,12 +255,12 @@ async function processRefundCandidate(context: BookkitContext, bookingId: string
   try {
     await attemptRefund(context, booking, operation.id, operation.choice, operation.paymentIntent, { attemptNumber });
   } catch (error) {
-    context.logger.warn?.('bookkit reconciliation refund attempt failed', { bookingId, error: String(error) });
+    context.logger.warn?.('reserva reconciliation refund attempt failed', { bookingId, error: String(error) });
   }
 }
 
 async function projectIncidents(
-  context: BookkitContext,
+  context: ReservaContext,
   sideEffectBookingIds: Iterable<string>,
   refundBookingIds: Iterable<string>,
   limit: number,
@@ -272,7 +272,7 @@ async function projectIncidents(
   return tally;
 }
 
-function adminUrlForIncident(context: BookkitContext, incidentId: string): string {
+function adminUrlForIncident(context: ReservaContext, incidentId: string): string {
   const adminPage = context.routeConfig.paths.adminPage;
   return new URL(`${adminPage}?view=incidents#incident-${incidentId}`, context.config.business.url).toString();
 }
@@ -280,11 +280,11 @@ function adminUrlForIncident(context: BookkitContext, incidentId: string): strin
 // Alert delivery has its own claim/attempt/backoff. Only open incidents are eligible: a revision
 // that auto-resolves before delivery is obsolete, while a later reopen increments alert_revision
 // and becomes independently deliverable.
-async function drainAlerts(context: BookkitContext, limit: number): Promise<{ sent: number; failed: number }> {
+async function drainAlerts(context: ReservaContext, limit: number): Promise<{ sent: number; failed: number }> {
   const sink = context.providers.alerts;
   const ids = await context.repo.listAlertCandidateIds(nowIso(context), limit);
   if (!sink && ids.length > 0) {
-    context.logger.error?.('bookkit reconciliation alert sink missing', {
+    context.logger.error?.('reserva reconciliation alert sink missing', {
       lifecycle: 'configuration_error', pendingAlerts: ids.length,
     });
     return { sent: 0, failed: ids.length };
@@ -308,13 +308,13 @@ async function drainAlerts(context: BookkitContext, limit: number): Promise<{ se
       adminUrl: adminUrlForIncident(context, claimed.id),
     });
     try {
-      context.logger.info?.('bookkit reconciliation alert delivery started', {
+      context.logger.info?.('reserva reconciliation alert delivery started', {
         incidentId: claimed.id, alertRevision: claimed.alertRevision, lifecycle: 'started',
       });
       await sink.send(alert);
       await context.repo.resolveIncidentAlertSuccess(id, token, claimed.alertRevision);
       sent += 1;
-      context.logger.info?.('bookkit reconciliation alert delivered', {
+      context.logger.info?.('reserva reconciliation alert delivered', {
         incidentId: claimed.id, alertRevision: claimed.alertRevision, lifecycle: 'succeeded',
       });
     } catch (error) {
@@ -323,7 +323,7 @@ async function drainAlerts(context: BookkitContext, limit: number): Promise<{ se
       const nextAttemptAt = computeNextAttemptAt(new Date(now), claimed.alertAttemptCount);
       await context.repo.resolveIncidentAlertFailure(id, token, message, nextAttemptAt);
       failed += 1;
-      context.logger.warn?.('bookkit reconciliation alert delivery failed', {
+      context.logger.warn?.('reserva reconciliation alert delivery failed', {
         incidentId: claimed.id, alertRevision: claimed.alertRevision,
         lifecycle: 'failed', nextAttemptAt, error: message,
       });
@@ -332,7 +332,7 @@ async function drainAlerts(context: BookkitContext, limit: number): Promise<{ se
   return { sent, failed };
 }
 
-async function referenceForBooking(context: BookkitContext, bookingId: string): Promise<string> {
+async function referenceForBooking(context: ReservaContext, bookingId: string): Promise<string> {
   const booking: Booking | null = await context.repo.getBookingById(bookingId);
   return booking?.reference ?? bookingId;
 }
@@ -340,18 +340,18 @@ async function referenceForBooking(context: BookkitContext, bookingId: string): 
 // Plan 020 (design decision 4): the one entry point a scheduled event (or a manual admin-triggered
 // sweep) calls. Bounded and resumable — a partial run (hitting a page limit, or one candidate
 // erroring) is safe; the next invocation picks up remaining debt via the same candidate queries.
-export async function runReconciliation(context: BookkitContext, options: ReconciliationOptions = {}): Promise<ReconciliationSummary> {
+export async function runReconciliation(context: ReservaContext, options: ReconciliationOptions = {}): Promise<ReconciliationSummary> {
   const sourceLimit = clampLimit(options.sourceLimit, DEFAULT_SOURCE_LIMIT, HARD_SOURCE_LIMIT);
   const alertLimit = clampLimit(options.alertLimit, DEFAULT_ALERT_LIMIT, HARD_ALERT_LIMIT);
   if (options.requireAlertSink && !context.providers.alerts) {
-    context.logger.error?.('bookkit reconciliation alert sink missing', { lifecycle: 'configuration_error' });
-    throw new Error('Bookkit reconciliation requires an operational alert sink');
+    context.logger.error?.('reserva reconciliation alert sink missing', { lifecycle: 'configuration_error' });
+    throw new Error('Reserva reconciliation requires an operational alert sink');
   }
 
   const startedAt = nowIso(context);
   const staleBefore = new Date(Date.parse(startedAt) - MUTATION_SIDE_EFFECT_LEASE_MS).toISOString();
   const failureDueBefore = new Date(Date.parse(startedAt) - INCIDENT_DELAY_THRESHOLD_MS).toISOString();
-  context.logger.info?.('bookkit reconciliation started', {
+  context.logger.info?.('reserva reconciliation started', {
     lifecycle: 'started', sourceLimit, alertLimit,
   });
 
@@ -389,6 +389,6 @@ export async function runReconciliation(context: BookkitContext, options: Reconc
     alertsSent: alertResult.sent,
     alertsFailed: alertResult.failed,
   };
-  context.logger.info?.('bookkit reconciliation completed', { lifecycle: 'completed', ...summary });
+  context.logger.info?.('reserva reconciliation completed', { lifecycle: 'completed', ...summary });
   return summary;
 }

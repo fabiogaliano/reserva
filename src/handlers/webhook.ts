@@ -6,12 +6,12 @@ import {
   dispatchMutation,
   runOwedMutationSideEffects,
 } from '../confirmation';
-import type { BookkitContext } from '../context';
+import type { ReservaContext } from '../context';
 import { nowIso } from '../context';
 import { HttpError, json } from '../http';
 import { run } from './shared';
 
-export function handlePaymentWebhook(request: Request, context: BookkitContext): Promise<Response> {
+export function handlePaymentWebhook(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const event = await context.providers.payments.parseWebhook(request);
