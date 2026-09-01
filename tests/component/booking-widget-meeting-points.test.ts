@@ -24,10 +24,12 @@ function stripInstanceId(html: string): string {
 }
 
 describe('BookingWidget.astro meetingPoints prop (Plan 017 design decision 5)', () => {
-  it('renders European Portuguese when no locale is supplied', async () => {
+  // Plan 026 (design decision 4): defaultLocale flipped pt-PT -> en -- a generic library must not
+  // default to Portuguese.
+  it('renders English when no locale is supplied', async () => {
     const html = await render(propsWithoutLocale);
-    expect(html).toContain('aria-label="Reservar este tour"');
-    expect(html).toContain('name="locale" value="pt-PT"');
+    expect(html).toContain('aria-label="Book now"');
+    expect(html).toContain('name="locale" value="en"');
   });
 
   it('with no meetingPoints prop, renders no meeting-point markup at all', async () => {

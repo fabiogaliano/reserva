@@ -1,6 +1,6 @@
-// Single key set for every string bookkit renders to a customer or operator. European Portuguese
-// is the product default, English is the fallback, and consumers can supply partial per-locale
-// overrides through `config.ui.messages`.
+// Single key set for every string bookkit renders to a customer or operator. English is the
+// default and the fallback; European Portuguese ships as a bundled catalog a consumer selects via
+// `config.locales`, and both can be overridden per locale through `config.ui.messages`.
 
 import type { ClientConfig } from '../core/config';
 import portuguesePortugalCatalog from './locales/pt-PT.json';
@@ -9,7 +9,7 @@ export const defaultMessages = {
   // Shared
   'common.brandFallback': 'Bookings',
   'common.reference': 'Reference',
-  'common.service': 'Tour',
+  'common.service': 'Service',
   'common.date': 'Date',
   'common.time': 'Time',
   'common.quantity': 'People',
@@ -36,7 +36,7 @@ export const defaultMessages = {
   'status.expired': 'Expired',
   'status.no_show': 'No-show',
   // Widget
-  'widget.title': 'Book this tour',
+  'widget.title': 'Book now',
   'widget.quantity': 'How many people?',
   'widget.person': '{n} person',
   'widget.quantityCount': '{n} people',
@@ -51,11 +51,11 @@ export const defaultMessages = {
   'widget.spotsLeft': '{n} spots left',
   'widget.pickup': 'Where do we meet?',
   'widget.pickupDefault': 'Meeting point',
-  'widget.pickupDefaultHint': 'Meet us at the tour start point',
+  'widget.pickupDefaultHint': 'Meet us at the starting point',
   'widget.pickupCustom': 'Custom pickup',
   'widget.pickupCustomHint': 'We pick you up at your address',
   // Plan 017 (design decision 5): legend for the meetingPointId radio group, shown only when a
-  // tour declares 2+ points — labels themselves are config-provided plain strings, like
+  // service declares 2+ points — labels themselves are config-provided plain strings, like
   // meetingPoint.label today.
   'widget.meetingPoint': 'Choose a meeting point',
   'widget.start': 'Start',
@@ -69,7 +69,7 @@ export const defaultMessages = {
   'widget.noscript': 'Booking requires JavaScript. Please contact us directly to book.',
   // Confirmation page
   'confirmation.title': 'Booking confirmed',
-  'confirmation.lead': 'Thank you — your tour is booked. A confirmation email is on its way.',
+  'confirmation.lead': 'Thank you — your booking is confirmed. A confirmation email is on its way.',
   'confirmation.detailsEmailed': 'Your booking is confirmed. Full details and a link to manage your booking were emailed to you.',
   'confirmation.whatsNextTitle': "What's next",
   'confirmation.whatsNextBody': 'Save your reference and arrive a few minutes early. If you chose a custom pickup, we will contact you to confirm the address.',
@@ -124,7 +124,7 @@ export const defaultMessages = {
   'admin.navBookings': 'Upcoming bookings',
   'admin.navDays': 'Availability',
   'admin.days': 'Availability by day',
-  'admin.daysHint': 'Each day shows fleet units used/capacity. Select a day to adjust or close it.',
+  'admin.daysHint': 'Each day shows units used/capacity. Select a day to adjust or close it.',
   'admin.unitsLoad': 'units {booked}/{capacity}',
   'admin.bookings': 'Upcoming bookings',
   'admin.noBookings': 'No upcoming bookings.',
@@ -146,17 +146,17 @@ export const defaultMessages = {
   'admin.save': 'Save',
   'admin.clear': 'Reset to default',
   'admin.defaultTitle': 'Schedule a capacity change',
-  'admin.defaultHint': 'Use when fleet capacity changes from a specific date, like a vehicle becoming unavailable. This overrides the normal number of vehicles. Individually adjusted days keep their own value.',
+  'admin.defaultHint': 'Use when capacity changes from a specific date, like a unit becoming unavailable. This overrides the normal capacity. Individually adjusted days keep their own value.',
   'admin.defaultScheduled': '{n} scheduled',
   'admin.monthFlagged': '{n} adjusted',
   'admin.defaultFrom': 'From date',
   'admin.defaultEntry': '{n} from {date}',
   'admin.remove': 'Remove',
   'admin.search': 'Search',
-  'admin.searchPlaceholder': 'Reference, tour, pickup…',
+  'admin.searchPlaceholder': 'Reference, service, pickup…',
   // Plan 023 (design decision 4): shown instead of the key above when no configured service
-  // declares a location module — text is a placeholder pending plan 026's copy pass.
-  'admin.searchPlaceholderNoPickup': 'Reference, tour…',
+  // declares a location module.
+  'admin.searchPlaceholderNoPickup': 'Reference, service…',
   'admin.filterStatus': 'Status',
   'admin.all': 'All',
   'admin.apply': 'Apply filters',
@@ -179,8 +179,8 @@ export const defaultMessages = {
   'admin.saved': 'Saved. Changes reach the public site within a minute.',
   'admin.sectionPolicy': 'Booking policy',
   'admin.sectionPolicyHint': 'The rules customers book, cancel and reschedule under.',
-  'admin.sectionCapacity': 'Fleet',
-  'admin.sectionCapacityHint': 'Set how many vehicles are normally available for bookings.',
+  'admin.sectionCapacity': 'Capacity',
+  'admin.sectionCapacityHint': 'Set how many concurrent bookings are normally available.',
   'admin.sectionContact': 'Business & contact',
   'admin.sectionContactHint': 'Shown to customers on booking pages and emails.',
   'admin.sectionLegal': 'Legal',
@@ -228,8 +228,8 @@ export const defaultMessages = {
   'setting.locales': 'Languages',
   'setting.shortCode': 'Reference prefix',
   'setting.siteUrl': 'Site URL',
-  'setting.services': 'Tours',
-  'setting.capacity': 'Number of vehicles',
+  'setting.services': 'Services',
+  'setting.capacity': 'Concurrent bookings',
   'setting.capacity.hint': 'Applies to dates without a scheduled or day-specific capacity change. Set to 0 to stop availability everywhere.',
   // Plan 020 (design decision 12/13/14): operator incident cards on the admin page.
   'admin.navIncidents': 'Attention required',
@@ -261,7 +261,10 @@ export const defaultMessages = {
 export type BookkitMessageKey = keyof typeof defaultMessages;
 export type BookkitMessages = Record<BookkitMessageKey, string>;
 
-export const defaultLocale = 'pt-PT';
+// Plan 026 (design decision 4): a generic library must not default to Portuguese. Both real
+// consumers (consumer-a, consumer-b) set config.locales.default explicitly, so this only
+// changes behavior for a caller of resolveMessages/the components with no locale argument at all.
+export const defaultLocale = 'en';
 
 const portuguesePortugalMessages: BookkitMessages = portuguesePortugalCatalog;
 const bundledCatalogs: Record<string, BookkitMessages> = {

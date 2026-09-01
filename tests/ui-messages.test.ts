@@ -15,12 +15,15 @@ describe('bundled UI messages', () => {
     }
   });
 
-  it('uses European Portuguese by default and keeps English selectable', () => {
-    expect(defaultLocale).toBe('pt-PT');
-    expect(resolveMessages(undefined, undefined)['widget.title']).toBe('Reservar este tour');
-    expect(resolveMessages(undefined, 'pt-PT')['widget.title']).toBe('Reservar este tour');
-    expect(resolveMessages(undefined, 'pt-pt')['widget.title']).toBe('Reservar este tour');
-    expect(resolveMessages(undefined, 'en')['widget.title']).toBe('Book this tour');
+  // Plan 026 (design decision 4): a generic library must not default to Portuguese — both real
+  // consumers set config.locales.default explicitly, so this only affects a caller supplying no
+  // locale at all.
+  it('uses English by default and keeps European Portuguese selectable', () => {
+    expect(defaultLocale).toBe('en');
+    expect(resolveMessages(undefined, undefined)['widget.title']).toBe('Book now');
+    expect(resolveMessages(undefined, 'en')['widget.title']).toBe('Book now');
+    expect(resolveMessages(undefined, 'pt-PT')['widget.title']).toBe('Reservar agora');
+    expect(resolveMessages(undefined, 'pt-pt')['widget.title']).toBe('Reservar agora');
   });
 
   it('layers deployment overrides over bundled base and regional copy', () => {

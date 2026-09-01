@@ -100,7 +100,7 @@ describe('BookingWidget.astro pickupOptions prop (plan 018 design decision 9)', 
       ],
     });
     expect(html).toContain('Meeting point');
-    expect(html).toContain('Meet us at the tour start point');
+    expect(html).toContain('Meet us at the starting point');
     expect(html).toContain('Custom pickup');
     expect(html).toContain('We pick you up at your address');
   });
