@@ -14,9 +14,9 @@
 // Run: `bun run test:pack` (also folded into `bun run verify` and CI's `pack` job).
 
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BOOKKIT_MIGRATIONS } from '../src/migrations-manifest';
 import { routeManifest } from '../src/routes-manifest';
@@ -126,15 +126,59 @@ function scheduledWorkerBuild(consumerDir: string): void {
   if (result.status !== 0) fail('scheduled-build', `packed consumer scheduled Worker build failed:\n${result.stdout}\n${result.stderr}`);
 }
 
+function findMjsFilesRecursive(dir: string): string[] {
+  const files: string[] = [];
+  for (const entry of readdirSync(dir)) {
+    const entryPath = join(dir, entry);
+    if (statSync(entryPath).isDirectory()) {
+      files.push(...findMjsFilesRecursive(entryPath));
+    } else if (entryPath.endsWith('.mjs')) {
+      files.push(entryPath);
+    }
+  }
+  return files;
+}
+
 function astroBuild(consumerDir: string): void {
   const result = run('bunx', ['astro', 'build'], { cwd: consumerDir });
   if (result.status !== 0) fail('build', `\`astro build\` failed:\n${result.stdout}\n${result.stderr}`);
 
   const entryPath = resolve(consumerDir, 'dist/server/entry.mjs');
   if (!existsSync(entryPath)) fail('build', `expected server build output missing: ${entryPath}`);
-  const entry = readFileSync(entryPath, 'utf8');
+
+  // Which `.mjs` file under dist/server carries the serialized SSR manifest is a bundler-layout
+  // detail, not part of the contract: under rolldown >= 1.2 the manifest is hoisted out of
+  // entry.mjs into a shared chunk (e.g. chunks/entrypoints_<hash>.mjs), while other bundlers inline
+  // it into entry.mjs itself. Find whichever file actually calls `deserializeManifest(` — that's
+  // the real injection payload — instead of assuming a fixed file layout.
+  const serverDir = resolve(consumerDir, 'dist/server');
+  const mjsFiles = findMjsFilesRecursive(serverDir);
+  const manifestFiles = mjsFiles
+    .map((path) => ({ path, text: readFileSync(path, 'utf8') }))
+    .filter(({ text }) => text.includes('deserializeManifest('));
+  if (manifestFiles.length === 0) {
+    fail(
+      'build',
+      `could not find the serialized SSR manifest: no \`.mjs\` file under ${serverDir} calls \`deserializeManifest(\`; ` +
+        `checked ${mjsFiles.length} file(s): ${mjsFiles.join(', ')}`,
+    );
+  }
+
+  // Assert the manifest's JSON field form, not a whole-dist grep: the compiled
+  // `virtual:bookkit/config` chunk (chunks/config_*.mjs) contains every route path regardless of
+  // whether it was actually injected, so a tree-wide grep would false-pass a missing route. The
+  // `deserializeManifest(` payload is the injection truth, and this form matches the old inlined
+  // layout too, so it's layout-independent and strictly stronger than the old check.
   for (const route of routeManifest) {
-    if (!entry.includes(route.pattern)) fail('build', `injected route \`${route.pattern}\` (${route.id}) is missing from the built worker entry (${entryPath})`);
+    const needle = `"route":"${route.pattern}"`;
+    const found = manifestFiles.some(({ text }) => text.includes(needle));
+    if (!found) {
+      fail(
+        'build',
+        `injected route \`${route.pattern}\` (${route.id}) is missing from the serialized SSR manifest ` +
+          `(checked ${manifestFiles.map(({ path }) => path).join(', ')})`,
+      );
+    }
   }
 }
 
