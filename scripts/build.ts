@@ -32,6 +32,15 @@ rmSync(resolve(repoRoot, 'dist'), { recursive: true, force: true });
 const tsc = spawnSync('bunx', ['tsc', '-p', 'tsconfig.build.json'], { cwd: repoRoot, stdio: 'inherit' });
 if (tsc.status !== 0) fail('`tsc -p tsconfig.build.json` failed');
 
+// npm rejects TypeScript bin targets. Bundle the CLI separately so consumers receive an executable
+// while its import.meta.url still resolves ../migrations at the package root.
+const cli = spawnSync(
+  'bun',
+  ['build', 'scripts/reserva-migrate.ts', '--target=node', '--outfile=dist/reserva-migrate.js'],
+  { cwd: repoRoot, stdio: 'inherit' },
+);
+if (cli.status !== 0) fail('reserva-migrate build failed');
+
 for (const relativePath of RAW_ASSETS) {
   const source = resolve(repoRoot, 'src', relativePath);
   const target = resolve(repoRoot, 'dist', relativePath);
@@ -40,4 +49,4 @@ for (const relativePath of RAW_ASSETS) {
   copyFileSync(source, target);
 }
 
-console.log(`build: dist/ ready (tsc output + ${RAW_ASSETS.length} raw assets)`);
+console.log(`build: dist/ ready (tsc output + reserva-migrate + ${RAW_ASSETS.length} raw assets)`);

@@ -23,14 +23,13 @@
   "files": [
     "dist",
     "migrations",
-    "scripts/reserva-migrate.ts",
     "examples/smoke-site/worker",
     "README.md",
     "AGENTS.md",
     "LICENSE"
   ],
   "bin": {
-    "reserva-migrate": "./scripts/reserva-migrate.ts"
+    "reserva-migrate": "dist/reserva-migrate.js"
   },
   "exports": {
     ".": {

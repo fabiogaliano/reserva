@@ -149,6 +149,7 @@ function assertPackagedLayout(consumerDir: string): void {
   for (const relativePath of [
     'dist/index.js',
     'dist/index.d.ts',
+    'dist/reserva-migrate.js',
     'dist/components/ManageBooking.astro',
     'dist/components/AdminDashboard.astro',
     'dist/ui/components.css',
@@ -159,6 +160,9 @@ function assertPackagedLayout(consumerDir: string): void {
 
   // The package boundary, asserted on the artifact a consumer actually installs.
   const manifest = JSON.parse(readFileSync(resolve(installedRoot, 'package.json'), 'utf8')) as Record<string, Record<string, string> | undefined>;
+  if (manifest.bin?.['reserva-migrate'] !== 'dist/reserva-migrate.js') {
+    fail('layout', 'reserva-migrate must target the compiled executable npm accepts');
+  }
   for (const field of ['dependencies', 'peerDependencies', 'optionalDependencies']) {
     if (manifest[field]?.stripe) fail('layout', `@reservajs/astro declares stripe in ${field}`);
   }

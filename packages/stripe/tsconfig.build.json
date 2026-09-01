@@ -11,10 +11,12 @@
     "sourceMap": true,
     "inlineSources": true,
     "allowImportingTsExtensions": false,
-    // Reset the repo-level source aliases: the publish build must typecheck against the peer's
-    // published declarations (node_modules/@reservajs/astro/dist), exactly as a consumer's build
-    // does, not against this repository's sources.
-    "paths": {},
+    // The adapter builds after the root package has emitted dist/. Resolve against that artifact,
+    // so this does not depend on a package-manager-specific workspace peer link.
+    "paths": {
+      "@reservajs/astro": ["../../dist/index.d.ts"],
+      "@reservajs/astro/core": ["../../dist/core/index.d.ts"]
+    },
     "types": ["@cloudflare/workers-types"]
   },
   "include": ["src"]

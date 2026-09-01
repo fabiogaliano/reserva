@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 // Thin wrapper around `wrangler d1 migrations apply`, published as the `reserva-migrate` bin so
 // consumers can run `bunx reserva-migrate --local` instead of hand-writing a db:migrate script.
 // Node builtins only for JSON/JSONC configs (no runtime dependency for the common case): it shells
@@ -106,10 +106,9 @@ function fail(message: string): never {
   throw new CliFailure(`reserva-migrate: ${message}\n${usage}`);
 }
 
-// Resolved from the script's own location, not the consumer's cwd: at `bin.reserva-migrate`,
-// `../migrations` relative to this file is reserva's packaged migrations/ directory both in this
-// repo (scripts/ -> repo root) and in an installed package (`files` ships both scripts/ and
-// migrations/ at the package root — see package.json).
+// Resolved from the script's own location, not the consumer's cwd. The source lives in scripts/
+// and the published executable in dist/, so ../migrations reaches the package-owned directory in
+// both layouts.
 function resolvePackagedMigrationsDir(): string {
   return fileURLToPath(new URL('../migrations', import.meta.url));
 }
