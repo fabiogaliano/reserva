@@ -156,8 +156,10 @@ function availabilityInput(request: Request, context: BookkitContext): Availabil
   try {
     // Plan 018 (design decision 3): the party size must price under every pickup id the service's
     // own pricing rows declare — derived like resolvedPriceTableFor, not the old literal
-    // default/custom pair, which a service with declared pickupOptions need not use at all.
-    for (const pickup of new Set(service.pricing.map((row) => row.pickup))) {
+    // default/custom pair, which a service with declared location.pickupOptions need not use at
+    // all. Plan 023: a location-less rule's `pickup` is undefined, normalized to null (the same key
+    // priceFor expects for such a service).
+    for (const pickup of new Set(service.pricing.map((row) => row.pickup ?? null))) {
       priceFor(service, quantity, pickup);
     }
   } catch {

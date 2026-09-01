@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validateConfig, type PricingRule } from '../src/core/config';
+import { validateConfig, type PricingRule, type ServiceConfig } from '../src/core/config';
 import { PricingError, pricingCombinations, priceFor, priceForService, resolvedPriceTableFor } from '../src/core/pricing';
 import { config, service } from './fixtures';
 
@@ -99,6 +99,50 @@ describe('core pricing', () => {
   });
 });
 
+// Plan 023 (design decision 2): a service with no `location` module has no pickup axis at all —
+// pricing rules omit `pickup` entirely and selection is by quantity tier alone.
+describe('location-less pricing (tiers only)', () => {
+  const tieredPricing: PricingRule[] = [
+    { maxQuantity: 4, priceMinor: 10000 },
+    { maxQuantity: 8, priceMinor: 18000 },
+  ];
+  const tieredService: ServiceConfig = {
+    durationMin: service.durationMin,
+    turnaroundMin: service.turnaroundMin,
+    schedule: service.schedule,
+    pricing: tieredPricing,
+  };
+
+  it('resolves a price by quantity alone, with a null pickup', () => {
+    expect(priceFor(tieredService, 2, null)).toBe(10000);
+    expect(priceFor(tieredService, 8, null)).toBe(18000);
+    expect(() => priceFor(tieredService, 9, null)).toThrow(PricingError);
+  });
+
+  it('builds a single-column resolved price table keyed by the empty string', () => {
+    const table = resolvedPriceTableFor(tieredService);
+    expect(Object.keys(table)).toEqual(['']);
+    expect(table['']?.[2]).toBe(10000);
+    expect(table['']?.[8]).toBe(18000);
+  });
+
+  it('pricingCombinations reports a null pickup for every quantity', () => {
+    const combinations = pricingCombinations(tieredService);
+    expect(combinations).toHaveLength(8);
+    expect(combinations.every((row) => row.pickup === null)).toBe(true);
+  });
+
+  it('validates cleanly through validateConfig and prices identically after canonicalization', () => {
+    const validated = validateConfig({
+      ...config,
+      services: { vintage: tieredService },
+    });
+    const canonical = validated.services.vintage!;
+    expect(canonical.location).toBeUndefined();
+    expect(priceFor(canonical, 3, null)).toBe(10000);
+  });
+});
+
 // Plan 018 (design decision 2/3): Maze Services' motivating case — four declared pickup options
 // priced outright (180/200/200/210 €), not as a surcharge on top of the meeting-point price.
 // custom_both must resolve to 210 €, not 180 + 20 + 20 = 220 €, proving priceFor's per-(pickup,
@@ -113,12 +157,15 @@ describe('non-additive pickup options (Maze fixture)', () => {
   ];
   const mazeTour = {
     ...service,
-    pickupOptions: [
-      { id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true },
-      { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
-      { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
-      { id: 'custom_both', requiresAddress: true, usesMeetingPoint: false },
-    ],
+    location: {
+      meetingPoints: service.location!.meetingPoints!,
+      pickupOptions: [
+        { id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true },
+        { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
+        { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
+        { id: 'custom_both', requiresAddress: true, usesMeetingPoint: false },
+      ],
+    },
     pricing: mazePricing,
   };
 
@@ -146,17 +193,16 @@ describe('non-additive pickup options (Maze fixture)', () => {
     expect(table.custom_both?.[2]).toBe(21000);
   });
 
-  it('always serializes default before custom, regardless of pricing-row order (widget byte-identity)', () => {
-    // The widget embeds JSON.stringify of this table in its markup; the pre-018 table always
-    // inserted { default, custom } in that fixed order, so a legacy config whose raw pricing array
-    // lists custom rows first must not change the rendered bytes.
+  // Plan 023 (design decision 2): pickupIdsFor's 'default'/'custom' pinning is gone — it existed
+  // only for byte-identity with the removed pre-018 widget markup. The key order is now plain
+  // first-occurrence order from the (maxQuantity-sorted) pricing rows.
+  it('orders table keys by first occurrence, with no default/custom pinning', () => {
     const customFirst: PricingRule[] = [
       { maxQuantity: 4, pickup: 'custom', priceMinor: 12000 },
       { maxQuantity: 4, pickup: 'default', priceMinor: 10000 },
     ];
-    expect(Object.keys(resolvedPriceTableFor({ pricing: customFirst }))).toEqual(['default', 'custom']);
-    // Declared non-default/custom ids keep their first-occurrence order after the pinned pair.
+    expect(Object.keys(resolvedPriceTableFor({ pricing: customFirst }))).toEqual(['custom', 'default']);
     expect(Object.keys(resolvedPriceTableFor({ pricing: [...mazePricing, ...customFirst] })))
-      .toEqual(['default', 'custom', 'meeting_point', 'custom_dropoff', 'custom_pickup', 'custom_both']);
+      .toEqual(['meeting_point', 'custom_dropoff', 'custom_pickup', 'custom_both', 'custom', 'default']);
   });
 });

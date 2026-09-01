@@ -226,12 +226,15 @@ describe('calendar availability hardening', () => {
               { maxQuantity: 4, pickup: 'custom_pickup', priceMinor: 20000 },
               { maxQuantity: 4, pickup: 'custom_both', priceMinor: 21000 },
             ],
-            pickupOptions: [
-              { id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true },
-              { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
-              { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
-              { id: 'custom_both', requiresAddress: true, usesMeetingPoint: false },
-            ],
+            location: {
+              meetingPoints: config.services.vintage!.location!.meetingPoints!,
+              pickupOptions: [
+                { id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true },
+                { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
+                { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
+                { id: 'custom_both', requiresAddress: true, usesMeetingPoint: false },
+              ],
+            },
           },
         },
       },
