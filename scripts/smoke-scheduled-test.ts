@@ -74,13 +74,13 @@ async function seedAndAssert(): Promise<void> {
     const id = 'smoke-scheduled-recovery';
 
     await context.repo.insertHold({
-      id, reference: `BKT-2026-${id}`, tourSlug: 'oldTown', people: 2, pickupType: 'default',
+      id, reference: `BKT-2026-${id}`, serviceSlug: 'oldTown', quantity: 2, pickupType: 'default',
       startsAt: '2026-08-20T09:00:00.000Z', endsAt: '2026-08-20T10:00:00.000Z', locale: 'en',
-      priceCents: 12000, holdExpiresAt: '2026-08-14T09:00:00.000Z',
+      priceMinor: 12000, currency: 'eur', holdExpiresAt: '2026-08-14T09:00:00.000Z',
       cancelToken: `cancel-${id}`, operatorToken: `operator-${id}`,
       createdAt: '2026-08-14T08:00:00.000Z', updatedAt: '2026-08-14T08:00:00.000Z',
     });
-    await context.repo.transitionToConfirmed(id, { expectedStatusIn: ['hold'], stripePaymentIntent: `pi_${id}`, updatedAt: '2026-08-14T08:01:00.000Z' });
+    await context.repo.transitionToConfirmed(id, { expectedStatusIn: ['hold'], paymentRef: `pi_${id}`, updatedAt: '2026-08-14T08:01:00.000Z' });
 
     // A failed attempt from ~11 minutes ago: past attempt 2's 10-minute backoff window
     // (RETRY_BACKOFF_MINUTES, src/reconciliation-helpers.ts) and past the 10-minute delayed-

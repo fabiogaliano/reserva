@@ -13,15 +13,15 @@ export default {
       whatsapp: '+351 910 000 000',
     },
   },
-  fleet: {
-    defaultCapacity: 3,
+  capacity: {
+    default: 3,
   },
   admin: {
     accessTeamDomain: 'https://example.cloudflareaccess.com',
     accessAud: 'example-bookkit',
     locale: 'en',
   },
-  tours: {
+  services: {
     oldTown: {
       durationMin: 60,
       turnaroundMin: 15,
@@ -34,10 +34,10 @@ export default {
         },
       ],
       pricing: [
-        { maxPeople: 4, pickup: 'default', priceCents: 2500 },
-        { maxPeople: 4, pickup: 'custom', priceCents: 3500 },
+        { maxQuantity: 4, pickup: 'default', priceMinor: 2500 },
+        { maxQuantity: 4, pickup: 'custom', priceMinor: 3500 },
       ],
-      // Single-point shorthand. A tour with more than one free meeting point (for example, two
+      // Single-point shorthand. A service with more than one free meeting point (for example, two
       // pickup spots at the same price) declares the array form instead — exactly one of the two
       // is allowed, never both:
       //   meetingPoints: [
@@ -45,7 +45,7 @@ export default {
       //     { id: 'station', label: 'Central station', mapsUrl: 'https://maps.google.com/?q=Central+station' },
       //   ],
       // The customer's choice travels as `meetingPointId` on the checkout body (see README —
-      // "Injected routes"); see examples/smoke-site/src/config.ts for a tour actually using it.
+      // "Injected routes"); see examples/smoke-site/src/config.ts for a service actually using it.
       meetingPoint: {
         label: 'Main square fountain',
         mapsUrl: 'https://maps.google.com/?q=Main+square',
@@ -68,9 +68,6 @@ export default {
   locales: {
     supported: ['pt-PT', 'en'],
     default: 'en',
-  },
-  payments: {
-    methods: ['card', 'mb_way'],
   },
   legal: {
     termsUrl: 'https://example.test/terms',

@@ -1,7 +1,7 @@
 ---
 // Plan 018 (design decision 9, step 6): exercises the widget's pickupOptions prop end-to-end
-// against a real four-option, non-additive-priced tour (mazeRiverside in ../config.ts) — the
-// homepage's oldTown tour only ever exercises the two-option pickupTypes alias.
+// against a real four-option, non-additive-priced service (mazeRiverside in ../config.ts) — the
+// homepage's oldTown service only ever exercises the two-option pickupTypes alias.
 //
 // Plan 019 (design decision 5): also passes meetingPoints — mazeRiverside now declares two, so
 // this page is the one browser fixture that exercises both axes together (a declared option's
@@ -12,13 +12,13 @@ import config from '../config';
 const title = 'Bookkit local demo — Maze Riverside';
 const from = new Date().toISOString().slice(0, 10);
 const to = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
-const tour = config.tours.mazeRiverside;
+const service = config.services.mazeRiverside;
 // The widget only needs {id, label, hint, usesMeetingPoint} — the config's raw pickupOptions also
 // carries requiresAddress, which is Stripe-side (see stripe.ts's custom_fields gate), not
 // something the widget itself renders.
-const pickupOptions = tour.pickupOptions!.map(({ id, label, usesMeetingPoint }) => ({ id, label, usesMeetingPoint }));
+const pickupOptions = service.pickupOptions!.map(({ id, label, usesMeetingPoint }) => ({ id, label, usesMeetingPoint }));
 // meetingPoints mapsUrl isn't rendered by the widget (see index.astro's oldTown wiring).
-const meetingPoints = tour.meetingPoints!.map(({ id, label }) => ({ id, label }));
+const meetingPoints = service.meetingPoints!.map(({ id, label }) => ({ id, label }));
 ---
 
 <html lang="en">
@@ -38,11 +38,11 @@ const meetingPoints = tour.meetingPoints!.map(({ id, label }) => ({ id, label })
       <section>
         <h2>Create a booking</h2>
         <BookingWidget
-          tourSlug="mazeRiverside"
+          serviceSlug="mazeRiverside"
           availabilityFrom={from}
           availabilityTo={to}
           pickupOptions={pickupOptions}
-          pricing={tour.pricing}
+          pricing={service.pricing}
           meetingPoints={meetingPoints}
           locale={config.locales.default}
         />

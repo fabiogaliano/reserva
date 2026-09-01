@@ -1,8 +1,8 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import type { CalEvent } from '../../../src/core/occupancy';
-import type { BookingEventHook, OperationalAlert, StripeEventParsed } from '../../../src/core/events';
+import type { BookingEventHook, OperationalAlert, PaymentEventParsed } from '../../../src/core/events';
 import { defineCloudflareBookkitRuntime, type BookkitProviders } from '../../../src/runtime';
-import { pickupOptionFor, resolveTour } from '../../../src/core/config';
+import { pickupOptionFor, resolveService } from '../../../src/core/config';
 import config from './config';
 
 // Hand-declared because this fixture has no real `wrangler types` codegen in CI; it mirrors the
@@ -52,45 +52,45 @@ export function armNextCalendarFailure(): void {
 const providers: BookkitProviders = {
   payments: {
     async createCheckout(booking, checkoutConfig) {
-      const sessionId = `local_session_${booking.id}`;
+      const sessionRef = `local_session_${booking.id}`;
       // Plan 019 (design decision 4): derives requiresAddress from the booking's own selected
-      // option (via the tour config), not from pickupType naming — a fake Stripe address
-      // collection step only ever runs for an option the tour itself declares as requiring one,
+      // option (via the service config), not from pickupType naming — a fake Stripe address
+      // collection step only ever runs for an option the service itself declares as requiring one,
       // same as the real custom_fields gate (src/providers/stripe.ts).
-      const tour = resolveTour(checkoutConfig, booking.tourSlug);
-      const requiresAddress = pickupOptionFor(tour, booking.pickupType)?.requiresAddress ?? false;
-      checkoutSessions.set(sessionId, {
-        amountTotal: booking.priceCents,
+      const service = resolveService(checkoutConfig, booking.serviceSlug);
+      const requiresAddress = pickupOptionFor(service, booking.pickupType)?.requiresAddress ?? false;
+      checkoutSessions.set(sessionRef, {
+        amountTotal: booking.priceMinor,
         currency: checkoutConfig.business.currency,
         pickupAddress: requiresAddress ? SMOKE_TEST_PICKUP_ADDRESS : null,
       });
       return {
-        sessionId,
-        url: `/booking-confirmation?session_id=${encodeURIComponent(sessionId)}`,
+        sessionRef,
+        url: `/booking-confirmation?session_id=${encodeURIComponent(sessionRef)}`,
       };
     },
     async parseWebhook(request) {
-      return await request.json() as StripeEventParsed;
+      return await request.json() as PaymentEventParsed;
     },
-    async getSession(sessionId) {
-      const session = checkoutSessions.get(sessionId);
-      if (!session) return { id: sessionId, status: 'open', paymentStatus: 'unpaid' };
+    async getSession(sessionRef) {
+      const session = checkoutSessions.get(sessionRef);
+      if (!session) return { id: sessionRef, status: 'open', paymentStatus: 'unpaid' };
       return {
-        id: sessionId,
+        id: sessionRef,
         status: 'complete',
         paymentStatus: 'paid',
         amountTotal: session.amountTotal,
         currency: session.currency,
-        paymentIntent: `local_payment_${sessionId}`,
+        paymentRef: `local_payment_${sessionRef}`,
         customerName: 'Local Demo Customer',
         customerEmail: 'customer@example.test',
         customerPhone: '+351 910 000 000',
         pickupAddress: session.pickupAddress,
       };
     },
-    async refund(paymentIntent) {
-      console.info('[bookkit demo] refund', { paymentIntent });
-      return { refundId: `local_refund_${paymentIntent}`, amountCents: 0 };
+    async refund(paymentRef, expectedAmountMinor) {
+      console.info('[bookkit demo] refund', { paymentRef, expectedAmountMinor });
+      return { refundRef: `local_refund_${paymentRef}`, amountMinor: expectedAmountMinor };
     },
   },
   calendar: {

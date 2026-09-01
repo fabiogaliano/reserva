@@ -17,11 +17,11 @@ const to = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
   <body>
     <section data-widget-index="0">
       <h1>Widget A</h1>
-      <BookingWidget tourSlug="oldTown" availabilityFrom={from} availabilityTo={to} locale={config.locales.default} />
+      <BookingWidget serviceSlug="oldTown" availabilityFrom={from} availabilityTo={to} locale={config.locales.default} />
     </section>
     <section data-widget-index="1">
       <h1>Widget B</h1>
-      <BookingWidget tourSlug="oldTown" availabilityFrom={from} availabilityTo={to} locale={config.locales.default} />
+      <BookingWidget serviceSlug="oldTown" availabilityFrom={from} availabilityTo={to} locale={config.locales.default} />
     </section>
   </body>
 </html>

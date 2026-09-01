@@ -1,12 +1,12 @@
 import baseConfig from '../../client-config';
 import type { ClientConfig } from '../../../src/core/config';
 
-// Plan 017 (design decision 5): the base tour declares the meetingPoint shorthand; destructuring
+// Plan 017 (design decision 5): the base service declares the meetingPoint shorthand; destructuring
 // it out here (rather than spreading it and then setting `meetingPoint: undefined`, which
 // `exactOptionalPropertyTypes` rejects — undefined isn't assignable to the shorthand's required
 // `{ label, mapsUrl }`) is how oldTownBase below swaps it for the meetingPoints array without
-// declaring both (exactly-one-of, see core/config.ts validateTour).
-const { meetingPoint: _oldTownMeetingPoint, ...oldTownBase } = baseConfig.tours.oldTown;
+// declaring both (exactly-one-of, see core/config.ts validateService).
+const { meetingPoint: _oldTownMeetingPoint, ...oldTownBase } = baseConfig.services.oldTown;
 
 export default {
   ...baseConfig,
@@ -15,10 +15,10 @@ export default {
     url: 'http://localhost:4321',
     timezone: 'UTC',
   },
-  tours: {
+  services: {
     oldTown: {
       ...oldTownBase,
-      // Two free meeting points, so the e2e suite has a real multi-point tour to book the second
+      // Two free meeting points, so the e2e suite has a real multi-point service to book the second
       // point through.
       meetingPoints: [
         { id: 'fountain', label: 'Main square fountain', mapsUrl: 'https://maps.google.com/?q=Main+square' },
@@ -59,10 +59,10 @@ export default {
         { id: 'custom_both', label: 'Custom pick-up & drop-off', requiresAddress: true, usesMeetingPoint: false },
       ],
       pricing: [
-        { maxPeople: 4, pickup: 'meeting_point', priceCents: 18000 },
-        { maxPeople: 4, pickup: 'custom_dropoff', priceCents: 20000 },
-        { maxPeople: 4, pickup: 'custom_pickup', priceCents: 20000 },
-        { maxPeople: 4, pickup: 'custom_both', priceCents: 21000 },
+        { maxQuantity: 4, pickup: 'meeting_point', priceMinor: 18000 },
+        { maxQuantity: 4, pickup: 'custom_dropoff', priceMinor: 20000 },
+        { maxQuantity: 4, pickup: 'custom_pickup', priceMinor: 20000 },
+        { maxQuantity: 4, pickup: 'custom_both', priceMinor: 21000 },
       ],
     },
   },

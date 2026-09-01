@@ -82,7 +82,7 @@ try {
   await requestOk('/'); // the widget page
   const from = new Date().toISOString().slice(0, 10);
   const to = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
-  await requestOk(`/api/booking/availability?tour=oldTown&people=2&from=${from}&to=${to}`); // a valid availability URL
+  await requestOk(`/api/booking/availability?service=oldTown&quantity=2&from=${from}&to=${to}`); // a valid availability URL
   await requestOk('/booking/assets/bookkit.js'); // one Bookkit asset route
 
   console.log('smoke-preview-test: built smoke-site output served successfully through `astro preview`');

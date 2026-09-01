@@ -8,10 +8,10 @@ const title = 'Bookkit local demo';
 // The demo runtime is configured with timezone UTC, so UTC date keys match business dates.
 const from = new Date().toISOString().slice(0, 10);
 const to = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
-const availabilityUrl = `/api/booking/availability?tour=oldTown&people=2&from=${from}&to=${to}`;
+const availabilityUrl = `/api/booking/availability?service=oldTown&quantity=2&from=${from}&to=${to}`;
 // Plan 017 (design decision 5): the widget only needs {id, label} — the config's raw (unvalidated)
 // meetingPoints array (see STOP condition 2) also carries mapsUrl, which the widget doesn't render.
-const meetingPoints = config.tours.oldTown.meetingPoints?.map(({ id, label }) => ({ id, label })) ?? [];
+const meetingPoints = config.services.oldTown.meetingPoints?.map(({ id, label }) => ({ id, label })) ?? [];
 ---
 
 <html lang="en">
@@ -30,7 +30,7 @@ const meetingPoints = config.tours.oldTown.meetingPoints?.map(({ id, label }) =>
 
       <section>
         <h2>Create a booking</h2>
-        <BookingWidget tourSlug="oldTown" availabilityFrom={from} availabilityTo={to} meetingPoints={meetingPoints} locale={config.locales.default} />
+        <BookingWidget serviceSlug="oldTown" availabilityFrom={from} availabilityTo={to} meetingPoints={meetingPoints} locale={config.locales.default} />
         <p>Submitting redirects through the confirmation route. The simulated payment provider reports the session as paid, which exercises confirmation and every provider seam.</p>
       </section>
 
