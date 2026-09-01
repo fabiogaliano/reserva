@@ -38,9 +38,10 @@ export const routeManifest = [
 
 export type BookkitRouteId = (typeof routeManifest)[number]['id'];
 
-// Feature groups a consumer can turn off via `bookkit({ routes: { admin, ops } })`. `customer`
-// and `webhook` are absent here on purpose: the booking API and customer pages are load-bearing,
-// so they are never disableable (see integration.ts's BookkitIntegrationOptions).
+// Feature groups a consumer can turn off via `config.routes: { admin, ops }` (plan 025 — moved here
+// from the Astro-only BookkitIntegrationOptions.routes, since admin-auth selection needs the same
+// declared intent). `customer` and `webhook` are absent here on purpose: the booking API and
+// customer pages are load-bearing, so they are never disableable.
 export interface BookkitRouteGroupFlags {
   admin: boolean;
   ops: boolean;
@@ -118,14 +119,10 @@ const routePrefixSchema = z
   .refine((value) => !value.includes(':'), { message: 'routePrefix must not contain a URL scheme' })
   .refine((value) => !value.includes('//'), { message: 'routePrefix must not contain consecutive slashes' });
 
-const routeGroupFlagsInputSchema = z.object({
-  admin: z.boolean().optional(),
-  ops: z.boolean().optional(),
-});
-
+// Plan 025 (design decision 3): `routes` moved to ClientConfig (core/config.ts) — this schema now
+// validates only `routePrefix`, the one remaining Astro-only mounting-detail option.
 const routeOptionsSchema = z.object({
   routePrefix: routePrefixSchema.optional(),
-  routes: routeGroupFlagsInputSchema.optional(),
 });
 
 export type BookkitRouteOptions = z.infer<typeof routeOptionsSchema>;

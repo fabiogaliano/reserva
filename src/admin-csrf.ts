@@ -30,7 +30,7 @@ export type AdminCsrfSecretLookup = (name: string) => string | undefined | Promi
 // Deliberately narrower than BookkitContext (just the two fields this module actually reads) so it
 // stays independently testable and has no dependency on ./context.
 export interface AdminCsrfContext {
-  config: { admin: { accessAud: string } };
+  config: { admin: { access?: { aud: string } } };
   secrets?: AdminCsrfSecretLookup;
 }
 
@@ -52,15 +52,22 @@ async function hmacSign(secret: string, message: string): Promise<string> {
   return base64UrlEncode(new Uint8Array(signature));
 }
 
-// `accessAud` (the Access application's Audience tag) is NOT secret: it is a public-ish identifier
-// that appears in the `aud` claim of every Access-issued JWT and in checked-in config — an attacker
-// does not need to compromise anything to learn it. An earlier version of this function used it as
-// the HMAC key on its own whenever BOOKKIT_CSRF_SECRET was unset, which made the "signed" token
-// forgeable by anyone who knew the deployment's accessAud (i.e. effectively everyone), defeating
-// layer 2 while looking like a defense. accessAud is only ever mixed into the key alongside a real
-// secret below, for cheap extra domain separation between deployments that happen to share one
-// BOOKKIT_CSRF_SECRET — never as a substitute for one.
-//
+// Plan 025 (design decision 5): the domain-separation input switched from `config.admin.accessAud`
+// alone to a stable derivation of whichever admin auth strategy is actually configured — the Access
+// application's Audience tag when `config.admin.access` is set, or the literal 'custom' otherwise,
+// so a deployment using a custom `adminAuth` still gets a distinct key from an Access deployment
+// sharing the same BOOKKIT_CSRF_SECRET. Neither value is secret: `aud` appears in the `aud` claim of
+// every Access-issued JWT and in checked-in config, and 'custom' is a fixed literal — an attacker
+// does not need to compromise anything to learn either. An earlier version of this function used
+// accessAud as the HMAC key on its own whenever BOOKKIT_CSRF_SECRET was unset, which made the
+// "signed" token forgeable by anyone who knew the deployment's accessAud (i.e. effectively
+// everyone), defeating layer 2 while looking like a defense. This derivation is only ever mixed into
+// the key alongside a real secret below, for cheap extra domain separation — never as a substitute
+// for one.
+function csrfDomainSeparator(context: AdminCsrfContext): string {
+  return context.config.admin.access?.aud ?? 'custom';
+}
+
 // No other genuinely-secret value is reachable here. Checked at the mint/verify call sites
 // (handleAdminGet/handleAdminPost in src/handlers/index.ts, both fed by BookkitContext):
 //   - Stripe's secretKey/webhookSecret are constructor options passed straight into StripeProvider
@@ -76,7 +83,7 @@ async function hmacSign(secret: string, message: string): Promise<string> {
 // Layer 1 (adminOriginAllowed) is unconditional and keeps blocking the attack on its own either way.
 async function csrfSecret(context: AdminCsrfContext): Promise<string | undefined> {
   const configured = context.secrets ? await context.secrets(CSRF_SECRET_ENV_NAME) : undefined;
-  return configured ? `${configured}:${context.config.admin.accessAud}` : undefined;
+  return configured ? `${configured}:${csrfDomainSeparator(context)}` : undefined;
 }
 
 interface CsrfPayload { sub: string; exp: number }
@@ -87,10 +94,10 @@ function isCsrfPayload(value: unknown): value is CsrfPayload {
     && typeof (value as { exp?: unknown }).exp === 'number';
 }
 
-// `sub` binds the token to the Access-authenticated caller it was minted for (empty string when no
-// claims are available — a caller-supplied verifyAccess that only reports true/false, see
-// accessAllowed in handlers/index.ts) so a token captured from one operator's rendered page cannot
-// be replayed against a different operator's session.
+// `sub` binds the token to the admin-authorized caller it was minted for (AdminIdentity.subject,
+// empty string when a custom adminAuth has no per-user identity to bind — see accessAllowed in
+// src/admin-access.ts) so a token captured from one operator's rendered page cannot be replayed
+// against a different operator's session.
 //
 // Returns undefined when no real secret is configured (see csrfSecret above) — the token layer is
 // then inert: handleAdminGet still renders the form (with no/empty token field, see

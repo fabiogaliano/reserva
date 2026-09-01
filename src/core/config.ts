@@ -132,8 +132,16 @@ export interface ClientConfig {
     default: number;
   };
   admin: {
-    accessTeamDomain: string;
-    accessAud: string;
+    // Plan 025 (design decision 2-3): optional as a pair — present auto-selects Cloudflare Access
+    // as the admin/ops auth implementation (cloudflareAccessAdminAuth, src/access.ts); absent means
+    // the consumer must supply a custom `adminAuth` callback to the runtime instead. Exactly one of
+    // the two is required whenever the admin or ops route group is enabled, checked once,
+    // synchronously, at runtime-definition initialization (src/runtime-context.ts) — not here,
+    // since this schema has no way to see a runtime-only `adminAuth` callback.
+    access?: {
+      teamDomain: string;
+      aud: string;
+    };
     // Operator copy can differ from the locale used for customer pages, emails, and checkout.
     locale?: string;
   };
@@ -170,6 +178,16 @@ export interface ClientConfig {
   // webhook may share one: outbox rows tell them apart by their `family` column, not by a
   // qualified key.
   webhooks?: WebhookEndpointConfig[];
+  // Plan 025 (design decision 3): moved here from the Astro-only `BookkitIntegrationOptions.routes`
+  // so the same declared intent drives both route injection (the integration reads it during
+  // astro:config:setup) and admin-auth selection (the runtime factory reads it at
+  // runtime-definition initialization) — one shared declaration instead of two independent
+  // options that could disagree. Both default to `true`; the public booking API and customer
+  // manage routes are load-bearing and are never disableable here.
+  routes?: {
+    admin?: boolean;
+    ops?: boolean;
+  };
   ui?: {
     // Per-locale overrides for Bookkit's rendered copy, merged over its bundled catalog and
     // English fallback. Keys are locale tags ('pt-PT', 'fr', …); values are partial message maps.
@@ -305,8 +323,10 @@ export const clientConfigSchema = z.object({
   }),
   capacity: z.object({ default: z.number().int().nonnegative() }),
   admin: z.object({
-    accessTeamDomain: z.string().refine(isValidAccessTeamDomain, 'must be an HTTPS Cloudflare Access origin'),
-    accessAud: z.string().min(1),
+    access: z.object({
+      teamDomain: z.string().refine(isValidAccessTeamDomain, 'must be an HTTPS Cloudflare Access origin'),
+      aud: z.string().min(1),
+    }).optional(),
     locale: z.string().min(1).refine(isValidLocale, 'must be a valid BCP 47 locale').optional(),
   }),
   services: z.record(z.string(), serviceSchema).refine((value) => Object.keys(value).length > 0, 'at least one service is required'),
@@ -332,6 +352,10 @@ export const clientConfigSchema = z.object({
     secretBinding: z.string().min(1),
     events: z.array(z.string()).min(1).optional(),
   })).optional(),
+  routes: z.object({
+    admin: z.boolean().optional(),
+    ops: z.boolean().optional(),
+  }).optional(),
   ui: z.object({
     messages: z.record(z.string(), z.record(z.string(), z.string())).optional(),
   }).optional(),

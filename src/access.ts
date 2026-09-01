@@ -1,3 +1,13 @@
+// Plan 025: the admin auth port's identity shape. `subject` is what the admin CSRF token binds to
+// (src/admin-csrf.ts) — the default Cloudflare Access implementation below prefers the Access JWT's
+// `email` claim over its raw `sub` claim (matching what an operator actually recognizes); a custom
+// adminAuth with no per-user identity to bind may return the documented empty-string subject
+// instead (see admin-csrf.ts's anonymous-subject fallback).
+export interface AdminIdentity {
+  subject: string;
+  email?: string;
+}
+
 export const ACCESS_ASSERTION_HEADER = 'Cf-Access-Jwt-Assertion';
 const JWKS_PATH = '/cdn-cgi/access/certs';
 const DEFAULT_JWKS_TTL_MS = 5 * 60_000;
@@ -100,4 +110,23 @@ export async function verifyAccessJwt(request: Request, config: AccessAdminConfi
   if (!jwk || !(await verify(parts, jwk, crypto))) throw new AccessVerificationError('access assertion signature mismatch');
   return parts.claims;
 }
-export const verifyAccess = verifyAccessJwt;
+// Plan 025 (design decision 2): the admin auth port's default implementation. Auto-wired by
+// defineCloudflareBookkitRuntime only when `config.admin.access` is configured — never both this
+// and a consumer-supplied `adminAuth` at once (validated once, synchronously, at runtime-definition
+// initialization; see src/runtime-context.ts). A single-argument `(request) => ...` function is
+// assignable everywhere the two-argument `AdminAuth` port type (src/context.ts) is expected: this
+// implementation never needs the BookkitContext argument, since Access verification is pure JWT
+// verification against `teamDomain`/`aud`.
+export function cloudflareAccessAdminAuth(teamDomain: string, aud: string): (request: Request) => Promise<AdminIdentity | null> {
+  return async (request) => {
+    let claims: AccessClaims;
+    try {
+      claims = await verifyAccessJwt(request, { accessTeamDomain: teamDomain, accessAud: aud });
+    } catch {
+      return null;
+    }
+    const email = typeof claims.email === 'string' ? claims.email : undefined;
+    const sub = typeof claims.sub === 'string' ? claims.sub : undefined;
+    return { subject: email ?? sub ?? '', ...(email ? { email } : {}) };
+  };
+}

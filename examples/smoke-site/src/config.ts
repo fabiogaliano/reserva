@@ -8,6 +8,11 @@ export default {
     url: 'http://localhost:4321',
     timezone: 'UTC',
   },
+  // Plan 025: the local demo is also the reference example of a non-Access deployment — Cloudflare
+  // Access cannot protect `localhost` anyway (see README "Admin access and booking tokens"), so this
+  // drops `admin.access` entirely rather than pointing it at a fake team domain, and the runtime
+  // module (src/runtime.ts) registers a custom `adminAuth` instead.
+  admin: { locale: baseConfig.admin.locale },
   services: {
     oldTown: {
       ...baseConfig.services.oldTown,

@@ -2,6 +2,7 @@ export { bookkit, virtualRuntimeId, virtualConfigId, type BookkitIntegrationOpti
 export { bookkit as default } from './integration';
 export { defineBookkitRuntime, defineCloudflareBookkitRuntime, getCache, getEnv } from './runtime-context';
 export type {
+  AdminAuth,
   BookkitContext,
   BookkitContextInput,
   BookkitProviders,
@@ -12,6 +13,10 @@ export type {
   CloudflareBookkitRuntimeOptions,
   CloudflareRuntimeBindings,
 } from './runtime-context';
+// Plan 025: the admin auth port's default implementation, exported so a consumer's custom
+// `adminAuth` can compose with it (e.g. fall back to Access) or reference `AdminIdentity` directly.
+export { cloudflareAccessAdminAuth } from './access';
+export type { AdminIdentity } from './access';
 export type { ClientConfig } from './core/config';
 // The UI copy seam: consumers type their `config.ui.messages` catalogs (and widget `messages`
 // props) against these, and can read the English fallback as the reference key set.

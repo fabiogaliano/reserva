@@ -41,7 +41,7 @@ export function handleAdminGet(request: Request, context: BookkitContext): Promi
     if (!access) throw new HttpError(403, 'forbidden', 'Cloudflare Access authorization required');
     // Minted fresh per render and embedded as a hidden field in every admin form (BK-SEC-001 layer
     // 2); handleAdminPost verifies it against the same Access-authenticated subject.
-    const csrfToken = await mintAdminCsrfToken(context, access.sub, context.clock().getTime());
+    const csrfToken = await mintAdminCsrfToken(context, access.subject, context.clock().getTime());
     const requestUrl = new URL(request.url);
     if (requestUrl.searchParams.get('view') === 'settings') {
       return html(settingsPage(context, await context.repo.listSettings(), requestUrl.searchParams.get('saved') === '1', requestUrl.searchParams.get('section') ?? '', csrfToken), 200, {
@@ -129,7 +129,7 @@ export function handleAdminPost(request: Request, context: BookkitContext): Prom
     // BK-SEC-001 layer 2: per-session CSRF token, bound to the same Access-authenticated subject
     // the request was just verified against.
     const csrfToken = form.get('csrf_token');
-    const csrfOk = await verifyAdminCsrfToken(context, typeof csrfToken === 'string' ? csrfToken : null, access.sub, context.clock().getTime());
+    const csrfOk = await verifyAdminCsrfToken(context, typeof csrfToken === 'string' ? csrfToken : null, access.subject, context.clock().getTime());
     if (!csrfOk) throw new HttpError(403, 'forbidden', 'Invalid or expired CSRF token');
     const action = requireString(form.get('action'), 'action');
     if (action === 'incident-retry' || action === 'incident-resolve') {
@@ -147,7 +147,7 @@ export function handleAdminPost(request: Request, context: BookkitContext): Prom
         const note = requireString(form.get('note'), 'note').trim();
         if (note.length < 1 || note.length > 500) throw new HttpError(400, 'validation_failed', 'note must be between 1 and 500 characters');
         await context.repo.resolveIncidentManual({
-          sourceType, sourceKey, resolvedAt: nowIso(context), resolvedBy: access.sub || 'admin', resolutionNote: note,
+          sourceType, sourceKey, resolvedAt: nowIso(context), resolvedBy: access.subject || 'admin', resolutionNote: note,
         });
         location.searchParams.set('saved', 'incident-resolved');
         return new Response(null, { status: 303, headers: { location: location.toString(), 'cache-control': 'no-store' } });

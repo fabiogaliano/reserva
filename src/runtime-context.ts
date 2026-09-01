@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import { verifyAccessJwt } from './access';
-import { createBookkitContext, type BookkitCache, type BookkitContext, type BookkitContextInput, type BookkitProviders, type BookkitLogger } from './context';
+import { cloudflareAccessAdminAuth } from './access';
+import { createBookkitContext, type AdminAuth, type BookkitCache, type BookkitContext, type BookkitContextInput, type BookkitProviders, type BookkitLogger } from './context';
 import { validateConfig, type ClientConfig } from './core/config';
 import { OPERATOR_SECRET_NAME } from './handlers/booking-actions';
 import { validateBookingEventHooks, type BookingEventHook } from './core/events';
@@ -57,7 +57,12 @@ export interface CloudflareBookkitRuntimeOptions<TEnv extends object = UntypedBo
   // rather than one booking's dispatch.
   hooks?: readonly BookingEventHook[];
   secretBindings?: ReadonlyArray<keyof TEnv & string>;
-  verifyAccess?: (bindings: CloudflareRuntimeBindings<TEnv>) => boolean | Promise<boolean>;
+  // Plan 025 (design decisions 1-2): the custom admin auth strategy's one registration — there is
+  // no separate `{ kind: 'custom' }` marker. Auto-overridden by cloudflareAccessAdminAuth whenever
+  // `config.admin.access` is configured (validated together, synchronously, at
+  // defineCloudflareBookkitRuntime call time — see resolveAdminAuth below); supplying both is a
+  // build-time error, not a silent precedence rule.
+  adminAuth?: AdminAuth;
   logger?: BookkitLogger | ((bindings: CloudflareRuntimeBindings<TEnv>) => BookkitLogger);
   migrationsTable?: string;
 }
@@ -323,6 +328,36 @@ function validatePaymentProvider(providers: BookkitProviders, config: ClientConf
   providers.payments.validateConfig?.(config);
 }
 
+// Plan 025 (design decisions 2-4): resolves the one admin auth path a deployment actually uses and
+// validates the combination synchronously, before defineCloudflareBookkitRuntime returns — composing
+// with, not replacing, validatePaymentProvider above at the same runtime-definition boundary. When
+// neither protected route group (admin/ops) is enabled, whichever path is configured (if any) is
+// still wired for defense in depth (a consumer manually rendering the admin page despite disabling
+// its route still hits the shared fail-closed gate — src/admin-access.ts), but the combination is
+// never validated, since there is no protected route to guard.
+function resolveAdminAuth(config: ClientConfig, custom: AdminAuth | undefined): AdminAuth | undefined {
+  const access = config.admin.access;
+  const resolved: AdminAuth | undefined = access ? cloudflareAccessAdminAuth(access.teamDomain, access.aud) : custom;
+  const protectedGroupEnabled = (config.routes?.admin ?? true) || (config.routes?.ops ?? true);
+  if (!protectedGroupEnabled) return resolved;
+  if (access && custom) {
+    throw new Error(
+      "Bookkit config declares both admin.access and a runtime `adminAuth` callback. Exactly one admin "
+      + 'auth path is allowed — remove whichever one this deployment does not use: drop `config.admin.access` '
+      + 'to use the custom `adminAuth` callback, or drop the `adminAuth` option to use Cloudflare Access.',
+    );
+  }
+  if (!access && !custom) {
+    throw new Error(
+      "Bookkit's admin dashboard and/or operator routes are enabled (config.routes.admin / config.routes.ops "
+      + 'default to true), but no admin auth is configured. Either set `config.admin.access = { teamDomain, aud }` '
+      + 'to use Cloudflare Access (the default implementation), or pass an `adminAuth` callback to '
+      + 'defineCloudflareBookkitRuntime for a custom strategy.',
+    );
+  }
+  return resolved;
+}
+
 export function defineBookkitRuntime(options: BookkitRuntimeFactoryOptions): BookkitRuntimeDefinition {
   const config = validateConfig(options.config);
   let providerValidated = false;
@@ -359,6 +394,7 @@ export function defineCloudflareBookkitRuntime<TEnv extends object>(
 ): BookkitRuntimeDefinition {
   const config = validateConfig(configInput);
   validateBookingEventHooks(options.hooks ?? []);
+  const adminAuth = resolveAdminAuth(config, options.adminAuth);
   const migrationsTable = requireMigrationsTableName(options.migrationsTable ?? D1_MIGRATIONS_TABLE);
   if (typeof options.providers !== 'function') validatePaymentProvider(options.providers, config);
   let providerValidated = typeof options.providers !== 'function';
@@ -405,16 +441,11 @@ export function defineCloudflareBookkitRuntime<TEnv extends object>(
         ...(logger ? { logger } : {}),
         ...(waitUntil ? { waitUntil } : {}),
         confirmationLocks,
-        verifyAccess: options.verifyAccess
-          ? () => options.verifyAccess?.(bindings) ?? false
-          // verifyAccessJwt resolves to the verified claims (throws on failure); passing them
-          // through (instead of collapsing to `true`) lets the admin CSRF token bind to the
-          // Access-authenticated subject — see src/admin-csrf.ts.
-          : (requestToVerify) => verifyAccessJwt(requestToVerify, config),
+        ...(adminAuth ? { adminAuth } : {}),
       };
       return createBookkitContext(contextInput);
     },
   };
 }
 
-export type { BookkitContext, BookkitContextInput, BookkitProviders };
+export type { AdminAuth, BookkitContext, BookkitContextInput, BookkitProviders };

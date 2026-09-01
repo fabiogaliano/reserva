@@ -24,12 +24,10 @@ export interface BookkitIntegrationOptions {
   // Prepended to every injected route pattern, and to every URL bookkit's own components/handlers
   // render (widget endpoints, manage/admin page links and form actions, the Stripe webhook path).
   // Normalized via `normalizeRoutePrefix` (leading slash, no trailing slash, ''/'/' => none);
-  // validated first via Zod (see `validateRouteOptions`) to reject obviously broken values.
+  // validated first via Zod (see `validateRouteOptions`) to reject obviously broken values. This
+  // stays an Astro-only option (mounting detail); route group flags live in `config.routes` — see
+  // ClientConfig in core/config.ts.
   routePrefix?: string;
-  // Feature groups that can be turned off. `admin` = the admin dashboard route; `ops` = the
-  // operator action routes. Public booking API + customer manage routes are load-bearing and
-  // always mounted (see routes-manifest.ts's `isRouteEnabled`). Both default to `true`.
-  routes?: { admin?: boolean; ops?: boolean };
 }
 
 // Canonical secret names for bookkit's optional providers, sourced from scripts/manual-*.ts (the
@@ -119,15 +117,18 @@ export function bookkit(options: BookkitIntegrationOptions): AstroIntegration {
     name: 'bookkit',
     hooks: {
       'astro:config:setup': ({ config, injectRoute, logger, updateConfig }) => {
-        // Fail-fast only: this hook runs during `astro build`/`astro dev` config resolution, a
-        // separate process/lifecycle phase from request-time Worker execution, so its canonical
-        // (sorted) return value has no path to the runtime config — defineBookkitRuntime /
+        // This hook runs during `astro build`/`astro dev` config resolution, a separate
+        // process/lifecycle phase from request-time Worker execution — defineBookkitRuntime /
         // defineCloudflareBookkitRuntime independently call validateConfig on the consumer's
         // runtime entrypoint and thread THAT return value through context.config (see
-        // runtime-context.ts), which is what actually backs priceFor/checkout. Discarding the
-        // return here is intentional, not the source of stale/unsorted pricing at runtime.
+        // runtime-context.ts), which is what actually backs priceFor/checkout. The validated value
+        // captured here is used for exactly one thing below: reading `routes.admin`/`routes.ops` to
+        // decide which route groups to inject — declared route-injection intent, not runtime
+        // pricing/business data, so reading it here can't cause the stale/unsorted-pricing problem
+        // discarding the return value elsewhere guards against.
+        let validatedConfig: ClientConfig;
         try {
-          validateConfig(options.config);
+          validatedConfig = validateConfig(options.config);
         } catch (error) {
           logger.error('Invalid Bookkit configuration. Fix the reported fields before building.');
           throw error;
@@ -135,16 +136,16 @@ export function bookkit(options: BookkitIntegrationOptions): AstroIntegration {
 
         let routeOptions: ReturnType<typeof validateRouteOptions>;
         try {
-          routeOptions = validateRouteOptions({ routePrefix: options.routePrefix, routes: options.routes });
+          routeOptions = validateRouteOptions({ routePrefix: options.routePrefix });
         } catch (error) {
-          logger.error('Invalid Bookkit route options. Fix routePrefix/routes before building.');
+          logger.error('Invalid Bookkit route options. Fix routePrefix before building.');
           throw error;
         }
 
         const prefix = normalizeRoutePrefix(routeOptions.routePrefix ?? '');
         const groupFlags: BookkitRouteGroupFlags = {
-          admin: routeOptions.routes?.admin ?? true,
-          ops: routeOptions.routes?.ops ?? true,
+          admin: validatedConfig.routes?.admin ?? true,
+          ops: validatedConfig.routes?.ops ?? true,
         };
         const resolvedRouteConfig = resolveRouteConfig(prefix, groupFlags);
 

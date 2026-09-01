@@ -1,5 +1,5 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import type { AccessClaims } from './access';
+import type { AdminIdentity } from './access';
 import { validateConfig, type ClientConfig } from './core/config';
 import type {
   BookingEventHook,
@@ -36,6 +36,13 @@ export interface BookkitLogger {
   error?(message: string, data?: Record<string, unknown>): void;
 }
 
+// Plan 025 (design decision 1): the one admin auth port shape, shared verbatim by
+// BookkitContext.adminAuth and CloudflareBookkitRuntimeOptions.adminAuth (runtime-context.ts) —
+// "one shared declaration," not a duplicated custom-auth marker. `context` is the already-built
+// BookkitContext, so a custom implementation can read `context.secrets`/`context.config` without
+// bindings plumbing of its own.
+export type AdminAuth = (request: Request, context: BookkitContext) => Promise<AdminIdentity | null>;
+
 export interface BookkitContext {
   config: ClientConfig;
   // The pristine file config, set by createRouteContext when DB-backed setting overrides were
@@ -53,19 +60,20 @@ export interface BookkitContext {
   // runtime module. Validated (names, uniqueness, subscribed events) when the context is built, so
   // a typo fails at startup rather than by silently never firing.
   hooks?: readonly BookingEventHook[];
-  // The default Cloudflare Access wiring (runtime-context.ts) resolves to the verified JWT claims
-  // (AccessClaims) rather than collapsing to a boolean, so the admin CSRF token (src/admin-csrf.ts)
-  // can bind itself to a specific Access user. A caller-supplied verifyAccess is only contractually
-  // required to return `boolean` (the supported API — see CloudflareBookkitRuntimeOptions.verifyAccess
-  // in runtime-context.ts, which is boolean-only even for the Cloudflare runtime helper's own
-  // override option), and a plain `true` carries no identity to bind a token to. accessAllowed
-  // (src/handlers/index.ts) falls back to an empty/anonymous subject in that case rather than
-  // inventing one — the resulting token is session-agnostic (interchangeable across every
-  // Access-authorized caller) but not weaker: it's still HMAC'd with the real BOOKKIT_CSRF_SECRET
-  // and still gated by the same-origin check, so it does not degrade to the accessAud-as-key
-  // forgery BK-SEC-001 flagged (see src/admin-csrf.ts). Don't try to force per-user binding here —
-  // there is no identity to bind to without extending the verifyAccess contract itself.
-  verifyAccess?: (request: Request) => boolean | AccessClaims | Promise<boolean | AccessClaims>;
+  // Plan 025: the admin auth port. `null` means unauthorized. Cloudflare Access is the default
+  // implementation (cloudflareAccessAdminAuth, src/access.ts), auto-wired by
+  // defineCloudflareBookkitRuntime only when `config.admin.access` is configured; a consumer
+  // registers a custom strategy by passing this exact function shape as `adminAuth` to the runtime
+  // factory — there is no second `kind: 'custom'` marker to keep in sync with it. Every admin/ops
+  // handler reaches this only through the one shared gate (accessAllowed, src/admin-access.ts),
+  // which also treats a throw as unauthorized rather than a 500 — fail-closed either way.
+  // AdminIdentity.subject is what the admin CSRF token binds to (src/admin-csrf.ts): the default
+  // Access implementation resolves it to the verified JWT subject, while a custom implementation
+  // with no per-user identity to bind may return the documented empty-string subject — the
+  // resulting token is session-agnostic (interchangeable across every admin-authorized caller) but
+  // not weaker, since it's still HMAC'd with the real BOOKKIT_CSRF_SECRET and still gated by the
+  // same-origin check first.
+  adminAuth?: AdminAuth;
   waitUntil?: (promise: Promise<unknown>) => void;
   confirmationLocks?: Map<string, Promise<void>>;
   // Resolved (prefix-applied) route paths + group flags, so handlers that render links/redirects

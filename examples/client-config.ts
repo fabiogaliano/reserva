@@ -17,8 +17,10 @@ export default {
     default: 3,
   },
   admin: {
-    accessTeamDomain: 'https://example.cloudflareaccess.com',
-    accessAud: 'example-bookkit',
+    access: {
+      teamDomain: 'https://example.cloudflareaccess.com',
+      aud: 'example-bookkit',
+    },
     locale: 'en',
   },
   services: {

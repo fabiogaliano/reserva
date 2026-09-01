@@ -35,7 +35,7 @@ const access = await accessAllowed(Astro.request, context);
 // undefined when BOOKKIT_CSRF_SECRET isn't configured (src/admin-csrf.ts mintAdminCsrfToken) — the
 // hidden field below is then omitted entirely and the POST verifier is a deliberate no-op, exactly
 // mirroring the built-in admin page's csrfField (src/handlers/index.ts adminPage).
-const csrfToken = access ? await mintAdminCsrfToken(context, access.sub, context.clock().getTime()) : undefined;
+const csrfToken = access ? await mintAdminCsrfToken(context, access.subject, context.clock().getTime()) : undefined;
 // A full UUID per render so two instances of this component on the same page never share an id —
 // see plan 014 item A.
 const titleId = `bookkit-admin-title-${crypto.randomUUID()}`;

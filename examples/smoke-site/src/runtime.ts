@@ -168,5 +168,9 @@ export default defineCloudflareBookkitRuntime<Env>(config, {
   providers,
   hooks,
   secretBindings: ['BOOKKIT_TOKEN_ENC_KEY', 'BOOKKIT_OPERATOR_SECRET', 'BOOKKIT_CSRF_SECRET'],
-  verifyAccess: () => true,
+  // Plan 025: the local demo's custom admin auth strategy — config declares no `admin.access`
+  // (Access cannot protect `localhost`), so this unconditionally admits every request as an
+  // anonymous admin. A real deployment must not do this; see README "Admin access and booking
+  // tokens" for the documented dev-only-bypass pattern this stands in for here.
+  adminAuth: async () => ({ subject: '' }),
 });
