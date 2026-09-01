@@ -89,6 +89,7 @@
     "@cloudflare/workers-types": "^5.20260814.1",
     "@playwright/test": "^1.62.1",
     "astro": "^7.2.2",
+    "standardwebhooks": "^1.1.1",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10",
     "wrangler": "^4.123.0"
