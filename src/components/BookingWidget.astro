@@ -32,7 +32,7 @@ interface Props {
   availabilityFrom?: string;
   availabilityTo?: string;
   locale?: string;
-  peopleOptions?: number[];
+  quantityOptions?: number[];
   // @deprecated use `pickupOptions` instead. Kept as an alias mapped onto the default id/custom id
   // pair (DEFAULT_PICKUP_OPTIONS in core/config.ts) so existing embeds keep compiling and keep
   // rendering today's exact markup — see plan 018 (design decision 9).
@@ -68,7 +68,7 @@ const {
   availabilityFrom,
   availabilityTo,
   locale = defaultLocale,
-  peopleOptions = [1, 2, 3, 4],
+  quantityOptions = [1, 2, 3, 4],
   pickupTypes = ['default', 'custom'],
   pickupOptions,
   meetingPoints = [],
@@ -178,7 +178,7 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
   <label class="bkw-field">
     <span class="bkw-label">{t['widget.quantity']}</span>
     <select class="bkw-select" name="quantity" required>
-      {peopleOptions.map((quantity) => <option value={quantity}>{quantityLabel(quantity)}</option>)}
+      {quantityOptions.map((quantity) => <option value={quantity}>{quantityLabel(quantity)}</option>)}
     </select>
   </label>
 

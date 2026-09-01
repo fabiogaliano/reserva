@@ -286,7 +286,7 @@ export function adminPage(
   ]));
   const formatDayTime = (startsAt: string): string =>
     new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', timeZone: timezone }).format(new Date(startsAt));
-  const peopleText = (quantity: number): string =>
+  const quantityText = (quantity: number): string =>
     formatMessage(quantity === 1 ? messages['widget.person'] : messages['widget.quantityCount'], { n: quantity });
   // The horizon rendered as month calendar grids instead of a day-per-row list: an operator's
   // mental model of availability is a calendar, and 30 rows collapse into a screenful of cells
@@ -396,7 +396,7 @@ export function adminPage(
       return {
         t: formatDayTime(entry.startsAt),
         c: entry.customerName ?? entry.customerEmail ?? '—',
-        p: peopleText(entry.quantity),
+        p: quantityText(entry.quantity),
         s: messages[`status.${entry.status}` as keyof typeof messages] ?? entry.status,
         ...(tone ? { sc: tone } : {}),
         ...(manageHref ? { u: manageHref } : {}),
@@ -426,7 +426,7 @@ export function adminPage(
       ? `<a href="${escapeHtml(manageHref)}">${escapeHtml(messages['admin.manage'])}</a>`
       : `<span class="bk-sub">${escapeHtml(messages['admin.manageUnavailable'])}</span>`;
     return `<li><span class="bk-mono">${escapeHtml(formatDayTime(entry.startsAt))}</span> <strong>${escapeHtml(entry.customerName ?? entry.customerEmail ?? '—')}</strong>`
-      + `<span class="bk-sub">${escapeHtml(peopleText(entry.quantity))}</span>${statusBadge(entry.status, messages)}`
+      + `<span class="bk-sub">${escapeHtml(quantityText(entry.quantity))}</span>${statusBadge(entry.status, messages)}`
       + `${manageMarkup}</li>`;
   };
   const editDayBookings = editDate ? [...bookingsByDate.get(editDate) ?? []].sort(byStart) : [];
