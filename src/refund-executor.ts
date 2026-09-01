@@ -18,12 +18,12 @@
 // StripeProvider.refund()'s own idempotency key (not this D1 claim) is what actually prevents a
 // double refund on a repeated Stripe call — the D1 claim exists to avoid redundant/observable
 // double-attempts from the scheduled path, not to gate correctness.
-import { classifyAttemptOutcome } from './confirmation';
-import type { Booking } from './core/booking';
-import type { ReservaContext } from './context';
-import { nowIso } from './context';
-import { computeNextAttemptAt } from './reconciliation-helpers';
-import type { RefundChoice } from './repo';
+import { classifyAttemptOutcome } from './confirmation.js';
+import type { Booking } from './core/booking.js';
+import type { ReservaContext } from './context.js';
+import { nowIso } from './context.js';
+import { computeNextAttemptAt } from './reconciliation-helpers.js';
+import type { RefundChoice } from './repo.js';
 
 export type RefundAttemptOutcome =
   // Stripe succeeded (or choice === 'none', which never touches Stripe) and the outcome is recorded.

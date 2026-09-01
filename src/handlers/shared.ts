@@ -1,4 +1,4 @@
-import { errorResponse } from '../http';
+import { errorResponse } from '../http.js';
 
 export function run(handler: () => Promise<Response>): Promise<Response> {
   return handler().catch(errorResponse);

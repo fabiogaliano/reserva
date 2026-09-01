@@ -1,7 +1,7 @@
-import { cancelBooking, type Booking } from './core/booking';
-import { cancellationSideEffectSeeds, dispatchMutation } from './confirmation';
-import type { ReservaContext } from './context';
-import { nowIso } from './context';
+import { cancelBooking, type Booking } from './core/booking.js';
+import { cancellationSideEffectSeeds, dispatchMutation } from './confirmation.js';
+import type { ReservaContext } from './context.js';
+import { nowIso } from './context.js';
 
 export type ClaimedOperatorCancellationResult =
   | { kind: 'cancelled'; booking: Booking }

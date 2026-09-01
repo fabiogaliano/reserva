@@ -6,7 +6,7 @@
 // verifies with any off-the-shelf implementation of that spec instead of a recipe documented only
 // here. Implemented on WebCrypto so the library keeps zero runtime dependencies for it; the spec's
 // own library is used in the tests as the independent verifier.
-import { ProviderFailure } from './provider-failure';
+import { ProviderFailure } from './provider-failure.js';
 
 // Brand visibility rides the User-Agent, never a second signature header — the spec's three
 // webhook-* headers stay the only signing surface (one truth per fact).

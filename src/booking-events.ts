@@ -2,19 +2,19 @@
 // in-process hooks a consumer registers on the runtime, and signed outbound webhooks declared in
 // config. Both are the same thing to the outbox: a named subscriber whose delivery debt is one row
 // carrying the identity `family`/`name`/`event` and the serialized envelope.
-import { toWireBooking, type Booking } from './core/booking';
-import type { WebhookEndpointConfig } from './core/config';
+import { toWireBooking, type Booking } from './core/booking.js';
+import type { WebhookEndpointConfig } from './core/config.js';
 import {
   BOOKING_EVENT_API_VERSION,
   type BookingEvent,
   type BookingEventEnvelope,
   type BookingEventHook,
-} from './core/events';
-import type { ReservaContext } from './context';
-import { getSecret } from './context';
-import { ProviderFailure } from './provider-failure';
-import { sideEffectOperationKey, type SideEffectOperationIdentity, type SideEffectOperationRecord, type SideEffectOperationSeed } from './repo';
-import { deliverWebhook } from './webhooks';
+} from './core/events.js';
+import type { ReservaContext } from './context.js';
+import { getSecret } from './context.js';
+import { ProviderFailure } from './provider-failure.js';
+import { sideEffectOperationKey, type SideEffectOperationIdentity, type SideEffectOperationRecord, type SideEffectOperationSeed } from './repo.js';
+import { deliverWebhook } from './webhooks.js';
 
 export type BookingEventFamily = 'hook' | 'webhook';
 

@@ -1,12 +1,12 @@
 import Stripe from 'stripe';
-import type { ApiErrorCode } from '../core/api';
-import type { Booking } from '../core/booking';
-import type { ClientConfig } from '../core/config';
-import { pickupOptionFor, resolveService } from '../core/config';
-import type { PaymentProvider, SessionStatus, PaymentEventParsed } from '../core/events';
-import { priceFor } from '../core/pricing';
-import { requestText, STRIPE_WEBHOOK_BODY_LIMIT_BYTES } from '../http';
-import type { ReservaResolvedRouteConfig } from '../routes-manifest';
+import type { ApiErrorCode } from '../core/api.js';
+import type { Booking } from '../core/booking.js';
+import type { ClientConfig } from '../core/config.js';
+import { pickupOptionFor, resolveService } from '../core/config.js';
+import type { PaymentProvider, SessionStatus, PaymentEventParsed } from '../core/events.js';
+import { priceFor } from '../core/pricing.js';
+import { requestText, STRIPE_WEBHOOK_BODY_LIMIT_BYTES } from '../http.js';
+import type { ReservaResolvedRouteConfig } from '../routes-manifest.js';
 
 export interface StripeClient {
   checkout: { sessions: {

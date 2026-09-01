@@ -1,6 +1,6 @@
 import type { APIContext } from 'astro';
-import { handleCustomerReschedule } from '../../../handlers';
-import { createRouteContext } from '../../route-context';
+import { handleCustomerReschedule } from '../../../handlers/index.js';
+import { createRouteContext } from '../../route-context.js';
 
 export const prerender = false;
 

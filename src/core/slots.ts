@@ -1,5 +1,5 @@
-import type { ScheduleRule, ServiceConfig } from './config';
-import { addMinutes, localDateAndTimeToUtc, localDateToWeekday, utcToLocalIso } from './time';
+import type { ScheduleRule, ServiceConfig } from './config.js';
+import { addMinutes, localDateAndTimeToUtc, localDateToWeekday, utcToLocalIso } from './time.js';
 
 export interface GeneratedSlot {
   start: string;

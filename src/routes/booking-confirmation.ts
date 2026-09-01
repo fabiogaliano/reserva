@@ -1,13 +1,13 @@
 import type { APIContext } from 'astro';
-import type { StatusResponse } from '../core/api';
-import { handleStatus } from '../handlers';
-import { escapeHtml } from '../http';
-import { cssAssetHref } from '../ui/asset-hrefs';
-import { formatDateParts, formatDateTime, formatPrice, googleCalendarUrl, icsDataUrl } from '../ui/format';
-import { factList, pageShell, themeToggle } from '../ui/layout';
-import { formatMessage, resolveMessages, type ReservaMessages } from '../ui/messages';
-import type { ReservaContext } from '../context';
-import { createRouteContext } from './route-context';
+import type { StatusResponse } from '../core/api.js';
+import { handleStatus } from '../handlers/index.js';
+import { escapeHtml } from '../http.js';
+import { cssAssetHref } from '../ui/asset-hrefs.js';
+import { formatDateParts, formatDateTime, formatPrice, googleCalendarUrl, icsDataUrl } from '../ui/format.js';
+import { factList, pageShell, themeToggle } from '../ui/layout.js';
+import { formatMessage, resolveMessages, type ReservaMessages } from '../ui/messages.js';
+import type { ReservaContext } from '../context.js';
+import { createRouteContext } from './route-context.js';
 
 export const prerender = false;
 

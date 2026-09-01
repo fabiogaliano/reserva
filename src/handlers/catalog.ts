@@ -3,18 +3,18 @@ import type {
   CatalogMetadataField,
   CatalogResponse,
   CatalogService,
-} from '../core/api';
+} from '../core/api.js';
 import {
   resolveMetadataFieldLabel,
   type ClientConfig,
   type PickupOption,
   type ServiceConfig,
-} from '../core/config';
-import { resolveLocale } from '../core/locale';
-import type { ReservaContext } from '../context';
-import { HttpError, json } from '../http';
-import { resolveMessages, type ReservaMessages } from '../ui/messages';
-import { run } from './shared';
+} from '../core/config.js';
+import { resolveLocale } from '../core/locale.js';
+import type { ReservaContext } from '../context.js';
+import { HttpError, json } from '../http.js';
+import { resolveMessages, type ReservaMessages } from '../ui/messages.js';
+import { run } from './shared.js';
 
 // Plan 027 (design decision 6): the rendering contract — everything a consumer needs to build a
 // booking flow before a date is chosen, read from the deployment instead of duplicated in its own

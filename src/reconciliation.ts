@@ -5,13 +5,13 @@
 // in the repository query because HTTP recovery deliberately remains immediate, while refund rows
 // use their persisted next_attempt_at. Both paths still claim through the same operation-specific
 // primitives used by ordinary request recovery.
-import { classifyAttemptOutcome, runScheduledSideEffectOperation } from './confirmation';
-import type { Booking } from './core/booking';
-import type { OperationalAlert } from './core/events';
-import type { ReservaContext } from './context';
-import { nowIso } from './context';
-import { resumeClaimedOperatorCancellation } from './operator-cancellation';
-import { attemptRefund } from './refund-executor';
+import { classifyAttemptOutcome, runScheduledSideEffectOperation } from './confirmation.js';
+import type { Booking } from './core/booking.js';
+import type { OperationalAlert } from './core/events.js';
+import type { ReservaContext } from './context.js';
+import { nowIso } from './context.js';
+import { resumeClaimedOperatorCancellation } from './operator-cancellation.js';
+import { attemptRefund } from './refund-executor.js';
 import {
   actionForSideEffectOperation,
   buildOperationalAlert,
@@ -22,7 +22,7 @@ import {
   type ExistingIncidentSignal,
   type IncidentProjection,
   type IncidentSourceSignal,
-} from './reconciliation-helpers';
+} from './reconciliation-helpers.js';
 import {
   MUTATION_SIDE_EFFECT_LEASE_MS,
   sideEffectOperationKey,
@@ -31,7 +31,7 @@ import {
   type OperationalIncidentSourceType,
   type RefundOperationRecord,
   type SideEffectOperationRecord,
-} from './repo';
+} from './repo.js';
 
 // Plan 020 (design decision 4): default/hard-capped bounded page sizes for one invocation.
 const DEFAULT_SOURCE_LIMIT = 10;

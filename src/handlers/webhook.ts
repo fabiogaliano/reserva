@@ -1,15 +1,15 @@
-import { verifyPayment } from '../core/payment-verification';
+import { verifyPayment } from '../core/payment-verification.js';
 import {
   cancellationSideEffectSeeds,
   confirmBookingFromPayment,
   dispatchDisputeEvent,
   dispatchMutation,
   runOwedMutationSideEffects,
-} from '../confirmation';
-import type { ReservaContext } from '../context';
-import { nowIso } from '../context';
-import { HttpError, json } from '../http';
-import { run } from './shared';
+} from '../confirmation.js';
+import type { ReservaContext } from '../context.js';
+import { nowIso } from '../context.js';
+import { HttpError, json } from '../http.js';
+import { run } from './shared.js';
 
 export function handlePaymentWebhook(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {

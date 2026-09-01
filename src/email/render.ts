@@ -1,12 +1,12 @@
-import type { Booking } from '../core/booking';
-import { meetingPointForBooking, metadataRowsForBooking, pickupPresentationFor, type ClientConfig } from '../core/config';
-import { toMajorUnits } from '../core/currency';
-import type { EmailBookingEvent, EmailRecipientRole } from '../core/events';
+import type { Booking } from '../core/booking.js';
+import { meetingPointForBooking, metadataRowsForBooking, pickupPresentationFor, type ClientConfig } from '../core/config.js';
+import { toMajorUnits } from '../core/currency.js';
+import type { EmailBookingEvent, EmailRecipientRole } from '../core/events.js';
 // Plan 024 (design decision 3): boolean metadata reuses the app's one existing yes/no copy pair
 // (admin.on/off) instead of inventing a second one in this renderer's own English/Portuguese
 // catalogs, the only cross-import from src/ui/ in this module, kept to that single pair.
-import { resolveMessages } from '../ui/messages';
-import { emailString, eventCopyKey } from './copy';
+import { resolveMessages } from '../ui/messages.js';
+import { emailString, eventCopyKey } from './copy.js';
 
 // ---------------------------------------------------------------------------
 // The public, provider-neutral seam (@reservajs/astro/email, src/email/index.ts).

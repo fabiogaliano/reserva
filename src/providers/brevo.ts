@@ -1,10 +1,10 @@
-import type { Booking } from '../core/booking';
-import type { ClientConfig } from '../core/config';
-import type { EmailBookingEvent, EmailProvider, EmailRecipientRole } from '../core/events';
-import { renderDefaultEmail, type EmailRenderer, type EmailTemplateContext, type RenderedEmail } from '../email';
-import { formatLocaleFor } from '../email/render';
-import { ProviderFailure } from '../provider-failure';
-import type { ReservaResolvedRouteConfig } from '../routes-manifest';
+import type { Booking } from '../core/booking.js';
+import type { ClientConfig } from '../core/config.js';
+import type { EmailBookingEvent, EmailProvider, EmailRecipientRole } from '../core/events.js';
+import { renderDefaultEmail, type EmailRenderer, type EmailTemplateContext, type RenderedEmail } from '../email/index.js';
+import { formatLocaleFor } from '../email/render.js';
+import { ProviderFailure } from '../provider-failure.js';
+import type { ReservaResolvedRouteConfig } from '../routes-manifest.js';
 
 export const BREVO_TRANSACTIONAL_EMAIL_URL = 'https://api.brevo.com/v3/smtp/email';
 export const BREVO_API_URL = BREVO_TRANSACTIONAL_EMAIL_URL;

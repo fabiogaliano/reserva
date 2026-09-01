@@ -1,9 +1,9 @@
-import type { QuoteResponse } from '../core/api';
-import { resolveService } from '../core/config';
-import type { ReservaContext } from '../context';
-import { HttpError, json, requestJson, requireInteger, requireString } from '../http';
-import { quotedPriceMinor, resolvePickupAxis } from './checkout';
-import { run } from './shared';
+import type { QuoteResponse } from '../core/api.js';
+import { resolveService } from '../core/config.js';
+import type { ReservaContext } from '../context.js';
+import { HttpError, json, requestJson, requireInteger, requireString } from '../http.js';
+import { quotedPriceMinor, resolvePickupAxis } from './checkout.js';
+import { run } from './shared.js';
 
 // Plan 027 (design decision 1): the pricing authority a headless consumer renders from. Before it
 // existed, the first consumer's widget reimplemented the whole pricing matrix client-side behind a

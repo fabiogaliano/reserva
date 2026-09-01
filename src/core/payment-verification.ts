@@ -1,4 +1,4 @@
-import type { Booking } from './booking';
+import type { Booking } from './booking.js';
 
 export interface VerifiedPaymentFacts {
   completed: boolean;

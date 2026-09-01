@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import type { AstroIntegration } from 'astro';
 import { envField } from 'astro/config';
 import type { Plugin } from 'vite';
-import { validateConfig, type ClientConfig } from './core/config';
+import { validateConfig, type ClientConfig } from './core/config.js';
 import {
   enabledRouteManifest,
   normalizeRoutePrefix,
@@ -13,7 +13,7 @@ import {
   validateRouteOptions,
   type ReservaResolvedRouteConfig,
   type ReservaRouteGroupFlags,
-} from './routes-manifest';
+} from './routes-manifest.js';
 
 export interface ReservaIntegrationOptions {
   config: ClientConfig | unknown;
@@ -91,8 +91,12 @@ function runtimeVirtualPlugin(entrypoint: string): Plugin {
   };
 }
 
+// The manifest names TypeScript sources, but the published package ships their compiled siblings
+// beside this file in dist/ — the consumer's Astro build compiles whichever one is injected, so
+// resolution simply follows the file that exists next to the integration actually running.
 function routeEntrypoint(relativePath: string): string {
-  return fileURLToPath(new URL(relativePath, import.meta.url));
+  const compiled = new URL(relativePath.replace(/\.ts$/, '.js'), import.meta.url);
+  return existsSync(fileURLToPath(compiled)) ? fileURLToPath(compiled) : fileURLToPath(new URL(relativePath, import.meta.url));
 }
 
 // Resolved once per build/dev-server start from the (validated, normalized) prefix + group flags —

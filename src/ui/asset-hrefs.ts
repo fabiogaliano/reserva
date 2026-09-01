@@ -1,9 +1,9 @@
-import { themeCss } from './theme';
-import { manageEnhancerJs } from './manage-enhancer';
-import { adminEnhancerJs } from './admin-enhancer';
-import { settingsEnhancerJs } from './settings-enhancer';
-import { themeToggleJs } from './theme-toggle';
-import { callyBundleJs } from './vendor/cally-bundle';
+import { themeCss } from './theme.js';
+import { manageEnhancerJs } from './manage-enhancer.js';
+import { adminEnhancerJs } from './admin-enhancer.js';
+import { settingsEnhancerJs } from './settings-enhancer.js';
+import { themeToggleJs } from './theme-toggle.js';
+import { callyBundleJs } from './vendor/cally-bundle.js';
 
 // Content-derived version in the query string so pages always reference the exact asset build they
 // were rendered against: any change to the CSS/JS produces a new URL, which lets the asset routes

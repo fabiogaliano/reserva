@@ -1,4 +1,4 @@
-import { adminLocaleFor } from '../core/config';
+import { adminLocaleFor } from '../core/config.js';
 import {
   SettingParseError,
   SettingsMergeError,
@@ -8,22 +8,22 @@ import {
   settingDefinitions,
   settingValuesEqual,
   type SettingValue,
-} from '../core/settings';
-import { enumerateDateKeys, localDateKey, parseUtcInstant } from '../core/time';
-import { adminOriginAllowed, mintAdminCsrfToken, verifyAdminCsrfToken } from '../admin-csrf';
-import { accessAllowed } from '../admin-access';
-import { retrySideEffectOperation } from '../confirmation';
-import type { ReservaContext } from '../context';
-import { nowIso } from '../context';
+} from '../core/settings.js';
+import { enumerateDateKeys, localDateKey, parseUtcInstant } from '../core/time.js';
+import { adminOriginAllowed, mintAdminCsrfToken, verifyAdminCsrfToken } from '../admin-csrf.js';
+import { accessAllowed } from '../admin-access.js';
+import { retrySideEffectOperation } from '../confirmation.js';
+import type { ReservaContext } from '../context.js';
+import { nowIso } from '../context.js';
 import type {
   OperationalIncidentSourceType,
   SettingsBatchOperation,
-} from '../repo';
-import { reprojectIncidentAfterAdminRetry, sideEffectIncidentSourceKey } from '../reconciliation';
-import { attemptRefund } from '../refund-executor';
-import { resolveMessages } from '../ui/messages';
-import { adminPage, incidentsSection, type AdminFilters } from '../ui/pages/admin-page';
-import { settingsPage } from '../ui/pages/settings-page';
+} from '../repo.js';
+import { reprojectIncidentAfterAdminRetry, sideEffectIncidentSourceKey } from '../reconciliation.js';
+import { attemptRefund } from '../refund-executor.js';
+import { resolveMessages } from '../ui/messages.js';
+import { adminPage, incidentsSection, type AdminFilters } from '../ui/pages/admin-page.js';
+import { settingsPage } from '../ui/pages/settings-page.js';
 import {
   html,
   HttpError,
@@ -31,8 +31,8 @@ import {
   requestFormData,
   requireInteger,
   requireString,
-} from '../http';
-import { run, runAdminPost } from './shared';
+} from '../http.js';
+import { run, runAdminPost } from './shared.js';
 
 export function handleAdminGet(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {

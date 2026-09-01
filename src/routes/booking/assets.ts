@@ -1,4 +1,4 @@
-import { themeCss } from '../../ui/theme';
+import { themeCss } from '../../ui/theme.js';
 
 export const prerender = false;
 

@@ -1,5 +1,5 @@
-import type { PickupType } from './config';
-import { addMinutes, compareInstants, parseUtcInstant } from './time';
+import type { PickupType } from './config.js';
+import { addMinutes, compareInstants, parseUtcInstant } from './time.js';
 
 export const bookingStatuses = ['hold', 'confirmed', 'cancelled', 'expired', 'no_show'] as const;
 export type BookingStatus = (typeof bookingStatuses)[number];

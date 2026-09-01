@@ -1,5 +1,5 @@
-import { minorUnitDigits, toMajorUnits } from '../core/currency';
-import { parseUtcInstant } from '../core/time';
+import { minorUnitDigits, toMajorUnits } from '../core/currency.js';
+import { parseUtcInstant } from '../core/time.js';
 
 // Booking summaries carry local ISO strings with an explicit offset, so parsing them yields the
 // correct instant and Intl re-projects it into the business timezone for display.

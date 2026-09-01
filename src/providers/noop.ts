@@ -1,4 +1,4 @@
-import type { EmailProvider } from '../core/events';
+import type { EmailProvider } from '../core/events.js';
 
 export const noopEmailProvider: EmailProvider = Object.freeze({ send: async () => undefined });
 export function createNoopEmailProvider(): EmailProvider { return noopEmailProvider; }

@@ -1,13 +1,13 @@
-import type { AvailabilityDay, AvailabilityResponse } from '../core/api';
-import { resolveService } from '../core/config';
-import { availabilityForDay, capacityForDate, defaultCapacityForDate, type CalEvent, type DayAvailability } from '../core/occupancy';
-import { priceFor } from '../core/pricing';
-import { generateSlots } from '../core/slots';
-import { addDaysToDateKey, enumerateDateKeys, localDateKey, localDateTimeToUtcIso, parseUtcInstant } from '../core/time';
-import type { ReservaContext } from '../context';
-import { nowIso } from '../context';
-import { HttpError, json, parseDate, requireInteger, requireString } from '../http';
-import { run } from './shared';
+import type { AvailabilityDay, AvailabilityResponse } from '../core/api.js';
+import { resolveService } from '../core/config.js';
+import { availabilityForDay, capacityForDate, defaultCapacityForDate, type CalEvent, type DayAvailability } from '../core/occupancy.js';
+import { priceFor } from '../core/pricing.js';
+import { generateSlots } from '../core/slots.js';
+import { addDaysToDateKey, enumerateDateKeys, localDateKey, localDateTimeToUtcIso, parseUtcInstant } from '../core/time.js';
+import type { ReservaContext } from '../context.js';
+import { nowIso } from '../context.js';
+import { HttpError, json, parseDate, requireInteger, requireString } from '../http.js';
+import { run } from './shared.js';
 
 // Plan 027 (design decision 3): the bound is the deployment's own booking horizon, not a fixed
 // 62 days — that constant is why the first consumer's widget had to chunk-and-merge availability

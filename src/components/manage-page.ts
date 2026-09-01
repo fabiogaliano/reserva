@@ -1,9 +1,9 @@
-import type { ManageBooking } from '../core/api';
-import { escapeHtml } from '../http';
-import { formatDateTime, formatPrice } from '../ui/format';
-import { factList, pageShell, statusBadge, themeToggle } from '../ui/layout';
-import { defaultLocale, formatMessage, resolveMessages, type ReservaMessages } from '../ui/messages';
-import type { ThemePreference } from '../ui/theme';
+import type { ManageBooking } from '../core/api.js';
+import { escapeHtml } from '../http.js';
+import { formatDateTime, formatPrice } from '../ui/format.js';
+import { factList, pageShell, statusBadge, themeToggle } from '../ui/layout.js';
+import { defaultLocale, formatMessage, resolveMessages, type ReservaMessages } from '../ui/messages.js';
+import type { ThemePreference } from '../ui/theme.js';
 
 export interface ManagePageOptions {
   messages?: ReservaMessages;

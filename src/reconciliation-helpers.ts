@@ -2,14 +2,14 @@
 // confirmation/mutation drains (src/confirmation.ts), and the shared refund executor
 // (src/refund-executor.ts). Kept dependency-free (no D1, no context) so every boundary/threshold
 // here is unit-testable without a fake repository or real workerd.
-import type { OperationalAlert } from './core/events';
+import type { OperationalAlert } from './core/events.js';
 import type {
   OperationalIncidentAction,
   OperationalIncidentResolutionKind,
   OperationalIncidentSeverity,
   OperationalIncidentStatus,
   SideEffectOperationIdentity,
-} from './repo';
+} from './repo.js';
 
 // Plan 020 (design decision 5): "Cron runs every five minutes, but retryable failures set
 // next_attempt_at using 5, 10, 20, 40, then 60 minutes capped at 60 for later attempts." Indexed by

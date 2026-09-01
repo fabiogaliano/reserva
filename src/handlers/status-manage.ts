@@ -1,8 +1,8 @@
-import type { ConfirmationBooking, ManageBooking, ManageResponse, StatusResponse } from '../core/api';
-import { canCancelBooking, canRescheduleBooking, toWireBooking, type Booking } from '../core/booking';
-import { meetingPointForBooking, metadataRowsForBooking, pickupPresentationFor, resolveService } from '../core/config';
-import { verifyPayment } from '../core/payment-verification';
-import { parseUtcInstant, utcToLocalIso } from '../core/time';
+import type { ConfirmationBooking, ManageBooking, ManageResponse, StatusResponse } from '../core/api.js';
+import { canCancelBooking, canRescheduleBooking, toWireBooking, type Booking } from '../core/booking.js';
+import { meetingPointForBooking, metadataRowsForBooking, pickupPresentationFor, resolveService } from '../core/config.js';
+import { verifyPayment } from '../core/payment-verification.js';
+import { parseUtcInstant, utcToLocalIso } from '../core/time.js';
 import {
   ConfirmationInProgressError,
   confirmBookingFromPayment,
@@ -10,11 +10,11 @@ import {
   isConfirmationSideEffectOperation,
   missingConfirmationEventOperations,
   runOwedMutationSideEffects,
-} from '../confirmation';
-import type { ReservaContext } from '../context';
-import { nowIso } from '../context';
-import { HttpError, json } from '../http';
-import { run, withSensitiveHeaders } from './shared';
+} from '../confirmation.js';
+import type { ReservaContext } from '../context.js';
+import { nowIso } from '../context.js';
+import { HttpError, json } from '../http.js';
+import { run, withSensitiveHeaders } from './shared.js';
 
 // Plan 027 (design decision 2): both summaries below are built from `toWireBooking` — the one
 // public booking projection — and their exported types are `Pick`ed from `WireBooking`, so a

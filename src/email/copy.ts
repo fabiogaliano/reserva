@@ -1,5 +1,5 @@
-import type { ClientConfig } from '../core/config';
-import type { EmailBookingEvent } from '../core/events';
+import type { ClientConfig } from '../core/config.js';
+import type { EmailBookingEvent } from '../core/events.js';
 
 // ---------------------------------------------------------------------------
 // Copy catalogs. Flat keys so a client can override any string per locale via

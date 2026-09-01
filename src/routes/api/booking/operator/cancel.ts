@@ -1,6 +1,6 @@
 import type { APIContext } from 'astro';
-import { handleOperatorCancel } from '../../../../handlers';
-import { createRouteContext } from '../../../route-context';
+import { handleOperatorCancel } from '../../../../handlers/index.js';
+import { createRouteContext } from '../../../route-context.js';
 
 export const prerender = false;
 

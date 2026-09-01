@@ -1,18 +1,18 @@
-import type { CheckoutResponse } from '../core/api';
-import type { Booking } from '../core/booking';
-import { DEFAULT_TOKEN_EXPIRY_DAYS, pickupOptionFor, resolveMeetingPoint, resolveService, type MetadataField, type PickupType, type ServiceConfig } from '../core/config';
-import { availabilityForDay, capacityForDate, defaultCapacityForDate, occupancyFor } from '../core/occupancy';
-import { priceFor } from '../core/pricing';
-import { resolveLocale } from '../core/locale';
-import { generateUniqueReference } from '../core/reference';
-import { generateSlots } from '../core/slots';
-import { localDateKey, parseUtcInstant } from '../core/time';
-import type { ReservaContext } from '../context';
-import { nowIso } from '../context';
-import { HoldLimitExceededError } from '../repo';
-import { HttpError, json, requestJson, requireInteger, requireString, tokenBytes } from '../http';
-import { assertSupportedPartySize, calendarEventsForWindow } from './availability';
-import { run } from './shared';
+import type { CheckoutResponse } from '../core/api.js';
+import type { Booking } from '../core/booking.js';
+import { DEFAULT_TOKEN_EXPIRY_DAYS, pickupOptionFor, resolveMeetingPoint, resolveService, type MetadataField, type PickupType, type ServiceConfig } from '../core/config.js';
+import { availabilityForDay, capacityForDate, defaultCapacityForDate, occupancyFor } from '../core/occupancy.js';
+import { priceFor } from '../core/pricing.js';
+import { resolveLocale } from '../core/locale.js';
+import { generateUniqueReference } from '../core/reference.js';
+import { generateSlots } from '../core/slots.js';
+import { localDateKey, parseUtcInstant } from '../core/time.js';
+import type { ReservaContext } from '../context.js';
+import { nowIso } from '../context.js';
+import { HoldLimitExceededError } from '../repo.js';
+import { HttpError, json, requestJson, requireInteger, requireString, tokenBytes } from '../http.js';
+import { assertSupportedPartySize, calendarEventsForWindow } from './availability.js';
+import { run } from './shared.js';
 
 // Plan 023 (design decision 3): a service with no location module has no pickup axis to validate
 // against, so the checkout body must not carry pickupType/meetingPointId at all — the 400 names

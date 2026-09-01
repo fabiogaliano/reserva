@@ -1,5 +1,5 @@
-import type { ClientConfig, PickupType, ServiceConfig } from './config';
-import { resolveService } from './config';
+import type { ClientConfig, PickupType, ServiceConfig } from './config.js';
+import { resolveService } from './config.js';
 
 export class PricingError extends Error {
   readonly quantity: number;

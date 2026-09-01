@@ -1,23 +1,23 @@
-import type { ApiErrorCode } from './core/api';
-import { confirmBooking, type Booking } from './core/booking';
-import { resolveService } from './core/config';
-import type { BookingEvent, EmailBookingEvent, EmailRecipientRole, PaymentCustomerDetails } from './core/events';
+import type { ApiErrorCode } from './core/api.js';
+import { confirmBooking, type Booking } from './core/booking.js';
+import { resolveService } from './core/config.js';
+import type { BookingEvent, EmailBookingEvent, EmailRecipientRole, PaymentCustomerDetails } from './core/events.js';
 import {
   capacityForDate,
   defaultCapacityForDate,
   getOccupancyIntervals,
   isSlotAvailable,
-} from './core/occupancy';
-import { localDateKey, parseUtcInstant } from './core/time';
-import type { ReservaContext } from './context';
-import { nowIso } from './context';
-import { classifyProviderError } from './provider-failure';
+} from './core/occupancy.js';
+import { localDateKey, parseUtcInstant } from './core/time.js';
+import type { ReservaContext } from './context.js';
+import { nowIso } from './context.js';
+import { classifyProviderError } from './provider-failure.js';
 import {
   bookingEventSeeds,
   deliverBookingEventOperation,
   dispatchNonDurableBookingEvent,
   durableSubscriberIdentities,
-} from './booking-events';
+} from './booking-events.js';
 import {
   SIDE_EFFECT_MAX_ATTEMPTS,
   sameSideEffectOperation,
@@ -26,7 +26,7 @@ import {
   type SideEffectOperationRecord,
   type SideEffectOperationSeed,
   type SideEffectOperationStatus,
-} from './repo';
+} from './repo.js';
 
 // Plan 021 (design decision 4): which rows are CONFIRMATION debt drained under the confirmation
 // lease (executeOperation). Everything else — including a durable hook/webhook row for

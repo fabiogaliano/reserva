@@ -1,12 +1,12 @@
 import { z } from 'astro/zod';
-import { CURRENCY_CODE_PATTERN } from './currency';
+import { CURRENCY_CODE_PATTERN } from './currency.js';
 import {
   BOOKING_EVENT_SUBSCRIBER_NAME_PATTERN,
   invalidSubscriberNameMessage,
   isBookingEvent,
   unknownBookingEventsMessage,
   type BookingEvent,
-} from './events';
+} from './events.js';
 
 // A plain string because the pickup axis is whatever ids a service declares in
 // ServiceConfig.location.pickupOptions (below), which no static union can enumerate. Kept as a

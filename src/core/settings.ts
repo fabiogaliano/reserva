@@ -1,5 +1,5 @@
 import { ZodError } from 'astro/zod';
-import { validateConfig, type ClientConfig } from './config';
+import { validateConfig, type ClientConfig } from './config.js';
 
 // Operator-editable settings: the runtime-safe scalar dials of ClientConfig, stored as JSON in the
 // `settings` table and merged over the file config per request (see routes/route-context.ts).

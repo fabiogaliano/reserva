@@ -10,13 +10,13 @@
 //   here derives from an existing one;
 // - the empty-value rule: a collection is `[]`/`{}` and an absent optional module is `null`, so a
 //   caller never branches on key presence.
-import type { WireBooking } from './booking';
-import type { MetadataField } from './config';
+import type { WireBooking } from './booking.js';
+import type { MetadataField } from './config.js';
 // Type-only (erased at build time): the ops-health payload reports outbox debt per operation
 // family, and that family set is plan 021's `SIDE_EFFECT_FAMILIES` in src/repo.ts. Importing the
 // derived type keeps the catalog single-sourced there rather than restating it here; nothing in
 // this module depends on the repository at runtime.
-import type { SideEffectFamily } from '../repo';
+import type { SideEffectFamily } from '../repo.js';
 
 // Plan 027 (design decision 2): the closed set of `error.code` values every Reserva API failure
 // can carry — one runtime array, with the union derived from it and `HttpError` (src/http.ts)

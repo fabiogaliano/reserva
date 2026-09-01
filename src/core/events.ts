@@ -1,7 +1,7 @@
-import type { ClientConfig } from './config';
-import type { Booking, WireBooking } from './booking';
-import type { CalEvent } from './occupancy';
-import type { ReservaResolvedRouteConfig } from '../routes-manifest';
+import type { ClientConfig } from './config.js';
+import type { Booking, WireBooking } from './booking.js';
+import type { CalEvent } from './occupancy.js';
+import type { ReservaResolvedRouteConfig } from '../routes-manifest.js';
 
 // Plan 021 (design decision 1): the closed set of emittable booking events, exported as a runtime
 // VALUE (not only a type) so a consumer — or an agent reading the package — can enumerate every

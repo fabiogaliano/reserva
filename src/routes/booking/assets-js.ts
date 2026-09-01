@@ -1,8 +1,8 @@
-import { callyBundleJs } from '../../ui/vendor/cally-bundle';
-import { manageEnhancerJs } from '../../ui/manage-enhancer';
-import { adminEnhancerJs } from '../../ui/admin-enhancer';
-import { settingsEnhancerJs } from '../../ui/settings-enhancer';
-import { themeToggleJs } from '../../ui/theme-toggle';
+import { callyBundleJs } from '../../ui/vendor/cally-bundle.js';
+import { manageEnhancerJs } from '../../ui/manage-enhancer.js';
+import { adminEnhancerJs } from '../../ui/admin-enhancer.js';
+import { settingsEnhancerJs } from '../../ui/settings-enhancer.js';
+import { themeToggleJs } from '../../ui/theme-toggle.js';
 
 export const prerender = false;
 

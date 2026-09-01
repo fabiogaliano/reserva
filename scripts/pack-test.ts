@@ -34,6 +34,13 @@ function run(command: string, args: string[], options: { cwd: string; env?: Node
   return spawnSync(command, args, { cwd: options.cwd, env: options.env ?? process.env, encoding: 'utf8' });
 }
 
+// Explicit, not relying on whichever lifecycle hooks the packing tool happens to honour: the
+// tarball must contain a dist/ built from the tree under test, never a stale one.
+function buildDist(): void {
+  const result = run('bun', ['run', 'build'], { cwd: repoRoot });
+  if (result.status !== 0) fail('build', `\`bun run build\` failed:\n${result.stdout}\n${result.stderr}`);
+}
+
 // `--destination` (not the default cwd) so the tarball never lands inside the repo tree.
 function packTarball(destination: string): string {
   const result = run('bun', ['pm', 'pack', '--quiet', '--destination', destination], { cwd: repoRoot });
@@ -58,8 +65,12 @@ function bunAddTarball(consumerDir: string, tarballPath: string): void {
   if (result.status !== 0) fail('install', `\`bun add ${tarballPath}\` failed:\n${result.stdout}\n${result.stderr}`);
 }
 
+// `.astro` subpaths point straight at the copied raw file; every compiled subpath carries the
+// types/default condition pair.
+type ExportTarget = string | { types: string; default: string };
+
 interface PackageJsonExports {
-  exports: Record<string, string>;
+  exports: Record<string, ExportTarget>;
 }
 
 // This inventory is intentionally independent of package.json: deriving the test only from the
@@ -90,7 +101,7 @@ function writeImportAll(consumerDir: string): string[] {
 
   // `.astro` subpaths are proven by the fixture's pages and astro build; tsc cannot parse them.
   const subpaths = Object.entries(packageJson.exports)
-    .filter(([, target]) => !target.endsWith('.astro'))
+    .filter(([, target]) => typeof target !== 'string')
     .map(([subpath]) => (subpath === '.' ? '@reservajs/astro' : `@reservajs/astro${subpath.slice(1)}`));
   const imports = subpaths.map((specifier, index) => `import * as mod${index} from ${JSON.stringify(specifier)};`).join('\n');
   const usage = `export const importedSubpaths: unknown[] = [${subpaths.map((_, index) => `mod${index}`).join(', ')}];\n`;
@@ -106,6 +117,23 @@ function assertScheduledTemplatePackaged(consumerDir: string): void {
     const installedPath = resolve(consumerDir, 'node_modules/@reservajs/astro', relativePath);
     if (!existsSync(installedPath)) fail('template', `scheduled Worker template file missing from packed package: ${relativePath}`);
   }
+}
+
+// dist/ is the whole artifact (plan 028 decision 1): the raw `.astro` components and the CSS their
+// relative imports reach must sit inside it, mirroring their source layout, and no TypeScript
+// source may ship beside it — a consumer compiling our sources is exactly what the build removes.
+function assertPackagedLayout(consumerDir: string): void {
+  const installedRoot = resolve(consumerDir, 'node_modules/@reservajs/astro');
+  for (const relativePath of [
+    'dist/index.js',
+    'dist/index.d.ts',
+    'dist/components/ManageBooking.astro',
+    'dist/components/AdminDashboard.astro',
+    'dist/ui/components.css',
+  ]) {
+    if (!existsSync(resolve(installedRoot, relativePath))) fail('layout', `missing from packed package: ${relativePath}`);
+  }
+  if (existsSync(resolve(installedRoot, 'src'))) fail('layout', 'the packed package still ships src/');
 }
 
 function typecheck(consumerDir: string, subpaths: string[]): void {
@@ -201,6 +229,9 @@ async function main(): Promise<void> {
   const workDir = mkdtempSync(resolve(tmpdir(), 'reserva-pack-'));
   const consumerDir = resolve(workDir, 'consumer');
   try {
+    console.log('pack-test: building dist/');
+    buildDist();
+
     console.log(`pack-test: packing tarball into ${workDir}`);
     const tarballPath = packTarball(workDir);
     console.log(`pack-test: packed ${tarballPath}`);
@@ -216,6 +247,9 @@ async function main(): Promise<void> {
 
     console.log('pack-test: asserting the scheduled Worker template is included');
     assertScheduledTemplatePackaged(consumerDir);
+
+    console.log('pack-test: asserting the packed layout is dist-only');
+    assertPackagedLayout(consumerDir);
 
     console.log('pack-test: typechecking every non-.astro exports subpath and the production-like provider factory');
     const subpaths = writeImportAll(consumerDir);

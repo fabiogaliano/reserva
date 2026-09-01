@@ -1,5 +1,5 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import { BrevoEmailProvider } from '@reservajs/astro/providers/email-brevo';
+import { consoleEmailProvider } from './email-provider';
 import { GoogleCalendarProvider } from '@reservajs/astro/providers/calendar-google';
 import { StripeProvider } from '@reservajs/astro/providers/payments-stripe';
 import { defineCloudflareReservaRuntime, type ReservaProviders } from '@reservajs/astro/runtime';
@@ -39,7 +39,7 @@ function providers(env: Env): ReservaProviders {
       serviceAccountPrivateKey: env.GOOGLE_SA_PRIVATE_KEY,
       impersonateEmail: env.GOOGLE_IMPERSONATE_EMAIL,
     }),
-    email: new BrevoEmailProvider({ apiKey: env.BREVO_API_KEY }),
+    email: consoleEmailProvider,
     alerts: {
       async send(alert) {
         const response = await fetch(env.OPERATIONS_ALERT_WEBHOOK_URL, {

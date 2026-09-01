@@ -1,9 +1,9 @@
-import type { Booking } from '../../core/booking';
-import { meetingPointForBooking, pickupPresentationFor, type ClientConfig } from '../../core/config';
-import type { CalendarProvider } from '../../core/events';
-import type { CalEvent } from '../../core/occupancy';
-import { ProviderFailure } from '../../provider-failure';
-import { GoogleServiceAccountAuth, type GoogleAuthOptions } from './auth';
+import type { Booking } from '../../core/booking.js';
+import { meetingPointForBooking, pickupPresentationFor, type ClientConfig } from '../../core/config.js';
+import type { CalendarProvider } from '../../core/events.js';
+import type { CalEvent } from '../../core/occupancy.js';
+import { ProviderFailure } from '../../provider-failure.js';
+import { GoogleServiceAccountAuth, type GoogleAuthOptions } from './auth.js';
 
 export interface GoogleCalendarAuth {
   getAccessToken(): Promise<string>;

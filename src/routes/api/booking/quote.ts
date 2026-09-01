@@ -1,6 +1,6 @@
 import type { APIContext } from 'astro';
-import { handleQuote } from '../../../handlers';
-import { createRouteContext } from '../../route-context';
+import { handleQuote } from '../../../handlers/index.js';
+import { createRouteContext } from '../../route-context.js';
 
 export const prerender = false;
 

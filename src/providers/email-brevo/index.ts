@@ -1,1 +1,1 @@
-export * from '../brevo';
+export * from '../brevo.js';

@@ -2,8 +2,10 @@
 // default and the fallback; European Portuguese ships as a bundled catalog a consumer selects via
 // `config.locales`, and both can be overridden per locale through `config.ui.messages`.
 
-import type { ClientConfig } from '../core/config';
-import portuguesePortugalCatalog from './locales/pt-PT.json';
+import type { ClientConfig } from '../core/config.js';
+// The import attribute is what makes the published `dist/` loadable by a plain ESM runtime, not
+// only by a bundler: Node refuses a JSON module without it.
+import portuguesePortugalCatalog from './locales/pt-PT.json' with { type: 'json' };
 
 export const defaultMessages = {
   // Shared

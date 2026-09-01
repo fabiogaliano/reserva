@@ -11,8 +11,14 @@ import packageJson from '../package.json';
 // that could itself run top-level side-effecting code regardless of what a bundler decides.
 const reExportLine = /^export\s+(?:\*|\{[^}]*\})\s+from\s+'\.{1,2}\/[^']+';$/;
 
-const providerSubpaths = Object.entries(packageJson.exports as Record<string, string>)
-  .filter(([specifier]) => specifier.startsWith('./providers/'));
+// The exports map names the emitted file; the shim whose contents this guards is the source tsc
+// compiles into it, so each target is read back through the build's src/ -> dist/ mirroring.
+const providerSubpaths = Object.entries(packageJson.exports as Record<string, { types: string; default: string } | string>)
+  .filter(([specifier]) => specifier.startsWith('./providers/'))
+  .map(([specifier, target]) => [
+    specifier,
+    (typeof target === 'string' ? target : target.default).replace(/^\.\/dist\//, './src/').replace(/\.js$/, '.ts'),
+  ] as [string, string]);
 
 describe('providers barrel tree-shake guardrail', () => {
   it('declares only CSS as side-effectful so bundlers may drop unused provider exports', () => {

@@ -1,17 +1,17 @@
-import { adminLocaleFor } from '../../core/config';
+import { adminLocaleFor } from '../../core/config.js';
 import {
   settingDefinitions,
   settingSections,
   type SettingDefinition,
   type SettingSection,
   type SettingValue,
-} from '../../core/settings';
-import type { ReservaContext } from '../../context';
-import { escapeHtml } from '../../http';
-import { cssAssetHref, jsAssetHref } from '../asset-hrefs';
-import { factList, pageShell, themeToggle } from '../layout';
-import { formatMessage, resolveMessages } from '../messages';
-import { adminSidebar } from './admin-page';
+} from '../../core/settings.js';
+import type { ReservaContext } from '../../context.js';
+import { escapeHtml } from '../../http.js';
+import { cssAssetHref, jsAssetHref } from '../asset-hrefs.js';
+import { factList, pageShell, themeToggle } from '../layout.js';
+import { formatMessage, resolveMessages } from '../messages.js';
+import { adminSidebar } from './admin-page.js';
 
 // The admin settings page (?view=settings). Layout follows settings-page UX conventions: grouped
 // sections behind a tab bar (one section on screen at a time), single-column fields within a

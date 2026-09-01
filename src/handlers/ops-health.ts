@@ -1,12 +1,12 @@
-import type { OpsHealthOutbox, OpsHealthResponse } from '../core/api';
-import { parseUtcInstant } from '../core/time';
-import { accessAllowed } from '../admin-access';
-import type { ReservaContext } from '../context';
-import { nowIso } from '../context';
-import { reservaMigrationStatus } from '../runtime-context';
-import type { SideEffectDebtByFamily } from '../repo';
-import { HttpError, json } from '../http';
-import { run, withSensitiveHeaders } from './shared';
+import type { OpsHealthOutbox, OpsHealthResponse } from '../core/api.js';
+import { parseUtcInstant } from '../core/time.js';
+import { accessAllowed } from '../admin-access.js';
+import type { ReservaContext } from '../context.js';
+import { nowIso } from '../context.js';
+import { reservaMigrationStatus } from '../runtime-context.js';
+import type { SideEffectDebtByFamily } from '../repo.js';
+import { HttpError, json } from '../http.js';
+import { run, withSensitiveHeaders } from './shared.js';
 
 // Plan 027 (design decision 7): the ops group's read surface, restored generically after plan 021
 // deleted the Tourflow feed. One read-only answer to "is this deployment healthy and current?" for

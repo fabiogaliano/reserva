@@ -59,7 +59,7 @@ describe('Astro integration entry', () => {
     const webhookRoute = routes.find((route) => route.pattern === '/api/booking/webhooks/payment');
     if (!webhookRoute) throw new Error('Stripe webhook route was not injected');
     const source = readFileSync(String(webhookRoute.entrypoint), 'utf8');
-    expect(source).toContain("import { handlePaymentWebhook } from '../../../../handlers';");
+    expect(source).toContain("import { handlePaymentWebhook } from '../../../../handlers/index.js';");
     expect(source).toContain('return handlePaymentWebhook(request, await createRouteContext({ request, locals }));');
   });
 

@@ -1,10 +1,10 @@
 import type { D1Database, D1Result } from '@cloudflare/workers-types';
-import type { ApiErrorCode } from './core/api';
-import type { Booking, BookingStatus, CancellationActor } from './core/booking';
-import type { PickupType } from './core/config';
-import type { EmailRecipientRole } from './core/events';
-import { sha256Base64Url } from './http';
-import type { CapacityDefault, DayCapacityOverride } from './core/occupancy';
+import type { ApiErrorCode } from './core/api.js';
+import type { Booking, BookingStatus, CancellationActor } from './core/booking.js';
+import type { PickupType } from './core/config.js';
+import type { EmailRecipientRole } from './core/events.js';
+import { sha256Base64Url } from './http.js';
+import type { CapacityDefault, DayCapacityOverride } from './core/occupancy.js';
 
 export interface BookingInsert {
   id: string;

@@ -1,9 +1,9 @@
 import runtime from 'virtual:reserva/runtime';
 import routeConfig from 'virtual:reserva/config';
-import type { ReservaContext } from '../context';
-import { loadMergedConfig } from '../core/settings';
-import { readThemePreference } from '../ui/theme';
-import type { ReservaRuntimeRequest } from '../runtime-context';
+import type { ReservaContext } from '../context.js';
+import { loadMergedConfig } from '../core/settings.js';
+import { readThemePreference } from '../ui/theme.js';
+import type { ReservaRuntimeRequest } from '../runtime-context.js';
 
 // Every route entrypoint must see the SAME resolved (prefixed) route table + group flags the
 // integration injected it under. `runtime.createContext` is authored by the consumer's own

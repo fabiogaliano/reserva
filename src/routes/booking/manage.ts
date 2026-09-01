@@ -6,15 +6,15 @@ import {
   handleOperatorCancel,
   handleOperatorNoShow,
   handleOperatorReschedule,
-} from '../../handlers';
-import { renderManageErrorPage, renderManagePage, type ManagePageOptions } from '../../components/manage-page';
-import { nowIso } from '../../context';
-import { resolveLocale } from '../../core/locale';
-import { localDateKey, localDateTimeToUtcIso, parseUtcInstant } from '../../core/time';
-import { errorResponse, HttpError, requestFormData } from '../../http';
-import { cssAssetHref, jsAssetHref } from '../../ui/asset-hrefs';
-import { resolveMessages } from '../../ui/messages';
-import { createRouteContext } from '../route-context';
+} from '../../handlers/index.js';
+import { renderManageErrorPage, renderManagePage, type ManagePageOptions } from '../../components/manage-page.js';
+import { nowIso } from '../../context.js';
+import { resolveLocale } from '../../core/locale.js';
+import { localDateKey, localDateTimeToUtcIso, parseUtcInstant } from '../../core/time.js';
+import { errorResponse, HttpError, requestFormData } from '../../http.js';
+import { cssAssetHref, jsAssetHref } from '../../ui/asset-hrefs.js';
+import { resolveMessages } from '../../ui/messages.js';
+import { createRouteContext } from '../route-context.js';
 
 export const prerender = false;
 

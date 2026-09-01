@@ -1,4 +1,4 @@
-import { isApiErrorCode, type ApiErrorCode, type ApiErrorEnvelope } from './core/api';
+import { isApiErrorCode, type ApiErrorCode, type ApiErrorEnvelope } from './core/api.js';
 
 // Plan 027 (design decision 2): `code` is the closed API_ERROR_CODES union, not a free string — a
 // code that isn't in the catalog no longer compiles, which is what lets a consumer switch

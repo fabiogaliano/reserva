@@ -1,8 +1,8 @@
-import type { ServiceConfig } from './config';
-import type { Booking } from './booking';
-import type { GeneratedSlot } from './slots';
-import { addMinutes, compareInstants, parseUtcInstant } from './time';
-import { generateSlots, scheduleForDate } from './slots';
+import type { ServiceConfig } from './config.js';
+import type { Booking } from './booking.js';
+import type { GeneratedSlot } from './slots.js';
+import { addMinutes, compareInstants, parseUtcInstant } from './time.js';
+import { generateSlots, scheduleForDate } from './slots.js';
 
 export interface DayCapacityOverride {
   date: string;

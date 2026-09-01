@@ -1,4 +1,4 @@
-import { utcToLocalDateTime } from './time';
+import { utcToLocalDateTime } from './time.js';
 
 function validCalendarDate(year: number, month: number, day: number): boolean {
   const probe = new Date(Date.UTC(year, month - 1, day));

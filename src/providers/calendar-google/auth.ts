@@ -1,4 +1,4 @@
-import { ProviderFailure } from '../../provider-failure';
+import { ProviderFailure } from '../../provider-failure.js';
 
 export const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 export const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar';

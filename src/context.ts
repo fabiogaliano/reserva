@@ -1,17 +1,17 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import type { AdminIdentity } from './access';
-import { validateConfig, type ClientConfig } from './core/config';
+import type { AdminIdentity } from './access.js';
+import { validateConfig, type ClientConfig } from './core/config.js';
 import type {
   BookingEventHook,
   CalendarProvider,
   EmailProvider,
   OperationalAlertSink,
   PaymentProvider,
-} from './core/events';
-import { validateBookingEventHooks } from './core/events';
-import { createBookingRepository, type BookingRepository } from './repo';
-import { resolvedRoutePaths, type ReservaResolvedRouteConfig } from './routes-manifest';
-import type { ThemePreference } from './ui/theme';
+} from './core/events.js';
+import { validateBookingEventHooks } from './core/events.js';
+import { createBookingRepository, type BookingRepository } from './repo.js';
+import { resolvedRoutePaths, type ReservaResolvedRouteConfig } from './routes-manifest.js';
+import type { ThemePreference } from './ui/theme.js';
 
 export interface ReservaCache {
   match(request: any): Promise<Response | undefined | null>;

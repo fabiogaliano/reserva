@@ -1,11 +1,11 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import { cloudflareAccessAdminAuth } from './access';
-import type { OpsHealthSchema } from './core/api';
-import { createReservaContext, type AdminAuth, type ReservaCache, type ReservaContext, type ReservaContextInput, type ReservaProviders, type ReservaLogger } from './context';
-import { validateConfig, type ClientConfig } from './core/config';
-import { OPERATOR_SECRET_NAME } from './handlers/booking-actions';
-import { validateBookingEventHooks, type BookingEventHook } from './core/events';
-import { RESERVA_MIGRATIONS } from './migrations-manifest';
+import { cloudflareAccessAdminAuth } from './access.js';
+import type { OpsHealthSchema } from './core/api.js';
+import { createReservaContext, type AdminAuth, type ReservaCache, type ReservaContext, type ReservaContextInput, type ReservaProviders, type ReservaLogger } from './context.js';
+import { validateConfig, type ClientConfig } from './core/config.js';
+import { OPERATOR_SECRET_NAME } from './handlers/booking-actions.js';
+import { validateBookingEventHooks, type BookingEventHook } from './core/events.js';
+import { RESERVA_MIGRATIONS } from './migrations-manifest.js';
 
 export interface ReservaRuntimeRequest {
   request: Request;

@@ -1,17 +1,17 @@
-import type { Booking } from '../../core/booking';
-import { adminLocaleFor, meetingPointForBooking, pickupOptionFor, pickupPresentationFor, resolveService, type ServiceConfig } from '../../core/config';
-import { defaultCapacityForDate, occupancyFor, type CapacityDefault } from '../../core/occupancy';
-import { enumerateDateKeys, localDateKey, utcToLocalIso } from '../../core/time';
-import type { ReservaContext } from '../../context';
-import { escapeHtml } from '../../http';
-import { isManageableToken } from '../../providers/brevo';
-import { ownerFacingIncidentTitle } from '../../reconciliation-helpers';
-import type { OperationalIncidentRecord } from '../../repo';
-import type { ReservaResolvedRouteConfig } from '../../routes-manifest';
-import { cssAssetHref, jsAssetHref } from '../asset-hrefs';
-import { formatDateTime, formatDayDate, formatPrice } from '../format';
-import { pageShell, statusBadge, statusToneOf, themeToggle } from '../layout';
-import { formatMessage, resolveMessages } from '../messages';
+import type { Booking } from '../../core/booking.js';
+import { adminLocaleFor, meetingPointForBooking, pickupOptionFor, pickupPresentationFor, resolveService, type ServiceConfig } from '../../core/config.js';
+import { defaultCapacityForDate, occupancyFor, type CapacityDefault } from '../../core/occupancy.js';
+import { enumerateDateKeys, localDateKey, utcToLocalIso } from '../../core/time.js';
+import type { ReservaContext } from '../../context.js';
+import { escapeHtml } from '../../http.js';
+import { isManageableToken } from '../../providers/brevo.js';
+import { ownerFacingIncidentTitle } from '../../reconciliation-helpers.js';
+import type { OperationalIncidentRecord } from '../../repo.js';
+import type { ReservaResolvedRouteConfig } from '../../routes-manifest.js';
+import { cssAssetHref, jsAssetHref } from '../asset-hrefs.js';
+import { formatDateTime, formatDayDate, formatPrice } from '../format.js';
+import { pageShell, statusBadge, statusToneOf, themeToggle } from '../layout.js';
+import { formatMessage, resolveMessages } from '../messages.js';
 
 export interface AdminFilters {
   q: string;

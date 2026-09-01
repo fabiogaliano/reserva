@@ -4,10 +4,10 @@
 // generic `adminAuth` port (src/context.ts) — this is the one shared, fail-closed gate every
 // admin/ops handler consumes, never per-route wiring, so a route added later in either protected
 // group (e.g. plan 027's ops-health endpoint) inherits it automatically.
-import type { AdminIdentity } from './access';
-import type { ReservaContext } from './context';
+import type { AdminIdentity } from './access.js';
+import type { ReservaContext } from './context.js';
 
-export type { AdminIdentity } from './access';
+export type { AdminIdentity } from './access.js';
 
 export async function accessAllowed(request: Request, context: ReservaContext): Promise<AdminIdentity | null> {
   if (!context.adminAuth) return null;

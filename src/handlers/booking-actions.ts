@@ -1,4 +1,4 @@
-import type { ManageActionResponse } from '../core/api';
+import type { ManageActionResponse } from '../core/api.js';
 import {
   canCancelBooking,
   canRescheduleBooking,
@@ -6,20 +6,20 @@ import {
   markNoShow,
   rescheduleBooking,
   type Booking,
-} from '../core/booking';
-import { DEFAULT_TOKEN_EXPIRY_DAYS } from '../core/config';
-import { occupancyFor } from '../core/occupancy';
-import { localDateKey, parseUtcInstant } from '../core/time';
-import { cancellationSideEffectSeeds, dispatchMutation, mutationSideEffectSeeds, runOwedMutationSideEffects } from '../confirmation';
-import type { ReservaContext } from '../context';
-import { getSecret, nowIso } from '../context';
-import { resumeClaimedOperatorCancellation } from '../operator-cancellation';
-import type { RefundChoice } from '../repo';
-import { attemptRefund } from '../refund-executor';
-import { bearerToken, constantTimeEqual, HttpError, json, requestJson, requireString } from '../http';
-import { checkSlot } from './checkout';
-import { run, withSensitiveHeaders } from './shared';
-import { tokenBooking } from './status-manage';
+} from '../core/booking.js';
+import { DEFAULT_TOKEN_EXPIRY_DAYS } from '../core/config.js';
+import { occupancyFor } from '../core/occupancy.js';
+import { localDateKey, parseUtcInstant } from '../core/time.js';
+import { cancellationSideEffectSeeds, dispatchMutation, mutationSideEffectSeeds, runOwedMutationSideEffects } from '../confirmation.js';
+import type { ReservaContext } from '../context.js';
+import { getSecret, nowIso } from '../context.js';
+import { resumeClaimedOperatorCancellation } from '../operator-cancellation.js';
+import type { RefundChoice } from '../repo.js';
+import { attemptRefund } from '../refund-executor.js';
+import { bearerToken, constantTimeEqual, HttpError, json, requestJson, requireString } from '../http.js';
+import { checkSlot } from './checkout.js';
+import { run, withSensitiveHeaders } from './shared.js';
+import { tokenBooking } from './status-manage.js';
 
 // The shared-secret alternative to a per-booking operator token on the operator endpoints. Declared
 // in the astro:env schema (src/integration.ts) and read through the same SecretLookup every other

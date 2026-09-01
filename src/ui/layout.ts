@@ -1,6 +1,6 @@
-import { escapeHtml } from '../http';
-import type { ReservaMessages } from './messages';
-import type { ThemePreference } from './theme';
+import { escapeHtml } from '../http.js';
+import type { ReservaMessages } from './messages.js';
+import type { ThemePreference } from './theme.js';
 
 export interface PageShellOptions {
   lang: string;
