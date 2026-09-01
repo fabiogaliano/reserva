@@ -10,8 +10,9 @@ export interface BookingInsert {
   reference: string;
   serviceSlug: string;
   quantity: number;
-  // Any service-declared option id — see core/booking.ts Booking.pickupType.
-  pickupType: PickupType;
+  // Any service-declared option id, or null for a location-less service — see core/booking.ts
+  // Booking.pickupType.
+  pickupType: PickupType | null;
   startsAt: string;
   endsAt: string;
   locale: string;
@@ -653,9 +654,10 @@ interface BookingRow {
   reference: string;
   service_slug: string;
   quantity: number;
-  // Plan 018 (design decision 2/4): the pickup domain lives in ServiceConfig.pickupOptions, which
-  // the DB can't see — assertValidBookingRow below only enforces the config-independent invariant
-  // that a present id is a non-empty string. Plan 022 made the column nullable (no location module).
+  // Plan 018 (design decision 2/4): the pickup domain lives in ServiceConfig.location.pickupOptions,
+  // which the DB can't see — assertValidBookingRow below only enforces the config-independent
+  // invariant that a present id is a non-empty string. Plan 022 made the column nullable, and plan
+  // 023 gives that NULL its real meaning: no location module.
   pickup_type: PickupType | null;
   pickup_address: string | null;
   // Plan 017 (design decision 3): see migrations/0014_meeting_points.sql for what each means.

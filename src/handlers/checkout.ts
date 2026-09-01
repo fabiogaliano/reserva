@@ -1,5 +1,5 @@
 import type { Booking } from '../core/booking';
-import { DEFAULT_PICKUP_OPTIONS, DEFAULT_TOKEN_EXPIRY_DAYS, pickupOptionFor, resolveMeetingPoint, resolveService, type MeetingPoint, type PickupType, type ServiceConfig } from '../core/config';
+import { DEFAULT_TOKEN_EXPIRY_DAYS, pickupOptionFor, resolveMeetingPoint, resolveService, type PickupType, type ServiceConfig } from '../core/config';
 import { availabilityForDay, capacityForDate, defaultCapacityForDate, occupancyFor } from '../core/occupancy';
 import { priceFor } from '../core/pricing';
 import { generateUniqueReference } from '../core/reference';
@@ -12,19 +12,16 @@ import { HttpError, json, requestJson, requireInteger, requireString, tokenBytes
 import { assertSupportedPartySize, calendarEventsForWindow } from './availability';
 import { run } from './shared';
 
-// Plan 018 (design decision 6): validated against the service's own declared option ids (via
-// pickupOptionFor, which already falls back to DEFAULT_PICKUP_OPTIONS for a service with none) rather
-// than a fixed 'default'/'custom' enum — a legacy service still only accepts that same pair, but a
-// service that declares more gets every id it names. For a declared set, the 400 names the valid ids
-// so a client with a stale option list gets an actionable error.
+// Plan 023 (design decision 3): a service with no location module has no pickup axis to validate
+// against, so the checkout body must not carry pickupType/meetingPointId at all — the 400 names
+// what to remove rather than guessing at a value. A location-ful service validates the supplied
+// value against its own declared option ids (via pickupOptionFor); the 400 names the valid ids so
+// a client with a stale option list gets an actionable error.
+interface CheckoutLocation { pickupType: PickupType | null; meetingPointId: string | null; meetingPointLabel: string | null }
+
 function parsePickup(service: ServiceConfig, value: unknown): PickupType {
   if (typeof value === 'string' && pickupOptionFor(service, value)) return value;
-  const validIds = (service.pickupOptions ?? DEFAULT_PICKUP_OPTIONS).map((option) => option.id);
-  // Byte-identity done criterion (plan 018): a service on the default pair must keep emitting the
-  // exact pre-018 error, for missing and invalid values alike — API callers may match on it.
-  if (validIds.length === 2 && validIds[0] === 'default' && validIds[1] === 'custom') {
-    throw new HttpError(400, 'validation_failed', 'pickupType must be default or custom');
-  }
+  const validIds = service.location!.pickupOptions.map((option) => option.id);
   requireString(value, 'pickupType');
   throw new HttpError(400, 'validation_failed', `pickupType must be one of: ${validIds.join(', ')}`);
 }
@@ -40,18 +37,41 @@ function parsePickup(service: ServiceConfig, value: unknown): PickupType {
 // choice on a multi-point service; an option with usesMeetingPoint: false accepts-but-doesn't-require
 // a supplied id, exactly like 'custom' did before this plan. `pickupType` here has already been
 // validated by parsePickup against this same service, so the option is always declared.
-function resolveCheckoutMeetingPoint(service: ReturnType<typeof resolveService>, pickupType: PickupType, body: Record<string, unknown>): MeetingPoint {
+//
+// Plan 023 (design decision 1): a location-ful service need not declare any meeting points at all
+// (every pickup option can have usesMeetingPoint: false) — that resolves to { id: null, label:
+// null } rather than throwing, since resolveMeetingPoint's "declares no meeting points" error is
+// reserved for a genuinely invalid request (a supplied meetingPointId with none to match).
+function resolveCheckoutMeetingPoint(service: ServiceConfig, pickupType: PickupType, body: Record<string, unknown>): { id: string | null; label: string | null } {
+  const points = service.location?.meetingPoints ?? [];
   const raw = body.meetingPointId;
   if (raw !== undefined) {
+    if (points.length === 0) throw new HttpError(400, 'validation_failed', 'This service declares no meeting points; do not send meetingPointId');
     const suppliedId = requireString(raw, 'meetingPointId');
     const point = resolveMeetingPoint(service, suppliedId);
     if (point.id !== suppliedId) throw new HttpError(400, 'validation_failed', 'Unknown meetingPointId');
     return point;
   }
-  if ((service.meetingPoints?.length ?? 0) > 1 && pickupOptionFor(service, pickupType)?.usesMeetingPoint) {
+  if (points.length === 0) return { id: null, label: null };
+  if (points.length > 1 && pickupOptionFor(service, pickupType)?.usesMeetingPoint) {
     throw new HttpError(400, 'validation_failed', 'meetingPointId is required for a service with more than one meeting point');
   }
   return resolveMeetingPoint(service);
+}
+
+// Plan 023 (design decision 3): the checkout body must not carry pickupType/meetingPointId for a
+// location-less service — rejecting them here (rather than silently ignoring) means a client that
+// still sends stale fields (e.g. after an operator drops a service's location module) gets an
+// actionable 400 instead of a booking that silently discarded its input.
+function resolveCheckoutLocation(service: ServiceConfig, body: Record<string, unknown>): CheckoutLocation {
+  if (!service.location) {
+    if (body.pickupType !== undefined) throw new HttpError(400, 'validation_failed', 'This service has no location module; do not send pickupType');
+    if (body.meetingPointId !== undefined) throw new HttpError(400, 'validation_failed', 'This service has no location module; do not send meetingPointId');
+    return { pickupType: null, meetingPointId: null, meetingPointLabel: null };
+  }
+  const pickupType = parsePickup(service, body.pickupType);
+  const meetingPoint = resolveCheckoutMeetingPoint(service, pickupType, body);
+  return { pickupType, meetingPointId: meetingPoint.id, meetingPointLabel: meetingPoint.label };
 }
 
 function assertSlot(config: BookkitContext['config'], serviceSlug: string, start: string, now: string): { service: ReturnType<typeof resolveService>; startsAt: string; endsAt: string } {
@@ -129,17 +149,16 @@ export function handleCheckout(request: Request, context: BookkitContext): Promi
     // for assertSupportedPartySize), so it's pulled forward here rather than duplicated — parsePickup
     // needs the service itself to validate pickupType against its declared option ids.
     const service = resolveService(context.config, serviceSlug);
-    const pickupType = parsePickup(service, body.pickupType);
+    const location = resolveCheckoutLocation(service, body);
     const locale = requireString(body.locale, 'locale');
     if (!context.config.locales.supported.includes(locale)) throw new HttpError(400, 'validation_failed', 'Unsupported locale');
     const now = nowIso(context);
     await context.repo.sweepExpiredHolds(now);
     assertSupportedPartySize(service, quantity);
     const candidate = await checkSlot(context, serviceSlug, quantity, start, now);
-    const meetingPoint = resolveCheckoutMeetingPoint(candidate.service, pickupType, body);
     let priceMinor: number;
     try {
-      priceMinor = priceFor(candidate.service, quantity, pickupType);
+      priceMinor = priceFor(candidate.service, quantity, location.pickupType);
     } catch {
       throw new HttpError(400, 'validation_failed', 'No price is configured for this party and pickup type');
     }
@@ -167,8 +186,8 @@ export function handleCheckout(request: Request, context: BookkitContext): Promi
         const tokenExpiryDays = context.config.booking.tokenExpiryDays ?? DEFAULT_TOKEN_EXPIRY_DAYS;
         const tokensExpireAt = new Date(parseUtcInstant(candidate.endsAt).getTime() + tokenExpiryDays * 86_400_000).toISOString();
         const created = await context.repo.insertHoldWithCapacity({
-          id: crypto.randomUUID(), reference, serviceSlug, quantity, pickupType,
-          meetingPointId: meetingPoint.id, meetingPointLabel: meetingPoint.label,
+          id: crypto.randomUUID(), reference, serviceSlug, quantity, pickupType: location.pickupType,
+          meetingPointId: location.meetingPointId, meetingPointLabel: location.meetingPointLabel,
           startsAt: candidate.startsAt, endsAt: candidate.endsAt, locale, priceMinor,
           currency: context.config.business.currency,
           holdExpiresAt: new Date(parseUtcInstant(now).getTime() + context.config.booking.holdMinutes * 60_000).toISOString(),
