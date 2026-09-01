@@ -37,6 +37,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./core": "./src/core/index.ts",
+    "./email": "./src/email/index.ts",
     "./providers": "./src/providers/index.ts",
     "./providers/calendar-google": "./src/providers/calendar-google/index.ts",
     "./providers/payments-stripe": "./src/providers/payments-stripe/index.ts",

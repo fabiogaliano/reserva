@@ -22,6 +22,11 @@ export type { ClientConfig } from './core/config';
 // props) against these, and can read the English fallback as the reference key set.
 export { defaultLocale, defaultMessages, formatMessage, resolveMessages } from './ui/messages';
 export type { BookkitMessageKey, BookkitMessages } from './ui/messages';
+// Plan 026 (design decision 2): the email copy-key union, so a `config.emails.messages` override
+// map typed against it (`Partial<Record<EmailCopyKey, string>>`) catches an unknown key at compile
+// time instead of it being silently ignored at render time — mirrors BookkitMessageKey above for
+// widget copy. Type-only, so it carries no runtime dependency on `src/email/` from this barrel.
+export type { EmailCopyKey } from './email/copy';
 // Exposed so `virtual:bookkit/config`'s injected type declaration (integration.ts's
 // virtualConfigTypes) can reference the exact resolved-route-config shape via `bookkit`'s existing
 // "." export, without adding a dedicated "./routes-manifest" subpath just for this one type.

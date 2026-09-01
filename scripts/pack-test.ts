@@ -67,6 +67,7 @@ interface PackageJsonExports {
 const EXPECTED_EXPORT_SUBPATHS = [
   '.',
   './core',
+  './email',
   './providers',
   './providers/calendar-google',
   './providers/payments-stripe',

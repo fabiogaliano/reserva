@@ -1,7 +1,8 @@
 import type { Booking } from '../core/booking';
 import type { ClientConfig } from '../core/config';
 import type { EmailBookingEvent, EmailProvider, EmailRecipientRole } from '../core/events';
-import { formatLocaleFor, renderDefaultEmail, type EmailTemplateContext, type RenderedEmail } from '../email/render';
+import { renderDefaultEmail, type EmailRenderer, type EmailTemplateContext, type RenderedEmail } from '../email';
+import { formatLocaleFor } from '../email/render';
 import { ProviderFailure } from '../provider-failure';
 import type { BookkitResolvedRouteConfig } from '../routes-manifest';
 
@@ -26,19 +27,23 @@ export class BrevoResponseError extends ProviderFailure {
 }
 
 // Brevo's own wire vocabulary — the transactional-email API's request-body field names, kept
-// distinct from the provider-neutral `RenderedEmail` (`{ subject, html, text? }`, src/email/
-// render.ts) so that shape never leaks a Brevo-specific field name into the public renderer seam.
+// distinct from the provider-neutral `RenderedEmail` (`{ subject, html, text? }`,
+// `@reservajs/astro/email`) so that shape never leaks a Brevo-specific field name into the public
+// renderer seam.
 export interface BrevoEmailContent { subject: string; htmlContent: string; textContent?: string }
-export interface BrevoEmailTemplateContext {
-  event: EmailBookingEvent; booking: Booking; config: ClientConfig; locale: string; recipient: BrevoRecipient;
-  customerManageUrl: string; operatorManageUrl: string; startsAtLocal: string;
-}
-export type BrevoEmailRenderer = (context: BrevoEmailTemplateContext) => BrevoEmailContent;
 export interface BrevoSender { email: string; name?: string }
 export interface BrevoRecipientAddress { email: string; name?: string }
 export interface BrevoEmailProviderOptions {
   apiKey: string; sender?: BrevoSender; owner?: BrevoRecipientAddress; endpoint?: string;
-  fetch?: typeof fetch; fetchImpl?: typeof fetch; render?: BrevoEmailRenderer; renderEmail?: BrevoEmailRenderer;
+  fetch?: typeof fetch; fetchImpl?: typeof fetch;
+  // The one full-replacement customization level (plan 026 design decision 2). Speaks the
+  // provider-neutral `EmailRenderer` contract from `@reservajs/astro/email`, not a Brevo-specific
+  // shape, so a renderer written against this option also works unmodified with any other
+  // transport, and can delegate events it doesn't want to replace to `renderDefaultEmail` instead
+  // of copying it. Migrating from the removed `render` option: return `{ subject, html, text? }`
+  // instead of `{ subject, htmlContent, textContent? }` — see the README's "Email templates"
+  // section for the three customization levels.
+  renderEmail?: EmailRenderer;
 }
 
 const ownerEvents = new Set<EmailBookingEvent>(['booking.confirmed', 'booking.cancelled_by_customer']);
@@ -62,15 +67,11 @@ function localStart(booking: Booking, config: ClientConfig): string {
   return new Intl.DateTimeFormat(formatLocaleFor(emailLocaleFor(booking, config)), { dateStyle: 'medium', timeStyle: 'short', timeZone: config.business.timezone }).format(new Date(booking.startsAt));
 }
 
-// The default template now lives in src/email/ (plan 026) — this maps its provider-neutral result
-// onto Brevo's own wire vocabulary. A custom render/renderEmail callback still speaks Brevo's
-// shape directly (BrevoEmailContent), so this wrapper only applies to the built-in default.
+// Maps the renderer's provider-neutral result onto Brevo's own wire vocabulary — the one place a
+// Brevo-specific field name (htmlContent/textContent) exists, whether the renderer that produced
+// it was the built-in default or a fully custom one (both now speak the same EmailRenderer shape).
 function toBrevoContent(rendered: RenderedEmail): BrevoEmailContent {
   return { subject: rendered.subject, htmlContent: rendered.html, ...(rendered.text !== undefined ? { textContent: rendered.text } : {}) };
-}
-
-function defaultRender(context: EmailTemplateContext): BrevoEmailContent {
-  return toBrevoContent(renderDefaultEmail(context));
 }
 
 function addressFor(recipient: BrevoRecipient, booking: Booking, config: ClientConfig, owner?: BrevoRecipientAddress): BrevoRecipientAddress | null {
@@ -80,11 +81,11 @@ function addressFor(recipient: BrevoRecipient, booking: Booking, config: ClientC
 
 export class BrevoEmailProvider implements EmailProvider {
   private readonly apiKey: string; private readonly sender: BrevoSender | undefined; private readonly owner: BrevoRecipientAddress | undefined;
-  private readonly endpoint: string; private readonly request: typeof fetch; private readonly renderer: BrevoEmailRenderer;
+  private readonly endpoint: string; private readonly request: typeof fetch; private readonly renderer: EmailRenderer;
   constructor(options: BrevoEmailProviderOptions) {
     if (!options.apiKey) throw new Error('Brevo apiKey is required');
     this.apiKey = options.apiKey; this.sender = options.sender; this.owner = options.owner; this.endpoint = options.endpoint ?? BREVO_TRANSACTIONAL_EMAIL_URL;
-    this.request = options.fetchImpl ?? options.fetch ?? globalThis.fetch.bind(globalThis); this.renderer = options.renderEmail ?? options.render ?? defaultRender;
+    this.request = options.fetchImpl ?? options.fetch ?? globalThis.fetch.bind(globalThis); this.renderer = options.renderEmail ?? renderDefaultEmail;
   }
   // BK-SIDE-001: which recipients apply for an event, exposed so a caller (the mutation
   // dispatcher) can record + retry each recipient as its own durable operation without knowing
@@ -109,8 +110,8 @@ export class BrevoEmailProvider implements EmailProvider {
     // BK-SEC-002 (patch-11-r1 LOW 1): '' rather than a dead link when the token isn't
     // presentable — the renderer omits the manage button for an empty URL. Kept here (not lost in
     // the sendToRecipient/send split) — see the isManageableToken doc comment.
-    const context: BrevoEmailTemplateContext = { event, booking, config, locale: emailLocaleFor(booking, config), recipient, customerManageUrl: isManageableToken(booking.cancelToken) ? manageUrl(config, booking.cancelToken, routePaths) : '', operatorManageUrl: isManageableToken(booking.operatorToken) ? manageUrl(config, booking.operatorToken, routePaths) : '', startsAtLocal: localStart(booking, config) };
-    const content = this.renderer(context);
+    const context: EmailTemplateContext = { event, booking, config, locale: emailLocaleFor(booking, config), recipient, customerManageUrl: isManageableToken(booking.cancelToken) ? manageUrl(config, booking.cancelToken, routePaths) : '', operatorManageUrl: isManageableToken(booking.operatorToken) ? manageUrl(config, booking.operatorToken, routePaths) : '', startsAtLocal: localStart(booking, config) };
+    const content = toBrevoContent(this.renderer(context));
     const response = await this.request(this.endpoint, { method: 'POST', headers: { accept: 'application/json', 'api-key': this.apiKey, 'content-type': 'application/json' }, body: JSON.stringify({ ...content, sender: this.sender ?? { email: config.business.contact.email, name: config.business.name }, to: [address] }) });
     if (!response.ok) throw new BrevoResponseError(response.status, await response.text());
   }

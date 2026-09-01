@@ -80,10 +80,10 @@ describe('email providers', () => {
 
   it('uses a renderer callback and falls back to the configured locale', async () => {
     const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
-    const render = vi.fn(({ locale, recipient }) => ({ subject: `${locale}:${recipient}`, htmlContent: '<p>custom</p>' }));
-    const provider = brevoEmail({ apiKey: 'key', fetch: request, render });
+    const renderEmail = vi.fn(({ locale, recipient }) => ({ subject: `${locale}:${recipient}`, html: '<p>custom</p>' }));
+    const provider = brevoEmail({ apiKey: 'key', fetch: request, renderEmail });
     await provider.send('booking.no_show', booking({ locale: 'fr' }), config);
-    expect(render).toHaveBeenCalledWith(expect.objectContaining({ locale: 'en', recipient: 'customer' }));
+    expect(renderEmail).toHaveBeenCalledWith(expect.objectContaining({ locale: 'en', recipient: 'customer' }));
     expect(request).toHaveBeenCalledTimes(1);
   });
 
@@ -101,8 +101,8 @@ describe('email providers', () => {
 
   it('reports the configured recipient roles and sends exactly one guarded recipient message', async () => {
     const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
-    const render = vi.fn(() => ({ subject: 'subject', htmlContent: '<p>content</p>' }));
-    const provider = brevoEmail({ apiKey: 'key', fetch: request, render });
+    const renderEmail = vi.fn(() => ({ subject: 'subject', html: '<p>content</p>' }));
+    const provider = brevoEmail({ apiKey: 'key', fetch: request, renderEmail });
 
     expect(provider.recipientsForEvent('booking.confirmed')).toEqual(['customer', 'owner']);
     expect(provider.recipientsForEvent('booking.cancelled_by_customer')).toEqual(['customer', 'owner']);
@@ -120,7 +120,7 @@ describe('email providers', () => {
     expect(typeof body).toBe('string');
     if (typeof body !== 'string') throw new Error('Brevo request body was not serialized');
     expect(JSON.parse(body)).toMatchObject({ to: [{ email: 'ada@example.test', name: 'Ada Lovelace' }] });
-    expect(render).toHaveBeenCalledWith(expect.objectContaining({
+    expect(renderEmail).toHaveBeenCalledWith(expect.objectContaining({
       recipient: 'customer', customerManageUrl: '', operatorManageUrl: '',
     }));
   });
