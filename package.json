@@ -78,6 +78,7 @@
     "test": "vitest run && vitest run --config vitest.component.config.ts",
     "test:workers": "vitest run --config vitest.workers.config.ts",
     "test:pack": "bun scripts/pack-test.ts",
+    "test:quickstart": "bun scripts/quickstart-test.ts",
     "test:preview": "bun scripts/smoke-preview-test.ts",
     "test:scheduled": "bun scripts/smoke-scheduled-test.ts",
     "test:e2e": "playwright test",

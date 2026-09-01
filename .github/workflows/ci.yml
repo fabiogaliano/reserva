@@ -72,6 +72,20 @@ jobs:
       - run: bunx playwright install --with-deps chromium
       - run: bun run test:e2e
 
+  # Plan 028 step 5: extracts the README quickstart's own code blocks, installs the packed tarballs
+  # into a fresh directory outside the repository, and books through to a confirmation. It is the
+  # only check that treats the documentation as executable, so a quickstart that stops working is a
+  # red build rather than a support thread.
+  quickstart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.23
+      - run: bun install --frozen-lockfile
+      - run: bun run test:quickstart
+
   # Plan 028 decision 5: the contract tables in README.md/AGENTS.md are generated from the
   # exported constants (routeManifest, API_ERROR_CODES, BOOKING_EVENTS). This job re-renders them
   # and fails if the committed docs differ, so documentation of a closed vocabulary cannot rot.

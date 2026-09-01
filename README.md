@@ -109,7 +109,13 @@ Declare the D1 binding Reserva reads, then apply its migrations:
 
 ```jsonc
 // wrangler.jsonc
-{ "d1_databases": [{ "binding": "RESERVA_DB", "database_name": "reserva", "database_id": "…" }] }
+{
+  "name": "lisbon-tuk-tours",
+  "compatibility_date": "2026-07-21",
+  "d1_databases": [
+    { "binding": "RESERVA_DB", "database_name": "reserva", "database_id": "<wrangler d1 create reserva>" }
+  ]
+}
 ```
 
 ```sh
