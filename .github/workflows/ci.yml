@@ -12,10 +12,11 @@ concurrency:
 
 jobs:
   # Split from a single `check` job (audit && typecheck && test && test:workers) so a red audit
-  # (a transitive advisory with no fix available yet — see docs/plans/013-hardening-sweep.md item
-  # E) can no longer mask whether the code itself is sound: these run independently, not chained,
-  # so `verify` still reports even when `audit` fails. `bun run check` (both, chained) remains the
-  # strict local pre-push gate; CI deliberately doesn't run it as a single step.
+  # can no longer mask whether the code itself is sound: advisories can get stuck on transitive
+  # pins nested inside astro/wrangler/Cloudflare tooling, unfixable within this repo's declared
+  # ranges. These run independently, not chained, so `verify` still reports even when `audit`
+  # fails. `bun run check` (both, chained) remains the strict local pre-push gate; CI
+  # deliberately doesn't run it as a single step.
   audit:
     runs-on: ubuntu-latest
     steps:

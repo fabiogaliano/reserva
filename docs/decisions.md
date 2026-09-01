@@ -1,6 +1,6 @@
 # Spec-level decisions
 
-Bookkit's implementation is checked against a build contract spec external to this
+Reserva's implementation is checked against a build contract spec external to this
 repo. These entries record places where a spec review found the spec itself has a gap
 or internal inconsistency that the implementation cannot resolve alone. Each states the
 current behavior and a recommendation for the next spec revision, so it doesn't get
@@ -13,12 +13,12 @@ re-litigated.
 and was later cancelled. The original implementation therefore fell through to
 `pending`, which was spec-compliant but misleading.
 
-**Decision.** Bookkit now returns `{ status: 'cancelled' }` for both cancelled and
+**Decision.** Reserva now returns `{ status: 'cancelled' }` for both cancelled and
 no-show bookings. This additive state lets the confirmation page stop polling and show
 an honest terminal result. Existing clients must continue handling unknown states
 conservatively until the external spec adopts the same enum value.
 
-**Current behavior.** `handleStatus` in `src/handlers/index.ts` explicitly maps
+**Current behavior.** `handleStatus` in `src/handlers/status-manage.ts` explicitly maps
 `cancelled` and `no_show` bookings to the public `cancelled` state. Handler tests pin
 that response; `pending` remains reserved for holds or completed sessions whose payment
 cannot yet be verified.
@@ -97,14 +97,14 @@ controls, e.g. a forgotten preview/staging host — can host a hostile auto-subm
 form and have the browser attach that cookie. "Same site" is therefore not this admin
 surface's real trust boundary; only `same-origin` is.
 
-**Decision 2 — the CSRF token's HMAC key material (revised).** Bookkit has no session
+**Decision 2 — the CSRF token's HMAC key material (revised).** Reserva has no session
 store to mint a per-session secret from (see "Why not Astro sessions?" below), and no
 existing secret in `ClientConfig`/`SecretLookup` is purpose-fit for CSRF signing
 (reaching into a specific `PaymentProvider` implementation for Stripe's secret/webhook
-key would couple this to one provider and never surfaces on `BookkitContext` anyway;
+key would couple this to one provider and never surfaces on `ReservaContext` anyway;
 reusing the optional Tourflow shared secret would mix unrelated trust domains for no
 real gain). The first version of this decision keyed the token from
-`config.admin.accessAud` alone whenever the optional `BOOKKIT_CSRF_SECRET` Worker
+`config.admin.accessAud` alone whenever the optional `RESERVA_CSRF_SECRET` Worker
 secret was unset, reasoning that accessAud is "never observable outside an
 already-Access-authenticated session." **That reasoning was wrong and a subsequent
 review of this handoff caught it (BK-SEC-001, P1 finding 1):** accessAud is the Access
@@ -113,16 +113,16 @@ JWT — an attacker only needs to have completed an Access login once (or seen t
 in checked-in config) to read it, so a key derived from it alone is not secret and
 the "signed" token was forgeable by anyone who could reach the admin route with a
 valid Access session, i.e. it added no protection beyond layer 1 whenever
-`BOOKKIT_CSRF_SECRET` wasn't set.
+`RESERVA_CSRF_SECRET` wasn't set.
 
 **Corrected decision.** `src/admin-csrf.ts`'s `csrfSecret` now returns a key only when
-`BOOKKIT_CSRF_SECRET` is actually configured (still mixed with `config.admin.accessAud`
+`RESERVA_CSRF_SECRET` is actually configured (still mixed with `config.admin.accessAud`
 for cheap extra domain separation between deployments sharing one secret — that mixing
 was never the problem, using accessAud *alone* as a fallback was). When the secret is
 unset, `mintAdminCsrfToken`/`verifyAdminCsrfToken` take layer 2 offline entirely —
 no token is minted, and verification is a no-op — rather than emit a token that only
-looks signed. **`BOOKKIT_CSRF_SECRET` must be set (`wrangler secret put
-BOOKKIT_CSRF_SECRET`, added to `secretBindings`) for layer 2 to actually run.** This
+looks signed. **`RESERVA_CSRF_SECRET` must be set (`wrangler secret put
+RESERVA_CSRF_SECRET`, added to `secretBindings`) for layer 2 to actually run.** This
 fail-open is acceptable, and does not reopen BK-SEC-001, only because layer 1
 (Fetch-Metadata/Origin) is unconditional and independently stops the attack in every
 modern browser with or without a configured secret — layer 1 itself never fails open.

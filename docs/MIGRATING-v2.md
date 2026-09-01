@@ -78,7 +78,7 @@ vendor name:
 | `BookkitProviders` | `ReservaProviders` |
 | `BookkitRuntime`, `BookkitRuntimeDefinition`, `BookkitRuntimeFactoryOptions`, `BookkitRuntimeRequest` | `ReservaRuntime`, `ReservaRuntimeDefinition`, `ReservaRuntimeFactoryOptions`, `ReservaRuntimeRequest` |
 | `BookkitEnvShape`, `UntypedBookkitEnv` | `ReservaEnvShape`, `UntypedReservaEnv` |
-| `BookkitCache`, `BookkitClient`, `BookkitClock`, `BookkitLogger` | `ReservaCache`, `ReservaClient`, `ReservaClock`, `ReservaLogger` |
+| `BookkitCache`, `BookkitClient`, `BookkitClock`, `BookkitLogger` | no longer exported — internal context types |
 | `BookkitMessageKey`, `BookkitMessages` | `ReservaMessageKey`, `ReservaMessages` |
 | `BookkitResolvedRouteConfig`, `BookkitRouteEntry`, `BookkitRouteGroup`, `BookkitRouteGroupFlags`, `BookkitRouteId`, `BookkitRouteOptions` | the same names with the `Reserva` prefix |
 | `createBookkitContext`, `checkBookkitMigrationsApplied`, `bookkitMigrationStatus`, `bookkitSchemaFingerprintPresent`, `bookkitSecretEnvSchema` | the same names with `reserva`/`Reserva` in place of `bookkit`/`Bookkit` |

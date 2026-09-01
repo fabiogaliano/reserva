@@ -24,7 +24,7 @@ The simulated email provider prints customer and operator management URLs in the
 
 To start with an empty database, stop the server and remove `.wrangler/state`, then run `bun run demo` again.
 
-## Scheduled reconciliation (plan 020)
+## Scheduled reconciliation
 
 `worker/` is a second, minimal Worker whose only job is calling `runReconciliation` on a cron
 schedule — the autonomous sweep that resumes stuck side-effect/refund debt, sweeps expired holds,
@@ -67,11 +67,11 @@ bun run cron:deploy
 
 `worker/wrangler.jsonc`'s `triggers.crons` defaults to every 5 minutes; production deployments
 should tune that to their own outage-tolerance, but nothing in `src/reconciliation.ts` assumes this
-exact cadence — see design decision 5 in `docs/plans/020-autonomous-reconciliation-operator-incidents.md`
-for the backoff schedule this cadence feeds.
+exact cadence — the retry backoff schedule in `src/reconciliation-helpers.ts` is what this
+cadence feeds.
 
 Both `wrangler.jsonc` files in this fixture (the site's own and `worker/wrangler.jsonc`) enable
-Workers observability with full logs (design decision 15) — reconciliation, incident, and alert
+Workers observability with full logs — reconciliation, incident, and alert
 events are only inspectable in production if their structured log fields are actually captured. A
 production deployment should also set up a Cloudflare-side alert on the cron Worker's
 failures/error logs (see README.md's runbook step 7a): the in-process `ReservaProviders.alerts`
