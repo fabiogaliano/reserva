@@ -1,9 +1,13 @@
 import type { Booking } from '../core/booking';
-import { meetingPointForBooking, pickupPresentationFor, type ClientConfig } from '../core/config';
+import { meetingPointForBooking, metadataRowsForBooking, pickupPresentationFor, type ClientConfig } from '../core/config';
 import { toMajorUnits } from '../core/currency';
 import type { EmailBookingEvent, EmailProvider, EmailRecipientRole } from '../core/events';
 import { ProviderFailure } from '../provider-failure';
 import type { BookkitResolvedRouteConfig } from '../routes-manifest';
+// Plan 024 (design decision 3): boolean metadata reuses the app's one existing yes/no copy pair
+// (admin.on/off) instead of inventing a second one in this provider's own English/Portuguese
+// catalogs below — the only cross-import from src/ui/ in this file, kept to that single pair.
+import { resolveMessages } from '../ui/messages';
 
 export const BREVO_TRANSACTIONAL_EMAIL_URL = 'https://api.brevo.com/v3/smtp/email';
 export const BREVO_API_URL = BREVO_TRANSACTIONAL_EMAIL_URL;
@@ -259,6 +263,20 @@ function buildModel(context: BrevoEmailTemplateContext): EmailModel {
     });
   }
 
+  // Plan 024 (design decision 3): the same metadataRowsForBooking projection the manage/
+  // confirmation payloads use, turned into card rows here since this provider builds its own HTML
+  // rather than delegating to a shared page renderer. Boolean -> the app's one existing yes/no
+  // copy pair; everything else its plain string form. Every value is attacker-controlled free text
+  // for `text` fields, so it's escaped exactly like every other card row above.
+  const metadataRows = service ? metadataRowsForBooking(service, booking.metadata, locale, config.locales.default) : [];
+  const onOffMessages = metadataRows.length > 0 ? resolveMessages(config, locale) : null;
+  const metadataCardRows: EmailCardRow[] = metadataRows.map((row) => {
+    const displayValue = typeof row.value === 'boolean'
+      ? (row.value ? onOffMessages!['admin.on'] : onOffMessages!['admin.off'])
+      : String(row.value);
+    return { label: row.label, valueHtml: `<strong>${escapeHtml(displayValue)}</strong>`, valueText: displayValue };
+  });
+
   const subject = interpolate(copy(`${eventKey}.${recipient}.subject`), rawValues);
   const leadHtml = `<p style="margin:0 0 26px;font-size:17px;line-height:1.5;">${interpolate(copy(`${eventKey}.${recipient}.lead`), htmlValues)}</p>`;
 
@@ -269,6 +287,7 @@ function buildModel(context: BrevoEmailTemplateContext): EmailModel {
       { label: copy('label.guests'), valueHtml: `<strong>${booking.quantity}</strong>`, valueText: String(booking.quantity) },
       { label: copy('label.paid'), valueHtml: `<strong>${escapeHtml(price)}</strong>`, valueText: price },
       ...pickupRows,
+      ...metadataCardRows,
       ...(booking.customerEmail ? [{ label: copy('label.email'), valueHtml: `<a href="mailto:${escapeHtml(booking.customerEmail)}" style="color:inherit;">${escapeHtml(booking.customerEmail)}</a>`, valueText: booking.customerEmail }] : []),
       ...(booking.customerPhone ? [{ label: copy('label.phone'), valueHtml: `<strong>${escapeHtml(booking.customerPhone)}</strong>`, valueText: booking.customerPhone }] : []),
       { label: copy('label.bookingId'), valueHtml: escapeHtml(booking.reference), valueText: booking.reference },
@@ -293,6 +312,7 @@ function buildModel(context: BrevoEmailTemplateContext): EmailModel {
         { label: copy('label.time'), valueHtml: `<strong>${escapeHtml(time)}</strong>`, valueText: time },
         { label: copy('label.guests'), valueHtml: `<strong>${booking.quantity}</strong>`, valueText: String(booking.quantity) },
         ...pickupRows,
+        ...metadataCardRows,
       ]
     : [];
 

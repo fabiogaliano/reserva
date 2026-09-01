@@ -1,5 +1,5 @@
 import { canCancelBooking, canRescheduleBooking, type Booking } from '../core/booking';
-import { meetingPointForBooking, pickupPresentationFor, resolveService } from '../core/config';
+import { meetingPointForBooking, metadataRowsForBooking, pickupPresentationFor, resolveService } from '../core/config';
 import { verifyPayment } from '../core/payment-verification';
 import { parseUtcInstant, utcToLocalIso } from '../core/time';
 import {
@@ -22,6 +22,11 @@ function bookingSummary(context: BookkitContext, booking: Booking): Record<strin
   // pre-023 booking of a service that later drops its location module still renders (pickupType
   // stays non-null on that row even though the service config no longer declares any options).
   const presentation = pickupPresentationFor(service, booking);
+  // Plan 024 (design decision 3): omitted entirely (not an empty array) when the booking carries
+  // no metadata — matches the pickup/meetingPoint fields' own conditional-presence convention
+  // above, and this doubles as the admin operator's view of the same booking (role toggles inside
+  // manage-page.ts, not a separate render path).
+  const metadataRows = metadataRowsForBooking(service, booking.metadata, booking.locale, context.config.locales.default);
   return {
     reference: booking.reference,
     serviceSlug: booking.serviceSlug,
@@ -44,6 +49,7 @@ function bookingSummary(context: BookkitContext, booking: Booking): Record<strin
     locale: booking.locale,
     status: booking.status,
     priceMinor: booking.priceMinor,
+    ...(metadataRows.length > 0 ? { metadata: metadataRows } : {}),
   };
 }
 
@@ -55,6 +61,7 @@ function confirmationSummary(context: BookkitContext, booking: Booking): Record<
   // anywhere.
   const presentation = pickupPresentationFor(service, booking);
   const includeMeetingPoint = presentation?.usesMeetingPoint ?? false;
+  const metadataRows = metadataRowsForBooking(service, booking.metadata, booking.locale, context.config.locales.default);
   return {
     reference: booking.reference,
     serviceSlug: booking.serviceSlug,
@@ -64,6 +71,7 @@ function confirmationSummary(context: BookkitContext, booking: Booking): Record<
     priceMinor: booking.priceMinor,
     ...(includeMeetingPoint ? { meetingPoint: meetingPointForBooking(service, booking.meetingPointId, booking.meetingPointLabel) } : {}),
     locale: booking.locale,
+    ...(metadataRows.length > 0 ? { metadata: metadataRows } : {}),
   };
 }
 

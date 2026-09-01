@@ -281,4 +281,58 @@ describe('email providers', () => {
     expect(ownerHtml.htmlContent).not.toContain('"><script>');
     expect(ownerHtml.htmlContent).toContain('&quot;&gt;&lt;script&gt;');
   });
+
+  // Plan 024 (design decision 3): the third read surface — labeled metadata rows on both the
+  // customer and owner cards, boolean rendered as the app's one existing yes/no copy pair
+  // (admin.on/off), and a hostile text-field value escaped exactly like every other card row.
+  describe('metadata rows', () => {
+    const dietaryField = { key: 'dietary_notes', label: 'Dietary notes', type: 'text' as const };
+    const vegetarianField = { key: 'vegetarian', label: 'Vegetarian', type: 'boolean' as const };
+    const metadataConfig: typeof config = {
+      ...config,
+      services: { ...config.services, vintage: { ...service, metadataFields: [dietaryField, vegetarianField] } },
+    };
+
+    it('renders labeled metadata rows on both the customer and owner cards', async () => {
+      const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
+      const provider = brevoEmail({ apiKey: 'key', fetch: request });
+
+      await provider.send('booking.confirmed', booking({ metadata: { dietary_notes: 'Vegan', vegetarian: true } }), metadataConfig);
+
+      expect(request).toHaveBeenCalledTimes(2);
+      const customerHtml = JSON.parse(request.mock.calls[0]![1]!.body as string) as { htmlContent: string };
+      const ownerHtml = JSON.parse(request.mock.calls[1]![1]!.body as string) as { htmlContent: string };
+      for (const html of [customerHtml.htmlContent, ownerHtml.htmlContent]) {
+        expect(html).toContain('Dietary notes');
+        expect(html).toContain('Vegan');
+        expect(html).toContain('Vegetarian');
+        expect(html).toContain('>On<'); // admin.on — reused, not a second invented copy pair
+      }
+    });
+
+    it('omits metadata rows entirely for an event with no card (e.g. a cancellation) on the customer side', async () => {
+      const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
+      const provider = brevoEmail({ apiKey: 'key', fetch: request });
+
+      await provider.sendToRecipient('customer', 'booking.cancelled_by_customer', booking({ metadata: { dietary_notes: 'Vegan' } }), metadataConfig);
+
+      const html = JSON.parse(request.mock.calls[0]![1]!.body as string) as { htmlContent: string };
+      expect(html.htmlContent).not.toContain('Dietary notes');
+    });
+
+    it('HTML-escapes a hostile metadata value on both cards', async () => {
+      const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
+      const provider = brevoEmail({ apiKey: 'key', fetch: request });
+      const xssPayload = '<script>window.__xss = true;</script>"><img src=x onerror=alert(1)>';
+
+      await provider.send('booking.confirmed', booking({ metadata: { dietary_notes: xssPayload } }), metadataConfig);
+
+      const customerHtml = JSON.parse(request.mock.calls[0]![1]!.body as string) as { htmlContent: string };
+      const ownerHtml = JSON.parse(request.mock.calls[1]![1]!.body as string) as { htmlContent: string };
+      for (const html of [customerHtml.htmlContent, ownerHtml.htmlContent]) {
+        expect(html).not.toContain(xssPayload);
+        expect(html).toContain('&lt;script&gt;');
+      }
+    });
+  });
 });

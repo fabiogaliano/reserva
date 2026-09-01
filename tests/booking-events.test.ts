@@ -235,6 +235,56 @@ describe('durable webhook delivery on the confirmation path', () => {
     for (const attempt of sent) expect(() => verifyAttempt(attempt)).not.toThrow();
   });
 
+  // Plan 024 (design decision 3): the webhook envelope carries the RAW consumer-declared record
+  // (values, not the labeled rows the manage/confirmation/email surfaces render), and follows the
+  // wave's empty-value rule — a collection is `{}` when absent, never `null`.
+  it('carries the raw metadata record in data.booking.metadata, and {} when the booking has none', async () => {
+    const withMetadata = booking({
+      id: 'webhook-metadata', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z',
+      paymentSessionRef: 'cs_webhook_metadata', metadata: { dietary_notes: 'Vegan', seat_pref: 'window' },
+    });
+    const withoutMetadata = booking({
+      id: 'webhook-no-metadata', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z',
+      paymentSessionRef: 'cs_webhook_no_metadata', metadata: null,
+    });
+    const repo = fakeRepository([withMetadata, withoutMetadata]);
+    const { sent, fetchImpl } = recordingFetch(() => new Response(null, { status: 204 }));
+    const pending: Promise<unknown>[] = [];
+
+    await confirmedBookingWithWebhook(repo, withMetadata.id, 'cs_webhook_metadata', fetchImpl, pending);
+    vi.stubGlobal('fetch', fetchImpl);
+    try {
+      const secondContext = createBookkitContext({
+        config: webhookConfig(), db: {} as D1Database, repo, clock,
+        secrets: async (name) => (name === 'PARTNER_WEBHOOK_SECRET' ? WEBHOOK_SECRET : undefined),
+        waitUntil: (task) => pending.push(task),
+        // A distinct paymentRef: paidWebhookProviders hardcodes 'pi_events_layer', which would
+        // collide with the first booking's already-confirmed payment_ref (BK-SCHEMA-001's partial
+        // unique index) and 409 instead of confirming.
+        providers: {
+          ...paidWebhookProviders(withoutMetadata.id, 'cs_webhook_no_metadata'),
+          payments: {
+            ...paidWebhookProviders(withoutMetadata.id, 'cs_webhook_no_metadata').payments,
+            parseWebhook: async () => ({
+              id: 'evt_events_layer_2', type: 'checkout_completed', bookingId: withoutMetadata.id, sessionRef: 'cs_webhook_no_metadata',
+              paymentRef: 'pi_events_layer_2', paid: true, amountCaptured: 10000, currency: config.business.currency,
+            }),
+          },
+        },
+      });
+      await handlePaymentWebhook(stripeWebhookRequest(), secondContext);
+      await Promise.all(pending.splice(0));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    const envelopes = sent.map((attempt) => JSON.parse(attempt.body) as BookingEventEnvelope);
+    const withMetadataEnvelope = envelopes.find((envelope) => envelope.id.startsWith(withMetadata.id));
+    const withoutMetadataEnvelope = envelopes.find((envelope) => envelope.id.startsWith(withoutMetadata.id));
+    expect(withMetadataEnvelope?.data.booking.metadata).toEqual({ dietary_notes: 'Vegan', seat_pref: 'window' });
+    expect(withoutMetadataEnvelope?.data.booking.metadata).toEqual({});
+  });
+
   it('gives a later event a distinct id and its own snapshot while the old row keeps the original', async () => {
     const seeded = booking({
       id: 'webhook-new-event', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z',

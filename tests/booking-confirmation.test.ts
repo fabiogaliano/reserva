@@ -114,4 +114,46 @@ describe('booking confirmation page', () => {
     vi.doUnmock('virtual:bookkit/runtime');
     vi.doUnmock('virtual:bookkit/config');
   });
+
+  // Plan 024 (design decision 3): the confirmationSummary payload's labeled metadata rows, and the
+  // XSS surface — a customer-supplied text field is the first fully attacker-controlled free text
+  // to reach this page, so a hostile payload must never reach the DOM unescaped.
+  it('renders labeled metadata rows (boolean as the existing yes/no copy pair) and escapes a hostile value', async () => {
+    vi.doMock('virtual:bookkit/runtime', () => ({ default: {} }));
+    vi.doMock('virtual:bookkit/config', () => ({ default: resolveRouteConfig() }));
+    const { confirmationPage } = await import('../src/routes/booking-confirmation');
+    const xssPayload = '<script>window.__xss = true;</script>"><img src=x onerror=alert(1)>';
+
+    const html = confirmationPage(
+      { config, routeConfig: resolveRouteConfig() },
+      {
+        status: 'confirmed',
+        booking: {
+          reference: 'LVT-2026-003',
+          serviceSlug: 'vintage',
+          start: '2026-06-15T09:00:00.000+01:00',
+          end: '2026-06-15T10:00:00.000+01:00',
+          quantity: 2,
+          priceMinor: 10000,
+          locale: 'en',
+          metadata: [
+            { key: 'dietary_notes', label: 'Dietary notes', value: xssPayload },
+            { key: 'vegetarian', label: 'Vegetarian', value: true },
+          ],
+        },
+      },
+      'https://example.test/booking-confirmation?session_id=cs_confirmed_metadata',
+      null,
+    );
+
+    expect(html).toContain('LVT-2026-003');
+    expect(html).toContain('Dietary notes');
+    expect(html).toContain('Vegetarian');
+    expect(html).toContain('<dd>On</dd>');
+    expect(html).not.toContain(xssPayload);
+    expect(html).toContain('&lt;script&gt;');
+
+    vi.doUnmock('virtual:bookkit/runtime');
+    vi.doUnmock('virtual:bookkit/config');
+  });
 });

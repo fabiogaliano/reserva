@@ -48,6 +48,10 @@ interface ManageBookingPayload {
   status?: string;
   priceMinor?: number;
   meetingPoint?: { label?: string; mapsUrl?: string };
+  // Plan 024 (design decision 3): labeled, presentation-ready rows from metadataRowsForBooking
+  // (core/config.ts) — the boolean-to-copy resolution happens here, matching how settings-page.ts
+  // already resolves a boolean setting's display text.
+  metadata?: Array<{ key: string; label: string; value: string | number | boolean }>;
 }
 
 // Defaults keep the original two-argument call shape working (tests and any consumer calling this
@@ -108,6 +112,16 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
       ? ` <a href="${escapeHtml(booking.meetingPoint.mapsUrl)}" rel="noopener" target="_blank">${escapeHtml(messages['common.openInMaps'])}</a>`
       : '';
     facts.push([messages['common.meetingPoint'], `${escapeHtml(booking.meetingPoint.label)}${maps}`]);
+  }
+  // Plan 024 (design decision 3): boolean -> the app's existing yes/no copy pair (admin.on/off,
+  // reused rather than inventing a second one); everything else renders as its plain string form.
+  // Every value is attacker-controlled free text for `text` fields, so it goes through escapeHtml
+  // like every other fact here.
+  for (const row of booking.metadata ?? []) {
+    const displayValue = typeof row.value === 'boolean'
+      ? (row.value ? messages['admin.on'] : messages['admin.off'])
+      : String(row.value);
+    facts.push([row.label, escapeHtml(displayValue)]);
   }
 
   const operatorBadge = role === 'operator' ? ` <span class="bk-badge bk-badge--accent">${escapeHtml(messages['manage.operatorBadge'])}</span>` : '';

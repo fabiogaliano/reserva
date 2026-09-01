@@ -20,6 +20,9 @@ interface ConfirmedBooking {
   locale?: string;
   priceMinor?: number;
   meetingPoint?: { label?: string; mapsUrl?: string };
+  // Plan 024 (design decision 3): see the identical field on ManageBookingPayload
+  // (src/components/manage-page.ts) — same shape, same renderer convention.
+  metadata?: Array<{ key: string; label: string; value: string | number | boolean }>;
 }
 
 function brandLine(context: Pick<BookkitContext, 'config'>): string {
@@ -47,6 +50,14 @@ function confirmedBody(context: Pick<BookkitContext, 'config'>, messages: Bookki
   if (meetingLabel) {
     const maps = mapsUrl ? ` <a href="${escapeHtml(mapsUrl)}" rel="noopener" target="_blank">${escapeHtml(messages['common.openInMaps'])}</a>` : '';
     facts.push([messages['common.meetingPoint'], `${escapeHtml(meetingLabel)}${maps}`]);
+  }
+  // Plan 024 (design decision 3): see the identical block in manage-page.ts renderManagePage —
+  // boolean -> the existing yes/no copy pair, everything else its plain string form, escaped.
+  for (const row of booking.metadata ?? []) {
+    const displayValue = typeof row.value === 'boolean'
+      ? (row.value ? messages['admin.on'] : messages['admin.off'])
+      : String(row.value);
+    facts.push([row.label, escapeHtml(displayValue)]);
   }
   const parts = start ? formatDateParts(start, locale, timezone) : null;
   const dateBlock = parts

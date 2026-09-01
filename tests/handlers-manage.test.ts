@@ -1,5 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
+import type { MetadataField } from '../src/core/config';
 import { createBookkitContext } from '../src/context';
 import { handleManage } from '../src/handlers';
 import { renderManagePage } from '../src/components/manage-page';
@@ -277,5 +278,66 @@ describe('GET /manage (spec §11)', () => {
     const customerBPayload = await customerBResponse.json() as { role: string; booking: { reference: string } };
     expect(customerBPayload.role).toBe('customer');
     expect(customerBPayload.booking.reference).toBe(bookingB.reference);
+  });
+});
+
+// Plan 024 (design decision 3): the manage page is BOTH surfaces — "admin booking detail" is the
+// same renderer with role: 'operator', not a separate admin-only render path. XSS payloads must be
+// escaped for both roles since both render the same metadata rows through the same shared helper.
+describe('metadata on the manage page (plan 024)', () => {
+  const dietaryField: MetadataField = { key: 'dietary_notes', label: 'Dietary notes', type: 'text' };
+  const vegetarianField: MetadataField = { key: 'vegetarian', label: 'Vegetarian', type: 'boolean' };
+  const metadataConfig = { ...config, services: { ...config.services, vintage: { ...service, metadataFields: [dietaryField, vegetarianField] } } };
+  const XSS_PAYLOAD = '<script>window.__xss = true;</script>"><img src=x onerror=alert(1)>';
+
+  function metadataContext(seed: ReturnType<typeof booking>[]) {
+    return createBookkitContext({ config: metadataConfig, db: {} as D1Database, repo: fakeRepository(seed), clock, providers: providers() });
+  }
+
+  it('shows labeled metadata rows (boolean as the existing yes/no copy pair) for both customer and operator roles', async () => {
+    const seeded = booking({ id: 'b-manage-metadata', status: 'confirmed', metadata: { dietary_notes: 'Vegan', vegetarian: true } });
+    const context = metadataContext([seeded]);
+
+    const customerResponse = await handleManage(manageRequest(seeded.cancelToken), context);
+    const customerPayload = await customerResponse.json() as { booking: { metadata?: Array<{ key: string; label: string; value: unknown }> } };
+    expect(customerPayload.booking.metadata).toEqual([
+      { key: 'dietary_notes', label: 'Dietary notes', value: 'Vegan' },
+      { key: 'vegetarian', label: 'Vegetarian', value: true },
+    ]);
+    const customerHtml = renderManagePage(customerPayload as unknown as Record<string, unknown>, '/manage', { locale: 'en' });
+    expect(customerHtml).toContain('Dietary notes');
+    expect(customerHtml).toContain('Vegan');
+    expect(customerHtml).toContain('Vegetarian');
+    // admin.on/off — the existing yes/no copy pair, reused rather than invented (exact fact-row
+    // fragment factList renders, not a loose substring match that could collide with other copy).
+    expect(customerHtml).toContain('<dd>On</dd>');
+
+    const operatorResponse = await handleManage(manageRequest(seeded.operatorToken), context);
+    const operatorPayload = await operatorResponse.json() as { booking: { metadata?: Array<{ key: string; label: string; value: unknown }> } };
+    expect(operatorPayload.booking.metadata).toEqual(customerPayload.booking.metadata);
+    const operatorHtml = renderManagePage(operatorPayload as unknown as Record<string, unknown>, '/manage', { locale: 'en' });
+    expect(operatorHtml).toContain('Dietary notes');
+    expect(operatorHtml).toContain('Vegan');
+  });
+
+  it('omits the metadata key entirely from the payload when the booking carries none', async () => {
+    const seeded = booking({ id: 'b-manage-no-metadata', status: 'confirmed', metadata: null });
+    const context = metadataContext([seeded]);
+    const response = await handleManage(manageRequest(seeded.cancelToken), context);
+    const payload = await response.json() as { booking: Record<string, unknown> };
+    expect(payload.booking).not.toHaveProperty('metadata');
+  });
+
+  it('HTML-escapes a hostile metadata value on both the customer and operator page renders', async () => {
+    const seeded = booking({ id: 'b-manage-metadata-xss', status: 'confirmed', metadata: { dietary_notes: XSS_PAYLOAD } });
+    const context = metadataContext([seeded]);
+
+    for (const token of [seeded.cancelToken, seeded.operatorToken]) {
+      const response = await handleManage(manageRequest(token), context);
+      const payload = await response.json() as Record<string, unknown>;
+      const html = renderManagePage(payload, '/manage');
+      expect(html).not.toContain(XSS_PAYLOAD);
+      expect(html).toContain('&lt;script&gt;');
+    }
   });
 });
