@@ -4,10 +4,10 @@ import config from '../../examples/client-config';
 import { defineCloudflareBookkitRuntime } from '../../src/runtime-context';
 
 const payments = {
-  createCheckout: async () => ({ url: 'https://checkout.test', sessionId: 'cs_test' }),
+  createCheckout: async () => ({ url: 'https://checkout.test', sessionRef: 'cs_test' }),
   parseWebhook: async () => ({ id: 'evt_test', type: 'unknown' as const }),
   getSession: async () => ({ status: 'open' as const }),
-  refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+  refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
 };
 
 describe('Cloudflare runtime bindings', () => {

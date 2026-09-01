@@ -17,11 +17,11 @@ test('a stale availability response cannot overwrite a newer party-size selectio
 
   await page.route('**/api/booking/availability*', async (route) => {
     const url = new URL(route.request().url());
-    const people = url.searchParams.get('people');
-    // people=2's request is the one this test holds open (the "stale" one); every other party
+    const quantity = url.searchParams.get('quantity');
+    // quantity=2's request is the one this test holds open (the "stale" one); every other party
     // size gets a distinct, immediately-resolved fake slot so the displayed time unambiguously
     // reveals which response actually won.
-    const startTime = people === '3' ? '14:00' : '09:00';
+    const startTime = quantity === '3' ? '14:00' : '09:00';
     const body = JSON.stringify({
       days: [{
         date: from,
@@ -29,12 +29,12 @@ test('a stale availability response cannot overwrite a newer party-size selectio
         slots: [{ start: `${from}T${startTime}:00.000Z`, remaining: 5, remainingBookings: 5 }],
       }],
     });
-    if (people === '2') await staleGate;
+    if (quantity === '2') await staleGate;
     await route.fulfill({ status: 200, contentType: 'application/json', body });
   });
 
   await page.goto('/');
-  // Initial load (default people=1, resolves immediately) has settled.
+  // Initial load (default quantity=1, resolves immediately) has settled.
   await expect(page.locator('.bkw-slot-time').first()).toHaveText('09:00');
 
   // Switch to 2 (the request this test holds open) and, before it resolves, switch to 3 (resolves
@@ -45,12 +45,12 @@ test('a stale availability response cannot overwrite a newer party-size selectio
   await expect(page.locator('.bkw-slot-time').first()).toHaveText('14:00');
   await expect(page.getByRole('radiogroup').getByRole('radio').first()).toBeEnabled();
 
-  // Only now let the stale people=2 response through. A real fix must not let it undo what
-  // people=3 already rendered — this is the assertion that fails against pre-change code.
+  // Only now let the stale quantity=2 response through. A real fix must not let it undo what
+  // quantity=3 already rendered — this is the assertion that fails against pre-change code.
   releaseStale();
   await page.waitForTimeout(500);
   await expect(page.locator('.bkw-slot-time').first()).toHaveText('14:00');
   // A superseded response reaching the finally block must not clear aria-busy out from under
-  // whatever the current (people=3) request state left it as.
+  // whatever the current (quantity=3) request state left it as.
   await expect(page.locator('calendar-date')).not.toHaveAttribute('aria-busy', 'true');
 });

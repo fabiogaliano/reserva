@@ -2,7 +2,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { ADMIN_CSRF_TOKEN_TTL_MS, mintAdminCsrfToken } from '../src/admin-csrf';
 import { createBookkitContext } from '../src/context';
-import type { ClientConfig, TourConfig } from '../src/core/config';
+import type { ClientConfig, ServiceConfig } from '../src/core/config';
 import { handleAdminGet, handleAdminPost } from '../src/handlers';
 import { booking, config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
@@ -227,12 +227,12 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
     expect(response.headers.get('referrer-policy')).toBe('same-origin');
   });
 
-  // BK-CAP-002: the day calendar must show fleet units consumed, not a raw booking-row count — a
-  // single 5-person booking on the fixture tour (occupancyFor: people > 4 ? 2 : 1) needs two
+  // BK-CAP-002: the day calendar must show capacity units consumed, not a raw booking-row count — a
+  // single 5-person booking on the fixture service (occupancyFor: quantity > 4 ? 2 : 1) needs two
   // vehicles, so a day with just this one booking is already at the fixture's default capacity (2).
-  it('renders the day cell in fleet units, not booking count, for a multi-unit booking', async () => {
+  it('renders the day cell in capacity units, not booking count, for a multi-unit booking', async () => {
     const multiUnit = booking({
-      id: 'b-admin-multiunit', reference: 'LVT-2026-300', people: 5,
+      id: 'b-admin-multiunit', reference: 'LVT-2026-300', quantity: 5,
       startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
       operatorToken: 'op-multiunit', cancelToken: 'cancel-multiunit',
     });
@@ -240,24 +240,24 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
     const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers() });
     const response = await handleAdminGet(adminGetRequest(), context);
     const body = await response.text();
-    // One booking, two fleet units, capacity 2 (fixture's fleet.defaultCapacity) — the label must
+    // One booking, two capacity units, capacity 2 (fixture's capacity.defaultCapacity) — the label must
     // read the unit count against capacity, not "1/2" (which is what a raw booking count would show).
     expect(body).toContain('units 2/2');
     expect(body).not.toMatch(/bk-day-load">1\/2</);
   });
 
   // Plan 017 (design decision 4): the meeting-point sub-line only renders for a default pickup on
-  // a tour that actually declares more than one point — mirrors the existing pickupAddress sub-
+  // a service that actually declares more than one point — mirrors the existing pickupAddress sub-
   // line pattern, and search must match what the row displays.
   describe('meeting-point sub-line + search (plan 017)', () => {
     const points = [
       { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
       { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
     ];
-    const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = config.tours.vintage!;
-    const multiPointConfig: ClientConfig = { ...config, tours: { ...config.tours, vintage: { ...vintageWithoutShorthand, meetingPoints: points } } };
+    const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = config.services.vintage!;
+    const multiPointConfig: ClientConfig = { ...config, services: { ...config.services, vintage: { ...vintageWithoutShorthand, meetingPoints: points } } };
 
-    it('renders the resolved meeting-point label as a sub-line for a multi-point tour, and is absent for a single-point tour', async () => {
+    it('renders the resolved meeting-point label as a sub-line for a multi-point service, and is absent for a single-point service', async () => {
       const chosen = booking({
         id: 'b-admin-meeting-point', reference: 'LVT-2026-400', startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
         operatorToken: 'op-meeting-point', cancelToken: 'cancel-meeting-point',
@@ -294,7 +294,7 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
   });
 });
 
-// Plan 018 (design decision 8): the pickup-cell label re-keys off the tour's declared option,
+// Plan 018 (design decision 8): the pickup-cell label re-keys off the service's declared option,
 // falling back through option?.label -> the message-catalog key for 'default'/'custom' -> the raw
 // id, and the requiresAddress/usesMeetingPoint sub-line gates re-key the same way the checkout
 // meeting-point requirement does (decision 6).
@@ -303,8 +303,8 @@ describe('pickup option label + sub-lines (plan 018 design decision 8)', () => {
     { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
     { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
   ];
-  const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = config.tours.vintage!;
-  const mazeTour: TourConfig = {
+  const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = config.services.vintage!;
+  const mazeTour: ServiceConfig = {
     ...vintageWithoutShorthand,
     meetingPoints: points,
     pickupOptions: [
@@ -313,12 +313,12 @@ describe('pickup option label + sub-lines (plan 018 design decision 8)', () => {
       { id: 'meet_elsewhere', requiresAddress: false, usesMeetingPoint: true },
     ],
     pricing: [
-      { maxPeople: 8, pickup: 'default', priceCents: 18000 },
-      { maxPeople: 8, pickup: 'custom_dropoff', priceCents: 21000 },
-      { maxPeople: 8, pickup: 'meet_elsewhere', priceCents: 19000 },
+      { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
+      { maxQuantity: 8, pickup: 'custom_dropoff', priceMinor: 21000 },
+      { maxQuantity: 8, pickup: 'meet_elsewhere', priceMinor: 19000 },
     ],
   };
-  const mazeConfig: ClientConfig = { ...config, tours: { ...config.tours, vintage: mazeTour } };
+  const mazeConfig: ClientConfig = { ...config, services: { ...config.services, vintage: mazeTour } };
 
   it('renders a declared option\'s own label', async () => {
     const seeded = booking({
@@ -369,18 +369,18 @@ describe('pickup option label + sub-lines (plan 018 design decision 8)', () => {
   });
 
   it('search cannot match a meeting-point label the row does not display (usesMeetingPoint: false)', async () => {
-    const noMeetTour: TourConfig = {
+    const noMeetTour: ServiceConfig = {
       ...mazeTour,
       pickupOptions: [
         { id: 'default', requiresAddress: false, usesMeetingPoint: true },
         { id: 'hotel_pickup', requiresAddress: true, usesMeetingPoint: false },
       ],
       pricing: [
-        { maxPeople: 8, pickup: 'default', priceCents: 18000 },
-        { maxPeople: 8, pickup: 'hotel_pickup', priceCents: 20000 },
+        { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
+        { maxQuantity: 8, pickup: 'hotel_pickup', priceMinor: 20000 },
       ],
     };
-    const noMeetConfig: ClientConfig = { ...config, tours: { ...config.tours, vintage: noMeetTour } };
+    const noMeetConfig: ClientConfig = { ...config, services: { ...config.services, vintage: noMeetTour } };
     const seeded = booking({
       id: 'b-admin-hidden-point', reference: 'LVT-2026-504', startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
       operatorToken: 'op-hidden-point', cancelToken: 'cancel-hidden-point',
@@ -501,34 +501,33 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     expect(response.headers.get('cache-control')).toBe('no-store');
     const body = await response.text();
     expect(body).toContain('name="booking.minNoticeHours"');
-    expect(body).toContain('name="payments.methods"');
     expect(body).toContain('Modified');
     expect(body).toContain('Default: 24');
     // The overridden field offers a per-field reset action.
     expect(body).toContain('value="settings-reset:booking.minNoticeHours"');
-    // Fleet size is a normal setting; only genuinely structural values remain deploy-time.
-    expect(body).toContain('data-bookkit-tab="fleet"');
-    expect(body).toContain('name="fleet.defaultCapacity"');
+    // Capacity size is a normal setting; only genuinely structural values remain deploy-time.
+    expect(body).toContain('data-bookkit-tab="capacity"');
+    expect(body).toContain('name="capacity.default"');
     expect(body).toContain('value="2" min="0" step="1" required');
     expect(body).toContain(config.business.timezone);
     expect(body).toContain('These cannot be changed here.');
   });
 
-  it('saves, resets, and validates the normal number of fleet vehicles', async () => {
+  it('saves, resets, and validates the normal number of capacity vehicles', async () => {
     const repo = fakeRepository();
     const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
 
-    const save = await handleAdminPost(adminPostRequest({ action: 'settings-save', section: 'fleet', 'fleet.defaultCapacity': '4' }), context);
+    const save = await handleAdminPost(adminPostRequest({ action: 'settings-save', section: 'capacity', 'capacity.default': '4' }), context);
     expect(save.status).toBe(303);
-    expect(repo.settings.get('fleet.defaultCapacity')).toBe('4');
+    expect(repo.settings.get('capacity.default')).toBe('4');
 
-    const resetToFileValue = await handleAdminPost(adminPostRequest({ action: 'settings-save', section: 'fleet', 'fleet.defaultCapacity': '2' }), context);
+    const resetToFileValue = await handleAdminPost(adminPostRequest({ action: 'settings-save', section: 'capacity', 'capacity.default': '2' }), context);
     expect(resetToFileValue.status).toBe(303);
-    expect(repo.settings.has('fleet.defaultCapacity')).toBe(false);
+    expect(repo.settings.has('capacity.default')).toBe(false);
 
-    const invalid = await handleAdminPost(adminPostRequest({ action: 'settings-save', section: 'fleet', 'fleet.defaultCapacity': '-1' }), context);
+    const invalid = await handleAdminPost(adminPostRequest({ action: 'settings-save', section: 'capacity', 'capacity.default': '-1' }), context);
     expect(invalid.status).toBe(400);
-    await expect(invalid.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('fleet.defaultCapacity') } });
+    await expect(invalid.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('capacity.default') } });
   });
 
   // BK-CONFIG-001: the holdMinutes kind declares max: 1440 (core/settings.ts); the rendered input

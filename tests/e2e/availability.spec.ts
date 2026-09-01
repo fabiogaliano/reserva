@@ -11,9 +11,9 @@ function dateRange() {
   return { from, to };
 }
 
-async function fetchAvailability(request: import('@playwright/test').APIRequestContext, people = PEOPLE) {
+async function fetchAvailability(request: import('@playwright/test').APIRequestContext, quantity = PEOPLE) {
   const { from, to } = dateRange();
-  const res = await request.get(`/api/booking/availability?tour=${TOUR}&people=${people}&from=${from}&to=${to}`);
+  const res = await request.get(`/api/booking/availability?service=${TOUR}&quantity=${quantity}&from=${from}&to=${to}`);
   return res.json();
 }
 
@@ -45,8 +45,8 @@ test('booking a slot decreases its remaining count by one, and selling it out re
   if (!openDay) throw new Error('No available day found to exercise capacity against');
   const targetStart = openDay.slots[0].start;
   const targetDate = openDay.date;
-  // The fixture's oldTown tour has no custom occupancyFor, so every booking (any party size)
-  // consumes exactly one fleet unit — `remaining` here is already bounded by fleet.defaultCapacity
+  // The fixture's oldTown service has no custom occupancyFor, so every booking (any party size)
+  // consumes exactly one capacity unit — `remaining` here is already bounded by capacity.defaultCapacity
   // (3 in this fixture) and only ever counts down, so however many other specs' bookings already
   // landed on this exact slot before this test ran, driving it the rest of the way to zero (rather
   // than assuming a fixed starting count) keeps this test independent of run order.
@@ -54,7 +54,7 @@ test('booking a slot decreases its remaining count by one, and selling it out re
   expect(remaining).toBeGreaterThan(0);
 
   while (remaining > 0) {
-    await createBooking(page, { tour: TOUR, people: PEOPLE });
+    await createBooking(page, { service: TOUR, quantity: PEOPLE });
     const after = await fetchAvailability(request);
     const day = after.days.find((d: any) => d.date === targetDate);
     const slot = day?.slots.find((s: any) => s.start === targetStart);

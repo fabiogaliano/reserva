@@ -1,24 +1,22 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createBookkitContext } from '../src/context';
-import { handleCustomerCancel, handleStripeWebhook } from '../src/handlers';
+import { handleCustomerCancel, handlePaymentWebhook } from '../src/handlers';
 import { booking, config } from './fixtures';
 import type { SideEffectOperationIdentity } from '../src/repo';
 import { fakeRepository, providers, sideEffectOperation } from './fakes';
 
 // Spec §11's most specific required case: webhook non-2xx on calendar OR email failure
-// must cause a Stripe redelivery that re-runs only the still-unsynced sink. The gating
-// lives in src/confirmation.ts:54-71 via the calendarSynced/emailSynced flags.
+// must cause a payment-provider redelivery that re-runs only the sink that hasn't succeeded yet.
+// The gating lives in the per-sink side_effect_operations rows (src/confirmation.ts).
 describe('webhook partial-failure redelivery re-runs only the unsynced sink', () => {
   it('calendar fails first: healthy email still sends, and redelivery retries only calendar', async () => {
     const seeded = booking({
       id: 'b-redelivery-calendar',
       status: 'hold',
       holdExpiresAt: '2026-06-14T09:00:00.000Z',
-      stripeSessionId: 'cs_redelivery_calendar',
-      stripePaymentIntent: null,
-      calendarSynced: false,
-      emailSynced: false,
+      paymentSessionRef: 'cs_redelivery_calendar',
+      paymentRef: null,
     });
     const repo = fakeRepository([seeded]);
     let calendarCalls = 0;
@@ -30,19 +28,19 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: providers({
         payments: {
-          createCheckout: async () => ({ url: '', sessionId: '' }),
+          createCheckout: async () => ({ url: '', sessionRef: '' }),
           parseWebhook: async () => ({
             id: 'evt_redelivery_calendar',
-            type: 'checkout.session.completed',
+            type: 'checkout_completed',
             bookingId: seeded.id,
-            sessionId: 'cs_redelivery_calendar',
-            paymentIntent: 'pi_redelivery_calendar',
+            sessionRef: 'cs_redelivery_calendar',
+            paymentRef: 'pi_redelivery_calendar',
             paid: true,
-            amountCaptured: seeded.priceCents,
+            amountCaptured: seeded.priceMinor,
             currency: config.business.currency,
           }),
           getSession: async () => ({ status: 'open' }),
-          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+          refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
         },
         calendar: {
           listEvents: async () => [],
@@ -58,7 +56,7 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
       }),
     });
 
-    const first = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    const first = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), context);
     expect(first.status).toBeGreaterThanOrEqual(500);
     expect(calendarCalls).toBe(1);
     // Provider failures are isolated per durable row; the webhook still returns non-2xx after
@@ -66,15 +64,16 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
     expect(emailCalls).toBe(1);
     const afterFirst = repo.rows.get(seeded.id);
     expect(afterFirst?.status).toBe('confirmed');
-    expect(afterFirst?.calendarSynced).toBe(false);
-    expect(afterFirst?.emailSynced).toBe(true);
+    expect(sideEffectOperation(repo, seeded.id, { family: 'calendar_create' })).toMatchObject({ status: 'failed' });
+    expect(sideEffectOperation(repo, seeded.id, { family: 'email_confirmation' })).toMatchObject({ status: 'succeeded' });
 
-    const second = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    const second = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), context);
     expect(second.status).toBe(200);
     expect(calendarCalls).toBe(2);
     expect(emailCalls).toBe(1);
-    const afterSecond = repo.rows.get(seeded.id);
-    expect(afterSecond).toMatchObject({ status: 'confirmed', calendarSynced: true, emailSynced: true });
+    expect(repo.rows.get(seeded.id)).toMatchObject({ status: 'confirmed' });
+    expect(sideEffectOperation(repo, seeded.id, { family: 'calendar_create' })).toMatchObject({ status: 'succeeded' });
+    expect(sideEffectOperation(repo, seeded.id, { family: 'email_confirmation' })).toMatchObject({ status: 'succeeded' });
   });
 
   it('surfaces a duplicate payment intent from the fake repository as a 409', async () => {
@@ -82,15 +81,15 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
       id: 'b-webhook-duplicate-payment-first',
       status: 'hold',
       holdExpiresAt: '2026-06-14T09:00:00.000Z',
-      stripeSessionId: 'cs_webhook_duplicate_payment_first',
-      stripePaymentIntent: null,
+      paymentSessionRef: 'cs_webhook_duplicate_payment_first',
+      paymentRef: null,
     });
     const second = booking({
       id: 'b-webhook-duplicate-payment-second',
       status: 'hold',
       holdExpiresAt: '2026-06-14T09:00:00.000Z',
-      stripeSessionId: 'cs_webhook_duplicate_payment_second',
-      stripePaymentIntent: null,
+      paymentSessionRef: 'cs_webhook_duplicate_payment_second',
+      paymentRef: null,
     });
     const repo = fakeRepository([first, second]);
     let eventIndex = 0;
@@ -100,44 +99,44 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
       repo,
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: providers({ payments: {
-        createCheckout: async () => ({ url: '', sessionId: '' }),
+        createCheckout: async () => ({ url: '', sessionRef: '' }),
         parseWebhook: async () => {
           const booking = eventIndex++ === 0 ? first : second;
           return {
             id: `evt_webhook_duplicate_payment_${booking.id}`,
-            type: 'checkout.session.completed' as const,
+            type: 'checkout_completed' as const,
             bookingId: booking.id,
-            sessionId: booking.stripeSessionId ?? '',
-            paymentIntent: 'pi_webhook_duplicate_payment',
+            sessionRef: booking.paymentSessionRef ?? '',
+            paymentRef: 'pi_webhook_duplicate_payment',
             paid: true,
-            amountCaptured: booking.priceCents,
+            amountCaptured: booking.priceMinor,
             currency: config.business.currency,
           };
         },
         getSession: async () => ({ status: 'open' }),
-        refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+        refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
       } }),
     });
 
-    const firstResponse = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    const firstResponse = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), context);
     expect(firstResponse.status).toBe(200);
 
-    const secondResponse = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    const secondResponse = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), context);
     expect(secondResponse.status).toBe(409);
-    await expect(secondResponse.json()).resolves.toMatchObject({ error: { code: 'duplicate_payment_intent' } });
-    expect(repo.rows.get(second.id)).toMatchObject({ status: 'hold', stripePaymentIntent: null });
+    await expect(secondResponse.json()).resolves.toMatchObject({ error: { code: 'duplicate_payment_ref' } });
+    expect(repo.rows.get(second.id)).toMatchObject({ status: 'hold', paymentRef: null });
   });
 
   it('drains a pending cancellation effect when Stripe redelivers a completed session for a terminal booking', async () => {
-    const sessionId = 'cs_redelivery_terminal_mutation';
-    const paymentIntent = 'pi_redelivery_terminal_mutation';
+    const sessionRef = 'cs_redelivery_terminal_mutation';
+    const paymentRef = 'pi_redelivery_terminal_mutation';
     const seeded = booking({
       id: 'b-redelivery-terminal-mutation',
       status: 'cancelled',
       cancelledAt: '2026-06-14T07:00:00.000Z',
       cancelledBy: 'operator',
-      stripeSessionId: sessionId,
-      stripePaymentIntent: paymentIntent,
+      paymentSessionRef: sessionRef,
+      paymentRef: paymentRef,
     });
     const repo = fakeRepository([seeded]);
     const identity: SideEffectOperationIdentity = { family: 'email', event: 'booking.cancelled_by_operator' };
@@ -150,25 +149,25 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: providers({
         payments: {
-          createCheckout: async () => ({ url: '', sessionId: '' }),
+          createCheckout: async () => ({ url: '', sessionRef: '' }),
           parseWebhook: async () => ({
             id: 'evt_redelivery_terminal_mutation',
-            type: 'checkout.session.completed',
+            type: 'checkout_completed',
             bookingId: seeded.id,
-            sessionId,
-            paymentIntent,
+            sessionRef,
+            paymentRef,
             paid: true,
-            amountCaptured: seeded.priceCents,
+            amountCaptured: seeded.priceMinor,
             currency: config.business.currency,
           }),
           getSession: async () => ({ status: 'open' }),
-          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+          refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
         },
         email: { send: async () => { emails += 1; } },
       }),
     });
 
-    const response = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    const response = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), context);
 
     expect(response.status).toBe(200);
     expect(emails).toBe(1);
@@ -180,10 +179,10 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
   // a calendar_delete row alongside the transition to cancelled whenever the booking still carries
   // a calendarEventId, and that row is owed/retryable exactly like calendar_create is.
   it('a charge.refunded full-refund webhook creates a calendar_delete debt when the delete fails, and Stripe redelivery drains it', async () => {
-    const paymentIntent = 'pi_redelivery_refund_calendar';
+    const paymentRef = 'pi_redelivery_refund_calendar';
     const seeded = booking({
       id: 'b-redelivery-refund-calendar',
-      stripePaymentIntent: paymentIntent,
+      paymentRef: paymentRef,
       calendarEventId: 'cal-redelivery-refund',
     });
     const repo = fakeRepository([seeded]);
@@ -195,17 +194,17 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: providers({
         payments: {
-          createCheckout: async () => ({ url: '', sessionId: '' }),
+          createCheckout: async () => ({ url: '', sessionRef: '' }),
           parseWebhook: async () => ({
             id: 'evt_redelivery_refund_calendar',
-            type: 'charge.refunded',
-            paymentIntent,
-            amountCaptured: seeded.priceCents,
-            amountRefunded: seeded.priceCents,
-            refundId: 're_redelivery_refund_calendar',
+            type: 'refunded',
+            paymentRef,
+            amountCaptured: seeded.priceMinor,
+            amountRefunded: seeded.priceMinor,
+            refundRef: 're_redelivery_refund_calendar',
           }),
           getSession: async () => ({ status: 'open' }),
-          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+          refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
         },
         calendar: {
           listEvents: async () => [],
@@ -219,7 +218,7 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
       }),
     });
 
-    const first = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    const first = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), context);
     expect(first.status).toBe(200);
     expect(repo.rows.get(seeded.id)?.status).toBe('cancelled');
     expect(repo.refundOperations.get(seeded.id)).toMatchObject({ status: 'succeeded', stripeRefundId: 're_redelivery_refund_calendar' });
@@ -228,7 +227,7 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
 
     // Stripe redelivers the same event — a booking-touching request for an already-cancelled
     // booking — which drains the owed calendar_delete row; this attempt succeeds.
-    const second = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    const second = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), context);
     expect(second.status).toBe(200);
     expect(deleteAttempts).toBe(2);
     expect(repo.rows.get(seeded.id)?.calendarEventId).toBeNull();
@@ -240,10 +239,8 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
       id: 'b-redelivery-email',
       status: 'hold',
       holdExpiresAt: '2026-06-14T09:00:00.000Z',
-      stripeSessionId: 'cs_redelivery_email',
-      stripePaymentIntent: null,
-      calendarSynced: false,
-      emailSynced: false,
+      paymentSessionRef: 'cs_redelivery_email',
+      paymentRef: null,
     });
     const repo = fakeRepository([seeded]);
     let calendarCalls = 0;
@@ -262,19 +259,19 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
       waitUntil: (task) => pending.push(task),
       providers: providers({
         payments: {
-          createCheckout: async () => ({ url: '', sessionId: '' }),
+          createCheckout: async () => ({ url: '', sessionRef: '' }),
           parseWebhook: async () => ({
             id: 'evt_redelivery_email',
-            type: 'checkout.session.completed',
+            type: 'checkout_completed',
             bookingId: seeded.id,
-            sessionId: 'cs_redelivery_email',
-            paymentIntent: 'pi_redelivery_email',
+            sessionRef: 'cs_redelivery_email',
+            paymentRef: 'pi_redelivery_email',
             paid: true,
-            amountCaptured: seeded.priceCents,
+            amountCaptured: seeded.priceMinor,
             currency: config.business.currency,
           }),
           getSession: async () => ({ status: 'open' }),
-          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+          refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
         },
         calendar: {
           listEvents: async () => [],
@@ -298,23 +295,24 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
       }],
     });
 
-    const first = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    const first = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), context);
     expect(first.status).toBeGreaterThanOrEqual(500);
     expect(calendarCalls).toBe(1);
     expect(emailCalls).toBe(1);
     const afterFirst = repo.rows.get(seeded.id);
     expect(afterFirst?.status).toBe('confirmed');
-    expect(afterFirst?.calendarSynced).toBe(true);
-    expect(afterFirst?.emailSynced).toBe(false);
+    expect(sideEffectOperation(repo, seeded.id, { family: 'calendar_create' })).toMatchObject({ status: 'succeeded' });
+    expect(sideEffectOperation(repo, seeded.id, { family: 'email_confirmation' })).toMatchObject({ status: 'failed' });
     expect(afterFirst?.calendarEventId).toBe('cal_redelivery_email');
 
-    const second = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    const second = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), context);
     expect(second.status).toBe(200);
-    // Calendar is gated by calendarSynced — it must not be re-run once it has succeeded.
+    // Calendar is gated by its own outbox row — it must not be re-run once that row succeeded.
     expect(calendarCalls).toBe(1);
     expect(emailCalls).toBe(2);
-    const afterSecond = repo.rows.get(seeded.id);
-    expect(afterSecond).toMatchObject({ status: 'confirmed', calendarSynced: true, emailSynced: true });
+    expect(repo.rows.get(seeded.id)).toMatchObject({ status: 'confirmed' });
+    expect(sideEffectOperation(repo, seeded.id, { family: 'calendar_create' })).toMatchObject({ status: 'succeeded' });
+    expect(sideEffectOperation(repo, seeded.id, { family: 'email_confirmation' })).toMatchObject({ status: 'succeeded' });
 
     // A non-durable hook is fire-and-forget: even though it always throws here, the webhook
     // response must still be 200, and the failure is only logged.
@@ -330,8 +328,8 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
   // row byte-identical to how the ordinary cancellation left it, converging only the refund
   // operation and minting no new side-effect debt.
   it('two redeliveries of the same charge.refunded webhook against an already-cancelled booking never touch the booking row again', async () => {
-    const paymentIntent = 'pi_redelivery_already_cancelled';
-    const seeded = booking({ id: 'b-redelivery-already-cancelled', stripePaymentIntent: paymentIntent });
+    const paymentRef = 'pi_redelivery_already_cancelled';
+    const seeded = booking({ id: 'b-redelivery-already-cancelled', paymentRef: paymentRef });
     const repo = fakeRepository([seeded]);
     const context = createBookkitContext({
       config,
@@ -340,13 +338,13 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: providers({
         payments: {
-          createCheckout: async () => ({ url: '', sessionId: '' }),
+          createCheckout: async () => ({ url: '', sessionRef: '' }),
           parseWebhook: async () => ({
-            id: 'evt_redelivery_already_cancelled', type: 'charge.refunded', paymentIntent,
-            amountCaptured: seeded.priceCents, amountRefunded: seeded.priceCents, refundId: 're_redelivery_already_cancelled',
+            id: 'evt_redelivery_already_cancelled', type: 'refunded', paymentRef,
+            amountCaptured: seeded.priceMinor, amountRefunded: seeded.priceMinor, refundRef: 're_redelivery_already_cancelled',
           }),
           getSession: async () => ({ status: 'open' }),
-          refund: async () => ({ refundId: 're_should_not_run', amountCents: seeded.priceCents }),
+          refund: async () => ({ refundRef: 're_should_not_run', amountMinor: seeded.priceMinor }),
         },
       }),
     });
@@ -360,16 +358,16 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
     const beforeWebhook = structuredClone(repo.rows.get(seeded.id));
     const sideEffectKeysBefore = [...repo.sideEffectOperations.keys()].sort();
 
-    const first = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    const first = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), context);
     expect(first.status).toBe(200);
-    const second = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    const second = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), context);
     expect(second.status).toBe(200);
 
     // status, cancelledBy, cancelledAt, updatedAt (and every other field) must deep-equal the
     // ordinary cancellation's row exactly — no second transition, no re-stamped updatedAt.
     expect(repo.rows.get(seeded.id)).toEqual(beforeWebhook);
     expect(repo.refundOperations.get(seeded.id)).toMatchObject({
-      choice: 'full', status: 'succeeded', stripeRefundId: 're_redelivery_already_cancelled', amountCents: seeded.priceCents,
+      choice: 'full', status: 'succeeded', stripeRefundId: 're_redelivery_already_cancelled', amountCents: seeded.priceMinor,
     });
     // Neither redelivery mints side-effect debt beyond what the original cancellation created.
     expect([...repo.sideEffectOperations.keys()].sort()).toEqual(sideEffectKeysBefore);

@@ -24,20 +24,21 @@ async function seedConfirmed(id: string): Promise<void> {
   await context.repo.insertHold({
     id,
     reference: `BKT-2026-${id}`,
-    tourSlug: 'vintage',
-    people: 2,
+    serviceSlug: 'vintage',
+    quantity: 2,
     pickupType: 'default',
     startsAt: '2026-08-20T09:00:00.000Z',
     endsAt: '2026-08-20T10:00:00.000Z',
     locale: 'en',
-    priceCents: 12000,
+    priceMinor: 12000,
+    currency: 'eur',
     holdExpiresAt: '2026-07-21T10:35:00.000Z',
     cancelToken: `cancel-${id}`,
     operatorToken: `operator-${id}`,
     createdAt: '2026-07-21T10:00:00.000Z',
     updatedAt: '2026-07-21T10:00:00.000Z',
   });
-  await context.repo.transitionToConfirmed(id, { expectedStatusIn: ['hold'], stripePaymentIntent: `pi_${id}`, updatedAt: '2026-07-21T10:01:00.000Z' });
+  await context.repo.transitionToConfirmed(id, { expectedStatusIn: ['hold'], paymentRef: `pi_${id}`, updatedAt: '2026-07-21T10:01:00.000Z' });
 }
 
 // Plan 020 (design decision 1-2): proves runReconciliation's real end-to-end pipeline — expired
@@ -47,9 +48,9 @@ describe('runReconciliation against real D1', () => {
   it('sweeps an expired hold', async () => {
     const context = createBookkitContext({ config, db, clock, providers: providers() });
     await context.repo.insertHold({
-      id: 'recon-d1-expired', reference: 'BKT-2026-recon-d1-expired', tourSlug: 'vintage', people: 2,
+      id: 'recon-d1-expired', reference: 'BKT-2026-recon-d1-expired', serviceSlug: 'vintage', quantity: 2,
       pickupType: 'default', startsAt: '2026-08-20T09:00:00.000Z', endsAt: '2026-08-20T10:00:00.000Z',
-      locale: 'en', priceCents: 12000, holdExpiresAt: '2026-08-14T09:00:00.000Z',
+      locale: 'en', priceMinor: 12000, currency: 'eur', holdExpiresAt: '2026-08-14T09:00:00.000Z',
       cancelToken: 'cancel-recon-d1-expired', operatorToken: 'operator-recon-d1-expired',
       createdAt: '2026-08-14T08:00:00.000Z', updatedAt: '2026-08-14T08:00:00.000Z',
     });
@@ -66,10 +67,10 @@ describe('runReconciliation against real D1', () => {
       config, db, clock,
       providers: providers({
         payments: {
-          createCheckout: async () => ({ url: '', sessionId: '' }),
+          createCheckout: async () => ({ url: '', sessionRef: '' }),
           parseWebhook: async () => { throw new Error('unused'); },
           getSession: async () => ({ status: 'open' }),
-          refund: async () => ({ refundId: 're_recon_d1', amountCents: 12000 }),
+          refund: async () => ({ refundRef: 're_recon_d1', amountMinor: 12000 }),
         },
       }),
     });
@@ -133,13 +134,13 @@ describe('runReconciliation against real D1', () => {
       config, db, clock,
       providers: providers({
         payments: {
-          createCheckout: async () => ({ url: '', sessionId: '' }),
+          createCheckout: async () => ({ url: '', sessionRef: '' }),
           parseWebhook: async () => { throw new Error('unused'); },
           getSession: async () => ({ status: 'open' }),
           refund: async () => {
             refunds += 1;
             await expect(context.repo.getBookingById(id)).resolves.toMatchObject({ status: 'cancelled' });
-            return { refundId: 're_recon_d1_after_cancel', amountCents: 12000 };
+            return { refundRef: 're_recon_d1_after_cancel', amountMinor: 12000 };
           },
         },
       }),

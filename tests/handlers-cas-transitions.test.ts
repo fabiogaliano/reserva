@@ -7,7 +7,7 @@ import {
   handleOperatorCancel,
   handleOperatorNoShow,
   handleOperatorReschedule,
-  handleStripeWebhook,
+  handlePaymentWebhook,
 } from '../src/handlers';
 import { booking, config } from './fixtures';
 import { sideEffectOperationKey, type SideEffectOperationIdentity } from '../src/repo';
@@ -202,7 +202,7 @@ describe('stale compare-and-set transitions', () => {
     // its own mutationSideEffects (mirroring cancellationSideEffectSeeds in src/confirmation.ts),
     // so this also pins that the stale webhook's re-read-and-drain path picks up and resolves the
     // winner's calendar debt, not just its email/hook rows.
-    const seeded = booking({ id: 'b-refund-vs-cancel', stripePaymentIntent: 'pi_refund_stale', calendarEventId: 'cal-refund-vs-cancel' });
+    const seeded = booking({ id: 'b-refund-vs-cancel', paymentRef: 'pi_refund_stale', calendarEventId: 'cal-refund-vs-cancel' });
     const repo = fakeRepository([seeded]);
     const realRefundTransition = repo.upsertRefundOperationAndTransitionToCancelled;
     const customerTransition = repo.transitionToCancelled;
@@ -240,16 +240,16 @@ describe('stale compare-and-set transitions', () => {
       clock,
       providers: providers({
         payments: {
-          createCheckout: async () => ({ url: '', sessionId: '' }),
+          createCheckout: async () => ({ url: '', sessionRef: '' }),
           parseWebhook: async () => ({
             id: 'evt_refund_stale',
-            type: 'charge.refunded',
-            paymentIntent: 'pi_refund_stale',
-            amountCaptured: seeded.priceCents,
-            amountRefunded: seeded.priceCents,
+            type: 'refunded',
+            paymentRef: 'pi_refund_stale',
+            amountCaptured: seeded.priceMinor,
+            amountRefunded: seeded.priceMinor,
           }),
           getSession: async () => ({ status: 'open' }),
-          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+          refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
         },
         calendar: {
           listEvents: async () => [], createEvent: async () => 'unused', patchEvent: async () => undefined,
@@ -265,9 +265,9 @@ describe('stale compare-and-set transitions', () => {
       }),
       hooks: [{ name: 'ops', durable: true, handler: async (event) => { opsEvents.push(event); } }],
     });
-    const request = new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' });
+    const request = new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' });
 
-    const first = await handleStripeWebhook(request, context);
+    const first = await handlePaymentWebhook(request, context);
     expect(first.status).toBe(200);
     expect(rereads).toBe(1);
     expect(repo.rows.get(seeded.id)).toMatchObject({ status: 'cancelled', cancelledBy: 'customer' });
@@ -285,7 +285,7 @@ describe('stale compare-and-set transitions', () => {
       'hook:ops:booking.cancelled_by_customer',
     ]);
 
-    const second = await handleStripeWebhook(request, context);
+    const second = await handlePaymentWebhook(request, context);
     expect(second.status).toBe(200);
     expect(emails).toEqual(['booking.cancelled_by_customer', 'booking.cancelled_by_customer']);
     expect(opsEvents).toEqual(['booking.cancelled_by_customer']);
@@ -298,10 +298,8 @@ describe('stale compare-and-set transitions', () => {
       id: 'b-confirm-vs-cancel',
       status: 'hold',
       holdExpiresAt: '2026-06-14T09:00:00.000Z',
-      stripeSessionId: 'cs_confirm_stale',
-      stripePaymentIntent: null,
-      calendarSynced: false,
-      emailSynced: false,
+      paymentSessionRef: 'cs_confirm_stale',
+      paymentRef: null,
     });
     const repo = fakeRepository([seeded]);
     const realTransition = repo.confirmWithSideEffectOperations;
@@ -327,19 +325,19 @@ describe('stale compare-and-set transitions', () => {
       clock,
       providers: providers({
         payments: {
-          createCheckout: async () => ({ url: '', sessionId: '' }),
+          createCheckout: async () => ({ url: '', sessionRef: '' }),
           parseWebhook: async () => ({
             id: 'evt_confirm_stale',
-            type: 'checkout.session.completed',
+            type: 'checkout_completed',
             bookingId: seeded.id,
-            sessionId: 'cs_confirm_stale',
-            paymentIntent: 'pi_confirm_stale',
+            sessionRef: 'cs_confirm_stale',
+            paymentRef: 'pi_confirm_stale',
             paid: true,
-            amountCaptured: seeded.priceCents,
+            amountCaptured: seeded.priceMinor,
             currency: config.business.currency,
           }),
           getSession: async () => ({ status: 'open' }),
-          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+          refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
         },
         calendar: {
           listEvents: async () => [],
@@ -351,7 +349,7 @@ describe('stale compare-and-set transitions', () => {
       }),
     });
 
-    const response = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    const response = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), context);
     expect(response.status).toBe(503);
     const row = repo.rows.get(seeded.id);
     expect(row?.status).toBe('cancelled');

@@ -19,13 +19,14 @@ async function seedConfirmed(id: string): Promise<void> {
   await repo.insertHold({
     id,
     reference: `BKT-2026-${id}`,
-    tourSlug: 'vintage',
-    people: 2,
+    serviceSlug: 'vintage',
+    quantity: 2,
     pickupType: 'default',
     startsAt: '2026-08-01T09:00:00.000Z',
     endsAt: '2026-08-01T10:00:00.000Z',
     locale: 'en',
-    priceCents: 12000,
+    priceMinor: 12000,
+    currency: 'eur',
     holdExpiresAt: '2026-07-21T10:35:00.000Z',
     cancelToken: `cancel-${id}`,
     operatorToken: `operator-${id}`,
@@ -34,7 +35,7 @@ async function seedConfirmed(id: string): Promise<void> {
   });
   const confirmed = await repo.transitionToConfirmed(id, {
     expectedStatusIn: ['hold'],
-    stripePaymentIntent: `pi_${id}`,
+    paymentRef: `pi_${id}`,
     updatedAt: '2026-07-21T10:01:00.000Z',
   });
   expect(confirmed).toMatchObject({ status: 'confirmed' });

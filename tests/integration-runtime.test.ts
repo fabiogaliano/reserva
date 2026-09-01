@@ -5,10 +5,10 @@ import { defineCloudflareBookkitRuntime, getCache, getEnv } from '../src/runtime
 import { BOOKKIT_MIGRATIONS } from '../src/migrations-manifest';
 
 const payments = {
-  createCheckout: async () => ({ url: 'https://checkout.test', sessionId: 'cs_test' }),
+  createCheckout: async () => ({ url: 'https://checkout.test', sessionRef: 'cs_test' }),
   parseWebhook: async () => ({ id: 'evt_test', type: 'unknown' as const }),
   getSession: async () => ({ status: 'open' as const }),
-  refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+  refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
 };
 
 describe('Cloudflare runtime helpers', () => {
@@ -21,25 +21,24 @@ describe('Cloudflare runtime helpers', () => {
       prepare: (query: string) => ({
         all: async () => {
           if (query.startsWith('PRAGMA table_info(bookings)')) {
-            return { results: ['occupancy_units', 'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at', 'reschedule_transition_version', 'meeting_point_id'].map((name) => ({ name })) };
+            return { results: ['occupancy_units', 'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at', 'reschedule_transition_version', 'meeting_point_id', 'currency', 'metadata'].map((name) => ({ name })) };
           }
-          if (query.includes("name IN ('bookings', 'idx_bookings_payment_intent')")) {
+          if (query.includes("name IN ('bookings', 'idx_bookings_payment_ref')")) {
             return {
               results: [
                 {
                   type: 'table', name: 'bookings',
                   sql: `CREATE TABLE bookings (
-                    people INTEGER CHECK (people > 0), pickup_type TEXT,
-                    starts_at TEXT, ends_at TEXT CHECK (ends_at > starts_at), price_cents INTEGER CHECK (price_cents >= 0),
+                    quantity INTEGER CHECK (quantity > 0), pickup_type TEXT,
+                    starts_at TEXT, ends_at TEXT CHECK (ends_at > starts_at), price_minor INTEGER CHECK (price_minor >= 0),
+                    currency TEXT NOT NULL, metadata TEXT,
                     status TEXT CHECK (status IN ('hold','confirmed','cancelled','expired','no_show')),
-                    calendar_synced INTEGER CHECK (calendar_synced IN (0,1)), email_synced INTEGER CHECK (email_synced IN (0,1)),
-                    tourflow_synced INTEGER CHECK (tourflow_synced IN (0,1)),
                     cancelled_by TEXT CHECK (cancelled_by IN ('customer','operator') OR cancelled_by IS NULL)
                   )`,
                 },
                 {
-                  type: 'index', name: 'idx_bookings_payment_intent',
-                  sql: 'CREATE UNIQUE INDEX idx_bookings_payment_intent ON bookings (stripe_payment_intent) WHERE stripe_payment_intent IS NOT NULL',
+                  type: 'index', name: 'idx_bookings_payment_ref',
+                  sql: 'CREATE UNIQUE INDEX idx_bookings_payment_ref ON bookings (payment_ref) WHERE payment_ref IS NOT NULL',
                 },
               ],
             };

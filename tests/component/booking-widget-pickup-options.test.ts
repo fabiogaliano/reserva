@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 // @ts-expect-error -- resolved by vitest.component.config.ts's Astro Vite pipeline, not by tsc.
 import BookingWidget from '../../src/components/BookingWidget.astro';
 
-const baseProps = { tourSlug: 'oldTown', availabilityFrom: '2026-01-01', availabilityTo: '2026-01-02', locale: 'en' };
+const baseProps = { serviceSlug: 'oldTown', availabilityFrom: '2026-01-01', availabilityTo: '2026-01-02', locale: 'en' };
 const fixturesDir = resolve(import.meta.dirname, '__fixtures__');
 
 // dateLabelId is a fresh crypto.randomUUID() every render (Plan 014 item A), and AstroContainer's
@@ -70,10 +70,10 @@ const mazePickupOptions = [
 ];
 
 const mazePricing = [
-  { maxPeople: 4, pickup: 'meeting_point', priceCents: 18000 },
-  { maxPeople: 4, pickup: 'custom_dropoff', priceCents: 20000 },
-  { maxPeople: 4, pickup: 'custom_pickup', priceCents: 20000 },
-  { maxPeople: 4, pickup: 'custom_both', priceCents: 21000 },
+  { maxQuantity: 4, pickup: 'meeting_point', priceMinor: 18000 },
+  { maxQuantity: 4, pickup: 'custom_dropoff', priceMinor: 20000 },
+  { maxQuantity: 4, pickup: 'custom_pickup', priceMinor: 20000 },
+  { maxQuantity: 4, pickup: 'custom_both', priceMinor: 21000 },
 ];
 
 describe('BookingWidget.astro pickupOptions prop (plan 018 design decision 9)', () => {
@@ -138,8 +138,8 @@ describe('BookingWidget.astro pickupOptions prop (plan 018 design decision 9)', 
     const island = html.match(/<script type="application\/json" data-bookkit-data>([^<]+)<\/script>/);
     expect(island).toBeTruthy();
     const data = JSON.parse(island![1]!);
-    // Each id's single maxPeople:4 row covers every party size 1-4 at one flat price (index 0 is
-    // never set — the table is 1-indexed by people count — so JSON round-trips it as null).
+    // Each id's single maxQuantity:4 row covers every party size 1-4 at one flat price (index 0 is
+    // never set — the table is 1-indexed by quantity count — so JSON round-trips it as null).
     expect(data.resolvedPrices).toEqual({
       meeting_point: [null, 18000, 18000, 18000, 18000],
       custom_dropoff: [null, 20000, 20000, 20000, 20000],

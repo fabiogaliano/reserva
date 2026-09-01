@@ -30,13 +30,14 @@ async function seedConfirmed(id: string): Promise<void> {
   await repo.insertHold({
     id,
     reference: `BKT-2026-${id}`,
-    tourSlug: 'vintage',
-    people: 2,
+    serviceSlug: 'vintage',
+    quantity: 2,
     pickupType: 'default',
     startsAt: '2026-08-01T09:00:00.000Z',
     endsAt: '2026-08-01T10:00:00.000Z',
     locale: 'en',
-    priceCents: 12000,
+    priceMinor: 12000,
+    currency: 'eur',
     holdExpiresAt: '2026-07-21T10:35:00.000Z',
     cancelToken: `cancel-${id}`,
     operatorToken: `operator-${id}`,
@@ -233,13 +234,14 @@ describe('BK-DATA-001 pairwise CAS interleavings on real D1', () => {
     await repo.insertHold({
       id,
       reference: `BKT-2026-${id}`,
-      tourSlug: 'vintage',
-      people: 2,
+      serviceSlug: 'vintage',
+      quantity: 2,
       pickupType: 'default',
       startsAt: '2026-08-01T09:00:00.000Z',
       endsAt: '2026-08-01T10:00:00.000Z',
       locale: 'en',
-      priceCents: 12000,
+      priceMinor: 12000,
+      currency: 'eur',
       holdExpiresAt: '2026-07-21T10:35:00.000Z',
       cancelToken: `cancel-${id}`,
       operatorToken: `operator-${id}`,
@@ -257,13 +259,13 @@ describe('BK-DATA-001 pairwise CAS interleavings on real D1', () => {
 
     const loser = await repo.transitionToConfirmed(id, {
       expectedStatusIn: ['hold', 'expired'],
-      stripePaymentIntent: 'pi_stale_confirm',
+      paymentRef: 'pi_stale_confirm',
       updatedAt: '2026-07-21T11:00:01.000Z',
     });
     expect(loser).toBeNull();
 
     const final = await repo.getBookingById(id);
     expect(final?.status).toBe('cancelled');
-    expect(final?.stripePaymentIntent).toBeNull();
+    expect(final?.paymentRef).toBeNull();
   });
 });

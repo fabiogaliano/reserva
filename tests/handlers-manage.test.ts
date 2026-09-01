@@ -4,7 +4,7 @@ import { createBookkitContext } from '../src/context';
 import { handleManage } from '../src/handlers';
 import { renderManagePage } from '../src/components/manage-page';
 import { utcToLocalIso } from '../src/core/time';
-import { booking, config, tour } from './fixtures';
+import { booking, config, service } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
 const clock = () => new Date('2026-06-14T08:00:00.000Z');
@@ -27,7 +27,7 @@ function manageRequest(token?: string): Request {
 
 // Spec §11: GET /manage is one page serving two capability sets from the same
 // token lookup — customer tokens enforce the cancel/reschedule cutoff, operator
-// tokens don't (they can also mark no-show once the tour has started).
+// tokens don't (they can also mark no-show once the service has started).
 describe('GET /manage (spec §11)', () => {
   it('customer token outside the cutoff can cancel and reschedule, and reports the booking summary + deadline', async () => {
     const seeded = booking({
@@ -52,22 +52,22 @@ describe('GET /manage (spec §11)', () => {
     expect(payload.deadline).toBe('2026-06-14T09:00:00.000Z');
     expect(payload.booking).toMatchObject({
       reference: seeded.reference,
-      tourSlug: seeded.tourSlug,
-      people: seeded.people,
+      serviceSlug: seeded.serviceSlug,
+      quantity: seeded.quantity,
       pickupType: seeded.pickupType,
       pickupAddress: seeded.pickupAddress,
       start: utcToLocalIso(seeded.startsAt, config.business.timezone),
       end: utcToLocalIso(seeded.endsAt, config.business.timezone),
       locale: seeded.locale,
-      priceCents: seeded.priceCents,
+      priceMinor: seeded.priceMinor,
       customerName: seeded.customerName,
       customerEmail: seeded.customerEmail,
       customerPhone: seeded.customerPhone,
       status: seeded.status,
       // Plan 017 (design decision 3): the validated fixture config has no meetingPoint shorthand
       // left on it (normalized into meetingPoints by validateConfig) — this booking has no stored
-      // meetingPointId, so bookingSummary resolves it to the tour's single declared point.
-      meetingPoint: { label: tour.meetingPoint!.label, mapsUrl: tour.meetingPoint!.mapsUrl },
+      // meetingPointId, so bookingSummary resolves it to the service's single declared point.
+      meetingPoint: { label: service.meetingPoint!.label, mapsUrl: service.meetingPoint!.mapsUrl },
     });
   });
 
@@ -76,8 +76,8 @@ describe('GET /manage (spec §11)', () => {
       { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
       { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
     ];
-    const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = tour;
-    const multiPointConfig = { ...config, tours: { ...config.tours, vintage: { ...vintageWithoutShorthand, meetingPoints: points } } };
+    const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = service;
+    const multiPointConfig = { ...config, services: { ...config.services, vintage: { ...vintageWithoutShorthand, meetingPoints: points } } };
 
     const chosenSecond = booking({
       id: 'b-manage-meeting-point-chosen', cancelToken: 'cancel-meeting-point-chosen', operatorToken: 'operator-meeting-point-chosen',
@@ -114,11 +114,11 @@ describe('GET /manage (spec §11)', () => {
       { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
       { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
     ];
-    const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = tour;
+    const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = service;
     const mazeConfig = {
       ...config,
-      tours: {
-        ...config.tours,
+      services: {
+        ...config.services,
         vintage: {
           ...vintageWithoutShorthand,
           meetingPoints: points,
@@ -128,9 +128,9 @@ describe('GET /manage (spec §11)', () => {
             { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
           ],
           pricing: [
-            { maxPeople: 8, pickup: 'default', priceCents: 18000 },
-            { maxPeople: 8, pickup: 'custom_pickup', priceCents: 20000 },
-            { maxPeople: 8, pickup: 'custom_dropoff', priceCents: 21000 },
+            { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
+            { maxQuantity: 8, pickup: 'custom_pickup', priceMinor: 20000 },
+            { maxQuantity: 8, pickup: 'custom_dropoff', priceMinor: 21000 },
           ],
         },
       },
@@ -164,7 +164,7 @@ describe('GET /manage (spec §11)', () => {
 
     it('renderManagePage gates the address and meeting-point facts on the flags, independently', () => {
       const base = {
-        reference: 'LVT-2026-800', tourSlug: 'vintage', start: '2026-06-20T09:00', people: 2, status: 'confirmed',
+        reference: 'LVT-2026-800', serviceSlug: 'vintage', start: '2026-06-20T09:00', quantity: 2, status: 'confirmed',
         pickupAddress: 'Hotel Mundial, Lisbon', meetingPoint: { label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
       };
       const addressOnly = renderManagePage({

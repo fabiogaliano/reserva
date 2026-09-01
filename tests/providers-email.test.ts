@@ -1,26 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ClientConfig, TourConfig } from '../src/core/config';
+import type { ClientConfig, ServiceConfig } from '../src/core/config';
 import { BrevoResponseError, brevoEmail, BREVO_TRANSACTIONAL_EMAIL_URL } from '../src/providers/brevo';
 import { calendarInviteOnly } from '../src/providers/noop';
-import { booking, config, tour } from './fixtures';
+import { booking, config, service } from './fixtures';
 import { resolveRouteConfig } from '../src/routes-manifest';
 
-// Plan 017 (design decision 4): a canonical (post-validateConfig-shaped) multi-point tour, built
+// Plan 017 (design decision 4): a canonical (post-validateConfig-shaped) multi-point service, built
 // inline per the plan's "don't edit shared fixture files" rule — fixtures.ts stays a single-point
-// `meetingPoint` shorthand tour so every other suite's byte-identical assertions keep holding.
-const { meetingPoint: _meetingPoint, ...tourWithoutShorthand } = tour;
-const multiPointTour: TourConfig = {
+// `meetingPoint` shorthand service so every other suite's byte-identical assertions keep holding.
+const { meetingPoint: _meetingPoint, ...tourWithoutShorthand } = service;
+const multiPointTour: ServiceConfig = {
   ...tourWithoutShorthand,
   meetingPoints: [
     { id: 'default', label: 'Praça do Comércio', mapsUrl: 'https://maps.google.com/?q=Praca+do+Comercio' },
     { id: 'belem', label: 'Belém Tower', mapsUrl: 'https://maps.google.com/?q=Belem+Tower' },
   ],
 };
-const multiPointConfig: ClientConfig = { ...config, tours: { vintage: multiPointTour } };
+const multiPointConfig: ClientConfig = { ...config, services: { vintage: multiPointTour } };
 
 // Plan 018 (design decision 8): a declared option with BOTH requiresAddress and usesMeetingPoint
 // (Maze's combined custom pickup+drop-off) — built inline per the same "don't touch fixtures.ts" rule.
-const bothFlagsTour: TourConfig = {
+const bothFlagsTour: ServiceConfig = {
   ...multiPointTour,
   pickupOptions: [
     { id: 'default', requiresAddress: false, usesMeetingPoint: true },
@@ -28,12 +28,12 @@ const bothFlagsTour: TourConfig = {
     { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
   ],
   pricing: [
-    { maxPeople: 8, pickup: 'default', priceCents: 18000 },
-    { maxPeople: 8, pickup: 'custom_dropoff', priceCents: 21000 },
-    { maxPeople: 8, pickup: 'custom_pickup', priceCents: 20000 },
+    { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
+    { maxQuantity: 8, pickup: 'custom_dropoff', priceMinor: 21000 },
+    { maxQuantity: 8, pickup: 'custom_pickup', priceMinor: 20000 },
   ],
 };
-const bothFlagsConfig: ClientConfig = { ...config, tours: { vintage: bothFlagsTour } };
+const bothFlagsConfig: ClientConfig = { ...config, services: { vintage: bothFlagsTour } };
 
 describe('email providers', () => {
   it('posts localized customer and owner messages to Brevo', async () => {
@@ -180,9 +180,9 @@ describe('email providers', () => {
   });
 
   // Plan 017 (design decision 4/7): the label/maps link now resolve per booking (chosen meeting
-  // point id) instead of always reading the tour's single `meetingPoint` — the template variable
+  // point id) instead of always reading the service's single `meetingPoint` — the template variable
   // names stay {pickupDetails}/{pickupMapLink} (decision 7).
-  it('renders the label and maps link for the meeting point the booking chose on a multi-point tour', async () => {
+  it('renders the label and maps link for the meeting point the booking chose on a multi-point service', async () => {
     const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
     const provider = brevoEmail({ apiKey: 'key', fetch: request });
 
@@ -244,9 +244,9 @@ describe('email providers', () => {
   });
 
   // Plan 017 done criterion: an existing single-point `meetingPoint` config renders byte-identical
-  // output — no meetingPointId/-Label on the booking resolves to the tour's one declared point,
+  // output — no meetingPointId/-Label on the booking resolves to the service's one declared point,
   // same as before this plan.
-  it('renders the single declared meeting point unchanged for a single-point tour', async () => {
+  it('renders the single declared meeting point unchanged for a single-point service', async () => {
     const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
     const provider = brevoEmail({ apiKey: 'key', fetch: request });
 

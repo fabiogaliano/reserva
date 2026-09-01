@@ -61,7 +61,7 @@ describe('mutation side-effect outbox', () => {
       expectedStatus: 'confirmed', expectedStartsAt: rescheduled.startsAt,
       startsAt: '2026-06-16T09:00:00.000Z', endsAt: '2026-06-16T10:00:00.000Z',
       rescheduledFrom: rescheduled.startsAt, updatedAt: now, now,
-      occupancyUnits: 1, occupancyEndsAt: '2026-06-16T10:30:00.000Z', localDate: '2026-06-16', fleetDefaultCapacity: 4,
+      occupancyUnits: 1, occupancyEndsAt: '2026-06-16T10:30:00.000Z', localDate: '2026-06-16', defaultCapacity: 4,
       mutationSideEffects: [seed(rescheduleIdentity)],
     });
 

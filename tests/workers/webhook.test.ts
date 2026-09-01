@@ -11,7 +11,7 @@ import worker, { WEBHOOK_SECRET, calendarEvents, emailOutbox, hookOutbox, resetW
 // the webhook route and confirming a booking with durable side effects -- was never proven
 // assembled. Every request below goes through the real worker (./worker.ts): real
 // defineCloudflareBookkitRuntime, a real StripeProvider doing real HMAC signature verification
-// (no mocked constructEventAsync anywhere in this file), the real handleStripeWebhook, and real D1.
+// (no mocked constructEventAsync anywhere in this file), the real handlePaymentWebhook, and real D1.
 
 const db = (env as unknown as { BOOKKIT_DB: D1Database }).BOOKKIT_DB;
 const repo = createBookingRepository(db);
@@ -35,13 +35,14 @@ async function seedHeldBooking(id: string): Promise<Booking> {
   return repo.insertHold({
     id,
     reference: `WHT-2026-${id}`,
-    tourSlug: 'oldTown',
-    people: 2,
+    serviceSlug: 'oldTown',
+    quantity: 2,
     pickupType: 'default',
     startsAt: futureIso(30 * 24 * 60 * 60_000),
     endsAt: futureIso(30 * 24 * 60 * 60_000 + 60 * 60_000),
     locale: 'en',
-    priceCents: 2500,
+    priceMinor: 2500,
+    currency: 'eur',
     holdExpiresAt: futureIso(60 * 60_000),
     cancelToken: `${id}-cancel-token`,
     operatorToken: `${id}-operator-token`,
@@ -87,7 +88,7 @@ async function signPayload(payload: string, secret: string = WEBHOOK_SECRET): Pr
 function webhookRequest(payload: string, signature: string | null): Request {
   const headers = new Headers();
   if (signature !== null) headers.set('stripe-signature', signature);
-  return new Request('http://localhost/api/booking/webhooks/stripe', { method: 'POST', headers, body: payload });
+  return new Request('http://localhost/api/booking/webhooks/payment', { method: 'POST', headers, body: payload });
 }
 
 // The documented integration-test pattern for a modules-format worker's ctx.waitUntil() side
@@ -123,10 +124,8 @@ describe('signed Stripe webhook through the assembled worker + real D1', () => {
     if (!confirmed) throw new Error('booking disappeared');
     expect(confirmed).toMatchObject({
       status: 'confirmed',
-      stripeSessionId: fixture.sessionId,
-      stripePaymentIntent: fixture.paymentIntent,
-      calendarSynced: true,
-      emailSynced: true,
+      paymentSessionRef: fixture.sessionId,
+      paymentRef: fixture.paymentIntent,
     });
 
     expect(calendarEvents.get(`cal_${id}`)).toBeDefined();
@@ -160,7 +159,7 @@ describe('signed Stripe webhook through the assembled worker + real D1', () => {
     expect(unsignedResponse.status).toBe(400);
 
     const untouched = await repo.getBookingById(id);
-    expect(untouched).toMatchObject({ status: 'hold', stripeSessionId: null, stripePaymentIntent: null });
+    expect(untouched).toMatchObject({ status: 'hold', paymentSessionRef: null, paymentRef: null });
     expect(await repo.listSideEffectOperations(id)).toEqual([]);
     expect(calendarEvents.size).toBe(0);
     expect(emailOutbox).toEqual([]);
@@ -183,7 +182,7 @@ describe('signed Stripe webhook through the assembled worker + real D1', () => {
     await expect(second.json()).resolves.toEqual({ received: true });
 
     const confirmed = await repo.getBookingById(id);
-    expect(confirmed).toMatchObject({ status: 'confirmed', stripeSessionId: fixture.sessionId, stripePaymentIntent: fixture.paymentIntent });
+    expect(confirmed).toMatchObject({ status: 'confirmed', paymentSessionRef: fixture.sessionId, paymentRef: fixture.paymentIntent });
 
     // Every provider call is attempted exactly once, not once per delivery.
     expect(calendarEvents.size).toBe(1);
@@ -215,12 +214,12 @@ describe('signed Stripe webhook through the assembled worker + real D1', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ received: true });
 
-    // src/handlers/index.ts handleStripeWebhook: confirmBookingFromPayment is a no-op for a
+    // src/handlers/index.ts handlePaymentWebhook: confirmBookingFromPayment is a no-op for a
     // booking that isn't hold/expired (it returns the booking unchanged, never re-confirming a
     // cancelled booking), but the unconditional session-id backfill below it still runs -- Stripe's
     // session id is recorded either way, without moving the booking off 'cancelled'.
     const stillCancelled = await repo.getBookingById(id);
-    expect(stillCancelled).toMatchObject({ status: 'cancelled', stripeSessionId: fixture.sessionId });
+    expect(stillCancelled).toMatchObject({ status: 'cancelled', paymentSessionRef: fixture.sessionId });
     expect(await repo.listSideEffectOperations(id)).toEqual([]);
     expect(calendarEvents.size).toBe(0);
     expect(emailOutbox).toEqual([]);

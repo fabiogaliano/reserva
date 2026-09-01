@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { createBooking } from './helpers';
 
 test('Full happy path: book and manage as customer', async ({ page }) => {
-  const { reference, outboxEntry } = await createBooking(page, { tour: 'oldTown', people: 2 });
+  const { reference, outboxEntry } = await createBooking(page, { service: 'oldTown', quantity: 2 });
 
   expect(reference).toBeTruthy();
 
@@ -38,7 +38,7 @@ test.describe('booking funnel in a timezone behind UTC (regression: BookingWidge
 
     const from = new Date().toISOString().slice(0, 10);
     const to = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
-    const availability = await (await request.get(`/api/booking/availability?tour=oldTown&people=2&from=${from}&to=${to}`)).json();
+    const availability = await (await request.get(`/api/booking/availability?service=oldTown&quantity=2&from=${from}&to=${to}`)).json();
     const openDay = availability.days.find((d: any) => d.slots.length > 0);
     if (!openDay) throw new Error('No available day found to probe isDateDisallowed against');
 
@@ -56,7 +56,7 @@ test.describe('booking funnel in a timezone behind UTC (regression: BookingWidge
     }, openDay.date);
     expect(disallowed).toBe(false);
 
-    const { reference } = await createBooking(page, { tour: 'oldTown', people: 2 });
+    const { reference } = await createBooking(page, { service: 'oldTown', quantity: 2 });
     expect(reference).toBeTruthy();
     await expect(page.locator('.bk-badge--ok')).toBeVisible();
   });

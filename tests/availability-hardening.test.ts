@@ -18,27 +18,27 @@ function memoryCache(): BookkitCache {
   };
 }
 
-function availabilityRequest(tour = 'vintage', people = 2): Request {
-  return new Request(`https://example.test/api/booking/availability?tour=${tour}&people=${people}&from=2026-06-15&to=2026-06-15`);
+function availabilityRequest(service = 'vintage', quantity = 2): Request {
+  return new Request(`https://example.test/api/booking/availability?service=${service}&quantity=${quantity}&from=2026-06-15&to=2026-06-15`);
 }
 
 function checkoutRequest(): Request {
   return new Request('https://example.test/api/booking/checkout', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ tourSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', people: 2, pickupType: 'default', locale: 'en' }),
+    body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity: 2, pickupType: 'default', locale: 'en' }),
   });
 }
 
 describe('calendar availability hardening', () => {
-  it('shares normalized calendar occupancy across availability queries with different tours and party sizes', async () => {
+  it('shares normalized calendar occupancy across availability queries with different services and party sizes', async () => {
     let calls = 0;
     const context = createBookkitContext({
       config: {
         ...config,
-        tours: {
-          ...config.tours,
-          second: { ...config.tours.vintage!, durationMin: 1_500, turnaroundMin: 0 },
+        services: {
+          ...config.services,
+          second: { ...config.services.vintage!, durationMin: 1_500, turnaroundMin: 0 },
         },
       },
       db: {} as D1Database,
@@ -209,22 +209,22 @@ describe('calendar availability hardening', () => {
     expect(calls).toBe(0);
   });
 
-  // Plan 018 (design decision 3): the party-size price probe iterates the pickup ids the tour's
-  // pricing rows declare — a Maze-shaped tour has no 'default'/'custom' rows at all, so the old
+  // Plan 018 (design decision 3): the party-size price probe iterates the pickup ids the service's
+  // pricing rows declare — a Maze-shaped service has no 'default'/'custom' rows at all, so the old
   // literal-pair probe would have 400'd every availability request for it.
-  it('serves availability for a tour whose pricing uses only declared non-enum pickup ids', async () => {
+  it('serves availability for a service whose pricing uses only declared non-enum pickup ids', async () => {
     const context = createBookkitContext({
       config: {
         ...config,
-        tours: {
-          ...config.tours,
+        services: {
+          ...config.services,
           maze: {
-            ...config.tours.vintage!,
+            ...config.services.vintage!,
             pricing: [
-              { maxPeople: 4, pickup: 'meeting_point', priceCents: 18000 },
-              { maxPeople: 4, pickup: 'custom_dropoff', priceCents: 20000 },
-              { maxPeople: 4, pickup: 'custom_pickup', priceCents: 20000 },
-              { maxPeople: 4, pickup: 'custom_both', priceCents: 21000 },
+              { maxQuantity: 4, pickup: 'meeting_point', priceMinor: 18000 },
+              { maxQuantity: 4, pickup: 'custom_dropoff', priceMinor: 20000 },
+              { maxQuantity: 4, pickup: 'custom_pickup', priceMinor: 20000 },
+              { maxQuantity: 4, pickup: 'custom_both', priceMinor: 21000 },
             ],
             pickupOptions: [
               { id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true },

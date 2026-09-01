@@ -3,7 +3,7 @@ import Stripe from 'stripe';
 import { describe, expect, it, vi } from 'vitest';
 import { createBookkitContext } from '../src/context';
 import { handleCheckout } from '../src/handlers';
-import { booking, config, tour } from './fixtures';
+import { booking, config, service } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 import {
   StripeProvider,
@@ -13,12 +13,12 @@ import {
   type StripeClient,
 } from '../src/providers/stripe';
 import { resolveRouteConfig } from '../src/routes-manifest';
-import type { ClientConfig, TourConfig } from '../src/core/config';
+import type { ClientConfig, ServiceConfig } from '../src/core/config';
 
-// Plan 018 (design decision 7): a Maze-shaped four-option tour, built inline — fixtures.ts stays
-// the two-option default/custom tour so every other suite's byte-identical assertions keep holding.
-const mazeTour: TourConfig = {
-  ...tour,
+// Plan 018 (design decision 7): a Maze-shaped four-option service, built inline — fixtures.ts stays
+// the two-option default/custom service so every other suite's byte-identical assertions keep holding.
+const mazeTour: ServiceConfig = {
+  ...service,
   pickupOptions: [
     { id: 'default', requiresAddress: false, usesMeetingPoint: true },
     { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
@@ -26,16 +26,16 @@ const mazeTour: TourConfig = {
     { id: 'meet_elsewhere', requiresAddress: false, usesMeetingPoint: true },
   ],
   pricing: [
-    { maxPeople: 8, pickup: 'default', priceCents: 18000 },
-    { maxPeople: 8, pickup: 'custom_pickup', priceCents: 20000 },
-    { maxPeople: 8, pickup: 'custom_dropoff', priceCents: 21000 },
-    { maxPeople: 8, pickup: 'meet_elsewhere', priceCents: 18000 },
+    { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
+    { maxQuantity: 8, pickup: 'custom_pickup', priceMinor: 20000 },
+    { maxQuantity: 8, pickup: 'custom_dropoff', priceMinor: 21000 },
+    { maxQuantity: 8, pickup: 'meet_elsewhere', priceMinor: 18000 },
     // A leftover pricing row for an id no longer in pickupOptions — models a config change after a
     // still-open hold's original checkout, exercising the safe-degrade test below.
-    { maxPeople: 8, pickup: 'removed_option', priceCents: 19000 },
+    { maxQuantity: 8, pickup: 'removed_option', priceMinor: 19000 },
   ],
 };
-const mazeConfig: ClientConfig = { ...config, tours: { vintage: mazeTour } };
+const mazeConfig: ClientConfig = { ...config, services: { vintage: mazeTour } };
 
 function stripeRefund(
   id: string,
@@ -100,18 +100,21 @@ describe('StripeProvider', () => {
     const { client, sessions } = makeClient();
     const provider = new StripeProvider({
       secretKey: 'sk_test', webhookSecret: 'whsec_test', client,
+      // Plan 022 (design decision 1): the method list is the Stripe adapter's own option now, not
+      // core config — passed here so this contract test still covers a multi-method session.
+      paymentMethods: ['card', 'mb_way'],
       now: () => new Date('2026-01-01T00:00:00.000Z'),
-      getTourName: (b) => `Vintage tour (${b.locale})`,
+      getServiceName: (b) => `Vintage service (${b.locale})`,
       getSuccessUrl: () => 'https://example.test/booking-confirmation?session_id={CHECKOUT_SESSION_ID}',
-      getCancelUrl: (b) => `https://example.test/tours/${b.tourSlug}`,
+      getCancelUrl: (b) => `https://example.test/services/${b.serviceSlug}`,
     });
-    await expect(provider.createCheckout(booking({ pickupType: 'custom' }), config)).resolves.toEqual({ url: 'https://checkout.test/cs_created', sessionId: 'cs_created' });
+    await expect(provider.createCheckout(booking({ pickupType: 'custom' }), config)).resolves.toEqual({ url: 'https://checkout.test/cs_created', sessionRef: 'cs_created' });
     expect(sessions.create).toHaveBeenCalledWith(expect.objectContaining({
       mode: 'payment', expires_at: 1767227400, locale: 'en', payment_method_types: ['card', 'mb_way'],
       phone_number_collection: { enabled: true }, consent_collection: { terms_of_service: 'required' }, metadata: { bookingId: 'booking-1' },
       payment_intent_data: { metadata: { bookingId: 'booking-1' } },
       custom_fields: [{ key: 'pickup_address', label: { type: 'custom', custom: 'Pickup address' }, type: 'text' }],
-      line_items: [{ quantity: 1, price_data: { currency: 'eur', unit_amount: 12000, product_data: { name: 'Vintage tour (en)' } } }],
+      line_items: [{ quantity: 1, price_data: { currency: 'eur', unit_amount: 12000, product_data: { name: 'Vintage service (en)' } } }],
       // BK-PAY-002: every checkout.sessions.create call carries a deterministic idempotency key.
     }), { idempotencyKey: 'bookkit-checkout-booking-1' });
   });
@@ -163,8 +166,8 @@ describe('StripeProvider', () => {
     expect(sessions.create).toHaveBeenCalledWith(expect.not.objectContaining({ custom_fields: expect.anything() }), expect.anything());
   });
 
-  // Plan 018 (design decision 7): the custom_fields gate is keyed on the tour's declared
-  // requiresAddress flag, not the literal id 'custom' — any id a tour marks requiresAddress
+  // Plan 018 (design decision 7): the custom_fields gate is keyed on the service's declared
+  // requiresAddress flag, not the literal id 'custom' — any id a service marks requiresAddress
   // collects the same 'pickup_address' field, and an id that doesn't never does, even though
   // neither is named 'default' or 'custom'.
   it('collects pickup_address for any declared option with requiresAddress, not just the id "custom"', async () => {
@@ -183,10 +186,10 @@ describe('StripeProvider', () => {
     expect(sessions.create).toHaveBeenCalledWith(expect.not.objectContaining({ custom_fields: expect.anything() }), expect.anything());
   });
 
-  // The safe degrade (stripe.ts): a stored pickupType the tour no longer declares (config changed
+  // The safe degrade (stripe.ts): a stored pickupType the service no longer declares (config changed
   // after this booking's hold was created) resolves pickupOptionFor to undefined, and
   // `undefined?.requiresAddress` is falsy — no address field, rather than guessing.
-  it('omits pickup_address for a stored pickupType the tour no longer declares', async () => {
+  it('omits pickup_address for a stored pickupType the service no longer declares', async () => {
     const { client, sessions } = makeClient();
     const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     await provider.createCheckout(booking({ pickupType: 'removed_option' }), mazeConfig);
@@ -197,12 +200,12 @@ describe('StripeProvider', () => {
     const { client, sessions } = makeClient();
     const provider = new StripeProvider({
       secretKey: 'sk_test', webhookSecret: 'whsec_test', client,
-      productDescription: (b) => `Tour of ${b.tourSlug} for ${b.people}`,
+      productDescription: (b) => `Service of ${b.serviceSlug} for ${b.quantity}`,
     });
-    await provider.createCheckout(booking({ people: 4 }), config);
+    await provider.createCheckout(booking({ quantity: 4 }), config);
     expect(sessions.create).toHaveBeenCalledWith(expect.objectContaining({
       line_items: [expect.objectContaining({ price_data: expect.objectContaining({
-        product_data: expect.objectContaining({ description: 'Tour of vintage for 4' }),
+        product_data: expect.objectContaining({ description: 'Service of vintage for 4' }),
       }) })],
     }), expect.anything());
   });
@@ -223,14 +226,14 @@ describe('StripeProvider', () => {
       paymentStatus: 'paid',
       amountTotal: 10000,
       currency: 'eur',
-      paymentIntent: 'pi_1',
+      paymentRef: 'pi_1',
       metadata: { bookingId: 'booking-1' },
       customerName: 'Ada Lovelace',
       customerEmail: 'ada@example.com',
       customerPhone: '+351910000000',
       pickupAddress: 'Praça do Comércio',
     });
-    await expect(provider.refund('pi_1', 10000)).resolves.toEqual({ refundId: 're_1', amountCents: 10000 });
+    await expect(provider.refund('pi_1', 10000)).resolves.toEqual({ refundRef: 're_1', amountMinor: 10000 });
     expect(client.refunds.create).toHaveBeenCalledWith(
       { payment_intent: 'pi_1', metadata: { bookkit_refund_key: 'bookkit-refund-pi_1' } },
       { idempotencyKey: 'bookkit-refund-pi_1' },
@@ -266,7 +269,7 @@ describe('StripeProvider', () => {
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
     const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
-    await expect(provider.refund('pi_1', 10000)).resolves.toEqual({ refundId: 're_existing', amountCents: 10000 });
+    await expect(provider.refund('pi_1', 10000)).resolves.toEqual({ refundRef: 're_existing', amountMinor: 10000 });
     expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 100 });
   });
 
@@ -284,7 +287,7 @@ describe('StripeProvider', () => {
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
     const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
-    await expect(provider.refund('pi_1', 10000)).resolves.toEqual({ refundId: 're_from_cache', amountCents: 10000 });
+    await expect(provider.refund('pi_1', 10000)).resolves.toEqual({ refundRef: 're_from_cache', amountMinor: 10000 });
     expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 100 });
   });
 
@@ -388,7 +391,7 @@ describe('StripeProvider', () => {
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
     const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
-    await expect(provider.refund('pi_1', 10000)).resolves.toEqual({ refundId: 're_recovered', amountCents: 10000 });
+    await expect(provider.refund('pi_1', 10000)).resolves.toEqual({ refundRef: 're_recovered', amountMinor: 10000 });
     expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 100 });
   });
 
@@ -445,7 +448,7 @@ describe('StripeProvider', () => {
     const { client } = makeClient();
     const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
     await expect(provider.parseWebhook(new Request('https://example.test/webhook', { method: 'POST', body: '{}' })))
-      .rejects.toMatchObject({ status: 400, code: 'invalid_stripe_signature' });
+      .rejects.toMatchObject({ status: 400, code: 'invalid_payment_signature' });
   });
 
   it('passes the raw webhook body through subtle verification and maps it', async () => {
@@ -455,8 +458,8 @@ describe('StripeProvider', () => {
     await expect(provider.parseWebhook(request)).resolves.toMatchObject({
       id: 'evt_1',
       bookingId: 'booking-1',
-      sessionId: 'cs_1',
-      paymentIntent: 'pi_1',
+      sessionRef: 'cs_1',
+      paymentRef: 'pi_1',
       amountCaptured: 10000,
       paid: true,
       currency: 'eur',
@@ -471,7 +474,7 @@ describe('StripeProvider', () => {
 
   // Plan 013 item C (audit finding #10): parseWebhook buffered request.text() unbounded. A body
   // whose declared Content-Length already exceeds the 1 MB webhook limit must 413 ahead of
-  // signature verification -- not get collapsed into the generic invalid_stripe_signature error
+  // signature verification -- not get collapsed into the generic invalid_payment_signature error
   // the surrounding try/catch maps everything else to (the STOP condition this item calls out).
   it('rejects an oversized webhook body with 413 before attempting signature verification', async () => {
     const { client } = makeClient();
@@ -496,7 +499,7 @@ describe('Checkout idempotency (BK-PAY-002)', () => {
   const checkoutRequest = (start = '2026-06-15T08:00:00.000Z') => new Request('https://example.test/api/booking/checkout', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ tourSlug: 'vintage', start, people: 2, pickupType: 'default', locale: 'en' }),
+    body: JSON.stringify({ serviceSlug: 'vintage', start, quantity: 2, pickupType: 'default', locale: 'en' }),
   });
 
   it('derives a checkout idempotency key from the booking id: stable for the same booking, distinct across bookings', async () => {
@@ -544,7 +547,7 @@ describe('Checkout idempotency (BK-PAY-002)', () => {
     const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client, now });
 
     await expect(provider.createCheckout(booking(), config)).resolves.toEqual({
-      url: 'https://checkout.test/cs_original', sessionId: 'cs_original',
+      url: 'https://checkout.test/cs_original', sessionRef: 'cs_original',
     });
     expect(create).toHaveBeenCalledTimes(2);
     // Param drift (e.g. a recomputed expires_at) would make a real Stripe retry 409 instead of
@@ -555,7 +558,7 @@ describe('Checkout idempotency (BK-PAY-002)', () => {
     expect(create.mock.calls[1]?.[1]).toEqual({ idempotencyKey: 'bookkit-checkout-booking-1' });
   });
 
-  it('handleCheckout: an ambiguous createCheckout failure that recovers on retry does not expire the hold, and stripeSessionId lands on the booking', async () => {
+  it('handleCheckout: an ambiguous createCheckout failure that recovers on retry does not expire the hold, and paymentSessionRef lands on the booking', async () => {
     let original: { id: string; url: string } | null = null;
     const create = vi.fn(async (_params: Stripe.Checkout.SessionCreateParams, _options?: { idempotencyKey?: string }) => {
       if (!original) {
@@ -584,7 +587,7 @@ describe('Checkout idempotency (BK-PAY-002)', () => {
     const body = await response.json() as { bookingId: string };
     const stored = repo.rows.get(body.bookingId);
     expect(stored?.status).toBe('hold');
-    expect(stored?.stripeSessionId).toBe('cs_recovered');
+    expect(stored?.paymentSessionRef).toBe('cs_recovered');
   });
 
   it('handleCheckout: a definitive Stripe rejection is not retried, and the hold IS still expired (pinned behavior)', async () => {
@@ -647,16 +650,38 @@ describe('Checkout idempotency (BK-PAY-002)', () => {
   });
 });
 
+// Plan 022 (design decision 7): the limits that used to live in core's validateConfig, checked
+// where they actually apply — the adapter that has to honour them.
+describe('StripeProvider.validateConfig', () => {
+  const provider = new StripeProvider({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client: makeClient().client });
+
+  it('rejects a hold above the 24h checkout-session cap and accepts the boundary', () => {
+    expect(() => provider.validateConfig({ ...config, booking: { ...config.booking, holdMinutes: 1441 } })).toThrow(/at most 1440/);
+    expect(() => provider.validateConfig({ ...config, booking: { ...config.booking, holdMinutes: 1440 } })).not.toThrow();
+  });
+
+  it('accepts pt-PT through Stripe\u2019s pt locale and rejects a locale Stripe has no checkout copy for', () => {
+    expect(() => provider.validateConfig({ ...config, locales: { supported: ['pt-PT'], default: 'pt-PT' } })).not.toThrow();
+    expect(() => provider.validateConfig({ ...config, locales: { supported: ['en', 'gd'], default: 'en' } })).toThrow(/no locale for/);
+  });
+
+  it('rejects a currency Stripe cannot present at checkout, naming the config path', () => {
+    expect(() => provider.validateConfig({ ...config, business: { ...config.business, currency: 'kpw' } }))
+      .toThrow(/business\.currency/);
+    expect(() => provider.validateConfig({ ...config, business: { ...config.business, currency: 'jpy' } })).not.toThrow();
+  });
+});
+
 describe('Stripe mapping helpers', () => {
   it('maps payment methods and full-refund charge amounts', () => {
     expect(stripePaymentMethodTypes(['card', 'mb_way'])).toEqual(['card', 'mb_way']);
     expect(mapStripeEvent({ id: 'evt_refund', type: 'charge.refunded', data: { object: {
       metadata: { bookingId: 'booking-1' }, payment_intent: { id: 'pi_1' }, amount_captured: 10000, amount_refunded: 10000,
       refunds: { data: [{ id: 're_1' }] },
-    } } } as unknown as Stripe.Event)).toMatchObject({ bookingId: 'booking-1', paymentIntent: 'pi_1', amountCaptured: 10000, amountRefunded: 10000, refundId: 're_1' });
+    } } } as unknown as Stripe.Event)).toMatchObject({ bookingId: 'booking-1', paymentRef: 'pi_1', amountCaptured: 10000, amountRefunded: 10000, refundRef: 're_1' });
   });
 
   it('maps a session to the public status shape', () => {
-    expect(mapSessionStatus({ id: 'cs_1', status: 'open', payment_status: 'unpaid', amount_total: 10000, currency: 'eur', payment_intent: null, metadata: null } as Stripe.Checkout.Session)).toEqual({ id: 'cs_1', status: 'open', paymentStatus: 'unpaid', amountTotal: 10000, currency: 'eur', paymentIntent: null });
+    expect(mapSessionStatus({ id: 'cs_1', status: 'open', payment_status: 'unpaid', amount_total: 10000, currency: 'eur', payment_intent: null, metadata: null } as Stripe.Checkout.Session)).toEqual({ id: 'cs_1', status: 'open', paymentStatus: 'unpaid', amountTotal: 10000, currency: 'eur', paymentRef: null });
   });
 });

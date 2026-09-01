@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { createBooking } from './helpers';
 
-// Plan 017 (design decision 5): the smoke-site's oldTown tour now declares two free meeting
+// Plan 017 (design decision 5): the smoke-site's oldTown service now declares two free meeting
 // points (examples/smoke-site/src/config.ts) instead of the single-point shorthand. These prove
 // the SECOND point survives the whole path — widget selection, checkout, storage, and rendering
 // back on the confirmation page — not just that "a" point round-trips (which the first-checked
@@ -9,7 +9,7 @@ import { createBooking } from './helpers';
 // exercises unchanged, since the first point stays pre-checked).
 
 test('booking the second meeting point carries its label through checkout to the confirmation page', async ({ page }) => {
-  const { reference } = await createBooking(page, { tour: 'oldTown', people: 2, meetingPointId: 'station' });
+  const { reference } = await createBooking(page, { service: 'oldTown', quantity: 2, meetingPointId: 'station' });
   expect(reference).toBeTruthy();
 
   await expect(page.locator('.bk-badge--ok')).toBeVisible();

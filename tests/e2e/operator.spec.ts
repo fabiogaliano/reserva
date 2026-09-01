@@ -4,7 +4,7 @@ import { createBooking, rescheduleViaManagePage } from './helpers';
 const TOUR = 'oldTown';
 
 test('operator can cancel a booking with a full refund, the page reflects the cancelled/refunded state, and a cancellation email lands in the outbox', async ({ page, request }) => {
-  const { reference, outboxEntry } = await createBooking(page, { tour: TOUR, people: 2 });
+  const { reference, outboxEntry } = await createBooking(page, { service: TOUR, quantity: 2 });
 
   const manageUrl = new URL(outboxEntry.operatorManageUrl);
   const token = manageUrl.searchParams.get('token');
@@ -32,7 +32,7 @@ test('operator can cancel a booking with a full refund, the page reflects the ca
 });
 
 test('operator can reschedule a confirmed booking, and the manage page reflects the new time', async ({ page, request }) => {
-  const { outboxEntry } = await createBooking(page, { tour: TOUR, people: 2 });
+  const { outboxEntry } = await createBooking(page, { service: TOUR, quantity: 2 });
 
   const manageUrl = new URL(outboxEntry.operatorManageUrl);
   const token = manageUrl.searchParams.get('token');

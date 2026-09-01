@@ -2,13 +2,13 @@
 // D1 (SQLite) -- the fake in-memory repo (tests/fakes.ts) has no schema at all, so it cannot prove
 // any of this. Three concerns, three describe blocks: (1) the new CHECK constraints/partial unique
 // index reject invalid rows at the DB layer, (2) a second booking cannot silently steal an
-// already-used stripe_payment_intent through the real application write paths, (3) the rebuild
+// already-used payment_ref through the real application write paths, (3) the rebuild
 // itself is lossless -- every one of the 42 physical bookings columns survives migration 0011
 // unchanged, which is the column-drop safety net for a migration that recreates the whole table.
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createBookingRepository, DuplicatePaymentIntentError } from '../../src/repo';
+import { createBookingRepository, DuplicatePaymentRefError } from '../../src/repo';
 
 interface TestEnv {
   BOOKKIT_DB: D1Database;
@@ -32,9 +32,9 @@ beforeEach(async () => {
 // deliberate: this proves the SCHEMA itself rejects the row, independent of any application-level
 // validation that might also happen to catch it.
 const validBooking = {
-  id: 'raw-valid', reference: 'BKT-RAW-VALID', tour_slug: 'vintage', people: 2, pickup_type: 'default',
+  id: 'raw-valid', reference: 'BKT-RAW-VALID', service_slug: 'vintage', quantity: 2, pickup_type: 'default',
   starts_at: '2026-08-01T09:00:00.000Z', ends_at: '2026-08-01T10:00:00.000Z', locale: 'en',
-  price_cents: 12000, status: 'hold', cancel_token: 'raw-valid-cancel', operator_token: 'raw-valid-operator',
+  price_minor: 12000, currency: 'eur', status: 'hold', cancel_token: 'raw-valid-cancel', operator_token: 'raw-valid-operator',
   created_at: '2026-07-21T10:00:00.000Z', updated_at: '2026-07-21T10:00:00.000Z',
 } as const;
 
@@ -46,21 +46,21 @@ function insertRawBooking(overrides: Record<string, unknown>) {
 }
 
 describe('bookings CHECK constraints and partial unique index (BK-SCHEMA-001, migration 0011)', () => {
-  it('rejects people = 0', async () => {
+  it('rejects quantity = 0', async () => {
     await expect(insertRawBooking({
-      id: 'people-0', reference: 'BKT-PEOPLE-0', cancel_token: 'ct-people-0', operator_token: 'ot-people-0', people: 0,
+      id: 'quantity-0', reference: 'BKT-PEOPLE-0', cancel_token: 'ct-quantity-0', operator_token: 'ot-quantity-0', quantity: 0,
     })).rejects.toThrow();
   });
 
-  it('rejects people = -1', async () => {
+  it('rejects quantity = -1', async () => {
     await expect(insertRawBooking({
-      id: 'people-neg1', reference: 'BKT-PEOPLE-NEG1', cancel_token: 'ct-people-neg1', operator_token: 'ot-people-neg1', people: -1,
+      id: 'quantity-neg1', reference: 'BKT-PEOPLE-NEG1', cancel_token: 'ct-quantity-neg1', operator_token: 'ot-quantity-neg1', quantity: -1,
     })).rejects.toThrow();
   });
 
-  it('rejects price_cents = -1', async () => {
+  it('rejects price_minor = -1', async () => {
     await expect(insertRawBooking({
-      id: 'price-neg1', reference: 'BKT-PRICE-NEG1', cancel_token: 'ct-price-neg1', operator_token: 'ot-price-neg1', price_cents: -1,
+      id: 'price-neg1', reference: 'BKT-PRICE-NEG1', cancel_token: 'ct-price-neg1', operator_token: 'ot-price-neg1', price_minor: -1,
     })).rejects.toThrow();
   });
 
@@ -85,16 +85,16 @@ describe('bookings CHECK constraints and partial unique index (BK-SCHEMA-001, mi
     })).rejects.toThrow();
   });
 
-  it('rejects a duplicate stripe_payment_intent across two bookings (idx_bookings_payment_intent)', async () => {
+  it('rejects a duplicate payment_ref across two bookings (idx_bookings_payment_ref)', async () => {
     await insertRawBooking({
-      id: 'pi-1', reference: 'BKT-PI-1', cancel_token: 'ct-pi-1', operator_token: 'ot-pi-1', stripe_payment_intent: 'pi_duplicate_test',
+      id: 'pi-1', reference: 'BKT-PI-1', cancel_token: 'ct-pi-1', operator_token: 'ot-pi-1', payment_ref: 'pi_duplicate_test',
     });
     await expect(insertRawBooking({
-      id: 'pi-2', reference: 'BKT-PI-2', cancel_token: 'ct-pi-2', operator_token: 'ot-pi-2', stripe_payment_intent: 'pi_duplicate_test',
+      id: 'pi-2', reference: 'BKT-PI-2', cancel_token: 'ct-pi-2', operator_token: 'ot-pi-2', payment_ref: 'pi_duplicate_test',
     })).rejects.toThrow();
   });
 
-  it('allows multiple bookings with a NULL stripe_payment_intent (the unique index is partial)', async () => {
+  it('allows multiple bookings with a NULL payment_ref (the unique index is partial)', async () => {
     await insertRawBooking({ id: 'pi-null-1', reference: 'BKT-PI-NULL-1', cancel_token: 'ct-pi-null-1', operator_token: 'ot-pi-null-1' });
     await expect(insertRawBooking({
       id: 'pi-null-2', reference: 'BKT-PI-NULL-2', cancel_token: 'ct-pi-null-2', operator_token: 'ot-pi-null-2',
@@ -109,7 +109,7 @@ describe('bookings CHECK constraints and partial unique index (BK-SCHEMA-001, mi
 
   // Plan 018 (design decision 4/5): migration 0015 rebuilds `bookings` with the
   // CHECK (pickup_type IN ('default','custom')) removed -- the domain now lives in
-  // TourConfig.pickupOptions (config), which the DB can't enumerate. A non-enum pickup id, which
+  // ServiceConfig.pickupOptions (config), which the DB can't enumerate. A non-enum pickup id, which
   // this same INSERT would have rejected before 0015, must now succeed at the SQL level.
   it('accepts a non-enum pickup_type (migration 0015 removed the CHECK; the domain now lives in config)', async () => {
     await expect(insertRawBooking({
@@ -142,11 +142,11 @@ describe('capacity table CHECK constraints (migration 0011)', () => {
   });
 });
 
-describe('duplicate stripe_payment_intent surfaces a clean conflict through the real write paths, not an unhandled 500', () => {
+describe('duplicate payment_ref surfaces a clean conflict through the real write paths, not an unhandled 500', () => {
   async function seedHold(id: string) {
     return repo.insertHold({
-      id, reference: `BKT-DUPPI-${id}`, tourSlug: 'vintage', people: 2, pickupType: 'default',
-      startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceCents: 12000,
+      id, reference: `BKT-DUPPI-${id}`, serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
+      startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
       holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: `cancel-${id}`, operatorToken: `operator-${id}`,
       createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
     });
@@ -157,17 +157,17 @@ describe('duplicate stripe_payment_intent surfaces a clean conflict through the 
     const second = await seedHold('confirm-2');
     await repo.acquireConfirmationLease(first.id, 'lease-1', '2026-07-21T10:00:00.000Z', '2026-07-21T10:05:00.000Z');
     await repo.confirmWithSideEffectOperations(first.id, {
-      expectedStatusIn: ['hold'], stripePaymentIntent: 'pi_shared_confirm', leaseToken: 'lease-1', oversold: false,
+      expectedStatusIn: ['hold'], paymentRef: 'pi_shared_confirm', leaseToken: 'lease-1', oversold: false,
       updatedAt: '2026-07-21T10:01:00.000Z',
     });
 
     await repo.acquireConfirmationLease(second.id, 'lease-2', '2026-07-21T10:00:00.000Z', '2026-07-21T10:05:00.000Z');
     const attempt = repo.confirmWithSideEffectOperations(second.id, {
-      expectedStatusIn: ['hold'], stripePaymentIntent: 'pi_shared_confirm', leaseToken: 'lease-2', oversold: false,
+      expectedStatusIn: ['hold'], paymentRef: 'pi_shared_confirm', leaseToken: 'lease-2', oversold: false,
       updatedAt: '2026-07-21T10:02:00.000Z',
     });
-    await expect(attempt).rejects.toBeInstanceOf(DuplicatePaymentIntentError);
-    await expect(attempt).rejects.toMatchObject({ status: 409, code: 'duplicate_payment_intent' });
+    await expect(attempt).rejects.toBeInstanceOf(DuplicatePaymentRefError);
+    await expect(attempt).rejects.toMatchObject({ status: 409, code: 'duplicate_payment_ref' });
 
     // The batch rolled back atomically -- the loser's status/outbox rows must not have advanced.
     await expect(repo.getBookingById(second.id)).resolves.toMatchObject({ status: 'hold' });
@@ -178,41 +178,41 @@ describe('duplicate stripe_payment_intent surfaces a clean conflict through the 
     const first = await seedHold('apply-1');
     const second = await seedHold('apply-2');
     await repo.transitionToConfirmed(first.id, {
-      expectedStatusIn: ['hold'], stripePaymentIntent: 'pi_shared_apply', updatedAt: '2026-07-21T10:01:00.000Z',
+      expectedStatusIn: ['hold'], paymentRef: 'pi_shared_apply', updatedAt: '2026-07-21T10:01:00.000Z',
     });
     await repo.transitionToConfirmed(second.id, { expectedStatusIn: ['hold'], updatedAt: '2026-07-21T10:01:00.000Z' });
     await repo.acquireConfirmationLease(second.id, 'lease-apply', '2026-07-21T10:02:00.000Z', '2026-07-21T10:07:00.000Z');
 
     const attempt = repo.applyConfirmedPaymentDetails(
-      second.id, { stripePaymentIntent: 'pi_shared_apply' }, 'lease-apply', '2026-07-21T10:03:00.000Z',
+      second.id, { paymentRef: 'pi_shared_apply' }, 'lease-apply', '2026-07-21T10:03:00.000Z',
     );
-    await expect(attempt).rejects.toBeInstanceOf(DuplicatePaymentIntentError);
-    await expect(attempt).rejects.toMatchObject({ status: 409, code: 'duplicate_payment_intent' });
-    await expect(repo.getBookingById(second.id)).resolves.toMatchObject({ stripePaymentIntent: null });
+    await expect(attempt).rejects.toBeInstanceOf(DuplicatePaymentRefError);
+    await expect(attempt).rejects.toMatchObject({ status: 409, code: 'duplicate_payment_ref' });
+    await expect(repo.getBookingById(second.id)).resolves.toMatchObject({ paymentRef: null });
   });
 
   it('the generic updateBooking also rejects a duplicate payment intent (defense in depth for any future caller)', async () => {
     const first = await seedHold('update-1');
     const second = await seedHold('update-2');
-    await repo.updateBooking(first.id, { stripePaymentIntent: 'pi_shared_update', updatedAt: '2026-07-21T10:01:00.000Z' });
+    await repo.updateBooking(first.id, { paymentRef: 'pi_shared_update', updatedAt: '2026-07-21T10:01:00.000Z' });
 
-    const attempt = repo.updateBooking(second.id, { stripePaymentIntent: 'pi_shared_update', updatedAt: '2026-07-21T10:02:00.000Z' });
-    await expect(attempt).rejects.toBeInstanceOf(DuplicatePaymentIntentError);
-    await expect(attempt).rejects.toMatchObject({ status: 409, code: 'duplicate_payment_intent' });
+    const attempt = repo.updateBooking(second.id, { paymentRef: 'pi_shared_update', updatedAt: '2026-07-21T10:02:00.000Z' });
+    await expect(attempt).rejects.toBeInstanceOf(DuplicatePaymentRefError);
+    await expect(attempt).rejects.toMatchObject({ status: 409, code: 'duplicate_payment_ref' });
   });
 
   // MEDIUM-1 (sol review): guardDuplicatePaymentIntent used to skip reclassification via a
-  // truthiness check on paymentIntent, so a collision on '' (falsy but non-null, and still covered
-  // by the partial index's WHERE stripe_payment_intent IS NOT NULL clause) would have bubbled up
+  // truthiness check on paymentRef, so a collision on '' (falsy but non-null, and still covered
+  // by the partial index's WHERE payment_ref IS NOT NULL clause) would have bubbled up
   // as an unhandled 500 instead of a clean 409.
   it('also rejects a duplicate EMPTY-STRING payment intent, not just a truthy one', async () => {
     const first = await seedHold('empty-1');
     const second = await seedHold('empty-2');
-    await repo.updateBooking(first.id, { stripePaymentIntent: '', updatedAt: '2026-07-21T10:01:00.000Z' });
+    await repo.updateBooking(first.id, { paymentRef: '', updatedAt: '2026-07-21T10:01:00.000Z' });
 
-    const attempt = repo.updateBooking(second.id, { stripePaymentIntent: '', updatedAt: '2026-07-21T10:02:00.000Z' });
-    await expect(attempt).rejects.toBeInstanceOf(DuplicatePaymentIntentError);
-    await expect(attempt).rejects.toMatchObject({ status: 409, code: 'duplicate_payment_intent' });
+    const attempt = repo.updateBooking(second.id, { paymentRef: '', updatedAt: '2026-07-21T10:02:00.000Z' });
+    await expect(attempt).rejects.toBeInstanceOf(DuplicatePaymentRefError);
+    await expect(attempt).rejects.toMatchObject({ status: 409, code: 'duplicate_payment_ref' });
   });
 });
 

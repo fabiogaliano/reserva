@@ -65,7 +65,7 @@ describe('validateRouteOptions (Zod, same throw-on-safeParse-failure style as va
   });
 
   it('rejects a prefix containing whitespace', () => {
-    expect(() => validateRouteOptions({ routePrefix: '/en tour' })).toThrow(/whitespace/);
+    expect(() => validateRouteOptions({ routePrefix: '/en service' })).toThrow(/whitespace/);
   });
 
   it('rejects a prefix containing ".." traversal segments', () => {
@@ -143,7 +143,7 @@ describe('route table generation (astro:config:setup)', () => {
   });
 
   it('rejects an invalid routePrefix at setup time, before any route is injected', () => {
-    expect(() => setup({ ...baseOptions, routePrefix: '/en tour' })).toThrow(/whitespace/);
+    expect(() => setup({ ...baseOptions, routePrefix: '/en service' })).toThrow(/whitespace/);
   });
 
   it('exposes the resolved (prefixed) paths and group flags through virtual:bookkit/config', () => {

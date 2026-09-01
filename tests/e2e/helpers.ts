@@ -2,11 +2,11 @@ import { type Page, expect } from '@playwright/test';
 import { format } from 'date-fns';
 
 export interface BookingOpts {
-  tour: string;
-  people: number;
-  // Plan 017 (design decision 5): selects a non-default meeting point when the tour declares 2+
+  service: string;
+  quantity: number;
+  // Plan 017 (design decision 5): selects a non-default meeting point when the service declares 2+
   // (the widget pre-checks the first one, which is why every other caller omits this and still
-  // books that first point unchanged). No-op when the tour has 0-1 points, since the widget then
+  // books that first point unchanged). No-op when the service has 0-1 points, since the widget then
   // renders no such group to select from.
   meetingPointId?: string;
 }
@@ -16,17 +16,17 @@ export async function createBooking(page: Page, opts: BookingOpts) {
 
   // 1. Select party size (accessible name, not the widget's internal CSS class — the class is a
   // styling hook the enhancer never renames, but a label survives markup/theming changes too).
-  await page.getByLabel('How many people?').selectOption(String(opts.people));
+  await page.getByLabel('How many people?').selectOption(String(opts.quantity));
 
   // 2. Fetch availability to find a valid date. Read from the API rather than hardcoding a date:
   // the fixture's schedule and cutoffs are relative to "today", so a fixed date would drift stale.
   const from = format(new Date(), 'yyyy-MM-dd');
   const to = format(new Date(Date.now() + 30 * 86_400_000), 'yyyy-MM-dd');
-  const res = await page.request.get(`/api/booking/availability?tour=${opts.tour}&people=${opts.people}&from=${from}&to=${to}`);
+  const res = await page.request.get(`/api/booking/availability?service=${opts.service}&quantity=${opts.quantity}&from=${from}&to=${to}`);
   const availability = await res.json();
   const openDay = availability.days.find((d: any) => d.slots.length > 0);
   if (!openDay) {
-    throw new Error(`No available days found for tour ${opts.tour} with ${opts.people} people`);
+    throw new Error(`No available days found for service ${opts.service} with ${opts.quantity} quantity`);
   }
 
   // 3. Pick the available date programmatically on the cally element to avoid timezone/locale label differences
@@ -85,13 +85,13 @@ export async function createBooking(page: Page, opts: BookingOpts) {
 // from a JS-enabled browser and isn't exercised here.
 export async function rescheduleViaManagePage(page: Page, currentStart: string): Promise<{ newStart: string }> {
   const form = page.locator('[data-bookkit-reschedule]');
-  const tour = await form.getAttribute('data-tour');
-  const people = await form.getAttribute('data-people');
+  const service = await form.getAttribute('data-service');
+  const quantity = await form.getAttribute('data-quantity');
   const from = await form.getAttribute('data-from');
   const to = await form.getAttribute('data-to');
-  if (!tour || !people || !from || !to) throw new Error('Reschedule form is missing its availability data attributes');
+  if (!service || !quantity || !from || !to) throw new Error('Reschedule form is missing its availability data attributes');
 
-  const res = await page.request.get(`/api/booking/availability?tour=${tour}&people=${people}&from=${from}&to=${to}`);
+  const res = await page.request.get(`/api/booking/availability?service=${service}&quantity=${quantity}&from=${from}&to=${to}`);
   const availability = await res.json();
   let target: { date: string; start: string } | undefined;
   for (const day of availability.days) {

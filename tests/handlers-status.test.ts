@@ -1,11 +1,11 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createBookkitContext } from '../src/context';
-import { handleStatus, handleStripeWebhook } from '../src/handlers';
+import { handleStatus, handlePaymentWebhook } from '../src/handlers';
 import { utcToLocalIso } from '../src/core/time';
-import { booking, config, tour } from './fixtures';
+import { booking, config, service } from './fixtures';
 import type { SideEffectOperationIdentity } from '../src/repo';
-import { fakeRepository, providers, seedSideEffectOperation, sideEffectOperation } from './fakes';
+import { fakeRepository, providers, seedSettledConfirmation, seedSideEffectOperation, sideEffectOperation } from './fakes';
 
 function expectSensitiveHeaders(response: Response): void {
   expect(response.headers.get('cache-control')).toBe('no-store');
@@ -18,11 +18,9 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       id: 'b-status-paid',
       status: 'hold',
       holdExpiresAt: '2026-06-14T09:00:00.000Z',
-      stripeSessionId: 'cs_status_paid',
-      stripePaymentIntent: null,
+      paymentSessionRef: 'cs_status_paid',
+      paymentRef: null,
       createdAt: '2026-06-14T07:30:00.000Z',
-      calendarSynced: false,
-      emailSynced: false,
     });
     const repo = fakeRepository([seeded]);
     let calendarCreates = 0;
@@ -34,10 +32,10 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: providers({
         payments: {
-          createCheckout: async () => ({ url: '', sessionId: '' }),
-          parseWebhook: async () => ({ id: 'evt_unused', type: 'checkout.session.completed' }),
-          getSession: async () => ({ id: 'cs_status_paid', status: 'complete', paymentStatus: 'paid', amountTotal: seeded.priceCents, currency: config.business.currency, paymentIntent: 'pi_status' }),
-          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+          createCheckout: async () => ({ url: '', sessionRef: '' }),
+          parseWebhook: async () => ({ id: 'evt_unused', type: 'checkout_completed' }),
+          getSession: async () => ({ id: 'cs_status_paid', status: 'complete', paymentStatus: 'paid', amountTotal: seeded.priceMinor, currency: config.business.currency, paymentRef: 'pi_status' }),
+          refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
         },
         calendar: {
           listEvents: async () => [],
@@ -56,19 +54,19 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     expect(payload.status).toBe('confirmed');
     expect(payload.booking).toMatchObject({
       reference: seeded.reference,
-      tourSlug: seeded.tourSlug,
+      serviceSlug: seeded.serviceSlug,
       start: utcToLocalIso(seeded.startsAt, config.business.timezone),
       end: utcToLocalIso(seeded.endsAt, config.business.timezone),
-      people: seeded.people,
-      priceCents: seeded.priceCents,
+      quantity: seeded.quantity,
+      priceMinor: seeded.priceMinor,
       // Plan 017 (design decision 3): the validated fixture config has no meetingPoint shorthand
       // left on it (normalized into meetingPoints) — this booking has no stored meetingPointId,
-      // so confirmationSummary resolves it to the tour's single declared point.
-      meetingPoint: { label: tour.meetingPoint!.label, mapsUrl: tour.meetingPoint!.mapsUrl },
+      // so confirmationSummary resolves it to the service's single declared point.
+      meetingPoint: { label: service.meetingPoint!.label, mapsUrl: service.meetingPoint!.mapsUrl },
       locale: seeded.locale,
     });
     expect(Object.keys(payload.booking).sort()).toEqual([
-      'end', 'locale', 'meetingPoint', 'people', 'priceCents', 'reference', 'start', 'tourSlug',
+      'end', 'locale', 'meetingPoint', 'priceMinor', 'quantity', 'reference', 'serviceSlug', 'start',
     ]);
     expect(payload.booking).not.toHaveProperty('customerEmail');
     expect(payload.booking).not.toHaveProperty('customerPhone');
@@ -88,24 +86,30 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
       { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
     ];
-    const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = tour;
-    const multiPointConfig = { ...config, tours: { ...config.tours, vintage: { ...vintageWithoutShorthand, meetingPoints: points } } };
+    const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = service;
+    const multiPointConfig = { ...config, services: { ...config.services, vintage: { ...vintageWithoutShorthand, meetingPoints: points } } };
     const clock = () => new Date('2026-06-14T08:00:00.000Z');
 
     const chosenSecond = booking({
-      id: 'b-status-meeting-point-chosen', status: 'confirmed', stripeSessionId: 'cs_status_meeting_chosen',
-      calendarSynced: true, emailSynced: true, createdAt: '2026-06-14T07:00:00.000Z',
+      id: 'b-status-meeting-point-chosen', status: 'confirmed', paymentSessionRef: 'cs_status_meeting_chosen',
+      createdAt: '2026-06-14T07:00:00.000Z',
       meetingPointId: 'station', meetingPointLabel: 'The Station',
     });
     const removedId = booking({
-      id: 'b-status-meeting-point-removed', status: 'confirmed', stripeSessionId: 'cs_status_meeting_removed',
-      calendarSynced: true, emailSynced: true, createdAt: '2026-06-14T07:00:00.000Z',
+      id: 'b-status-meeting-point-removed', status: 'confirmed', paymentSessionRef: 'cs_status_meeting_removed',
+      createdAt: '2026-06-14T07:00:00.000Z',
       meetingPointId: 'no-longer-declared', meetingPointLabel: 'The Old Dock',
     });
+    const multiPointRepo = fakeRepository([chosenSecond, removedId]);
+    // Plan 022: both fixtures are long-since-confirmed bookings. Their succeeded confirmation rows
+    // are what says so now that the sync flags are gone, so /status renders them rather than
+    // treating them as legacy rows owed a repair.
+    seedSettledConfirmation(multiPointRepo, chosenSecond.id);
+    seedSettledConfirmation(multiPointRepo, removedId.id);
     const context = createBookkitContext({
       config: multiPointConfig,
       db: {} as D1Database,
-      repo: fakeRepository([chosenSecond, removedId]),
+      repo: multiPointRepo,
       clock,
       providers: providers(),
     });
@@ -124,11 +128,11 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
       { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
     ];
-    const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = tour;
+    const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = service;
     const mazeConfig = {
       ...config,
-      tours: {
-        ...config.tours,
+      services: {
+        ...config.services,
         vintage: {
           ...vintageWithoutShorthand,
           meetingPoints: points,
@@ -138,9 +142,9 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
             { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
           ],
           pricing: [
-            { maxPeople: 8, pickup: 'default', priceCents: 18000 },
-            { maxPeople: 8, pickup: 'custom_pickup', priceCents: 20000 },
-            { maxPeople: 8, pickup: 'custom_dropoff', priceCents: 21000 },
+            { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
+            { maxQuantity: 8, pickup: 'custom_pickup', priceMinor: 20000 },
+            { maxQuantity: 8, pickup: 'custom_dropoff', priceMinor: 21000 },
           ],
         },
       },
@@ -148,13 +152,17 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     const clock = () => new Date('2026-06-14T08:00:00.000Z');
 
     function mazeContext(seed: ReturnType<typeof booking>[]) {
-      return createBookkitContext({ config: mazeConfig, db: {} as D1Database, repo: fakeRepository(seed), clock, providers: providers() });
+      const repo = fakeRepository(seed);
+      // Plan 022: see the multi-point test above — succeeded confirmation rows are how a fixture
+      // now says "already delivered".
+      for (const row of seed) seedSettledConfirmation(repo, row.id);
+      return createBookkitContext({ config: mazeConfig, db: {} as D1Database, repo, clock, providers: providers() });
     }
 
     it('omits meetingPoint for a declared usesMeetingPoint: false option (custom_pickup)', async () => {
       const seeded = booking({
-        id: 'b-status-pickup-false', status: 'confirmed', stripeSessionId: 'cs_status_pickup_false',
-        calendarSynced: true, emailSynced: true, createdAt: '2026-06-14T07:00:00.000Z',
+        id: 'b-status-pickup-false', status: 'confirmed', paymentSessionRef: 'cs_status_pickup_false',
+        createdAt: '2026-06-14T07:00:00.000Z',
         pickupType: 'custom_pickup', pickupAddress: 'Hotel Mundial, Lisbon',
         meetingPointId: 'square', meetingPointLabel: 'The Square',
       });
@@ -162,13 +170,13 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       const payload = await response.json() as { booking: Record<string, unknown> };
       expect(payload.booking).not.toHaveProperty('meetingPoint');
       expect(payload.booking).not.toHaveProperty('pickupAddress');
-      expect(Object.keys(payload.booking).sort()).toEqual(['end', 'locale', 'people', 'priceCents', 'reference', 'start', 'tourSlug']);
+      expect(Object.keys(payload.booking).sort()).toEqual(['end', 'locale', 'priceMinor', 'quantity', 'reference', 'serviceSlug', 'start']);
     });
 
     it('includes the chosen point for a declared usesMeetingPoint: true option (custom_dropoff)', async () => {
       const seeded = booking({
-        id: 'b-status-pickup-true', status: 'confirmed', stripeSessionId: 'cs_status_pickup_true',
-        calendarSynced: true, emailSynced: true, createdAt: '2026-06-14T07:00:00.000Z',
+        id: 'b-status-pickup-true', status: 'confirmed', paymentSessionRef: 'cs_status_pickup_true',
+        createdAt: '2026-06-14T07:00:00.000Z',
         pickupType: 'custom_dropoff', pickupAddress: 'Hotel Mundial, Lisbon',
         meetingPointId: 'station', meetingPointLabel: 'The Station',
       });
@@ -179,8 +187,8 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
 
     it('includes the meeting point for a stored id no longer declared (pre-018 fallback)', async () => {
       const seeded = booking({
-        id: 'b-status-pickup-undeclared', status: 'confirmed', stripeSessionId: 'cs_status_pickup_undeclared',
-        calendarSynced: true, emailSynced: true, createdAt: '2026-06-14T07:00:00.000Z',
+        id: 'b-status-pickup-undeclared', status: 'confirmed', paymentSessionRef: 'cs_status_pickup_undeclared',
+        createdAt: '2026-06-14T07:00:00.000Z',
         pickupType: 'no_longer_declared', pickupAddress: null,
         meetingPointId: 'square', meetingPointLabel: 'The Square',
       });
@@ -195,10 +203,8 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       id: 'b-status-leased',
       status: 'hold',
       holdExpiresAt: '2026-06-14T09:00:00.000Z',
-      stripeSessionId: 'cs_status_leased',
-      stripePaymentIntent: null,
-      calendarSynced: false,
-      emailSynced: false,
+      paymentSessionRef: 'cs_status_leased',
+      paymentRef: null,
     });
     const repo = fakeRepository([seeded]);
     // Simulate another worker (e.g. the webhook) mid-confirmation, as handlers-lifecycle does.
@@ -212,10 +218,10 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: providers({
         payments: {
-          createCheckout: async () => ({ url: '', sessionId: '' }),
-          parseWebhook: async () => ({ id: 'evt_unused', type: 'checkout.session.completed' }),
-          getSession: async () => ({ id: 'cs_status_leased', status: 'complete', paymentStatus: 'paid', amountTotal: seeded.priceCents, currency: config.business.currency, paymentIntent: 'pi_status' }),
-          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+          createCheckout: async () => ({ url: '', sessionRef: '' }),
+          parseWebhook: async () => ({ id: 'evt_unused', type: 'checkout_completed' }),
+          getSession: async () => ({ id: 'cs_status_leased', status: 'complete', paymentStatus: 'paid', amountTotal: seeded.priceMinor, currency: config.business.currency, paymentRef: 'pi_status' }),
+          refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
         },
         calendar: {
           listEvents: async () => [],
@@ -242,10 +248,8 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       id: 'b-status-race',
       status: 'hold',
       holdExpiresAt: '2026-06-14T09:00:00.000Z',
-      stripeSessionId: 'cs_status_race',
-      stripePaymentIntent: null,
-      calendarSynced: false,
-      emailSynced: false,
+      paymentSessionRef: 'cs_status_race',
+      paymentRef: null,
     });
     const repo = fakeRepository([seeded]);
     // Gate the session lookup so both handlers have read the hold row before either
@@ -253,9 +257,9 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     let readers = 0;
     let releaseReaders = (): void => undefined;
     const bothRead = new Promise<void>((resolve) => { releaseReaders = resolve; });
-    const realGetBookingBySessionId = repo.getBookingBySessionId;
-    repo.getBookingBySessionId = async (sessionId) => {
-      const result = await realGetBookingBySessionId(sessionId);
+    const realGetBookingBySessionRef = repo.getBookingBySessionRef;
+    repo.getBookingBySessionRef = async (sessionRef) => {
+      const result = await realGetBookingBySessionRef(sessionRef);
       readers += 1;
       if (readers >= 2) releaseReaders();
       await bothRead;
@@ -265,10 +269,10 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     let emails = 0;
     const sharedProviders = providers({
       payments: {
-        createCheckout: async () => ({ url: '', sessionId: '' }),
-        parseWebhook: async () => ({ id: 'evt_race', type: 'checkout.session.completed', sessionId: 'cs_status_race', paymentIntent: 'pi_race', paid: true, amountCaptured: seeded.priceCents, currency: config.business.currency }),
-        getSession: async () => ({ id: 'cs_status_race', status: 'complete', paymentStatus: 'paid', amountTotal: seeded.priceCents, currency: config.business.currency, paymentIntent: 'pi_race' }),
-        refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+        createCheckout: async () => ({ url: '', sessionRef: '' }),
+        parseWebhook: async () => ({ id: 'evt_race', type: 'checkout_completed', sessionRef: 'cs_status_race', paymentRef: 'pi_race', paid: true, amountCaptured: seeded.priceMinor, currency: config.business.currency }),
+        getSession: async () => ({ id: 'cs_status_race', status: 'complete', paymentStatus: 'paid', amountTotal: seeded.priceMinor, currency: config.business.currency, paymentRef: 'pi_race' }),
+        refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
       },
       calendar: {
         listEvents: async () => [],
@@ -285,7 +289,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     const statusContext = createBookkitContext({ config, db: {} as D1Database, repo, clock: () => new Date('2026-06-14T08:00:00.000Z'), providers: sharedProviders });
 
     const [webhookResponse, statusResponse] = await Promise.all([
-      handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST', body: 'raw' }), webhookContext),
+      handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST', body: 'raw' }), webhookContext),
       handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_race'), statusContext),
     ]);
 
@@ -298,7 +302,11 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     expect(['confirmed', 'pending']).toContain(statusPayload.status);
     expect(calendarCreates).toBe(1);
     expect(emails).toBe(1);
-    expect(repo.rows.get(seeded.id)).toMatchObject({ status: 'confirmed', calendarSynced: true, emailSynced: true });
+    expect(repo.rows.get(seeded.id)).toMatchObject({ status: 'confirmed' });
+    // Plan 022: delivery state lives only in the outbox rows now — that both are succeeded is the
+    // whole record that the calendar event and the confirmation email actually went out.
+    expect(sideEffectOperation(repo, seeded.id, { family: 'calendar_create' })).toMatchObject({ status: 'succeeded' });
+    expect(sideEffectOperation(repo, seeded.id, { family: 'email_confirmation' })).toMatchObject({ status: 'succeeded' });
   });
 
   it('expires the hold when the Stripe session itself expired', async () => {
@@ -306,7 +314,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       id: 'b-status-expiring',
       status: 'hold',
       holdExpiresAt: '2026-06-14T09:00:00.000Z',
-      stripeSessionId: 'cs_status_expiring',
+      paymentSessionRef: 'cs_status_expiring',
     });
     const repo = fakeRepository([seeded]);
     const context = createBookkitContext({
@@ -316,10 +324,10 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: providers({
         payments: {
-          createCheckout: async () => ({ url: '', sessionId: '' }),
-          parseWebhook: async () => ({ id: 'evt_unused', type: 'checkout.session.completed' }),
+          createCheckout: async () => ({ url: '', sessionRef: '' }),
+          parseWebhook: async () => ({ id: 'evt_unused', type: 'checkout_completed' }),
           getSession: async () => ({ status: 'expired' }),
-          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+          refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
         },
       }),
     });
@@ -335,8 +343,8 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     const seeded = booking({
       id: 'b-status-expired-mismatch',
       status: 'expired',
-      stripeSessionId: 'cs_status_expired_mismatch',
-      priceCents: 10000,
+      paymentSessionRef: 'cs_status_expired_mismatch',
+      priceMinor: 10000,
     });
     const repo = fakeRepository([seeded]);
     const warnings: Array<{ message: string; data: Record<string, unknown> | undefined }> = [];
@@ -348,8 +356,8 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       logger: { warn: (message, data) => { warnings.push({ message, data }); } },
       providers: providers({
         payments: {
-          createCheckout: async () => ({ url: '', sessionId: '' }),
-          parseWebhook: async () => ({ id: 'evt_unused', type: 'checkout.session.completed' }),
+          createCheckout: async () => ({ url: '', sessionRef: '' }),
+          parseWebhook: async () => ({ id: 'evt_unused', type: 'checkout_completed' }),
           getSession: async () => ({
             id: 'cs_status_expired_mismatch',
             status: 'complete',
@@ -357,7 +365,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
             amountTotal: 9999,
             currency: config.business.currency,
           }),
-          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+          refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
         },
       }),
     });
@@ -367,7 +375,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     expectSensitiveHeaders(response);
     await expect(response.json()).resolves.toEqual({ status: 'pending' });
     expect(warnings).toEqual([{
-      message: 'Stripe payment verification rejected',
+      message: 'payment verification rejected',
       data: { bookingId: seeded.id, reason: 'amount_mismatch' },
     }]);
     expect(repo.rows.get(seeded.id)?.status).toBe('expired');
@@ -394,7 +402,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       id: 'b-status-open',
       status: 'hold',
       holdExpiresAt: '2026-06-14T09:00:00.000Z',
-      stripeSessionId: 'cs_status_open',
+      paymentSessionRef: 'cs_status_open',
     });
     const repo = fakeRepository([seeded]);
     let calendarCreates = 0;
@@ -405,10 +413,10 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: providers({
         payments: {
-          createCheckout: async () => ({ url: '', sessionId: '' }),
-          parseWebhook: async () => ({ id: 'evt_unused', type: 'checkout.session.completed' }),
+          createCheckout: async () => ({ url: '', sessionRef: '' }),
+          parseWebhook: async () => ({ id: 'evt_unused', type: 'checkout_completed' }),
           getSession: async () => ({ status: 'open' }),
-          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+          refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
         },
         calendar: {
           listEvents: async () => [],
@@ -430,16 +438,16 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
   it('withholds confirmed details after the status detail grace window', async () => {
     const seeded = booking({
       id: 'b-status-confirmed-aged',
-      stripeSessionId: 'cs_status_confirmed_aged',
+      paymentSessionRef: 'cs_status_confirmed_aged',
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-06-14T08:00:00.000Z',
-      calendarSynced: true,
-      emailSynced: true,
     });
+    const agedRepo = fakeRepository([seeded]);
+    seedSettledConfirmation(agedRepo, seeded.id);
     const context = createBookkitContext({
       config,
       db: {} as D1Database,
-      repo: fakeRepository([seeded]),
+      repo: agedRepo,
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: providers(),
     });
@@ -456,11 +464,9 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     const now = '2026-06-14T08:00:00.000Z';
     const seeded = booking({
       id: 'b-status-confirmed-renewal',
-      stripeSessionId: 'cs_status_confirmed_renewal',
+      paymentSessionRef: 'cs_status_confirmed_renewal',
       createdAt: '2026-06-14T03:00:00.000Z',
       updatedAt: '2026-06-14T07:59:00.000Z',
-      calendarSynced: false,
-      emailSynced: true,
     });
     const repo = fakeRepository([seeded]);
     seedSideEffectOperation(repo, seeded.id, { family: 'calendar_create' }, {
@@ -483,15 +489,16 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     expect(response.status).toBe(200);
     expectSensitiveHeaders(response);
     await expect(response.json()).resolves.toEqual({ status: 'confirmed' });
-    expect(repo.rows.get(seeded.id)).toMatchObject({ createdAt: seeded.createdAt, updatedAt: now, calendarSynced: true });
+    expect(repo.rows.get(seeded.id)).toMatchObject({ createdAt: seeded.createdAt, updatedAt: now });
+    expect(sideEffectOperation(repo, seeded.id, { family: 'calendar_create' })).toMatchObject({ status: 'succeeded' });
   });
 
   it('does not treat reschedule mutation rows as confirmation fulfillment debt', async () => {
     const seeded = booking({
-      id: 'b-status-mutation-isolation', status: 'confirmed', stripeSessionId: 'cs_status_mutation_isolation',
-      calendarSynced: true, emailSynced: true,
+      id: 'b-status-mutation-isolation', status: 'confirmed', paymentSessionRef: 'cs_status_mutation_isolation',
     });
     const repo = fakeRepository([seeded]);
+    seedSettledConfirmation(repo, seeded.id);
     const emailIdentity: SideEffectOperationIdentity = { family: 'email', name: 'customer', event: 'booking.rescheduled', discriminator: '1' };
     const hookIdentity: SideEffectOperationIdentity = { family: 'hook', name: 'ops', event: 'booking.rescheduled', discriminator: '1' };
     await repo.recordMutationSideEffectOperations(seeded.id, [emailIdentity, hookIdentity].map((identity) => ({
@@ -543,7 +550,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     const seeded = booking({
       id: 'b-status-cancelled',
       status: 'cancelled',
-      stripeSessionId: 'cs_status_cancelled',
+      paymentSessionRef: 'cs_status_cancelled',
       cancelledAt: '2026-06-13T08:00:00.000Z',
       cancelledBy: 'customer',
     });
@@ -555,10 +562,10 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: providers({
         payments: {
-          createCheckout: async () => ({ url: '', sessionId: '' }),
-          parseWebhook: async () => ({ id: 'evt_unused', type: 'checkout.session.completed' }),
+          createCheckout: async () => ({ url: '', sessionRef: '' }),
+          parseWebhook: async () => ({ id: 'evt_unused', type: 'checkout_completed' }),
           getSession: async () => { throw new Error('getSession should not be called for a cancelled booking'); },
-          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+          refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
         },
       }),
     });
@@ -568,7 +575,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     expectSensitiveHeaders(response);
     await expect(response.json()).resolves.toEqual({ status: 'cancelled' });
 
-    const noShowRepo = fakeRepository([booking({ id: 'b-status-no-show', status: 'no_show', stripeSessionId: 'cs_status_no_show' })]);
+    const noShowRepo = fakeRepository([booking({ id: 'b-status-no-show', status: 'no_show', paymentSessionRef: 'cs_status_no_show' })]);
     const noShowContext = createBookkitContext({
       config,
       db: {} as D1Database,

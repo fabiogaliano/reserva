@@ -1,9 +1,9 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createBookkitContext } from '../src/context';
-import { handleStripeWebhook } from '../src/handlers';
+import { handlePaymentWebhook } from '../src/handlers';
 import { booking, config } from './fixtures';
-import { fakeRepository, providers } from './fakes';
+import { fakeRepository, providers, seedSettledConfirmation } from './fakes';
 
 describe('late checkout.session.completed on an already-expired hold (spec §6)', () => {
   it('still confirms the booking — payment happened inside the session window, so redelivery after an outage must not orphan it', async () => {
@@ -11,42 +11,39 @@ describe('late checkout.session.completed on an already-expired hold (spec §6)'
       id: 'b-late-expired',
       status: 'expired',
       holdExpiresAt: null,
-      stripeSessionId: 'cs_late',
+      paymentSessionRef: 'cs_late',
       customerName: null,
       customerEmail: null,
       customerPhone: null,
       pickupAddress: null,
-      calendarSynced: false,
-      emailSynced: false,
     });
     const occupied = booking({
       id: 'b-late-occupied',
       status: 'confirmed',
       startsAt: seeded.startsAt,
       endsAt: seeded.endsAt,
-      calendarSynced: true,
-      emailSynced: true,
     });
     const repo = fakeRepository([seeded, occupied]);
+    seedSettledConfirmation(repo, occupied.id);
     let calendarCreates = 0;
     let emails = 0;
     const warnings: Array<[string, Record<string, unknown> | undefined]> = [];
     const context = createBookkitContext({
-      config: { ...config, fleet: { defaultCapacity: 1 } },
+      config: { ...config, capacity: { default: 1 } },
       db: {} as D1Database,
       repo,
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       logger: { warn: (message, data) => { warnings.push([message, data]); } },
       providers: providers({
         payments: {
-          createCheckout: async () => ({ url: '', sessionId: '' }),
+          createCheckout: async () => ({ url: '', sessionRef: '' }),
           parseWebhook: async () => ({
             id: 'evt_late',
-            type: 'checkout.session.completed',
-            sessionId: 'cs_late',
-            paymentIntent: 'pi_late',
+            type: 'checkout_completed',
+            sessionRef: 'cs_late',
+            paymentRef: 'pi_late',
             paid: true,
-            amountCaptured: seeded.priceCents,
+            amountCaptured: seeded.priceMinor,
             currency: config.business.currency,
             customerName: 'Grace Hopper',
             customerEmail: 'grace@example.test',
@@ -54,7 +51,7 @@ describe('late checkout.session.completed on an already-expired hold (spec §6)'
             pickupAddress: 'Rossio',
           }),
           getSession: async () => ({ status: 'open' }),
-          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+          refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
         },
         calendar: {
           listEvents: async () => [],
@@ -66,7 +63,7 @@ describe('late checkout.session.completed on an already-expired hold (spec §6)'
       }),
     });
 
-    const response = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    const response = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), context);
 
     expect(response.status).toBe(200);
     expect(calendarCreates).toBe(1);

@@ -88,7 +88,7 @@ describe('BookingWidget.astro (Plan 017 design decision 5: meeting-point radio g
     expect(widgetSource).toContain('input.disabled = hide;');
     // Wired into the pickupType radios' change listener, not just fired once.
     expect(widgetSource).toMatch(/pickup\.addEventListener\('change', \(\) => \{\s*updatePrice\(form, data\);\s*syncMeetingPoints\(form\);/);
-    // And run once at init, so a tour whose first pickupType option is 'custom' starts correctly
+    // And run once at init, so a service whose first pickupType option is 'custom' starts correctly
     // hidden instead of only reacting to a later change event.
     expect(widgetSource).toMatch(/updatePrice\(form, data\);\s*syncMeetingPoints\(form\);\s*void loadAvailability\(form, data\);/);
   });
@@ -103,7 +103,7 @@ describe('BookingWidget.astro (Plan 017 design decision 5: meeting-point radio g
   });
 });
 
-describe('BookingWidget.astro (Plan 018 design decision 9: tour-declared pickupOptions)', () => {
+describe('BookingWidget.astro (Plan 018 design decision 9: service-declared pickupOptions)', () => {
   it('declares the pickupOptions prop and keeps pickupTypes as a documented deprecated alias', () => {
     expect(widgetSource).toMatch(/@deprecated use `pickupOptions` instead\./);
     expect(widgetSource).toMatch(/pickupTypes\?: Array<'default' \| 'custom'>;/);
@@ -133,7 +133,7 @@ describe('BookingWidget.astro (Plan 018 design decision 9: tour-declared pickupO
     expect(widgetSource).toContain('type ResolvedPriceTable = Record<string, number[]>;');
     expect(widgetSource).not.toContain("new FormData(form).get('pickupType') === 'custom' ? 'custom' : 'default'");
     expect(widgetSource).toContain("const pickup = String(formData.get('pickupType') ?? '');");
-    expect(widgetSource).toContain('data.resolvedPrices[pickup]?.[people]');
+    expect(widgetSource).toContain('data.resolvedPrices[pickup]?.[quantity]');
   });
 
   it('syncMeetingPoints re-keys off the checked radio\'s data-uses-meeting-point, falling back to the pickupType === \'custom\' heuristic when absent', () => {

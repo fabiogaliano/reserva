@@ -2,13 +2,13 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createBookkitContext } from '../src/context';
 import { verifyPayment, type VerifiedPaymentFacts } from '../src/core/payment-verification';
-import { handleStatus, handleStripeWebhook } from '../src/handlers';
+import { handleStatus, handlePaymentWebhook } from '../src/handlers';
 import { booking, config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
 interface PaymentCase {
   name: string;
-  priceCents: number;
+  priceMinor: number;
   paymentStatus: 'paid' | 'unpaid' | 'no_payment_required';
   amountTotal?: number;
   currency?: string;
@@ -18,7 +18,7 @@ interface PaymentCase {
 function factsFor(scenario: PaymentCase): VerifiedPaymentFacts {
   return {
     completed: true,
-    sessionId: 'cs_1',
+    sessionRef: 'cs_1',
     paid: scenario.paymentStatus === 'paid',
     paymentStatus: scenario.paymentStatus,
     ...(scenario.amountTotal !== undefined ? { amountTotal: scenario.amountTotal } : {}),
@@ -28,15 +28,15 @@ function factsFor(scenario: PaymentCase): VerifiedPaymentFacts {
 }
 
 const cases: PaymentCase[] = [
-  { name: 'paid paid booking', priceCents: 10000, paymentStatus: 'paid', amountTotal: 10000, currency: 'eur', allowed: true },
-  { name: 'unpaid paid booking', priceCents: 10000, paymentStatus: 'unpaid', amountTotal: 10000, currency: 'eur', allowed: false },
-  { name: 'no-payment-required paid booking', priceCents: 10000, paymentStatus: 'no_payment_required', amountTotal: 10000, currency: 'eur', allowed: false },
-  { name: 'paid free booking', priceCents: 0, paymentStatus: 'paid', allowed: true },
-  { name: 'unpaid free booking', priceCents: 0, paymentStatus: 'unpaid', allowed: false },
-  { name: 'no-payment-required free booking', priceCents: 0, paymentStatus: 'no_payment_required', allowed: true },
-  { name: 'paid booking with missing amount', priceCents: 10000, paymentStatus: 'paid', currency: 'eur', allowed: false },
-  { name: 'paid booking with wrong amount', priceCents: 10000, paymentStatus: 'paid', amountTotal: 9999, currency: 'eur', allowed: false },
-  { name: 'paid booking with wrong currency', priceCents: 10000, paymentStatus: 'paid', amountTotal: 10000, currency: 'usd', allowed: false },
+  { name: 'paid paid booking', priceMinor: 10000, paymentStatus: 'paid', amountTotal: 10000, currency: 'eur', allowed: true },
+  { name: 'unpaid paid booking', priceMinor: 10000, paymentStatus: 'unpaid', amountTotal: 10000, currency: 'eur', allowed: false },
+  { name: 'no-payment-required paid booking', priceMinor: 10000, paymentStatus: 'no_payment_required', amountTotal: 10000, currency: 'eur', allowed: false },
+  { name: 'paid free booking', priceMinor: 0, paymentStatus: 'paid', allowed: true },
+  { name: 'unpaid free booking', priceMinor: 0, paymentStatus: 'unpaid', allowed: false },
+  { name: 'no-payment-required free booking', priceMinor: 0, paymentStatus: 'no_payment_required', allowed: true },
+  { name: 'paid booking with missing amount', priceMinor: 10000, paymentStatus: 'paid', currency: 'eur', allowed: false },
+  { name: 'paid booking with wrong amount', priceMinor: 10000, paymentStatus: 'paid', amountTotal: 9999, currency: 'eur', allowed: false },
+  { name: 'paid booking with wrong currency', priceMinor: 10000, paymentStatus: 'paid', amountTotal: 10000, currency: 'usd', allowed: false },
 ];
 
 describe('payment verification parity', () => {
@@ -45,9 +45,9 @@ describe('payment verification parity', () => {
       id: 'b-payment-verification',
       status: 'hold',
       holdExpiresAt: '2026-06-14T09:00:00.000Z',
-      stripeSessionId: 'cs_1',
-      stripePaymentIntent: null,
-      priceCents: scenario.priceCents,
+      paymentSessionRef: 'cs_1',
+      paymentRef: null,
+      priceMinor: scenario.priceMinor,
     });
     expect(verifyPayment(current, factsFor(scenario)).allowed).toBe(scenario.allowed);
 
@@ -60,23 +60,23 @@ describe('payment verification parity', () => {
       logger: { warn: () => undefined },
       providers: providers({
         payments: {
-          createCheckout: async () => ({ url: '', sessionId: '' }),
+          createCheckout: async () => ({ url: '', sessionRef: '' }),
           parseWebhook: async () => ({
             id: 'evt-payment-verification',
-            type: 'checkout.session.completed',
+            type: 'checkout_completed',
             bookingId: current.id,
-            sessionId: 'cs_1',
+            sessionRef: 'cs_1',
             paid: scenario.paymentStatus === 'paid',
             paymentStatus: scenario.paymentStatus,
             ...(scenario.amountTotal !== undefined ? { amountCaptured: scenario.amountTotal } : {}),
             ...(scenario.currency !== undefined ? { currency: scenario.currency } : {}),
           }),
           getSession: async () => ({ status: 'open' }),
-          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+          refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
         },
       }),
     });
-    const webhookResponse = await handleStripeWebhook(new Request('https://example.test/webhook', { method: 'POST' }), webhookContext);
+    const webhookResponse = await handlePaymentWebhook(new Request('https://example.test/webhook', { method: 'POST' }), webhookContext);
 
     const statusRepo = fakeRepository([current]);
     const statusContext = createBookkitContext({
@@ -87,8 +87,8 @@ describe('payment verification parity', () => {
       logger: { warn: () => undefined },
       providers: providers({
         payments: {
-          createCheckout: async () => ({ url: '', sessionId: '' }),
-          parseWebhook: async () => ({ id: 'evt_unused', type: 'checkout.session.completed' }),
+          createCheckout: async () => ({ url: '', sessionRef: '' }),
+          parseWebhook: async () => ({ id: 'evt_unused', type: 'checkout_completed' }),
           getSession: async () => ({
             id: 'cs_1',
             status: 'complete',
@@ -96,7 +96,7 @@ describe('payment verification parity', () => {
             ...(scenario.amountTotal !== undefined ? { amountTotal: scenario.amountTotal } : {}),
             ...(scenario.currency !== undefined ? { currency: scenario.currency } : {}),
           }),
-          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+          refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
         },
       }),
     });

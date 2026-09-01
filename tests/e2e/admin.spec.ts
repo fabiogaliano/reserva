@@ -5,7 +5,7 @@ import { createBooking } from './helpers';
 const TOUR = 'oldTown';
 
 test('admin dashboard lists a booking by reference, and its operator manage link opens the manage page in the operator role', async ({ page }) => {
-  const { reference } = await createBooking(page, { tour: TOUR, people: 2 });
+  const { reference } = await createBooking(page, { service: TOUR, quantity: 2 });
 
   await page.goto('/booking/admin');
   await expect(page.locator('h1')).toContainText('Booking admin', { ignoreCase: true });
@@ -26,7 +26,7 @@ test('closing a day override removes it from availability, and clearing the over
   const targetDate = format(addDays(new Date(), 25), 'yyyy-MM-dd');
 
   const availabilityBefore = await (await request.get(
-    `/api/booking/availability?tour=${TOUR}&people=2&from=${targetDate}&to=${targetDate}`,
+    `/api/booking/availability?service=${TOUR}&quantity=2&from=${targetDate}&to=${targetDate}`,
   )).json();
   const dayBefore = availabilityBefore.days.find((d: any) => d.date === targetDate);
   expect(dayBefore?.slots.length).toBeGreaterThan(0);
@@ -39,7 +39,7 @@ test('closing a day override removes it from availability, and clearing the over
   await expect(page).toHaveURL(new RegExp(`date=${targetDate}`));
 
   const availabilityClosed = await (await request.get(
-    `/api/booking/availability?tour=${TOUR}&people=2&from=${targetDate}&to=${targetDate}`,
+    `/api/booking/availability?service=${TOUR}&quantity=2&from=${targetDate}&to=${targetDate}`,
   )).json();
   const dayClosed = availabilityClosed.days.find((d: any) => d.date === targetDate);
   expect(dayClosed?.status).toBe('closed');
@@ -51,7 +51,7 @@ test('closing a day override removes it from availability, and clearing the over
   await expect(page).toHaveURL(new RegExp(`date=${targetDate}`));
 
   const availabilityRestored = await (await request.get(
-    `/api/booking/availability?tour=${TOUR}&people=2&from=${targetDate}&to=${targetDate}`,
+    `/api/booking/availability?service=${TOUR}&quantity=2&from=${targetDate}&to=${targetDate}`,
   )).json();
   const dayRestored = availabilityRestored.days.find((d: any) => d.date === targetDate);
   expect(dayRestored?.status).not.toBe('closed');

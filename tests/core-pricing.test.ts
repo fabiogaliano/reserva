@@ -1,48 +1,48 @@
 import { describe, expect, it } from 'vitest';
 import { validateConfig, type PricingRule } from '../src/core/config';
-import { PricingError, pricingCombinations, priceFor, priceForTour, resolvedPriceTableFor } from '../src/core/pricing';
-import { config, tour } from './fixtures';
+import { PricingError, pricingCombinations, priceFor, priceForService, resolvedPriceTableFor } from '../src/core/pricing';
+import { config, service } from './fixtures';
 
 describe('core pricing', () => {
-  it('resolves every supported people and pickup combination', () => {
-    expect(pricingCombinations(tour)).toHaveLength(16);
-    expect(priceForTour(config, 'vintage', 1, 'default')).toBe(10000);
-    expect(priceForTour(config, 'vintage', 8, 'custom')).toBe(20000);
+  it('resolves every supported quantity and pickup combination', () => {
+    expect(pricingCombinations(service)).toHaveLength(16);
+    expect(priceForService(config, 'vintage', 1, 'default')).toBe(10000);
+    expect(priceForService(config, 'vintage', 8, 'custom')).toBe(20000);
   });
 
   it('keeps server prices and the widget lookup table in parity after canonicalization', () => {
     const pricingVariants = [
       [
-        { maxPeople: 8, pickup: 'default', priceCents: 18000 },
-        { maxPeople: 4, pickup: 'custom', priceCents: 12000 },
-        { maxPeople: 4, pickup: 'default', priceCents: 10000 },
-        { maxPeople: 8, pickup: 'custom', priceCents: 20000 },
+        { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
+        { maxQuantity: 4, pickup: 'custom', priceMinor: 12000 },
+        { maxQuantity: 4, pickup: 'default', priceMinor: 10000 },
+        { maxQuantity: 8, pickup: 'custom', priceMinor: 20000 },
       ],
       [
-        { maxPeople: 4, pickup: 'custom', priceCents: 12000 },
-        { maxPeople: 8, pickup: 'custom', priceCents: 20000 },
-        { maxPeople: 8, pickup: 'default', priceCents: 18000 },
-        { maxPeople: 4, pickup: 'default', priceCents: 10000 },
+        { maxQuantity: 4, pickup: 'custom', priceMinor: 12000 },
+        { maxQuantity: 8, pickup: 'custom', priceMinor: 20000 },
+        { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
+        { maxQuantity: 4, pickup: 'default', priceMinor: 10000 },
       ],
     ];
 
     for (const pricing of pricingVariants) {
       const validated = validateConfig({
         ...config,
-        tours: {
-          ...config.tours,
-          vintage: { ...tour, pricing },
+        services: {
+          ...config.services,
+          vintage: { ...service, pricing },
         },
       });
-      const canonicalTour = validated.tours.vintage;
-      if (!canonicalTour) throw new Error('expected vintage tour');
-      const prices = resolvedPriceTableFor(canonicalTour);
+      const canonicalService = validated.services.vintage;
+      if (!canonicalService) throw new Error('expected vintage service');
+      const prices = resolvedPriceTableFor(canonicalService);
 
-      for (let people = 1; people <= 8; people += 1) {
-        expect(priceFor(canonicalTour, people, 'default')).toBe(people <= 4 ? 10000 : 18000);
-        expect(priceFor(canonicalTour, people, 'custom')).toBe(people <= 4 ? 12000 : 20000);
-        expect(prices.default![people]).toBe(priceFor(canonicalTour, people, 'default'));
-        expect(prices.custom![people]).toBe(priceFor(canonicalTour, people, 'custom'));
+      for (let quantity = 1; quantity <= 8; quantity += 1) {
+        expect(priceFor(canonicalService, quantity, 'default')).toBe(quantity <= 4 ? 10000 : 18000);
+        expect(priceFor(canonicalService, quantity, 'custom')).toBe(quantity <= 4 ? 12000 : 20000);
+        expect(prices.default![quantity]).toBe(priceFor(canonicalService, quantity, 'default'));
+        expect(prices.custom![quantity]).toBe(priceFor(canonicalService, quantity, 'custom'));
       }
     }
   });
@@ -53,66 +53,66 @@ describe('core pricing', () => {
     // module (examples/smoke-site/src/config.ts, imported independently of runtime.ts), never
     // touching validateConfig's canonical return. The server, meanwhile, always resolves against
     // context.config, which IS validateConfig's return (see runtime-context.ts). So this test feeds
-    // priceFor the validated/canonical tour and resolvedPriceTableFor the raw, never-validated
+    // priceFor the validated/canonical service and resolvedPriceTableFor the raw, never-validated
     // array, and asserts they still agree for every party size — the actual displayed-vs-charged
     // guarantee. This fails on a resolvedPriceTableFor that trusts its input's order (pre-fix) and
     // passes once it canonicalizes independently of what validateConfig did upstream.
     const pricingVariants: PricingRule[][] = [
       [
-        { maxPeople: 8, pickup: 'default', priceCents: 18000 },
-        { maxPeople: 4, pickup: 'custom', priceCents: 12000 },
-        { maxPeople: 4, pickup: 'default', priceCents: 10000 },
-        { maxPeople: 8, pickup: 'custom', priceCents: 20000 },
+        { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
+        { maxQuantity: 4, pickup: 'custom', priceMinor: 12000 },
+        { maxQuantity: 4, pickup: 'default', priceMinor: 10000 },
+        { maxQuantity: 8, pickup: 'custom', priceMinor: 20000 },
       ],
       [
-        { maxPeople: 4, pickup: 'custom', priceCents: 12000 },
-        { maxPeople: 8, pickup: 'custom', priceCents: 20000 },
-        { maxPeople: 8, pickup: 'default', priceCents: 18000 },
-        { maxPeople: 4, pickup: 'default', priceCents: 10000 },
+        { maxQuantity: 4, pickup: 'custom', priceMinor: 12000 },
+        { maxQuantity: 8, pickup: 'custom', priceMinor: 20000 },
+        { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
+        { maxQuantity: 4, pickup: 'default', priceMinor: 10000 },
       ],
     ];
 
     for (const rawPricing of pricingVariants) {
       const rawConfig = {
         ...config,
-        tours: { ...config.tours, vintage: { ...tour, pricing: rawPricing } },
+        services: { ...config.services, vintage: { ...service, pricing: rawPricing } },
       };
 
       // Server path: goes through config load, exactly like context.config backing checkout/priceFor.
-      const canonicalTour = validateConfig(rawConfig).tours.vintage;
-      if (!canonicalTour) throw new Error('expected vintage tour');
+      const canonicalService = validateConfig(rawConfig).services.vintage;
+      if (!canonicalService) throw new Error('expected vintage service');
 
       // Widget path: the raw array as authored, never passed through validateConfig.
       const widgetPrices = resolvedPriceTableFor({ pricing: rawPricing });
 
-      for (let people = 1; people <= 8; people += 1) {
+      for (let quantity = 1; quantity <= 8; quantity += 1) {
         for (const pickup of ['default', 'custom'] as const) {
-          expect(widgetPrices[pickup]![people]).toBe(priceFor(canonicalTour, people, pickup));
+          expect(widgetPrices[pickup]![quantity]).toBe(priceFor(canonicalService, quantity, pickup));
         }
       }
     }
   });
 
   it('fails at runtime for unsupported values rather than silently choosing a price', () => {
-    expect(() => priceFor(tour, 9, 'default')).toThrow(PricingError);
-    expect(() => priceFor(tour, 0, 'custom')).toThrow(PricingError);
+    expect(() => priceFor(service, 9, 'default')).toThrow(PricingError);
+    expect(() => priceFor(service, 0, 'custom')).toThrow(PricingError);
   });
 });
 
-// Plan 018 (design decision 2/3): Consumer A' motivating case — four declared pickup options
+// Plan 018 (design decision 2/3): Maze Services' motivating case — four declared pickup options
 // priced outright (180/200/200/210 €), not as a surcharge on top of the meeting-point price.
 // custom_both must resolve to 210 €, not 180 + 20 + 20 = 220 €, proving priceFor's per-(pickup,
-// maxPeople) lookup stays non-additive once the axis is a tour-declared id set instead of a fixed
+// maxQuantity) lookup stays non-additive once the axis is a service-declared id set instead of a fixed
 // default/custom pair.
 describe('non-additive pickup options (Maze fixture)', () => {
   const mazePricing: PricingRule[] = [
-    { maxPeople: 4, pickup: 'meeting_point', priceCents: 18000 },
-    { maxPeople: 4, pickup: 'custom_dropoff', priceCents: 20000 },
-    { maxPeople: 4, pickup: 'custom_pickup', priceCents: 20000 },
-    { maxPeople: 4, pickup: 'custom_both', priceCents: 21000 },
+    { maxQuantity: 4, pickup: 'meeting_point', priceMinor: 18000 },
+    { maxQuantity: 4, pickup: 'custom_dropoff', priceMinor: 20000 },
+    { maxQuantity: 4, pickup: 'custom_pickup', priceMinor: 20000 },
+    { maxQuantity: 4, pickup: 'custom_both', priceMinor: 21000 },
   ];
   const mazeTour = {
-    ...tour,
+    ...service,
     pickupOptions: [
       { id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true },
       { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
@@ -125,16 +125,16 @@ describe('non-additive pickup options (Maze fixture)', () => {
   it('resolves each option to its own stated price, not an additive sum of the others', () => {
     const validated = validateConfig({
       ...config,
-      tours: { ...config.tours, vintage: mazeTour },
+      services: { ...config.services, vintage: mazeTour },
     });
-    const canonicalTour = validated.tours.vintage;
-    if (!canonicalTour) throw new Error('expected vintage tour');
+    const canonicalService = validated.services.vintage;
+    if (!canonicalService) throw new Error('expected vintage service');
 
-    expect(priceFor(canonicalTour, 2, 'meeting_point')).toBe(18000);
-    expect(priceFor(canonicalTour, 2, 'custom_dropoff')).toBe(20000);
-    expect(priceFor(canonicalTour, 2, 'custom_pickup')).toBe(20000);
+    expect(priceFor(canonicalService, 2, 'meeting_point')).toBe(18000);
+    expect(priceFor(canonicalService, 2, 'custom_dropoff')).toBe(20000);
+    expect(priceFor(canonicalService, 2, 'custom_pickup')).toBe(20000);
     // Not 18000 + 2000 + 2000 = 22000 — the combined option's price is stated outright.
-    expect(priceFor(canonicalTour, 2, 'custom_both')).toBe(21000);
+    expect(priceFor(canonicalService, 2, 'custom_both')).toBe(21000);
   });
 
   it('derives the price table key set from the distinct pickup values declared in the pricing rows', () => {
@@ -151,8 +151,8 @@ describe('non-additive pickup options (Maze fixture)', () => {
     // inserted { default, custom } in that fixed order, so a legacy config whose raw pricing array
     // lists custom rows first must not change the rendered bytes.
     const customFirst: PricingRule[] = [
-      { maxPeople: 4, pickup: 'custom', priceCents: 12000 },
-      { maxPeople: 4, pickup: 'default', priceCents: 10000 },
+      { maxQuantity: 4, pickup: 'custom', priceMinor: 12000 },
+      { maxQuantity: 4, pickup: 'default', priceMinor: 10000 },
     ];
     expect(Object.keys(resolvedPriceTableFor({ pricing: customFirst }))).toEqual(['default', 'custom']);
     // Declared non-default/custom ids keep their first-occurrence order after the pinned pair.

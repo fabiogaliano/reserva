@@ -1,39 +1,39 @@
 import { describe, expect, it } from 'vitest';
-import type { TourConfig } from '../src/core/config';
-import { DEFAULT_PICKUP_OPTIONS, meetingPointForBooking, peopleValuesForTour, pickupOptionFor, resolveMeetingPoint, validateConfig } from '../src/core/config';
+import type { ServiceConfig } from '../src/core/config';
+import { DEFAULT_PICKUP_OPTIONS, meetingPointForBooking, quantityValuesForService, pickupOptionFor, resolveMeetingPoint, validateConfig } from '../src/core/config';
 import { priceFor } from '../src/core/pricing';
-import { config, tour } from './fixtures';
+import { config, service } from './fixtures';
 
 describe('core config and pricing validation', () => {
-  it('accepts a valid config and infers people ranges from pricing breakpoints', () => {
+  it('accepts a valid config and infers quantity ranges from pricing breakpoints', () => {
     // Plan 017 (design decision 1): validateConfig normalizes the meetingPoint shorthand into a
     // canonical meetingPoints array (and clears the shorthand — see the idempotency test below),
     // so the validated config is no longer a byte-for-byte copy of the input fixture — the
     // fixture's shorthand is still what the config declares, though.
     // Plan 018 (design decision 1): validateConfig also injects the default pickupOptions pair
-    // when a tour declares none, same canonicalize-on-validate move.
-    const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = tour;
+    // when a service declares none, same canonicalize-on-validate move.
+    const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = service;
     expect(validateConfig(config)).toEqual({
       ...config,
-      tours: {
-        ...config.tours,
+      services: {
+        ...config.services,
         vintage: {
           ...vintageWithoutShorthand,
-          meetingPoints: [{ id: 'default', ...tour.meetingPoint }],
+          meetingPoints: [{ id: 'default', ...service.meetingPoint }],
           pickupOptions: DEFAULT_PICKUP_OPTIONS,
         },
       },
     });
-    expect(peopleValuesForTour(tour)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
-    expect(priceFor(tour, 5, 'custom')).toBe(20000);
+    expect(quantityValuesForService(service)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(priceFor(service, 5, 'custom')).toBe(20000);
   });
 
   it('normalizes the meetingPoint shorthand to a canonical meetingPoints array and clears the shorthand', () => {
     const validated = validateConfig(config);
-    expect(validated.tours.vintage?.meetingPoints).toEqual([
-      { id: 'default', label: tour.meetingPoint!.label, mapsUrl: tour.meetingPoint!.mapsUrl },
+    expect(validated.services.vintage?.meetingPoints).toEqual([
+      { id: 'default', label: service.meetingPoint!.label, mapsUrl: service.meetingPoint!.mapsUrl },
     ]);
-    expect(validated.tours.vintage?.meetingPoint).toBeUndefined();
+    expect(validated.services.vintage?.meetingPoint).toBeUndefined();
   });
 
   it('stays idempotent when re-validated (defineBookkitRuntime/defineCloudflareBookkitRuntime validate once at definition and createBookkitContext validates again on every request)', () => {
@@ -43,17 +43,17 @@ describe('core config and pricing validation', () => {
     // Plan 018 (design decision 1): pickupOptions injection must be idempotent too — a second
     // validateConfig pass over the already-normalized config (the same double-validate path
     // defineBookkitRuntime/createBookkitContext exercise) neither re-injects nor drops it.
-    expect(validated.tours.vintage?.pickupOptions).toEqual(DEFAULT_PICKUP_OPTIONS);
-    expect(validateConfig(validated).tours.vintage?.pickupOptions).toEqual(DEFAULT_PICKUP_OPTIONS);
+    expect(validated.services.vintage?.pickupOptions).toEqual(DEFAULT_PICKUP_OPTIONS);
+    expect(validateConfig(validated).services.vintage?.pickupOptions).toEqual(DEFAULT_PICKUP_OPTIONS);
   });
 
-  it('rejects a tour that declares both meetingPoint and meetingPoints', () => {
+  it('rejects a service that declares both meetingPoint and meetingPoints', () => {
     const invalid = {
       ...config,
-      tours: {
-        ...config.tours,
+      services: {
+        ...config.services,
         vintage: {
-          ...tour,
+          ...service,
           meetingPoints: [{ id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' }],
         },
       },
@@ -61,21 +61,21 @@ describe('core config and pricing validation', () => {
     expect(() => validateConfig(invalid)).toThrow(/declare either meetingPoint or meetingPoints, not both/);
   });
 
-  it('rejects a tour that declares neither meetingPoint nor meetingPoints', () => {
-    const { meetingPoint: _meetingPoint, ...tourWithoutMeetingPoint } = tour;
+  it('rejects a service that declares neither meetingPoint nor meetingPoints', () => {
+    const { meetingPoint: _meetingPoint, ...tourWithoutMeetingPoint } = service;
     const invalid = {
       ...config,
-      tours: { ...config.tours, vintage: tourWithoutMeetingPoint },
+      services: { ...config.services, vintage: tourWithoutMeetingPoint },
     };
     expect(() => validateConfig(invalid)).toThrow(/must declare either meetingPoint or meetingPoints/);
   });
 
-  it('rejects duplicate meeting point ids within a tour', () => {
-    const { meetingPoint: _meetingPoint, ...tourWithoutMeetingPoint } = tour;
+  it('rejects duplicate meeting point ids within a service', () => {
+    const { meetingPoint: _meetingPoint, ...tourWithoutMeetingPoint } = service;
     const invalid = {
       ...config,
-      tours: {
-        ...config.tours,
+      services: {
+        ...config.services,
         vintage: {
           ...tourWithoutMeetingPoint,
           meetingPoints: [
@@ -89,11 +89,11 @@ describe('core config and pricing validation', () => {
   });
 
   it('rejects an empty meeting point id', () => {
-    const { meetingPoint: _meetingPoint, ...tourWithoutMeetingPoint } = tour;
+    const { meetingPoint: _meetingPoint, ...tourWithoutMeetingPoint } = service;
     const invalid = {
       ...config,
-      tours: {
-        ...config.tours,
+      services: {
+        ...config.services,
         vintage: {
           ...tourWithoutMeetingPoint,
           meetingPoints: [{ id: '', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' }],
@@ -106,74 +106,74 @@ describe('core config and pricing validation', () => {
   it('canonicalizes out-of-order pricing tiers for each pickup type', () => {
     const validated = validateConfig({
       ...config,
-      tours: {
-        ...config.tours,
+      services: {
+        ...config.services,
         vintage: {
-          ...tour,
+          ...service,
           pricing: [
-            { maxPeople: 8, pickup: 'custom', priceCents: 20000 },
-            { maxPeople: 8, pickup: 'default', priceCents: 18000 },
-            { maxPeople: 4, pickup: 'custom', priceCents: 12000 },
-            { maxPeople: 4, pickup: 'default', priceCents: 10000 },
+            { maxQuantity: 8, pickup: 'custom', priceMinor: 20000 },
+            { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
+            { maxQuantity: 4, pickup: 'custom', priceMinor: 12000 },
+            { maxQuantity: 4, pickup: 'default', priceMinor: 10000 },
           ],
         },
       },
     });
-    const canonicalTour = validated.tours.vintage;
-    if (!canonicalTour) throw new Error('expected vintage tour');
+    const canonicalService = validated.services.vintage;
+    if (!canonicalService) throw new Error('expected vintage service');
 
-    expect(canonicalTour.pricing).toEqual([
-      { maxPeople: 4, pickup: 'custom', priceCents: 12000 },
-      { maxPeople: 4, pickup: 'default', priceCents: 10000 },
-      { maxPeople: 8, pickup: 'custom', priceCents: 20000 },
-      { maxPeople: 8, pickup: 'default', priceCents: 18000 },
+    expect(canonicalService.pricing).toEqual([
+      { maxQuantity: 4, pickup: 'custom', priceMinor: 12000 },
+      { maxQuantity: 4, pickup: 'default', priceMinor: 10000 },
+      { maxQuantity: 8, pickup: 'custom', priceMinor: 20000 },
+      { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
     ]);
-    expect(priceFor(canonicalTour, 2, 'default')).toBe(10000);
+    expect(priceFor(canonicalService, 2, 'default')).toBe(10000);
   });
 
   it('rejects a duplicate breakpoint that would shadow a pricing rule with an actionable diagnostic', () => {
     const invalid = {
       ...config,
-      tours: {
-        ...config.tours,
+      services: {
+        ...config.services,
         vintage: {
-          ...tour,
-          pricing: [...tour.pricing, { maxPeople: 4, pickup: 'default', priceCents: 9000 }],
+          ...service,
+          pricing: [...service.pricing, { maxQuantity: 4, pickup: 'default', priceMinor: 9000 }],
         },
       },
     };
 
-    expect(() => validateConfig(invalid)).toThrow(/tour vintage pricing rule 4 \(pickup=default, maxPeople=4\) duplicates and shadows rule 0; remove or change one breakpoint/);
+    expect(() => validateConfig(invalid)).toThrow(/service vintage pricing rule 4 \(pickup=default, maxQuantity=4\) duplicates and shadows rule 0; remove or change one breakpoint/);
   });
 
-  it('rejects a missing pickup variant for a supported people count', () => {
+  it('rejects a missing pickup variant for a supported quantity count', () => {
     const invalid = {
       ...config,
-      tours: {
-        ...config.tours,
+      services: {
+        ...config.services,
         vintage: {
-          ...config.tours.vintage!,
-          pricing: config.tours.vintage!.pricing.filter((row) => row.pickup !== 'custom' || row.maxPeople !== 8),
+          ...config.services.vintage!,
+          pricing: config.services.vintage!.pricing.filter((row) => row.pickup !== 'custom' || row.maxQuantity !== 8),
         },
       },
     };
-    expect(() => validateConfig(invalid)).toThrow(/missing custom pricing for people=5/);
+    expect(() => validateConfig(invalid)).toThrow(/missing custom pricing for quantity=5/);
   });
 
-  // Plan 018 (design decision 2): the pricing axis is a plain string now, so validateTour is the
-  // only thing that can reject a row pointing at an id the tour never declared.
+  // Plan 018 (design decision 2): the pricing axis is a plain string now, so validateService is the
+  // only thing that can reject a row pointing at an id the service never declared.
   it('rejects a pricing row that references an undeclared pickup option id', () => {
     const invalid = {
       ...config,
-      tours: {
-        ...config.tours,
+      services: {
+        ...config.services,
         vintage: {
-          ...tour,
+          ...service,
           pickupOptions: [{ id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true }],
           pricing: [
-            { maxPeople: 4, pickup: 'meeting_point', priceCents: 18000 },
-            { maxPeople: 8, pickup: 'meeting_point', priceCents: 20000 },
-            { maxPeople: 4, pickup: 'unknown_option', priceCents: 15000 },
+            { maxQuantity: 4, pickup: 'meeting_point', priceMinor: 18000 },
+            { maxQuantity: 8, pickup: 'meeting_point', priceMinor: 20000 },
+            { maxQuantity: 4, pickup: 'unknown_option', priceMinor: 15000 },
           ],
         },
       },
@@ -186,39 +186,39 @@ describe('core config and pricing validation', () => {
   it('reports a per-id coverage hole for a declared pickup option', () => {
     const invalid = {
       ...config,
-      tours: {
-        ...config.tours,
+      services: {
+        ...config.services,
         vintage: {
-          ...tour,
+          ...service,
           pickupOptions: [
             { id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true },
             { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
           ],
           pricing: [
-            { maxPeople: 4, pickup: 'meeting_point', priceCents: 18000 },
-            { maxPeople: 8, pickup: 'meeting_point', priceCents: 20000 },
-            { maxPeople: 4, pickup: 'custom_dropoff', priceCents: 20000 },
+            { maxQuantity: 4, pickup: 'meeting_point', priceMinor: 18000 },
+            { maxQuantity: 8, pickup: 'meeting_point', priceMinor: 20000 },
+            { maxQuantity: 4, pickup: 'custom_dropoff', priceMinor: 20000 },
           ],
         },
       },
     };
-    expect(() => validateConfig(invalid)).toThrow(/missing custom_dropoff pricing for people=5/);
+    expect(() => validateConfig(invalid)).toThrow(/missing custom_dropoff pricing for quantity=5/);
   });
 
   it('rejects duplicate pickup option ids', () => {
     const invalid = {
       ...config,
-      tours: {
-        ...config.tours,
+      services: {
+        ...config.services,
         vintage: {
-          ...tour,
+          ...service,
           pickupOptions: [
             { id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true },
             { id: 'meeting_point', requiresAddress: true, usesMeetingPoint: false },
           ],
           pricing: [
-            { maxPeople: 4, pickup: 'meeting_point', priceCents: 10000 },
-            { maxPeople: 8, pickup: 'meeting_point', priceCents: 18000 },
+            { maxQuantity: 4, pickup: 'meeting_point', priceMinor: 10000 },
+            { maxQuantity: 8, pickup: 'meeting_point', priceMinor: 18000 },
           ],
         },
       },
@@ -230,14 +230,14 @@ describe('core config and pricing validation', () => {
     for (const id of ['MeetingPoint', 'meeting point']) {
       const invalid = {
         ...config,
-        tours: {
-          ...config.tours,
+        services: {
+          ...config.services,
           vintage: {
-            ...tour,
+            ...service,
             pickupOptions: [{ id, requiresAddress: false, usesMeetingPoint: true }],
             pricing: [
-              { maxPeople: 4, pickup: id, priceCents: 10000 },
-              { maxPeople: 8, pickup: id, priceCents: 18000 },
+              { maxQuantity: 4, pickup: id, priceMinor: 10000 },
+              { maxQuantity: 8, pickup: id, priceMinor: 18000 },
             ],
           },
         },
@@ -256,14 +256,17 @@ describe('core config and pricing validation', () => {
     expect(() => validateConfig({ ...config, booking: { ...config.booking, holdMinutes: 34 } })).toThrow(/at least 35/);
   });
 
-  it('rejects a hold above the Stripe 24h checkout-session cap (BK-CONFIG-001) and accepts the boundary', () => {
-    expect(() => validateConfig({ ...config, booking: { ...config.booking, holdMinutes: 1441 } })).toThrow(/at most 1440/);
-    expect(() => validateConfig({ ...config, booking: { ...config.booking, holdMinutes: 1440 } })).not.toThrow();
+  // Plan 022 (design decision 7): the 24h checkout-session cap and Stripe's locale list are the
+  // Stripe adapter's limits, checked by its validateConfig (tests/providers-stripe.test.ts).
+  // Core only keeps the vendor-neutral rules: a hold long enough to outlive its payment session,
+  // and locale tags a formatter can actually use.
+  it('accepts any hold at or above the safety floor, with no vendor-imposed ceiling', () => {
+    expect(() => validateConfig({ ...config, booking: { ...config.booking, holdMinutes: 4320 } })).not.toThrow();
   });
 
-  it('accepts pt-PT through Stripe’s pt locale and rejects unsupported locales', () => {
+  it('rejects a locale tag no formatter can parse', () => {
     expect(() => validateConfig({ ...config, locales: { supported: ['pt-PT'], default: 'pt-PT' } })).not.toThrow();
-    expect(() => validateConfig({ ...config, locales: { supported: ['en', 'xx'], default: 'en' } })).toThrow(/not supported by Stripe/);
+    expect(() => validateConfig({ ...config, locales: { supported: ['en', 'not a tag'], default: 'en' } })).toThrow(/not a valid BCP 47 locale tag/);
   });
 
   it('allows the operator locale to differ from customer and Stripe locales', () => {
@@ -292,10 +295,10 @@ describe('core config and pricing validation', () => {
   it('accepts equal season endpoints as a one-day inclusive range', () => {
     const oneDay = {
       ...config,
-      tours: {
+      services: {
         vintage: {
-          ...tour,
-          schedule: [{ ...tour.schedule[0]!, from: '06-15', to: '06-15' }],
+          ...service,
+          schedule: [{ ...service.schedule[0]!, from: '06-15', to: '06-15' }],
         },
       },
     };
@@ -305,9 +308,9 @@ describe('core config and pricing validation', () => {
   it('surfaces a throwing occupancy resolver as a path-specific validation issue', () => {
     const invalid = {
       ...config,
-      tours: {
+      services: {
         vintage: {
-          ...tour,
+          ...service,
           occupancyFor: () => {
             throw new Error('resolver failed');
           },
@@ -319,7 +322,7 @@ describe('core config and pricing validation', () => {
       throw new Error('expected validation to fail');
     } catch (error) {
       const issues = (error as { issues?: Array<{ path: (string | number)[]; message: string }> }).issues ?? [];
-      expect(issues[0]?.path).toEqual(['tours', 'vintage', 'occupancyFor']);
+      expect(issues[0]?.path).toEqual(['services', 'vintage', 'occupancyFor']);
       expect(issues[0]?.message).toContain('resolver failed');
     }
   });
@@ -327,10 +330,10 @@ describe('core config and pricing validation', () => {
   it('allows a season range that wraps across year-end', () => {
     const wrapped = {
       ...config,
-      tours: {
+      services: {
         vintage: {
-          ...tour,
-          schedule: [{ ...tour.schedule[0], from: '11-01', to: '02-28' }],
+          ...service,
+          schedule: [{ ...service.schedule[0], from: '11-01', to: '02-28' }],
         },
       },
     };
@@ -343,8 +346,8 @@ describe('resolveMeetingPoint', () => {
     { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
     { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
   ];
-  const { meetingPoint: _meetingPoint, ...tourBase } = tour;
-  const multiPointTour: TourConfig = { ...tourBase, meetingPoints: points };
+  const { meetingPoint: _meetingPoint, ...tourBase } = service;
+  const multiPointTour: ServiceConfig = { ...tourBase, meetingPoints: points };
 
   it('returns the point matching the given id', () => {
     expect(resolveMeetingPoint(multiPointTour, 'station')).toEqual(points[1]);
@@ -360,10 +363,10 @@ describe('resolveMeetingPoint', () => {
 
   // Plan 017 STOP condition 2: examples/smoke-site imports config directly for the widget,
   // never through validateConfig — resolveMeetingPoint must still work off the raw shorthand.
-  it('derives the single point from the meetingPoint shorthand on a raw, un-normalized tour', () => {
-    const expected = { id: 'default', ...tour.meetingPoint };
-    expect(resolveMeetingPoint(tour)).toEqual(expected);
-    expect(resolveMeetingPoint(tour, 'anything')).toEqual(expected);
+  it('derives the single point from the meetingPoint shorthand on a raw, un-normalized service', () => {
+    const expected = { id: 'default', ...service.meetingPoint };
+    expect(resolveMeetingPoint(service)).toEqual(expected);
+    expect(resolveMeetingPoint(service, 'anything')).toEqual(expected);
   });
 });
 
@@ -372,8 +375,8 @@ describe('meetingPointForBooking', () => {
     { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
     { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
   ];
-  const { meetingPoint: _meetingPoint, ...tourBase } = tour;
-  const multiPointTour: TourConfig = { ...tourBase, meetingPoints: points };
+  const { meetingPoint: _meetingPoint, ...tourBase } = service;
+  const multiPointTour: ServiceConfig = { ...tourBase, meetingPoints: points };
 
   it('resolves a declared id to its live label and maps link', () => {
     expect(meetingPointForBooking(multiPointTour, 'station', 'stale stored label')).toEqual({
@@ -412,23 +415,23 @@ describe('meetingPointForBooking', () => {
 describe('pickupOptionFor', () => {
   it('returns the declared option matching a given id', () => {
     const validated = validateConfig(config);
-    const vintage = validated.tours.vintage!;
+    const vintage = validated.services.vintage!;
     expect(pickupOptionFor(vintage, 'custom')).toEqual({ id: 'custom', requiresAddress: true, usesMeetingPoint: false });
     expect(pickupOptionFor(vintage, 'default')).toEqual({ id: 'default', requiresAddress: false, usesMeetingPoint: true });
   });
 
-  it('returns undefined for an id the tour has not declared', () => {
+  it('returns undefined for an id the service has not declared', () => {
     const validated = validateConfig(config);
-    const vintage = validated.tours.vintage!;
+    const vintage = validated.services.vintage!;
     expect(pickupOptionFor(vintage, 'unknown')).toBeUndefined();
   });
 
-  // Plan 018 (design decision 1): tolerant of a raw (never-validated) tour, same precedent as
+  // Plan 018 (design decision 1): tolerant of a raw (never-validated) service, same precedent as
   // resolveMeetingPoint (plan 017 STOP condition 2) — examples/smoke-site imports config directly
   // for the widget, never through validateConfig.
-  it('derives the default pair on a raw tour without pickupOptions', () => {
-    expect(pickupOptionFor(tour, 'default')).toEqual({ id: 'default', requiresAddress: false, usesMeetingPoint: true });
-    expect(pickupOptionFor(tour, 'custom')).toEqual({ id: 'custom', requiresAddress: true, usesMeetingPoint: false });
-    expect(pickupOptionFor(tour, 'unknown')).toBeUndefined();
+  it('derives the default pair on a raw service without pickupOptions', () => {
+    expect(pickupOptionFor(service, 'default')).toEqual({ id: 'default', requiresAddress: false, usesMeetingPoint: true });
+    expect(pickupOptionFor(service, 'custom')).toEqual({ id: 'custom', requiresAddress: true, usesMeetingPoint: false });
+    expect(pickupOptionFor(service, 'unknown')).toBeUndefined();
   });
 });

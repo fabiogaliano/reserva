@@ -6,7 +6,7 @@ interface TestEnv {
   BOOKKIT_DB: D1Database;
 }
 
-// Plan 003: real-D1 coverage for the capacity feature (per-day overrides + fleet defaults) and
+// Plan 003: real-D1 coverage for the capacity feature (per-day overrides + capacity defaults) and
 // the two hottest list queries (listOccupancyBookings/listUpcoming), none of which ran against
 // actual SQL before this file existed — see tests/workers/repo-d1.test.ts for the established
 // pattern this file follows (createBookingRepository(db) on the BOOKKIT_DB binding, beforeEach
@@ -32,13 +32,14 @@ function seedHold(
   return repository.insertHold({
     id,
     reference: `BKT-2026-${id}`,
-    tourSlug: 'vintage',
-    people: 2,
+    serviceSlug: 'vintage',
+    quantity: 2,
     pickupType: 'default',
     startsAt,
     endsAt,
     locale: 'en',
-    priceCents: 10000,
+    priceMinor: 10000,
+    currency: 'eur',
     holdExpiresAt,
     cancelToken: `cancel-${id}`,
     operatorToken: `operator-${id}`,

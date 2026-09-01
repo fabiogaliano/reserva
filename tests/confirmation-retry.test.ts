@@ -35,7 +35,7 @@ describe('retrySideEffectOperation', () => {
   });
 
   it('retries an abandoned calendar_create row past the attempt cap and succeeds', async () => {
-    const seeded = booking({ id: 'retry-calendar-success', status: 'confirmed', calendarSynced: false });
+    const seeded = booking({ id: 'retry-calendar-success', status: 'confirmed', calendarEventId: null });
     const repo = fakeRepository([seeded]);
     const operation = seedSideEffect(repo, seeded.id, { family: 'calendar_create' }, { status: 'abandoned', attemptCount: 10 });
     let calendarCalls = 0;
@@ -47,11 +47,11 @@ describe('retrySideEffectOperation', () => {
     await expect(retrySideEffectOperation(context, seeded, operation)).resolves.toBe('succeeded');
     expect(calendarCalls).toBe(1);
     expect(sideEffectOperation(repo, seeded.id, { family: 'calendar_create' })).toMatchObject({ status: 'succeeded', attemptCount: 11 });
-    expect(repo.rows.get(seeded.id)?.calendarSynced).toBe(true);
+    expect(repo.rows.get(seeded.id)?.calendarEventId).toBe('cal_retry');
   });
 
   it('retries an abandoned calendar_create row and records another failure when the provider is still down', async () => {
-    const seeded = booking({ id: 'retry-calendar-fail', status: 'confirmed', calendarSynced: false });
+    const seeded = booking({ id: 'retry-calendar-fail', status: 'confirmed', calendarEventId: null });
     const repo = fakeRepository([seeded]);
     const operation = seedSideEffect(repo, seeded.id, { family: 'calendar_create' }, { status: 'abandoned', attemptCount: 10 });
     const context = createBookkitContext({

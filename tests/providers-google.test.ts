@@ -1,25 +1,25 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ClientConfig, TourConfig } from '../src/core/config';
-import { booking, config, tour } from './fixtures';
+import type { ClientConfig, ServiceConfig } from '../src/core/config';
+import { booking, config, service } from './fixtures';
 import { ProviderFailure } from '../src/provider-failure';
 import { clearGoogleTokenCache, GoogleServiceAccountAuth } from '../src/providers/calendar-google/auth';
 import { GoogleCalendarProvider, mapGoogleCalendarEvent } from '../src/providers/calendar-google/calendar';
 
-// Plan 017 (design decision 4): canonical (post-validateConfig-shaped) multi-point tour, built
-// inline — fixtures.ts stays a single-point `meetingPoint` shorthand tour for other suites.
-const { meetingPoint: _meetingPoint, ...tourWithoutShorthand } = tour;
-const multiPointTour: TourConfig = {
+// Plan 017 (design decision 4): canonical (post-validateConfig-shaped) multi-point service, built
+// inline — fixtures.ts stays a single-point `meetingPoint` shorthand service for other suites.
+const { meetingPoint: _meetingPoint, ...tourWithoutShorthand } = service;
+const multiPointTour: ServiceConfig = {
   ...tourWithoutShorthand,
   meetingPoints: [
     { id: 'default', label: 'Praça do Comércio', mapsUrl: 'https://maps.google.com/?q=Praca+do+Comercio' },
     { id: 'belem', label: 'Belém Tower', mapsUrl: 'https://maps.google.com/?q=Belem+Tower' },
   ],
 };
-const multiPointConfig: ClientConfig = { ...config, tours: { vintage: multiPointTour } };
+const multiPointConfig: ClientConfig = { ...config, services: { vintage: multiPointTour } };
 
 // Plan 018 (design decision 8): a declared option with BOTH requiresAddress and usesMeetingPoint
 // (Maze's combined custom pickup+drop-off) — built inline per the same "don't touch fixtures.ts" rule.
-const bothFlagsTour: TourConfig = {
+const bothFlagsTour: ServiceConfig = {
   ...multiPointTour,
   pickupOptions: [
     { id: 'default', requiresAddress: false, usesMeetingPoint: true },
@@ -27,12 +27,12 @@ const bothFlagsTour: TourConfig = {
     { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
   ],
   pricing: [
-    { maxPeople: 8, pickup: 'default', priceCents: 18000 },
-    { maxPeople: 8, pickup: 'custom_dropoff', priceCents: 21000 },
-    { maxPeople: 8, pickup: 'custom_pickup', priceCents: 20000 },
+    { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
+    { maxQuantity: 8, pickup: 'custom_dropoff', priceMinor: 21000 },
+    { maxQuantity: 8, pickup: 'custom_pickup', priceMinor: 20000 },
   ],
 };
-const bothFlagsConfig: ClientConfig = { ...config, tours: { vintage: bothFlagsTour } };
+const bothFlagsConfig: ClientConfig = { ...config, services: { vintage: bothFlagsTour } };
 
 const fakePem = '-----BEGIN PRIVATE KEY-----\nAQID\n-----END PRIVATE KEY-----';
 const fakeCrypto = {
@@ -107,15 +107,15 @@ describe('Google Calendar provider', () => {
     await provider.deleteEvent('created');
     expect(request.mock.calls[2]?.[1]).toEqual(expect.objectContaining({ method: 'PATCH' }));
     expect(String(request.mock.calls[2]?.[0])).toContain('/created?sendUpdates=all');
-    // Plan 017: TourConfig.meetingPoint is now optional shorthand — the fixture tour still uses it
+    // Plan 017: ServiceConfig.meetingPoint is now optional shorthand — the fixture service still uses it
     // (single-point, unvalidated), so the non-null assertion carries the "this fixture declares it" fact.
-    expect(String(request.mock.calls[2]?.[1]?.body)).toContain(config.tours.vintage!.meetingPoint!.mapsUrl);
+    expect(String(request.mock.calls[2]?.[1]?.body)).toContain(config.services.vintage!.meetingPoint!.mapsUrl);
     expect(request.mock.calls[3]?.[1]).toEqual(expect.objectContaining({ method: 'DELETE' }));
   });
 
   // Plan 017 (design decision 4): the event description's Pickup/maps-URL lines resolve per
-  // booking (chosen meeting point id) instead of always reading the tour's single `meetingPoint`.
-  it('describes the meeting point the booking chose on a multi-point tour', async () => {
+  // booking (chosen meeting point id) instead of always reading the service's single `meetingPoint`.
+  it('describes the meeting point the booking chose on a multi-point service', async () => {
     const auth = { getAccessToken: async () => 'token' } as GoogleServiceAccountAuth;
     const request = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ id: 'created' }), { headers: { 'content-type': 'application/json' } }));
     const provider = new GoogleCalendarProvider({ calendarId: 'primary@example.test', auth, fetch: request });

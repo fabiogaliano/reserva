@@ -16,3 +16,16 @@ test('an unknown booking-confirmation session_id shows a recoverable not-found p
   expect(response?.status()).toBe(200);
   await expect(page.locator('h1')).toContainText('Booking not found');
 });
+
+// Plan 022: the payment webhook route moved off the vendor's name
+// (/api/booking/webhooks/stripe -> /api/booking/webhooks/payment). A stale deployment or a
+// forgotten redirect would leave the old path answering, so this pins both sides at the HTTP layer
+// against the real built worker: the new path is routed (it rejects an unsigned body rather than
+// 404ing), and the old one no longer exists at all.
+test('the payment webhook answers on its neutral path and the vendor-named one is gone', async ({ request }) => {
+  const answered = await request.post('/api/booking/webhooks/payment', { data: 'not-a-signed-payload' });
+  expect(answered.status()).not.toBe(404);
+
+  const retired = await request.post('/api/booking/webhooks/stripe', { data: 'not-a-signed-payload' });
+  expect(retired.status()).toBe(404);
+});

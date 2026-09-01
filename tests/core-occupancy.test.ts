@@ -9,7 +9,7 @@ import {
   remainingBookings,
   remainingCapacity,
 } from '../src/core/occupancy';
-import { booking, config, tour } from './fixtures';
+import { booking, config, service } from './fixtures';
 
 const slotStart = '2026-06-15T09:00:00.000Z';
 const slotEnd = '2026-06-15T10:00:00.000Z';
@@ -17,7 +17,7 @@ const slotEnd = '2026-06-15T10:00:00.000Z';
 function occupancyOptions(overrides: Partial<Parameters<typeof getOccupancyIntervals>[0]> = {}) {
   return {
     bookings: [],
-    tour,
+    service,
     now: '2026-06-15T08:00:00.000Z',
     ...overrides,
   };
@@ -34,27 +34,27 @@ describe('core occupancy', () => {
     })).toBe(true);
   });
 
-  it('uses the booking tour turnaround and occupancy resolver across tours', () => {
+  it('uses the booking service turnaround and occupancy resolver across services', () => {
     const largeTour = {
-      ...tour,
+      ...service,
       turnaroundMin: 90,
-      occupancyFor: (people: number) => people > 4 ? 2 : 1,
+      occupancyFor: (quantity: number) => quantity > 4 ? 2 : 1,
     };
     const intervals = getOccupancyIntervals(occupancyOptions({
-      bookings: [booking({ people: 8, tourSlug: 'large' })],
-      tours: { large: largeTour },
+      bookings: [booking({ quantity: 8, serviceSlug: 'large' })],
+      services: { large: largeTour },
     }));
     expect(intervals).toHaveLength(1);
     expect(intervals[0]?.units).toBe(2);
     expect(intervals[0]?.end).toBe('2026-06-15T11:30:00.000Z');
   });
 
-  it('removes a slot at capacity and treats eight people as two vehicles', () => {
+  it('removes a slot at capacity and treats eight quantity as two vehicles', () => {
     const one = booking();
-    const intervals = getOccupancyIntervals(occupancyOptions({ bookings: [one, booking({ id: 'booking-2', people: 2 })] }));
+    const intervals = getOccupancyIntervals(occupancyOptions({ bookings: [one, booking({ id: 'booking-2', quantity: 2 })] }));
     expect(isSlotAvailable(slotStart, slotEnd, { capacity: 2, intervals, requestedUnits: 1, turnaroundMin: 30 })).toBe(false);
 
-    const large = getOccupancyIntervals(occupancyOptions({ bookings: [booking({ people: 8 })] }));
+    const large = getOccupancyIntervals(occupancyOptions({ bookings: [booking({ quantity: 8 })] }));
     expect(remainingCapacity(2, large, slotStart, '2026-06-15T10:30:00.000Z')).toBe(0);
   });
 
@@ -77,15 +77,15 @@ describe('core occupancy', () => {
     }));
     expect(remainingCapacity(result.capacity, twoBookings, slotStart, '2026-06-15T10:30:00.000Z')).toBe(0);
     const full = availabilityForDay({
-      date: '2026-06-15', timezone: config.business.timezone, tour, capacity: 0,
-      bookings: [], requestedPeople: 1, limitedThreshold: 2, closedReason: 'vacation',
+      date: '2026-06-15', timezone: config.business.timezone, service, capacity: 0,
+      bookings: [], requestedQuantity: 1, limitedThreshold: 2, closedReason: 'vacation',
     });
     expect(full.status).toBe('closed');
     expect(full.closedReason).toBe('vacation');
     expect(full.slots).toEqual([]);
   });
 
-  it('resolves the fleet default from the latest capacity default at or before the date', () => {
+  it('resolves the capacity default from the latest capacity default at or before the date', () => {
     const defaults = [
       { fromDate: '2026-06-10', capacity: 1, reason: 'van in repair' },
       { fromDate: '2026-07-01', capacity: 2, reason: null },
@@ -101,12 +101,12 @@ describe('core occupancy', () => {
 
   it('returns closed for a non-operating day even when capacity is positive', () => {
     const nonOperatingTour = {
-      ...tour,
-      schedule: [{ ...tour.schedule[0]!, days: [0] }],
+      ...service,
+      schedule: [{ ...service.schedule[0]!, days: [0] }],
     };
     const result = availabilityForDay({
-      date: '2026-06-15', timezone: config.business.timezone, tour: nonOperatingTour, capacity: 2,
-      bookings: [], requestedPeople: 1, limitedThreshold: 2, now: '2026-06-14T00:00:00.000Z',
+      date: '2026-06-15', timezone: config.business.timezone, service: nonOperatingTour, capacity: 2,
+      bookings: [], requestedQuantity: 1, limitedThreshold: 2, now: '2026-06-14T00:00:00.000Z',
     });
     expect(result.status).toBe('closed');
     expect(result.slots).toEqual([]);
@@ -114,12 +114,12 @@ describe('core occupancy', () => {
 
   it('skips a nonexistent Lisbon spring-forward slot without failing availability', () => {
     const springTour = {
-      ...tour,
-      schedule: [{ ...tour.schedule[0]!, firstStart: '01:30', lastStart: '03:00', intervalMin: 30 }],
+      ...service,
+      schedule: [{ ...service.schedule[0]!, firstStart: '01:30', lastStart: '03:00', intervalMin: 30 }],
     };
     const result = availabilityForDay({
-      date: '2026-03-29', timezone: config.business.timezone, tour: springTour, capacity: 2,
-      bookings: [], requestedPeople: 1, limitedThreshold: 0, now: '2026-03-28T00:00:00.000Z', maxHorizonDays: 3,
+      date: '2026-03-29', timezone: config.business.timezone, service: springTour, capacity: 2,
+      bookings: [], requestedQuantity: 1, limitedThreshold: 0, now: '2026-03-28T00:00:00.000Z', maxHorizonDays: 3,
     });
     expect(result.status).toBe('available');
     expect(result.slots.map((slot) => slot.start)).not.toContain('2026-03-29T01:30:00.000+00:00');
@@ -195,19 +195,19 @@ describe('core occupancy', () => {
     expect(intervals).toHaveLength(1);
   });
 
-  it('remainingBookings converts remaining fleet units into bookings for a given party size (BK-CAP-002)', () => {
-    // Fixture tour: occupancyFor(5) = 2 units (parties >4 need a second vehicle).
-    expect(remainingBookings(3, tour, 5)).toBe(1); // 3 units / 2-unit party = 1 more booking fits
-    expect(remainingBookings(4, tour, 5)).toBe(2);
-    expect(remainingBookings(1, tour, 5)).toBe(0); // a lone unit can't seat a 2-unit party
+  it('remainingBookings converts remaining capacity units into bookings for a given party size (BK-CAP-002)', () => {
+    // Fixture service: occupancyFor(5) = 2 units (parties >4 need a second vehicle).
+    expect(remainingBookings(3, service, 5)).toBe(1); // 3 units / 2-unit party = 1 more booking fits
+    expect(remainingBookings(4, service, 5)).toBe(2);
+    expect(remainingBookings(1, service, 5)).toBe(0); // a lone unit can't seat a 2-unit party
     // A single-unit party consumes 1:1, so remainingBookings equals the raw unit count.
-    expect(remainingBookings(3, tour, 2)).toBe(3);
+    expect(remainingBookings(3, service, 2)).toBe(3);
   });
 
   it('availabilityForDay slots carry both remaining (units) and remainingBookings (for the requested party)', () => {
     const result = availabilityForDay({
-      date: '2026-06-15', timezone: config.business.timezone, tour, capacity: 4,
-      bookings: [], requestedPeople: 5, limitedThreshold: 2, now: '2026-06-14T00:00:00.000Z',
+      date: '2026-06-15', timezone: config.business.timezone, service, capacity: 4,
+      bookings: [], requestedQuantity: 5, limitedThreshold: 2, now: '2026-06-14T00:00:00.000Z',
     });
     expect(result.slots.length).toBeGreaterThan(0);
     for (const slot of result.slots) {

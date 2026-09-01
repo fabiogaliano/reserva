@@ -3,24 +3,24 @@ import { describe, expect, it } from 'vitest';
 import { runOwedMutationSideEffects } from '../src/confirmation';
 import type { BookkitLogger, BookkitProviders } from '../src/context';
 import { createBookkitContext } from '../src/context';
-import { handleStatus, handleStripeWebhook } from '../src/handlers';
+import { handleStatus, handlePaymentWebhook } from '../src/handlers';
 import { ProviderFailure } from '../src/provider-failure';
 import { booking, config } from './fixtures';
 import type { SideEffectOperationIdentity } from '../src/repo';
-import { fakeRepository, providers, sideEffectOperation } from './fakes';
+import { fakeRepository, providers, sideEffectOperation, seedSettledConfirmation } from './fakes';
 
 const seedFor = (identity: SideEffectOperationIdentity) => ({ ...identity, eventPayloadJson: null, eventIdPrefix: null });
 
-function paidWebhookProviders(bookingId: string, sessionId: string, overrides: Partial<BookkitProviders> = {}): BookkitProviders {
+function paidWebhookProviders(bookingId: string, sessionRef: string, overrides: Partial<BookkitProviders> = {}): BookkitProviders {
   return providers({
     payments: {
-      createCheckout: async () => ({ url: '', sessionId: '' }),
+      createCheckout: async () => ({ url: '', sessionRef: '' }),
       parseWebhook: async () => ({
-        id: 'evt_abandon', type: 'checkout.session.completed', bookingId, sessionId,
-        paymentIntent: 'pi_abandon', paid: true, amountCaptured: 10000, currency: config.business.currency,
+        id: 'evt_abandon', type: 'checkout_completed', bookingId, sessionRef,
+        paymentRef: 'pi_abandon', paid: true, amountCaptured: 10000, currency: config.business.currency,
       }),
       getSession: async () => ({ status: 'open' }),
-      refund: async () => ({ refundId: 're_abandon', amountCents: 0 }),
+      refund: async () => ({ refundRef: 're_abandon', amountMinor: 0 }),
     },
     ...overrides,
   });
@@ -42,7 +42,7 @@ function capturingLogger(): { logger: BookkitLogger; errors: Array<[string, Reco
 // failure is classified permanent, or a retryable failure has exhausted the attempt cap.
 describe('outbox permanent-failure classification and attempt cap (plan 016)', () => {
   it('abandons a confirmation-path row after one permanent (401) failure, never claims it again, logs exactly once, and never returns a retryable webhook response', async () => {
-    const seeded = booking({ id: 'abandon-401', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', stripeSessionId: 'cs_abandon_401' });
+    const seeded = booking({ id: 'abandon-401', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', paymentSessionRef: 'cs_abandon_401' });
     const repo = fakeRepository([seeded]);
     let emailCalls = 0;
     let hookCalls = 0;
@@ -58,7 +58,7 @@ describe('outbox permanent-failure classification and attempt cap (plan 016)', (
       hooks: [{ name: 'analytics', handler: async () => { hookCalls += 1; } }],
     });
 
-    const first = await handleStripeWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context);
+    const first = await handlePaymentWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context);
     expect(first.status).toBe(200);
     expect(emailCalls).toBe(1);
     expect(hookCalls).toBe(1);
@@ -70,14 +70,14 @@ describe('outbox permanent-failure classification and attempt cap (plan 016)', (
     });
 
     // A webhook redelivery must never reclaim the abandoned row or retry the webhook response.
-    const second = await handleStripeWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context);
+    const second = await handlePaymentWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context);
     expect(second.status).toBe(200);
     expect(emailCalls).toBe(1);
     expect(hookCalls).toBe(1);
     expect(sideEffectOperation(repo, seeded.id, { family: 'email_confirmation' })).toMatchObject({ status: 'abandoned', attemptCount: 1 });
 
     // Nor must a /status poll.
-    const status = await handleStatus(new Request(`https://example.test/status?session_id=${seeded.stripeSessionId}`), context);
+    const status = await handleStatus(new Request(`https://example.test/status?session_id=${seeded.paymentSessionRef}`), context);
     expect(status.status).toBe(200);
     expect(emailCalls).toBe(1);
     expect(hookCalls).toBe(1);
@@ -170,10 +170,10 @@ describe('outbox permanent-failure classification and attempt cap (plan 016)', (
 
   it('abandons a confirmation-path durable hook row after a permanent failure and stops handleStatus from re-entering fulfillment for it', async () => {
     const seeded = booking({
-      id: 'abandon-hook', status: 'confirmed', stripeSessionId: 'cs_abandon_hook',
-      calendarSynced: true, emailSynced: true,
+      id: 'abandon-hook', status: 'confirmed', paymentSessionRef: 'cs_abandon_hook',
     });
     const repo = fakeRepository([seeded]);
+    seedSettledConfirmation(repo, seeded.id);
     const identity: SideEffectOperationIdentity = { family: 'hook', name: 'ops', event: 'booking.confirmed' };
     let pushCalls = 0;
     const { logger, errors } = capturingLogger();
@@ -184,14 +184,14 @@ describe('outbox permanent-failure classification and attempt cap (plan 016)', (
       hooks: [{ name: 'ops', durable: true, handler: async () => { pushCalls += 1; throw new ProviderFailure({ status: 403, message: 'forbidden' }); } }],
     });
 
-    const first = await handleStatus(new Request(`https://example.test/status?session_id=${seeded.stripeSessionId}`), context);
+    const first = await handleStatus(new Request(`https://example.test/status?session_id=${seeded.paymentSessionRef}`), context);
     expect(first.status).toBe(200);
     expect(pushCalls).toBe(1);
     expect(sideEffectOperation(repo, seeded.id, identity)).toMatchObject({ status: 'abandoned', attemptCount: 1 });
     expect(errors).toHaveLength(1);
     expect(errors[0]?.[1]).toMatchObject({ operation: 'hook:ops:booking.confirmed', provider: 'hook', status: 403, reason: 'permanent_failure' });
 
-    const second = await handleStatus(new Request(`https://example.test/status?session_id=${seeded.stripeSessionId}`), context);
+    const second = await handleStatus(new Request(`https://example.test/status?session_id=${seeded.paymentSessionRef}`), context);
     expect(second.status).toBe(200);
     // needsFulfillment now sees the row exists (abandoned) and stops re-entering fulfillment
     // (which would otherwise re-run confirmBookingFromPayment on every future poll); the mutation

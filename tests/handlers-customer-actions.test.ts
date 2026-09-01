@@ -148,7 +148,7 @@ describe('POST /cancel (customer, spec §11)', () => {
   // Stripe/D1 already show the booking as cancelled, but the *calendar* event survives (delete
   // failed), so it still occupies the slot until a later request drains the calendar_delete debt.
   it('a stale calendar event survives a failed delete: occupancy still blocks the slot until a later request drains the debt and frees it', async () => {
-    const singleCapacityConfig = { ...config, fleet: { defaultCapacity: 1 } };
+    const singleCapacityConfig = { ...config, capacity: { default: 1 } };
     const seeded = booking({
       id: 'b-calendar-debt-occupancy', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z',
       calendarEventId: 'cal-debt',
@@ -184,7 +184,7 @@ describe('POST /cancel (customer, spec §11)', () => {
     expect(repo.rows.get(seeded.id)?.status).toBe('cancelled');
     expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_delete`)).toMatchObject({ status: 'failed' });
 
-    const availabilityRequest = () => new Request('https://example.test/api/booking/availability?tour=vintage&people=1&from=2026-06-15&to=2026-06-15');
+    const availabilityRequest = () => new Request('https://example.test/api/booking/availability?service=vintage&quantity=1&from=2026-06-15&to=2026-06-15');
     const blocked = await handleAvailability(availabilityRequest(), context);
     expect(blocked.status).toBe(200);
     const blockedPayload = await blocked.json() as { days: Array<{ slots: Array<{ start: string }> }> };
@@ -259,7 +259,7 @@ describe('POST /operator/cancel (spec §11)', () => {
 });
 
 describe('POST /reschedule (customer, spec §11)', () => {
-  it('happy path: moves to a new valid slot on the same tour, preserves party/price, patches the calendar, and dispatches booking.rescheduled', async () => {
+  it('happy path: moves to a new valid slot on the same service, preserves party/price, patches the calendar, and dispatches booking.rescheduled', async () => {
     const seeded = booking({
       id: 'b-reschedule-happy',
       startsAt: '2026-06-15T09:00:00.000Z',
@@ -288,9 +288,9 @@ describe('POST /reschedule (customer, spec §11)', () => {
     expect(row?.startsAt).toBe(validNewStart);
     expect(row?.endsAt).toBe('2026-06-15T09:00:00.000Z');
     expect(row?.rescheduledFrom).toBe(seeded.startsAt);
-    expect(row?.priceCents).toBe(seeded.priceCents);
-    expect(row?.tourSlug).toBe(seeded.tourSlug);
-    expect(row?.people).toBe(seeded.people);
+    expect(row?.priceMinor).toBe(seeded.priceMinor);
+    expect(row?.serviceSlug).toBe(seeded.serviceSlug);
+    expect(row?.quantity).toBe(seeded.quantity);
     expect(patches).toBe(1);
     expect(emails).toEqual(['booking.rescheduled']);
   });
@@ -393,7 +393,7 @@ describe('POST /reschedule (customer, spec §11)', () => {
   });
 
   it('excludes its own occupancy at the route layer: moving within an overlapping window at capacity 1 must not 409 against itself', async () => {
-    const singleCapacityConfig = { ...config, fleet: { defaultCapacity: 1 } };
+    const singleCapacityConfig = { ...config, capacity: { default: 1 } };
     // Local 09:00-10:00 (UTC 08:00-09:00). Moving to local 09:30 overlaps the old
     // occupied window (which extends to 10:30 local with the 30-min turnaround).
     const seeded = booking({ id: 'b-reschedule-own-occupancy', startsAt: '2026-06-15T08:00:00.000Z', endsAt: '2026-06-15T09:00:00.000Z' });
@@ -406,7 +406,7 @@ describe('POST /reschedule (customer, spec §11)', () => {
   });
 
   it('inverse control: the same move fails with 409 slot_unavailable when a second confirmed booking occupies the target window', async () => {
-    const singleCapacityConfig = { ...config, fleet: { defaultCapacity: 1 } };
+    const singleCapacityConfig = { ...config, capacity: { default: 1 } };
     const seeded = booking({ id: 'b-reschedule-blocked', startsAt: '2026-06-15T08:00:00.000Z', endsAt: '2026-06-15T09:00:00.000Z' });
     const blocker = booking({
       id: 'b-reschedule-blocker',
@@ -467,7 +467,7 @@ describe('POST /reschedule (customer, spec §11)', () => {
 
   // BK-SEC-002 (patch-11-r1 MEDIUM 2): tokens_expire_at must track the booking's CURRENT endsAt,
   // not whatever it was at checkout — otherwise a reschedule that moves a booking out drops its
-  // manage link's expiry before the (new, later) tour date, and one moved in leaves an
+  // manage link's expiry before the (new, later) service date, and one moved in leaves an
   // over-long window relative to the new (earlier) end. repo.tokenState mirrors the DB-side
   // tokens_expire_at column (see tests/fakes.ts).
   it('moves tokens_expire_at to (new endsAt + tokenExpiryDays) on a LATER reschedule', async () => {
@@ -479,7 +479,7 @@ describe('POST /reschedule (customer, spec §11)', () => {
     const response = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, newStart), context);
     expect(response.status).toBe(200);
     const row = repo.rows.get(seeded.id);
-    expect(row?.endsAt).toBe('2026-06-15T11:00:00.000Z'); // 60-min tour, moved an hour later
+    expect(row?.endsAt).toBe('2026-06-15T11:00:00.000Z'); // 60-min service, moved an hour later
     const expected = new Date(new Date(row!.endsAt).getTime() + DEFAULT_TOKEN_EXPIRY_DAYS * 86_400_000).toISOString();
     expect(repo.tokenState.get(seeded.id)?.tokensExpireAt).toBe(expected);
   });
@@ -493,7 +493,7 @@ describe('POST /reschedule (customer, spec §11)', () => {
     const response = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, newStart), context);
     expect(response.status).toBe(200);
     const row = repo.rows.get(seeded.id);
-    expect(row?.endsAt).toBe('2026-06-15T09:00:00.000Z'); // 60-min tour, moved an hour earlier
+    expect(row?.endsAt).toBe('2026-06-15T09:00:00.000Z'); // 60-min service, moved an hour earlier
     const expected = new Date(new Date(row!.endsAt).getTime() + DEFAULT_TOKEN_EXPIRY_DAYS * 86_400_000).toISOString();
     expect(repo.tokenState.get(seeded.id)?.tokensExpireAt).toBe(expected);
     // Sanity: the new expiry is earlier than it would have been off the ORIGINAL endsAt, proving

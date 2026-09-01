@@ -2,7 +2,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { runOwedMutationSideEffects } from '../src/confirmation';
 import { createBookkitContext, type BookkitProviders } from '../src/context';
-import { handleStatus, handleStripeWebhook } from '../src/handlers';
+import { handleStatus, handlePaymentWebhook } from '../src/handlers';
 import { booking, config } from './fixtures';
 import { sameSideEffectOperation, type SideEffectOperationIdentity } from '../src/repo';
 import { fakeRepository, providers, seedSideEffectOperation, sideEffectOperation } from './fakes';
@@ -10,16 +10,16 @@ import { fakeRepository, providers, seedSideEffectOperation, sideEffectOperation
 const CUSTOMER: SideEffectOperationIdentity = { family: 'email', name: 'customer', event: 'booking.confirmed' };
 const OWNER: SideEffectOperationIdentity = { family: 'email', name: 'owner', event: 'booking.confirmed' };
 
-function paidWebhookProviders(bookingId: string, sessionId: string, overrides: Partial<BookkitProviders> = {}) {
+function paidWebhookProviders(bookingId: string, sessionRef: string, overrides: Partial<BookkitProviders> = {}) {
   return providers({
     payments: {
-      createCheckout: async () => ({ url: '', sessionId: '' }),
+      createCheckout: async () => ({ url: '', sessionRef: '' }),
       parseWebhook: async () => ({
-        id: 'evt_email_outbox', type: 'checkout.session.completed', bookingId, sessionId,
-        paymentIntent: 'pi_email_outbox', paid: true, amountCaptured: 10000, currency: config.business.currency,
+        id: 'evt_email_outbox', type: 'checkout_completed', bookingId, sessionRef,
+        paymentRef: 'pi_email_outbox', paid: true, amountCaptured: 10000, currency: config.business.currency,
       }),
       getSession: async () => ({ status: 'open' }),
-      refund: async () => ({ refundId: 're_email_outbox', amountCents: 0 }),
+      refund: async () => ({ refundRef: 're_email_outbox', amountMinor: 0 }),
     },
     ...overrides,
   });
@@ -30,7 +30,7 @@ function paidWebhookProviders(bookingId: string, sessionId: string, overrides: P
 // per-recipient email rows (family 'email', name 'customer'/'owner', event 'booking.confirmed').
 describe('confirmation-path per-recipient email outbox (plan 012)', () => {
   it('sends only the owner recipient on retry after an owner-recipient failure, never resending the already-delivered customer message', async () => {
-    const seeded = booking({ id: 'b-email-split-owner-fails', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', stripeSessionId: 'cs_email_owner_fails' });
+    const seeded = booking({ id: 'b-email-split-owner-fails', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', paymentSessionRef: 'cs_email_owner_fails' });
     const repo = fakeRepository([seeded]);
     const recipients: string[] = [];
     let ownerAttempts = 0;
@@ -49,29 +49,32 @@ describe('confirmation-path per-recipient email outbox (plan 012)', () => {
       }),
     });
 
-    await expect(handleStripeWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context)).resolves.toMatchObject({ status: 500 });
+    await expect(handlePaymentWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context)).resolves.toMatchObject({ status: 500 });
     expect(recipients).toEqual(['customer', 'owner']);
     expect(sideEffectOperation(repo, seeded.id, CUSTOMER)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
     expect(sideEffectOperation(repo, seeded.id, OWNER)).toMatchObject({ status: 'failed', attemptCount: 1 });
-    expect(repo.rows.get(seeded.id)).toMatchObject({ emailSynced: false });
 
-    await expect(handleStripeWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context)).resolves.toMatchObject({ status: 200 });
+    await expect(handlePaymentWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context)).resolves.toMatchObject({ status: 200 });
     // Only ONE more attempt happened (the owner retry) — the customer recipient is never sent again.
     expect(recipients).toEqual(['customer', 'owner', 'owner']);
     expect(recipients.filter((recipient) => recipient === 'customer')).toHaveLength(1);
     expect(sideEffectOperation(repo, seeded.id, OWNER)).toMatchObject({ status: 'succeeded', attemptCount: 2 });
-    expect(repo.rows.get(seeded.id)).toMatchObject({ emailSynced: true });
   });
 
-  it('sets emailSynced true only once BOTH split rows have succeeded, not after the first', async () => {
-    const seeded = booking({ id: 'b-email-split-both-succeed', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', stripeSessionId: 'cs_email_both_succeed' });
+  // Plan 022: the derived emailSynced flag this used to observe is gone; the per-recipient rows ARE
+  // the record now, so the invariant is asserted where it lives — after the first recipient
+  // resolves, the confirmation as a whole is still not delivered.
+  it('counts the confirmation email as delivered only once BOTH split rows have succeeded, not after the first', async () => {
+    const seeded = booking({ id: 'b-email-split-both-succeed', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', paymentSessionRef: 'cs_email_both_succeed' });
     const repo = fakeRepository([seeded]);
     const originalResolve = repo.resolveSideEffectOperation;
-    const emailSyncedAfterResolve: Record<string, boolean> = {};
+    const allEmailsDeliveredAfterResolve: Record<string, boolean> = {};
     repo.resolveSideEffectOperation = async (input) => {
       const result = await originalResolve(input);
       if (input.identity.family === 'email' && input.identity.name) {
-        emailSyncedAfterResolve[input.identity.name] = repo.rows.get(input.bookingId)?.emailSynced ?? false;
+        const emailRows = (await repo.listSideEffectOperations(input.bookingId))
+          .filter((row) => row.family === 'email' && row.event === 'booking.confirmed');
+        allEmailsDeliveredAfterResolve[input.identity.name] = emailRows.every((row) => row.status === 'succeeded');
       }
       return result;
     };
@@ -87,15 +90,14 @@ describe('confirmation-path per-recipient email outbox (plan 012)', () => {
       }),
     });
 
-    await expect(handleStripeWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context)).resolves.toMatchObject({ status: 200 });
+    await expect(handlePaymentWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context)).resolves.toMatchObject({ status: 200 });
 
-    expect(emailSyncedAfterResolve.customer).toBe(false);
-    expect(emailSyncedAfterResolve.owner).toBe(true);
-    expect(repo.rows.get(seeded.id)).toMatchObject({ emailSynced: true });
+    expect(allEmailsDeliveredAfterResolve.customer).toBe(false);
+    expect(allEmailsDeliveredAfterResolve.owner).toBe(true);
   });
 
   it('a plain-send provider keeps the single combined email_confirmation row and existing behavior', async () => {
-    const seeded = booking({ id: 'b-email-combined-unchanged', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', stripeSessionId: 'cs_email_combined' });
+    const seeded = booking({ id: 'b-email-combined-unchanged', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', paymentSessionRef: 'cs_email_combined' });
     const repo = fakeRepository([seeded]);
     let sendCalls = 0;
     const context = createBookkitContext({
@@ -106,18 +108,17 @@ describe('confirmation-path per-recipient email outbox (plan 012)', () => {
       }),
     });
 
-    await expect(handleStripeWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context)).resolves.toMatchObject({ status: 200 });
+    await expect(handlePaymentWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context)).resolves.toMatchObject({ status: 200 });
 
     expect(sendCalls).toBe(1);
     const emailRows = (await repo.listSideEffectOperations(seeded.id)).filter((row) => row.family === 'email_confirmation' || row.family === 'email');
     expect(emailRows).toEqual([expect.objectContaining({ family: 'email_confirmation', status: 'succeeded' })]);
-    expect(repo.rows.get(seeded.id)).toMatchObject({ emailSynced: true });
   });
 
   it('retries a seeded failed legacy combined row through send() and never creates split rows, even once the provider becomes split-capable', async () => {
     const seeded = booking({
-      id: 'b-email-legacy-upgrade', status: 'confirmed', stripeSessionId: 'cs_email_legacy_upgrade',
-      calendarSynced: true, emailSynced: false,
+      id: 'b-email-legacy-upgrade', status: 'confirmed', paymentSessionRef: 'cs_email_legacy_upgrade',
+      calendarEventId: 'cal_email_legacy_upgrade',
     });
     const repo = fakeRepository([seeded]);
     const createdAt = '2026-06-14T08:00:00.000Z';
@@ -149,7 +150,6 @@ describe('confirmation-path per-recipient email outbox (plan 012)', () => {
     expect(sideEffectOperation(repo, seeded.id, { family: 'email_confirmation' })).toMatchObject({ status: 'succeeded' });
     expect(sideEffectOperation(repo, seeded.id, CUSTOMER) !== undefined).toBe(false);
     expect(sideEffectOperation(repo, seeded.id, OWNER) !== undefined).toBe(false);
-    expect(repo.rows.get(seeded.id)).toMatchObject({ emailSynced: true });
   });
 
   it('never lets the mutation drain claim a split confirmation email row', async () => {
@@ -175,7 +175,7 @@ describe('confirmation-path per-recipient email outbox (plan 012)', () => {
   });
 
   it('a repository failure resolving the customer row does not block the independent owner row', async () => {
-    const seeded = booking({ id: 'b-email-split-repo-write-fails', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', stripeSessionId: 'cs_email_repo_write_fails' });
+    const seeded = booking({ id: 'b-email-split-repo-write-fails', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', paymentSessionRef: 'cs_email_repo_write_fails' });
     const repo = fakeRepository([seeded]);
     const resolveOperation = repo.resolveSideEffectOperation;
     let failCustomerSuccessWrite = true;
@@ -199,15 +199,14 @@ describe('confirmation-path per-recipient email outbox (plan 012)', () => {
       }),
     });
 
-    await expect(handleStripeWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context)).resolves.toMatchObject({ status: 500 });
+    await expect(handlePaymentWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context)).resolves.toMatchObject({ status: 500 });
     expect(recipients).toEqual(['customer', 'owner']);
     expect(sideEffectOperation(repo, seeded.id, CUSTOMER)).toMatchObject({ status: 'failed', attemptCount: 1 });
     expect(sideEffectOperation(repo, seeded.id, OWNER)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
 
-    await expect(handleStripeWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context)).resolves.toMatchObject({ status: 200 });
+    await expect(handlePaymentWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context)).resolves.toMatchObject({ status: 200 });
     expect(recipients).toEqual(['customer', 'owner', 'customer']);
     expect(sideEffectOperation(repo, seeded.id, CUSTOMER)).toMatchObject({ status: 'succeeded', attemptCount: 2 });
     expect(sideEffectOperation(repo, seeded.id, OWNER)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
-    expect(repo.rows.get(seeded.id)).toMatchObject({ emailSynced: true });
   });
 });

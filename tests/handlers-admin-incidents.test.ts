@@ -67,7 +67,7 @@ describe('admin incidents (plan 020 design decisions 12-14)', () => {
   });
 
   it('GET renders an open incident card with its owner-facing title, never the word "abandoned"', async () => {
-    const seeded = booking({ id: 'inc-render', status: 'confirmed', calendarSynced: false });
+    const seeded = booking({ id: 'inc-render', status: 'confirmed', calendarEventId: null });
     const repo = fakeRepository([seeded]);
     seedSideEffect(repo, seeded.id, { family: 'calendar_create' });
     await repo.upsertOpenIncident({
@@ -112,7 +112,7 @@ describe('admin incidents (plan 020 design decisions 12-14)', () => {
   });
 
   it('incident-retry dispatches a side_effect incident to retrySideEffectOperation and redirects with a notice', async () => {
-    const seeded = booking({ id: 'inc-retry-se', status: 'confirmed', calendarSynced: false });
+    const seeded = booking({ id: 'inc-retry-se', status: 'confirmed', calendarEventId: null });
     const repo = fakeRepository([seeded]);
     seedSideEffect(repo, seeded.id, { family: 'calendar_create' });
     await repo.upsertOpenIncident({
@@ -134,11 +134,12 @@ describe('admin incidents (plan 020 design decisions 12-14)', () => {
     expect(response.headers.get('location')).toContain('saved=incident-retried');
     expect(response.headers.get('location')).toContain('#bk-incidents');
     expect(calendarCalls).toBe(1);
-    expect(repo.rows.get(seeded.id)?.calendarSynced).toBe(true);
+    // Plan 022: the calendar event id the retry wrote IS the record that the event exists.
+    expect(repo.rows.get(seeded.id)?.calendarEventId).toBe('cal_retry');
   });
 
   it('incident-retry dispatches a refund incident through claimRefundExecutionForRetry + the shared executor', async () => {
-    const seeded = booking({ id: 'inc-retry-refund', status: 'cancelled', stripePaymentIntent: 'pi_inc_retry' });
+    const seeded = booking({ id: 'inc-retry-refund', status: 'cancelled', paymentRef: 'pi_inc_retry' });
     const repo = fakeRepository([seeded]);
     await repo.claimRefundOperation({ id: 'op-inc-retry', bookingId: seeded.id, paymentIntent: 'pi_inc_retry', choice: 'full', requestedAt: '2026-06-14T07:00:00.000Z' });
     await repo.resolveRefundOperation('op-inc-retry', { status: 'failed', error: 'stripe down', resolvedAt: '2026-06-14T07:00:00.000Z' });
@@ -152,10 +153,10 @@ describe('admin incidents (plan 020 design decisions 12-14)', () => {
       config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, secrets: csrfSecrets,
       providers: providers({
         payments: {
-          createCheckout: async () => ({ url: '', sessionId: '' }),
+          createCheckout: async () => ({ url: '', sessionRef: '' }),
           parseWebhook: async () => { throw new Error('unused'); },
           getSession: async () => ({ status: 'open' }),
-          refund: async () => { refundCalls += 1; return { refundId: 're_inc_retry', amountCents: seeded.priceCents }; },
+          refund: async () => { refundCalls += 1; return { refundRef: 're_inc_retry', amountMinor: seeded.priceMinor }; },
         },
       }),
     });
@@ -170,7 +171,7 @@ describe('admin incidents (plan 020 design decisions 12-14)', () => {
   });
 
   it('incident-resolve requires a trimmed 1-500 char note, records who/when, and only resolves the incident (never the underlying row)', async () => {
-    const seeded = booking({ id: 'inc-resolve', status: 'confirmed', calendarSynced: false });
+    const seeded = booking({ id: 'inc-resolve', status: 'confirmed', calendarEventId: null });
     const repo = fakeRepository([seeded]);
     seedSideEffect(repo, seeded.id, { family: 'calendar_create' });
     await repo.upsertOpenIncident({
@@ -194,7 +195,7 @@ describe('admin incidents (plan 020 design decisions 12-14)', () => {
     expect(resolved).toMatchObject({ status: 'resolved', resolutionKind: 'manual', resolvedBy: 'ops@example.test', resolutionNote: 'called the customer directly' });
     // The underlying row is untouched — still 'abandoned', never rewritten to look succeeded.
     expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_create`)?.status).toBe('abandoned');
-    expect(repo.rows.get(seeded.id)?.calendarSynced).toBe(false);
+    expect(repo.rows.get(seeded.id)?.calendarEventId).toBeNull();
   });
 
   it('rejects incident-retry/incident-resolve for an unknown or already-resolved incident with 400', async () => {

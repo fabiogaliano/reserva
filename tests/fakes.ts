@@ -7,11 +7,11 @@ import {
   maxConcurrentOccupancy,
   resolveCapacity,
   type OccupancyBooking,
-  type OccupancyTour,
+  type OccupancyService,
 } from '../src/core/occupancy';
 import { sha256Base64Url } from '../src/http';
 import {
-  DuplicatePaymentIntentError,
+  DuplicatePaymentRefError,
   HoldLimitExceededError,
   MUTATION_SIDE_EFFECT_LEASE_MS,
   SIDE_EFFECT_MAX_ATTEMPTS,
@@ -140,8 +140,8 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
   };
   const guardDuplicatePaymentIntent = (bookingId: string, paymentIntent: string | null | undefined): void => {
     if (paymentIntent === null || paymentIntent === undefined) return;
-    if (find((item) => item.id !== bookingId && item.stripePaymentIntent === paymentIntent)) {
-      throw new DuplicatePaymentIntentError(paymentIntent);
+    if (find((item) => item.id !== bookingId && item.paymentRef === paymentIntent)) {
+      throw new DuplicatePaymentRefError(paymentIntent);
     }
   };
   // patch-05-r1 Fix 2: reuse the REAL getOccupancyIntervals/maxConcurrentOccupancy (src/core/
@@ -149,10 +149,10 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
   // src/repo.ts's own NOT-EXISTS max-concurrency guard (see the Fix 1 comment there). Each row's
   // already-resolved occupancy_ends_at/occupancy_units (tracked in `occupancyMeta`, falling back
   // to COALESCE(_, endsAt)/COALESCE(_, 1) for rows seeded outside these methods, matching a
-  // pre-migration-0008 NULL row) is smuggled through a trivial zero-turnaround tour whose
-  // occupancyFor is the identity on a synthetic `people` count — that lets getOccupancyIntervals
+  // pre-migration-0008 NULL row) is smuggled through a trivial zero-turnaround service whose
+  // occupancyFor is the identity on a synthetic `quantity` count — that lets getOccupancyIntervals
   // do the real active/overlap bookkeeping instead of a second, parallel implementation of it.
-  const zeroTurnaroundTour: OccupancyTour = { turnaroundMin: 0, occupancyFor: (units) => units };
+  const zeroTurnaroundTour: OccupancyService = { turnaroundMin: 0, occupancyFor: (units) => units };
   const toOccupancyBooking = (item: Booking): OccupancyBooking => {
     const meta = occupancyMeta.get(item.id);
     return {
@@ -161,7 +161,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       startsAt: item.startsAt,
       endsAt: meta?.endsAt ?? item.endsAt,
       holdExpiresAt: item.holdExpiresAt,
-      people: meta?.units ?? 1,
+      quantity: meta?.units ?? 1,
     };
   };
   // Max-concurrent occupancy in [targetStart, targetEnd) — the same semantic src/repo.ts's guard
@@ -169,7 +169,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
   const maxConcurrentInInterval = (targetStart: string, targetEnd: string, now: string, excludeId?: string): number => {
     const intervals = getOccupancyIntervals({
       bookings: [...rows.values()].map(toOccupancyBooking),
-      tour: zeroTurnaroundTour,
+      service: zeroTurnaroundTour,
       now,
       ...(excludeId !== undefined ? { excludeBookingId: excludeId } : {}),
     });
@@ -177,14 +177,14 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
   };
   // Mirrors capacityForDate/defaultCapacityForDate (core/occupancy.ts): a day override for
   // localDate wins outright; otherwise the capacity_defaults row with the latest from_date <=
-  // localDate applies; otherwise fleetDefaultCapacity. Calls through `repository` (not a
+  // localDate applies; otherwise defaultCapacity. Calls through `repository` (not a
   // captured local) so a test overriding repo.getDayOverride/listCapacityDefaults (same pattern
   // as overriding repo.listOccupancyBookings elsewhere in these tests) is honored here too.
-  const resolveCapacityFake = async (localDate: string, fleetDefaultCapacity: number): Promise<number> => {
+  const resolveCapacityFake = async (localDate: string, defaultCapacity: number): Promise<number> => {
     const override = await repository.getDayOverride(localDate);
     if (override) return resolveCapacity(override.capacity);
     const defaults = await repository.listCapacityDefaults();
-    return defaultCapacityForDate(localDate, fleetDefaultCapacity, defaults);
+    return defaultCapacityForDate(localDate, defaultCapacity, defaults);
   };
   const repository: BookingRepository & { rows: Map<string, Booking>; settings: Map<string, string>; refundOperations: Map<string, RefundOperationRecord>; sideEffectOperations: Map<string, SideEffectOperationRecord>; tokenState: Map<string, FakeTokenState>; recordMutationSideEffectOperations(bookingId: string, seeds: SideEffectOperationSeed[], now: string): Promise<void> } = {
     rows,
@@ -226,12 +226,12 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       return item ? hydrateBooking(item) : null;
     },
     getBookingByReference: async (reference) => find((item) => item.reference === reference),
-    getBookingBySessionId: async (sessionId) => {
-      const item = find((candidate) => candidate.stripeSessionId === sessionId);
+    getBookingBySessionRef: async (sessionRef) => {
+      const item = find((candidate) => candidate.paymentSessionRef === sessionRef);
       return item ? hydrateBooking(item) : null;
     },
-    getBookingByPaymentIntent: async (paymentIntent) => {
-      const item = find((candidate) => candidate.stripePaymentIntent === paymentIntent);
+    getBookingByPaymentRef: async (paymentRef) => {
+      const item = find((candidate) => candidate.paymentRef === paymentRef);
       return item ? hydrateBooking(item) : null;
     },
     // BK-SEC-002: mirrors src/repo.ts's hash-first lookup with a guarded legacy-plaintext
@@ -297,7 +297,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         );
         if (active.length >= input.maxActiveHoldsForIp) throw new HoldLimitExceededError();
       }
-      const created: Booking = { ...booking(), ...input, pickupAddress: null, customerName: null, customerEmail: null, customerPhone: null, status: 'hold', stripeSessionId: null, stripePaymentIntent: null, calendarEventId: null, calendarSynced: false, emailSynced: false, remindedAt: null, reviewRequestedAt: null, cancelledAt: null, cancelledBy: null, rescheduledFrom: null };
+      const created: Booking = { ...booking(), ...input, pickupAddress: null, customerName: null, customerEmail: null, customerPhone: null, status: 'hold', paymentSessionRef: null, paymentRef: null, calendarEventId: null, cancelledAt: null, cancelledBy: null, rescheduledFrom: null };
       const stored = storeTokens(created);
       rows.set(stored.id, stored);
       // BK-SEC-002: a newly created row is hash-backed from the start (never "legacy"), mirroring
@@ -326,7 +326,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       // Computed alongside capacity (both awaits, both independent of rows/holdIps/occupancyMeta)
       // so the decide+write block below stays the single synchronous block Fix 2 above requires.
       const [capacity, cancelTokenHash, operatorTokenHash] = await Promise.all([
-        resolveCapacityFake(input.localDate, input.fleetDefaultCapacity),
+        resolveCapacityFake(input.localDate, input.defaultCapacity),
         sha256Base64Url(input.cancelToken),
         sha256Base64Url(input.operatorToken),
       ]);
@@ -341,7 +341,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       }
       const used = maxConcurrentInInterval(input.startsAt, input.occupancyEndsAt, input.createdAt);
       if (used + input.occupancyUnits > capacity) return null;
-      const created: Booking = { ...booking(), ...input, pickupAddress: null, customerName: null, customerEmail: null, customerPhone: null, status: 'hold', stripeSessionId: null, stripePaymentIntent: null, calendarEventId: null, calendarSynced: false, emailSynced: false, remindedAt: null, reviewRequestedAt: null, cancelledAt: null, cancelledBy: null, rescheduledFrom: null };
+      const created: Booking = { ...booking(), ...input, pickupAddress: null, customerName: null, customerEmail: null, customerPhone: null, status: 'hold', paymentSessionRef: null, paymentRef: null, calendarEventId: null, cancelledAt: null, cancelledBy: null, rescheduledFrom: null };
       const stored = storeTokens(created);
       rows.set(stored.id, stored);
       occupancyMeta.set(stored.id, { units: input.occupancyUnits, endsAt: input.occupancyEndsAt });
@@ -360,7 +360,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     updateBooking: async (id, patch) => {
       const current = rows.get(id);
       if (!current) throw new Error('missing booking');
-      guardDuplicatePaymentIntent(id, patch.stripePaymentIntent);
+      guardDuplicatePaymentIntent(id, patch.paymentRef);
       const defined = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
       const updated = { ...current, ...defined } as Booking;
       rows.set(id, updated);
@@ -402,7 +402,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     transitionToConfirmed: async (id, input) => {
       const current = rows.get(id);
       if (!current || !input.expectedStatusIn.includes(current.status)) return null;
-      guardDuplicatePaymentIntent(id, input.stripePaymentIntent);
+      guardDuplicatePaymentIntent(id, input.paymentRef);
       const { expectedStatusIn, updatedAt, ...patch } = input;
       const defined = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
       const updated: Booking = { ...current, ...defined, status: 'confirmed', holdExpiresAt: null, updatedAt };
@@ -412,7 +412,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     confirmWithSideEffectOperations: async (id, input) => {
       const current = rows.get(id);
       if (!current || !input.expectedStatusIn.includes(current.status) || leases.get(id)?.token !== input.leaseToken) return null;
-      guardDuplicatePaymentIntent(id, input.stripePaymentIntent);
+      guardDuplicatePaymentIntent(id, input.paymentRef);
       const { expectedStatusIn, leaseToken, oversold, updatedAt, eventSeeds, emailRecipients, ...patch } = input;
       const defined = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
       const updated: Booking = { ...current, ...defined, status: 'confirmed', holdExpiresAt: null, updatedAt };
@@ -440,10 +440,10 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       const current = rows.get(id);
       if (!current || current.status !== 'confirmed' || leases.get(id)?.token !== leaseToken) return false;
       if (Object.values(patch).every((value) => value === undefined)) return false;
-      guardDuplicatePaymentIntent(id, patch.stripePaymentIntent);
+      guardDuplicatePaymentIntent(id, patch.paymentRef);
       const updated: Booking = {
         ...current,
-        ...(current.stripePaymentIntent === null && patch.stripePaymentIntent !== undefined ? { stripePaymentIntent: patch.stripePaymentIntent } : {}),
+        ...(current.paymentRef === null && patch.paymentRef !== undefined ? { paymentRef: patch.paymentRef } : {}),
         ...(current.customerName === null && patch.customerName !== undefined ? { customerName: patch.customerName } : {}),
         ...(current.customerEmail === null && patch.customerEmail !== undefined ? { customerEmail: patch.customerEmail } : {}),
         ...(current.customerPhone === null && patch.customerPhone !== undefined ? { customerPhone: patch.customerPhone } : {}),
@@ -457,10 +457,13 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       if (rows.get(id)?.status !== 'confirmed' || leases.get(id)?.token !== leaseToken) return;
       const booking = rows.get(id);
       if (!booking) return;
+      // Plan 022: the retired calendar_synced flag's information now lives in calendar_event_id
+      // (an id is only ever written once the provider accepted the event) — mirrors src/repo.ts.
+      const calendarSucceeded = booking.calendarEventId !== null;
       insertOperation(id, { family: 'calendar_create' }, now, {
-        status: booking.calendarSynced ? 'succeeded' : 'pending',
+        status: calendarSucceeded ? 'succeeded' : 'pending',
         providerResultId: booking.calendarEventId,
-        resolvedAt: booking.calendarSynced ? now : null,
+        resolvedAt: calendarSucceeded ? now : null,
       });
       // Plan 012 (design decision 1/2/3): same split-vs-combined choice
       // confirmWithSideEffectOperations makes for a brand-new confirmation, applied here for
@@ -474,10 +477,10 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       const skipSplit = emailRecipients && emailRecipients.length > 0 && combinedRowExists;
       if (!skipSplit) {
         for (const identity of emailIdentities) {
-          insertOperation(id, identity, now, {
-            status: booking.emailSynced ? 'succeeded' : 'pending',
-            resolvedAt: booking.emailSynced ? now : null,
-          });
+          // Plan 022: migration 0018 materialized every already-sent confirmation email as a
+          // succeeded row before dropping email_synced, so a booking with no row here has
+          // genuinely never been emailed — mirrors src/repo.ts.
+          insertOperation(id, identity, now, {});
         }
       }
       // Plan 021 (design decision 4): the legacy-repair path for a subscriber registered after
@@ -543,18 +546,11 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       });
       if (input.identity.family === 'calendar_create') {
         rows.set(input.bookingId, {
-          ...current, calendarSynced: input.status === 'succeeded', calendarEventId: input.providerResultId ?? null,
-          updatedAt: input.resolvedAt,
+          ...current, calendarEventId: input.providerResultId ?? null, updatedAt: input.resolvedAt,
         });
         return true;
       }
-      const combined = sideEffectOperations.get(sideEffectKey(input.bookingId, { family: 'email_confirmation' }));
-      const applicable = combined
-        ? [combined]
-        : [...sideEffectOperations.values()].filter((row) => row.bookingId === input.bookingId
-          && row.family === 'email' && row.event === 'booking.confirmed');
-      const emailSynced = applicable.every((row) => row.status === 'succeeded');
-      rows.set(input.bookingId, { ...current, emailSynced, updatedAt: input.resolvedAt });
+      rows.set(input.bookingId, { ...current, updatedAt: input.resolvedAt });
       return true;
     },
     // Plan 016 (design decision 4): 'abandoned' already falls outside pending/failed/reclaimable-
@@ -637,7 +633,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     // synchronous block after it closes that gap — no concurrent call can observe `rows` between
     // this call's decide and its write (mirrors D1's single UPDATE ... WHERE transaction).
     rescheduleWithCapacity: async (id, input) => {
-      const capacity = await resolveCapacityFake(input.localDate, input.fleetDefaultCapacity);
+      const capacity = await resolveCapacityFake(input.localDate, input.defaultCapacity);
       const current = rows.get(id);
       if (!current || current.status !== input.expectedStatus || current.startsAt !== input.expectedStartsAt) return null;
       const used = maxConcurrentInInterval(input.startsAt, input.occupancyEndsAt, input.now, id);
@@ -992,22 +988,22 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
 }
 
 // Records the idempotency key and expected amount each refund() call would carry (mirroring
-// StripeProvider's own deterministic `bookkit-refund-<paymentIntent>` derivation) so tests can
+// StripeProvider's own deterministic `bookkit-refund-<paymentRef>` derivation) so tests can
 // assert a retried refund reuses the same key instead of minting a fresh one per attempt
 // (BK-REFUND-001 F10), and that callers forward the booking's full expected amount. `resultFor`
-// lets a test control the returned refund id/amount, or throw to simulate a Stripe-side failure.
+// lets a test control the returned refund ref/amount, or throw to simulate a provider-side failure.
 export function fakeRefundTracker(
-  resultFor: (paymentIntent: string, callNumber: number) => { refundId: string; amountCents: number } = (paymentIntent) => ({ refundId: `re_${paymentIntent}`, amountCents: 0 }),
+  resultFor: (paymentRef: string, callNumber: number) => { refundRef: string; amountMinor: number } = (paymentRef) => ({ refundRef: `re_${paymentRef}`, amountMinor: 0 }),
 ): { refund: PaymentProvider['refund']; idempotencyKeys: string[]; expectedAmounts: number[] } {
   const idempotencyKeys: string[] = [];
   const expectedAmounts: number[] = [];
   return {
     idempotencyKeys,
     expectedAmounts,
-    refund: async (paymentIntent, expectedAmountCents) => {
-      idempotencyKeys.push(`bookkit-refund-${paymentIntent}`);
-      expectedAmounts.push(expectedAmountCents);
-      return resultFor(paymentIntent, idempotencyKeys.length);
+    refund: async (paymentRef, expectedAmountMinor) => {
+      idempotencyKeys.push(`bookkit-refund-${paymentRef}`);
+      expectedAmounts.push(expectedAmountMinor);
+      return resultFor(paymentRef, idempotencyKeys.length);
     },
   };
 }
@@ -1046,6 +1042,21 @@ export function seedSideEffectOperation(
   return row;
 }
 
+// Plan 022: the retired calendarSynced/emailSynced flags were how a fixture said "this booking's
+// confirmation was already delivered". Migration 0018 turned every such flag into the succeeded
+// outbox row it described, so a fixture says it the same way now — and the repair path in
+// handlers/status-manage.ts sees a booking with nothing left owed instead of a legacy row to heal.
+export function seedSettledConfirmation(
+  repo: FakeRepository,
+  bookingId: string,
+  overrides: Partial<SideEffectOperationRecord> = {},
+): void {
+  const settled: Partial<SideEffectOperationRecord> = { status: 'succeeded', attemptCount: 1, ...overrides };
+  const resolvedAt = settled.resolvedAt ?? settled.createdAt ?? '2026-06-14T08:00:00.000Z';
+  seedSideEffectOperation(repo, bookingId, { family: 'calendar_create' }, { ...settled, resolvedAt, providerResultId: repo.rows.get(bookingId)?.calendarEventId ?? 'cal_settled' });
+  seedSideEffectOperation(repo, bookingId, { family: 'email_confirmation' }, { ...settled, resolvedAt });
+}
+
 export function sideEffectOperation(
   repo: FakeRepository,
   bookingId: string,
@@ -1058,12 +1069,12 @@ export function sideEffectOperation(
 export function providers(overrides: Partial<BookkitProviders> = {}): BookkitProviders {
   return {
     payments: {
-      createCheckout: async () => ({ url: 'https://checkout.test/cs_1', sessionId: 'cs_1' }),
+      createCheckout: async () => ({ url: 'https://checkout.test/cs_1', sessionRef: 'cs_1' }),
       parseWebhook: async () => ({
         id: 'evt_1',
-        type: 'checkout.session.completed',
-        sessionId: 'cs_1',
-        paymentIntent: 'pi_1',
+        type: 'checkout_completed',
+        sessionRef: 'cs_1',
+        paymentRef: 'pi_1',
         paid: true,
         paymentStatus: 'paid',
         amountCaptured: 10000,
@@ -1074,7 +1085,7 @@ export function providers(overrides: Partial<BookkitProviders> = {}): BookkitPro
         pickupAddress: 'Praça do Comércio',
       }),
       getSession: async () => ({ status: 'open' }),
-      refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+      refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
     },
     calendar: {
       listEvents: async () => [],

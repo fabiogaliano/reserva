@@ -2,9 +2,9 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createBookkitContext } from '../src/context';
 import type { Booking } from '../src/core/booking';
-import type { ClientConfig, TourConfig } from '../src/core/config';
-import { handleAvailability, handleCheckout, handleOperatorNoShow, handleStripeWebhook } from '../src/handlers';
-import { booking, config, tour } from './fixtures';
+import type { ClientConfig, ServiceConfig } from '../src/core/config';
+import { handleAvailability, handleCheckout, handleOperatorNoShow, handlePaymentWebhook } from '../src/handlers';
+import { booking, config, service } from './fixtures';
 import { fakeRepository, providers, sideEffectOperation } from './fakes';
 
 describe('Bookkit handlers', () => {
@@ -37,16 +37,16 @@ describe('Bookkit handlers', () => {
     });
     const checkout = await handleCheckout(new Request('https://example.test/api/booking/checkout', {
       method: 'POST',
-      body: JSON.stringify({ tourSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', people: 2, pickupType: 'default', locale: 'en' }),
+      body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity: 2, pickupType: 'default', locale: 'en' }),
       headers: { 'content-type': 'application/json' },
     }), context);
     expect(checkout.status).toBe(201);
     const created = [...repo.rows.values()][0];
-    expect(created?.stripeSessionId).toBe('cs_1');
+    expect(created?.paymentSessionRef).toBe('cs_1');
 
     const [first, second] = await Promise.all([
-      handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST', body: 'same' }), context),
-      handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST', body: 'same' }), secondContext),
+      handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST', body: 'same' }), context),
+      handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST', body: 'same' }), secondContext),
     ]);
     expect([first.status, second.status]).toContain(200);
     expect([first.status, second.status].every((status) => status === 200 || status === 503)).toBe(true);
@@ -67,10 +67,8 @@ describe('Bookkit handlers', () => {
       id: 'b-leased',
       status: 'hold',
       holdExpiresAt: '2026-06-14T09:00:00.000Z',
-      stripeSessionId: 'cs_1',
-      stripePaymentIntent: null,
-      calendarSynced: false,
-      emailSynced: false,
+      paymentSessionRef: 'cs_1',
+      paymentRef: null,
     });
     const repo = fakeRepository([seeded]);
     await repo.acquireConfirmationLease(seeded.id, 'stalled-worker', '2026-06-14T08:00:00.000Z', '2026-06-14T08:05:00.000Z');
@@ -82,14 +80,17 @@ describe('Bookkit handlers', () => {
       providers: providers(),
     });
 
-    const blocked = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    const blocked = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), context);
     expect(blocked.status).toBe(503);
     await expect(blocked.json()).resolves.toMatchObject({ error: { code: 'confirmation_in_progress' } });
 
     await repo.releaseConfirmationLease(seeded.id, 'stalled-worker');
-    const retried = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    const retried = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), context);
     expect(retried.status).toBe(200);
-    expect(repo.rows.get(seeded.id)).toMatchObject({ status: 'confirmed', calendarSynced: true, emailSynced: true });
+    expect(repo.rows.get(seeded.id)).toMatchObject({ status: 'confirmed' });
+    // Plan 022: both confirmation rows succeeded is the whole record that the retry delivered.
+    expect(sideEffectOperation(repo, seeded.id, { family: 'calendar_create' })).toMatchObject({ status: 'succeeded' });
+    expect(sideEffectOperation(repo, seeded.id, { family: 'email_confirmation' })).toMatchObject({ status: 'succeeded' });
   });
 
   it('enforces configured hold limits through the repository', async () => {
@@ -104,7 +105,7 @@ describe('Bookkit handlers', () => {
     const checkoutRequest = () => new Request('https://example.test/api/booking/checkout', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.1' },
-      body: JSON.stringify({ tourSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', people: 2, pickupType: 'default', locale: 'en' }),
+      body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity: 2, pickupType: 'default', locale: 'en' }),
     });
 
     await expect(handleCheckout(checkoutRequest(), context)).resolves.toMatchObject({ status: 201 });
@@ -113,19 +114,19 @@ describe('Bookkit handlers', () => {
     await expect(limited.json()).resolves.toMatchObject({ error: { code: 'too_many_holds' } });
   });
 
-  it('uses the longest configured tour window during checkout revalidation', async () => {
-    const candidateTour = { ...config.tours.vintage!, turnaroundMin: 0, schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], firstStart: '12:00', lastStart: '12:00', intervalMin: 30 }] };
-    const longTour = { ...config.tours.vintage!, turnaroundMin: 120, schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], firstStart: '10:00', lastStart: '10:00', intervalMin: 30 }] };
+  it('uses the longest configured service window during checkout revalidation', async () => {
+    const candidateTour = { ...config.services.vintage!, turnaroundMin: 0, schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], firstStart: '12:00', lastStart: '12:00', intervalMin: 30 }] };
+    const longTour = { ...config.services.vintage!, turnaroundMin: 120, schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], firstStart: '10:00', lastStart: '10:00', intervalMin: 30 }] };
     const multiTourConfig = {
       ...config,
       business: { ...config.business, timezone: 'UTC' },
-      tours: { candidate: candidateTour, long: longTour },
+      services: { candidate: candidateTour, long: longTour },
       booking: { ...config.booking, minNoticeHours: 0 },
     };
     const existing = booking({
       id: 'long-booking',
-      tourSlug: 'long',
-      people: 8,
+      serviceSlug: 'long',
+      quantity: 8,
       startsAt: '2026-06-15T10:00:00.000Z',
       endsAt: '2026-06-15T11:00:00.000Z',
     });
@@ -140,7 +141,7 @@ describe('Bookkit handlers', () => {
     const response = await handleCheckout(new Request('https://example.test/api/booking/checkout', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ tourSlug: 'candidate', start: '2026-06-15T12:00:00.000Z', people: 2, pickupType: 'default', locale: 'en' }),
+      body: JSON.stringify({ serviceSlug: 'candidate', start: '2026-06-15T12:00:00.000Z', quantity: 2, pickupType: 'default', locale: 'en' }),
     }), context);
     expect(response.status).toBe(409);
   });
@@ -149,7 +150,7 @@ describe('Bookkit handlers', () => {
     const seeded = booking({
       id: 'b-unpaid',
       status: 'hold',
-      stripeSessionId: 'cs_unpaid',
+      paymentSessionRef: 'cs_unpaid',
       holdExpiresAt: '2026-06-14T09:00:00.000Z',
     });
     const repo = fakeRepository([seeded]);
@@ -161,10 +162,10 @@ describe('Bookkit handlers', () => {
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: providers({
         payments: {
-          createCheckout: async () => ({ url: '', sessionId: '' }),
-          parseWebhook: async () => ({ id: 'evt_unpaid', type: 'checkout.session.completed', bookingId: seeded.id, sessionId: 'cs_unpaid', paid: false, amountCaptured: seeded.priceCents, currency: config.business.currency }),
+          createCheckout: async () => ({ url: '', sessionRef: '' }),
+          parseWebhook: async () => ({ id: 'evt_unpaid', type: 'checkout_completed', bookingId: seeded.id, sessionRef: 'cs_unpaid', paid: false, amountCaptured: seeded.priceMinor, currency: config.business.currency }),
           getSession: async () => ({ status: 'open' }),
-          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+          refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
         },
         calendar: {
           listEvents: async () => [],
@@ -175,7 +176,7 @@ describe('Bookkit handlers', () => {
       }),
     });
 
-    const response = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    const response = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), context);
     expect(response.status).toBe(409);
     expect(repo.rows.get(seeded.id)?.status).toBe('hold');
     expect(calendarCreates).toBe(0);
@@ -184,7 +185,7 @@ describe('Bookkit handlers', () => {
   // Plan 021: a dispute is not a booking transition, so its durable row is written directly and
   // drained detached — the webhook response must not wait for a slow subscriber.
   it('reports Stripe disputes through waitUntil without delaying the webhook response', async () => {
-    const seeded = booking({ id: 'b-dispute', stripePaymentIntent: 'pi_dispute' });
+    const seeded = booking({ id: 'b-dispute', paymentRef: 'pi_dispute' });
     const repo = fakeRepository([seeded]);
     const pending: Promise<unknown>[] = [];
     let deliveredEvent: string | undefined;
@@ -197,10 +198,10 @@ describe('Bookkit handlers', () => {
       waitUntil: (promise) => pending.push(promise),
       providers: providers({
         payments: {
-          createCheckout: async () => ({ url: '', sessionId: '' }),
-          parseWebhook: async () => ({ id: 'evt_dispute', type: 'charge.dispute.created', paymentIntent: 'pi_dispute' }),
+          createCheckout: async () => ({ url: '', sessionRef: '' }),
+          parseWebhook: async () => ({ id: 'evt_dispute', type: 'dispute_created', paymentRef: 'pi_dispute' }),
           getSession: async () => ({ status: 'open' }),
-          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+          refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
         },
       }),
       hooks: [{
@@ -213,7 +214,7 @@ describe('Bookkit handlers', () => {
       }],
     });
 
-    const response = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
+    const response = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), context);
     expect(response.status).toBe(200);
     expect(deliveredEvent).toBe('payment.dispute_created');
     expect(pending).toHaveLength(1);
@@ -231,7 +232,7 @@ describe('Bookkit handlers', () => {
       repo: fakeRepository(),
       providers: providers(),
     });
-    const response = await handleAvailability(new Request('https://example.test/api/booking/availability?tour=vintage&people=2&from=2026-02-30&to=2026-03-01'), context);
+    const response = await handleAvailability(new Request('https://example.test/api/booking/availability?service=vintage&quantity=2&from=2026-02-30&to=2026-03-01'), context);
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed' } });
   });
@@ -246,7 +247,7 @@ describe('Bookkit handlers', () => {
     };
     const context = createBookkitContext({ config, db: {} as D1Database, repo, providers: providers() });
 
-    const response = await handleAvailability(new Request('https://example.test/api/booking/availability?tour=vintage&people=2&from=1000-01-01&to=9999-12-31'), context);
+    const response = await handleAvailability(new Request('https://example.test/api/booking/availability?service=vintage&quantity=2&from=1000-01-01&to=9999-12-31'), context);
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: 'Date range cannot exceed 62 days' } });
     // Enumerating ~3.3M date keys takes seconds and would also drive occupancyReads above 0;
@@ -303,7 +304,7 @@ describe('Bookkit handlers', () => {
     const response = await handleCheckout(new Request('https://example.test/api/booking/checkout', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ tourSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', people: 2, pickupType: 'default', locale: 'en' }),
+      body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity: 2, pickupType: 'default', locale: 'en' }),
     }), context);
 
     expect(response.status).toBe(201);
@@ -314,7 +315,7 @@ describe('Bookkit handlers', () => {
 
   it('logs a warning when a payment confirms an expired hold, but not on the normal hold path', async () => {
     const expiredWarnings: Array<[string, Record<string, unknown> | undefined]> = [];
-    const seededExpired = booking({ id: 'b-expired', status: 'expired', holdExpiresAt: null, stripeSessionId: 'cs_expired' });
+    const seededExpired = booking({ id: 'b-expired', status: 'expired', holdExpiresAt: null, paymentSessionRef: 'cs_expired' });
     const expiredContext = createBookkitContext({
       config,
       db: {} as D1Database,
@@ -323,14 +324,14 @@ describe('Bookkit handlers', () => {
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: providers({
         payments: {
-          createCheckout: async () => ({ url: '', sessionId: '' }),
-          parseWebhook: async () => ({ id: 'evt_expired', type: 'checkout.session.completed', bookingId: seededExpired.id, sessionId: 'cs_expired', paid: true, amountCaptured: seededExpired.priceCents, currency: config.business.currency }),
+          createCheckout: async () => ({ url: '', sessionRef: '' }),
+          parseWebhook: async () => ({ id: 'evt_expired', type: 'checkout_completed', bookingId: seededExpired.id, sessionRef: 'cs_expired', paid: true, amountCaptured: seededExpired.priceMinor, currency: config.business.currency }),
           getSession: async () => ({ status: 'open' }),
-          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+          refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
         },
       }),
     });
-    const expiredResponse = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), expiredContext);
+    const expiredResponse = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), expiredContext);
     expect(expiredResponse.status).toBe(200);
     expect(expiredWarnings).toContainEqual([
       'confirming expired hold after payment; possible one-slot oversell',
@@ -338,7 +339,7 @@ describe('Bookkit handlers', () => {
     ]);
 
     const holdWarnings: Array<[string, Record<string, unknown> | undefined]> = [];
-    const seededHold = booking({ id: 'b-hold', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', stripeSessionId: 'cs_hold' });
+    const seededHold = booking({ id: 'b-hold', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', paymentSessionRef: 'cs_hold' });
     const holdContext = createBookkitContext({
       config,
       db: {} as D1Database,
@@ -347,29 +348,29 @@ describe('Bookkit handlers', () => {
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: providers({
         payments: {
-          createCheckout: async () => ({ url: '', sessionId: '' }),
-          parseWebhook: async () => ({ id: 'evt_hold', type: 'checkout.session.completed', bookingId: seededHold.id, sessionId: 'cs_hold', paid: true, amountCaptured: seededHold.priceCents, currency: config.business.currency }),
+          createCheckout: async () => ({ url: '', sessionRef: '' }),
+          parseWebhook: async () => ({ id: 'evt_hold', type: 'checkout_completed', bookingId: seededHold.id, sessionRef: 'cs_hold', paid: true, amountCaptured: seededHold.priceMinor, currency: config.business.currency }),
           getSession: async () => ({ status: 'open' }),
-          refund: async () => ({ refundId: 're_test', amountCents: 0 }),
+          refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
         },
       }),
     });
-    const holdResponse = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), holdContext);
+    const holdResponse = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), holdContext);
     expect(holdResponse.status).toBe(200);
     expect(holdWarnings.some(([message]) => message.includes('possible one-slot oversell'))).toBe(false);
   });
 });
 
 // Plan 017 (design decision 2): checkout's meetingPointId field — required only for a
-// multi-point tour's default (free) pickup; validated against the declared set whenever supplied
+// multi-point service's default (free) pickup; validated against the declared set whenever supplied
 // (including for a custom pickup); the resolved id is always what gets stored.
 describe('checkout meetingPointId (plan 017 design decision 2)', () => {
   const points = [
     { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
     { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
   ];
-  const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = tour;
-  const multiPointConfig = { ...config, tours: { ...config.tours, vintage: { ...vintageWithoutShorthand, meetingPoints: points } } };
+  const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = service;
+  const multiPointConfig = { ...config, services: { ...config.services, vintage: { ...vintageWithoutShorthand, meetingPoints: points } } };
 
   function checkoutContext(configOverride = config) {
     const repo = fakeRepository();
@@ -387,11 +388,11 @@ describe('checkout meetingPointId (plan 017 design decision 2)', () => {
     return new Request('https://example.test/api/booking/checkout', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ tourSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', people: 2, pickupType: 'default', locale: 'en', ...body }),
+      body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity: 2, pickupType: 'default', locale: 'en', ...body }),
     });
   }
 
-  it('rejects a 2-point tour\'s default pickup with 400 when meetingPointId is missing', async () => {
+  it('rejects a 2-point service\'s default pickup with 400 when meetingPointId is missing', async () => {
     const { context } = checkoutContext(multiPointConfig);
     const response = await handleCheckout(checkoutRequest({}), context);
     expect(response.status).toBe(400);
@@ -410,12 +411,12 @@ describe('checkout meetingPointId (plan 017 design decision 2)', () => {
     await expect(customResponse.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('Unknown meetingPointId') } });
   });
 
-  it('stores the single declared point\'s id for a single-point tour when the field is omitted', async () => {
+  it('stores the single declared point\'s id for a single-point service when the field is omitted', async () => {
     const { repo, context } = checkoutContext(config);
     const response = await handleCheckout(checkoutRequest({}), context);
     expect(response.status).toBe(201);
     const { bookingId } = await response.json() as { bookingId: string };
-    expect(repo.rows.get(bookingId)).toMatchObject({ meetingPointId: 'default', meetingPointLabel: tour.meetingPoint!.label });
+    expect(repo.rows.get(bookingId)).toMatchObject({ meetingPointId: 'default', meetingPointLabel: service.meetingPoint!.label });
   });
 
   it('does not require meetingPointId for a custom pickup, and stores the resolved first point', async () => {
@@ -426,7 +427,7 @@ describe('checkout meetingPointId (plan 017 design decision 2)', () => {
     expect(repo.rows.get(bookingId)).toMatchObject({ meetingPointId: 'square', meetingPointLabel: 'The Square' });
   });
 
-  it('stores the chosen second point\'s id and label for a 2-point tour', async () => {
+  it('stores the chosen second point\'s id and label for a 2-point service', async () => {
     const { repo, context } = checkoutContext(multiPointConfig);
     const response = await handleCheckout(checkoutRequest({ meetingPointId: 'station' }), context);
     expect(response.status).toBe(201);
@@ -435,7 +436,7 @@ describe('checkout meetingPointId (plan 017 design decision 2)', () => {
   });
 });
 
-// Plan 018 (design decision 6): parsePickup validates pickupType against the tour's own declared
+// Plan 018 (design decision 6): parsePickup validates pickupType against the service's own declared
 // option ids (via pickupOptionFor) instead of a fixed 'default'/'custom' enum, and the
 // meetingPointId requirement re-keys onto the chosen option's usesMeetingPoint instead of
 // `pickupType === 'default'` — Maze's "custom drop-off" still starts at a meeting point even though
@@ -445,10 +446,10 @@ describe('checkout pickupType (plan 018 design decision 6)', () => {
     { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
     { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
   ];
-  const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = tour;
-  // A Maze-shaped four-option tour, built inline — fixtures.ts stays the two-option default/custom
-  // tour so every other suite's byte-identical assertions keep holding.
-  const mazeTour: TourConfig = {
+  const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = service;
+  // A Maze-shaped four-option service, built inline — fixtures.ts stays the two-option default/custom
+  // service so every other suite's byte-identical assertions keep holding.
+  const mazeTour: ServiceConfig = {
     ...vintageWithoutShorthand,
     meetingPoints: points,
     pickupOptions: [
@@ -458,13 +459,13 @@ describe('checkout pickupType (plan 018 design decision 6)', () => {
       { id: 'meet_elsewhere', requiresAddress: false, usesMeetingPoint: true },
     ],
     pricing: [
-      { maxPeople: 8, pickup: 'default', priceCents: 18000 },
-      { maxPeople: 8, pickup: 'custom_pickup', priceCents: 20000 },
-      { maxPeople: 8, pickup: 'custom_dropoff', priceCents: 21000 },
-      { maxPeople: 8, pickup: 'meet_elsewhere', priceCents: 19000 },
+      { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
+      { maxQuantity: 8, pickup: 'custom_pickup', priceMinor: 20000 },
+      { maxQuantity: 8, pickup: 'custom_dropoff', priceMinor: 21000 },
+      { maxQuantity: 8, pickup: 'meet_elsewhere', priceMinor: 19000 },
     ],
   };
-  const mazeConfig: ClientConfig = { ...config, tours: { ...config.tours, vintage: mazeTour } };
+  const mazeConfig: ClientConfig = { ...config, services: { ...config.services, vintage: mazeTour } };
 
   function checkoutContext(configOverride: ClientConfig = mazeConfig) {
     const repo = fakeRepository();
@@ -482,19 +483,19 @@ describe('checkout pickupType (plan 018 design decision 6)', () => {
     return new Request('https://example.test/api/booking/checkout', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ tourSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', people: 2, pickupType: 'default', locale: 'en', ...body }),
+      body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity: 2, pickupType: 'default', locale: 'en', ...body }),
     });
   }
 
-  it('accepts a declared non-enum pickupType end-to-end, pricing it from the tour\'s own rows', async () => {
+  it('accepts a declared non-enum pickupType end-to-end, pricing it from the service\'s own rows', async () => {
     const { repo, context } = checkoutContext();
     const response = await handleCheckout(checkoutRequest({ pickupType: 'meet_elsewhere', meetingPointId: 'station' }), context);
     expect(response.status).toBe(201);
     const { bookingId } = await response.json() as { bookingId: string };
-    expect(repo.rows.get(bookingId)).toMatchObject({ pickupType: 'meet_elsewhere', priceCents: 19000, meetingPointId: 'station', meetingPointLabel: 'The Station' });
+    expect(repo.rows.get(bookingId)).toMatchObject({ pickupType: 'meet_elsewhere', priceMinor: 19000, meetingPointId: 'station', meetingPointLabel: 'The Station' });
   });
 
-  it('400s an undeclared pickupType, naming the tour\'s valid ids', async () => {
+  it('400s an undeclared pickupType, naming the service\'s valid ids', async () => {
     const { context } = checkoutContext();
     const response = await handleCheckout(checkoutRequest({ pickupType: 'bogus' }), context);
     expect(response.status).toBe(400);
@@ -503,17 +504,17 @@ describe('checkout pickupType (plan 018 design decision 6)', () => {
     });
   });
 
-  it('a legacy two-option tour still accepts exactly default/custom byte-identically', async () => {
-    // config.tours.vintage carries no pickupOptions — pickupOptionFor falls back to
+  it('a legacy two-option service still accepts exactly default/custom byte-identically', async () => {
+    // config.services.vintage carries no pickupOptions — pickupOptionFor falls back to
     // DEFAULT_PICKUP_OPTIONS, so this is the same request the pre-018 suite already exercises.
     const { repo, context } = checkoutContext(config);
     const response = await handleCheckout(checkoutRequest({ pickupType: 'custom' }), context);
     expect(response.status).toBe(201);
     const { bookingId } = await response.json() as { bookingId: string };
-    expect(repo.rows.get(bookingId)).toMatchObject({ pickupType: 'custom', priceCents: 12000 });
+    expect(repo.rows.get(bookingId)).toMatchObject({ pickupType: 'custom', priceMinor: 12000 });
   });
 
-  it('a legacy two-option tour keeps the exact pre-018 validation error for an invalid AND a missing pickupType', async () => {
+  it('a legacy two-option service keeps the exact pre-018 validation error for an invalid AND a missing pickupType', async () => {
     // The byte-identity done criterion covers error bodies too — API callers may match on the
     // message — so the default pair must never emit the new "must be one of" wording.
     const { context } = checkoutContext(config);
@@ -526,7 +527,7 @@ describe('checkout pickupType (plan 018 design decision 6)', () => {
     }
   });
 
-  it('a declared tour distinguishes a missing pickupType from an undeclared one', async () => {
+  it('a declared service distinguishes a missing pickupType from an undeclared one', async () => {
     const { context } = checkoutContext();
     const response = await handleCheckout(checkoutRequest({ pickupType: undefined }), context);
     expect(response.status).toBe(400);

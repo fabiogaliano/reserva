@@ -1,17 +1,17 @@
 import type { Booking } from '../src/core/booking';
-import type { ClientConfig, TourConfig } from '../src/core/config';
+import type { ClientConfig, ServiceConfig } from '../src/core/config';
 
-export const tour: TourConfig = {
+export const service: ServiceConfig = {
   durationMin: 60,
   turnaroundMin: 30,
   schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], firstStart: '09:00', lastStart: '12:00', intervalMin: 30 }],
   pricing: [
-    { maxPeople: 4, pickup: 'default', priceCents: 10000 },
-    { maxPeople: 4, pickup: 'custom', priceCents: 12000 },
-    { maxPeople: 8, pickup: 'default', priceCents: 18000 },
-    { maxPeople: 8, pickup: 'custom', priceCents: 20000 },
+    { maxQuantity: 4, pickup: 'default', priceMinor: 10000 },
+    { maxQuantity: 4, pickup: 'custom', priceMinor: 12000 },
+    { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
+    { maxQuantity: 8, pickup: 'custom', priceMinor: 20000 },
   ],
-  occupancyFor: (people) => people > 4 ? 2 : 1,
+  occupancyFor: (quantity) => quantity > 4 ? 2 : 1,
   meetingPoint: { label: 'Praça do Comércio', mapsUrl: 'https://maps.google.com/?q=Praca+do+Comercio' },
 };
 
@@ -24,9 +24,9 @@ export const config: ClientConfig = {
     currency: 'eur',
     contact: { email: 'owner@example.test', phone: '+351000000000' },
   },
-  fleet: { defaultCapacity: 2 },
+  capacity: { default: 2 },
   admin: { accessTeamDomain: 'https://team.cloudflareaccess.com', accessAud: 'aud' },
-  tours: { vintage: tour },
+  services: { vintage: service },
   booking: {
     minNoticeHours: 24,
     maxHorizonDays: 180,
@@ -37,7 +37,6 @@ export const config: ClientConfig = {
     calendarMaxStaleSeconds: 15 * 60,
   },
   locales: { supported: ['en', 'pt-BR'], default: 'en' },
-  payments: { methods: ['card', 'mb_way'] },
   legal: { termsUrl: 'https://example.test/terms' },
 };
 
@@ -45,8 +44,8 @@ export function booking(overrides: Partial<Booking> = {}): Booking {
   return {
     id: 'booking-1',
     reference: 'LVT-2026-001',
-    tourSlug: 'vintage',
-    people: 2,
+    serviceSlug: 'vintage',
+    quantity: 2,
     pickupType: 'default',
     pickupAddress: null,
     meetingPointId: null,
@@ -57,16 +56,14 @@ export function booking(overrides: Partial<Booking> = {}): Booking {
     customerEmail: 'ada@example.test',
     customerPhone: null,
     locale: 'en',
-    priceCents: 10000,
+    priceMinor: 10000,
+    currency: 'eur',
     status: 'confirmed',
     holdExpiresAt: null,
-    stripeSessionId: 'cs_1',
-    stripePaymentIntent: 'pi_1',
+    paymentSessionRef: 'cs_1',
+    paymentRef: 'pi_1',
     calendarEventId: null,
-    calendarSynced: false,
-    emailSynced: false,
-    remindedAt: null,
-    reviewRequestedAt: null,
+    metadata: null,
     cancelToken: 'cancel-token',
     operatorToken: 'operator-token',
     cancelledAt: null,

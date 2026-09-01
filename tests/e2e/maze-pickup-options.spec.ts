@@ -16,10 +16,10 @@ async function bookMaze(page: import('@playwright/test').Page, pickupType: strin
   // mid-flow, right after selecting the option, before submitting.
   const from = format(new Date(), 'yyyy-MM-dd');
   const to = format(new Date(Date.now() + 30 * 86_400_000), 'yyyy-MM-dd');
-  const res = await page.request.get(`/api/booking/availability?tour=mazeRiverside&people=2&from=${from}&to=${to}`);
+  const res = await page.request.get(`/api/booking/availability?service=mazeRiverside&quantity=2&from=${from}&to=${to}`);
   const availability = await res.json();
   const openDay = availability.days.find((d: any) => d.slots.length > 0);
-  if (!openDay) throw new Error('No available days found for tour mazeRiverside with 2 people');
+  if (!openDay) throw new Error('No available days found for service mazeRiverside with 2 quantity');
 
   await page.evaluate((dateStr) => {
     const cal = document.querySelector('calendar-date') as any;
@@ -63,7 +63,7 @@ async function bookMaze(page: import('@playwright/test').Page, pickupType: strin
 }
 
 // Plan 018 (design decision 9, step 6) / plan 019 (design decision 6): books the 210 € combined
-// option (custom_both — requiresAddress: true, usesMeetingPoint: false) on the mazeRiverside tour
+// option (custom_both — requiresAddress: true, usesMeetingPoint: false) on the mazeRiverside service
 // (examples/smoke-site/src/config.ts) end-to-end, and follows it all the way to the server-stored
 // confirmation and the protected manage flow — not just a client-computed price and a success
 // badge, which would still pass an accidental server mapping to the 180 € option.
@@ -73,10 +73,10 @@ test('booking the 210 € custom pick-up & drop-off option shows the server-stor
 
   const from = format(new Date(), 'yyyy-MM-dd');
   const to = format(new Date(Date.now() + 30 * 86_400_000), 'yyyy-MM-dd');
-  const res = await page.request.get(`/api/booking/availability?tour=mazeRiverside&people=2&from=${from}&to=${to}`);
+  const res = await page.request.get(`/api/booking/availability?service=mazeRiverside&quantity=2&from=${from}&to=${to}`);
   const availability = await res.json();
   const openDay = availability.days.find((d: any) => d.slots.length > 0);
-  if (!openDay) throw new Error('No available days found for tour mazeRiverside with 2 people');
+  if (!openDay) throw new Error('No available days found for service mazeRiverside with 2 quantity');
 
   await page.evaluate((dateStr) => {
     const cal = document.querySelector('calendar-date') as any;
@@ -105,10 +105,10 @@ test('booking the 210 € custom pick-up & drop-off option shows the server-stor
   expect(reference).toBeTruthy();
   await expect(page.locator('.bk-badge--ok')).toBeVisible();
 
-  // Server-stored priceCents, not the client's pre-checkout computation — an accidental server
+  // Server-stored priceMinor, not the client's pre-checkout computation — an accidental server
   // mapping to the 180 € option would still show 210 on the widget but fail this assertion.
   await expect(page.locator('.bk-facts')).toContainText('210');
-  // custom_both doesn't use a meeting point: neither of the tour's two dock labels may leak into
+  // custom_both doesn't use a meeting point: neither of the service's two dock labels may leak into
   // the confirmation's facts or its calendar links.
   await expect(page.locator('.bk-facts')).not.toContainText('Riverside dock');
   await expect(page.locator('.bk-facts')).not.toContainText('Maze north gate');
@@ -180,7 +180,7 @@ test('custom drop-off carries the selected second meeting point and the collecte
 
 // Plan 019 (design decision 6): a false usesMeetingPoint option (custom_pickup) hides and disables
 // the meeting-point group and the checkout request omits meetingPointId — the declared-option
-// counterpart to meeting-points.spec.ts's legacy default/custom pair, on a tour that also declares
+// counterpart to meeting-points.spec.ts's legacy default/custom pair, on a service that also declares
 // real meeting points, so the two axes' interaction is exercised in the same browser test.
 test('custom pick-up hides and disables the meeting-point group, and the checkout payload omits meetingPointId', async ({ page }) => {
   await page.goto('/maze');

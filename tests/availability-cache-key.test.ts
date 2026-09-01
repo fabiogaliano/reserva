@@ -1,4 +1,4 @@
-// Plan 013 item B (audit finding #11): availabilityInput validates exactly tour/people/from/to,
+// Plan 013 item B (audit finding #11): availabilityInput validates exactly service/quantity/from/to,
 // but the cache key used to be the whole sorted request URL — any extra query parameter (a
 // tracking nonce, cache-buster, etc.) minted a fresh cache entry, bypassing and bloating the 60s
 // public availability cache. The key must be built from the four validated parameters only.
@@ -50,7 +50,7 @@ describe('availability cache key', () => {
     const cache = memoryCache();
     const context = contextWithoutCalendar(cache, () => { computeCount += 1; });
 
-    const base = 'https://example.test/api/booking/availability?tour=vintage&people=2&from=2026-06-15&to=2026-06-15';
+    const base = 'https://example.test/api/booking/availability?service=vintage&quantity=2&from=2026-06-15&to=2026-06-15';
     await expect(handleAvailability(new Request(base), context)).resolves.toMatchObject({ status: 200 });
     await expect(handleAvailability(new Request(`${base}&nonce=whatever-junk`), context)).resolves.toMatchObject({ status: 200 });
 
@@ -64,11 +64,11 @@ describe('availability cache key', () => {
     const context = contextWithoutCalendar(cache, () => { computeCount += 1; });
 
     await expect(handleAvailability(
-      new Request('https://example.test/api/booking/availability?tour=vintage&people=2&from=2026-06-15&to=2026-06-15'),
+      new Request('https://example.test/api/booking/availability?service=vintage&quantity=2&from=2026-06-15&to=2026-06-15'),
       context,
     )).resolves.toMatchObject({ status: 200 });
     await expect(handleAvailability(
-      new Request('https://example.test/api/booking/availability?tour=vintage&people=3&from=2026-06-15&to=2026-06-15'),
+      new Request('https://example.test/api/booking/availability?service=vintage&quantity=3&from=2026-06-15&to=2026-06-15'),
       context,
     )).resolves.toMatchObject({ status: 200 });
 

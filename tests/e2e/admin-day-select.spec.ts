@@ -18,7 +18,7 @@ async function revealDay(page: Page, date: string): Promise<Locator> {
 
 async function closedOn(page: Page, date: string): Promise<boolean> {
   const availability = await (await page.request.get(
-    `/api/booking/availability?tour=${TOUR}&people=2&from=${date}&to=${date}`,
+    `/api/booking/availability?service=${TOUR}&quantity=2&from=${date}&to=${date}`,
   )).json();
   const day = availability.days.find((d: any) => d.date === date);
   return day?.status === 'closed' && day?.slots.length === 0;

@@ -41,7 +41,7 @@ describe('runReconciliation', () => {
   });
 
   it('opens a delayed incident once a failed side-effect row has been failing for ten uninterrupted minutes, and resolves it automatically once a later drain succeeds', async () => {
-    const seeded = booking({ id: 'recon-delayed-incident', status: 'confirmed', calendarSynced: false, emailSynced: true });
+    const seeded = booking({ id: 'recon-delayed-incident', status: 'confirmed' });
     const repo = fakeRepository([seeded]);
     seedSideEffect(repo, seeded.id, { family: 'calendar_create' }, {
       status: 'failed', attemptCount: 2, failureStartedAt: '2026-08-14T09:49:00.000Z',
@@ -83,7 +83,7 @@ describe('runReconciliation', () => {
   });
 
   it('does not open an incident for a failed side-effect row still inside the ten-minute window', async () => {
-    const seeded = booking({ id: 'recon-too-soon', status: 'confirmed', calendarSynced: false, emailSynced: true });
+    const seeded = booking({ id: 'recon-too-soon', status: 'confirmed' });
     const repo = fakeRepository([seeded]);
     seedSideEffect(repo, seeded.id, { family: 'calendar_create' }, {
       status: 'failed', attemptCount: 1, failureStartedAt: '2026-08-14T09:55:00.000Z',
@@ -99,7 +99,7 @@ describe('runReconciliation', () => {
   });
 
   it('opens an action_required incident immediately for an abandoned side-effect row', async () => {
-    const seeded = booking({ id: 'recon-abandoned', status: 'confirmed', calendarSynced: true, emailSynced: false });
+    const seeded = booking({ id: 'recon-abandoned', status: 'confirmed' });
     const repo = fakeRepository([seeded]);
     seedSideEffect(repo, seeded.id, { family: 'email_confirmation' }, {
       status: 'abandoned', attemptCount: 10, failureStartedAt: '2026-08-14T09:59:59.000Z',
@@ -113,13 +113,13 @@ describe('runReconciliation', () => {
   });
 
   it('resumes and completes a stuck cancelled-booking refund via the shared executor, opening no incident on success', async () => {
-    const seeded = booking({ id: 'recon-refund-resume', status: 'cancelled', stripePaymentIntent: 'pi_recon_resume' });
+    const seeded = booking({ id: 'recon-refund-resume', status: 'cancelled', paymentRef: 'pi_recon_resume' });
     const repo = fakeRepository([seeded]);
-    await repo.claimRefundOperation({ id: 'op-recon', bookingId: seeded.id, paymentIntent: seeded.stripePaymentIntent, choice: 'full', requestedAt: '2026-08-14T09:00:00.000Z' });
+    await repo.claimRefundOperation({ id: 'op-recon', bookingId: seeded.id, paymentIntent: seeded.paymentRef, choice: 'full', requestedAt: '2026-08-14T09:00:00.000Z' });
     let refunds = 0;
     const context = createBookkitContext({
       config, db: {} as D1Database, repo, clock,
-      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionId: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => { refunds += 1; return { refundId: 're_recon_resume', amountCents: seeded.priceCents }; } } }),
+      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionRef: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => { refunds += 1; return { refundRef: 're_recon_resume', amountMinor: seeded.priceMinor }; } } }),
     });
 
     const summary = await runReconciliation(context);
@@ -130,16 +130,16 @@ describe('runReconciliation', () => {
   });
 
   it('resumes the cancellation gate after a crash between the refund decision claim and cancellation CAS', async () => {
-    const seeded = booking({ id: 'recon-refund-not-cancelled', status: 'confirmed', stripePaymentIntent: 'pi_recon_not_cancelled' });
+    const seeded = booking({ id: 'recon-refund-not-cancelled', status: 'confirmed', paymentRef: 'pi_recon_not_cancelled' });
     const repo = fakeRepository([seeded]);
-    await repo.claimRefundOperation({ id: 'op-not-cancelled', bookingId: seeded.id, paymentIntent: seeded.stripePaymentIntent, choice: 'full', requestedAt: '2026-08-14T09:00:00.000Z' });
+    await repo.claimRefundOperation({ id: 'op-not-cancelled', bookingId: seeded.id, paymentIntent: seeded.paymentRef, choice: 'full', requestedAt: '2026-08-14T09:00:00.000Z' });
     let refunds = 0;
     const context = createBookkitContext({
       config, db: {} as D1Database, repo, clock,
-      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionId: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => {
+      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionRef: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => {
         refunds += 1;
         expect(repo.rows.get(seeded.id)?.status).toBe('cancelled');
-        return { refundId: 're_after_cancel', amountCents: seeded.priceCents };
+        return { refundRef: 're_after_cancel', amountMinor: seeded.priceMinor };
       } } }),
     });
 
@@ -150,13 +150,13 @@ describe('runReconciliation', () => {
   });
 
   it('opens an incident and never calls Stripe when a requested refund cannot safely resume cancellation', async () => {
-    const seeded = booking({ id: 'recon-refund-blocked', status: 'no_show', stripePaymentIntent: 'pi_recon_blocked' });
+    const seeded = booking({ id: 'recon-refund-blocked', status: 'no_show', paymentRef: 'pi_recon_blocked' });
     const repo = fakeRepository([seeded]);
-    await repo.claimRefundOperation({ id: 'op-blocked', bookingId: seeded.id, paymentIntent: seeded.stripePaymentIntent, choice: 'full', requestedAt: '2026-08-14T09:00:00.000Z' });
+    await repo.claimRefundOperation({ id: 'op-blocked', bookingId: seeded.id, paymentIntent: seeded.paymentRef, choice: 'full', requestedAt: '2026-08-14T09:00:00.000Z' });
     let refunds = 0;
     const context = createBookkitContext({
       config, db: {} as D1Database, repo, clock,
-      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionId: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => { refunds += 1; return { refundId: 'never', amountCents: seeded.priceCents }; } } }),
+      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionRef: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => { refunds += 1; return { refundRef: 'never', amountMinor: seeded.priceMinor }; } } }),
     });
 
     const summary = await runReconciliation(context);
@@ -166,13 +166,13 @@ describe('runReconciliation', () => {
   });
 
   it('opens an action_required refund incident on failure and resolves it once a later attempt succeeds', async () => {
-    const seeded = booking({ id: 'recon-refund-incident', status: 'cancelled', stripePaymentIntent: 'pi_recon_incident' });
+    const seeded = booking({ id: 'recon-refund-incident', status: 'cancelled', paymentRef: 'pi_recon_incident' });
     const repo = fakeRepository([seeded]);
-    await repo.claimRefundOperation({ id: 'op-incident', bookingId: seeded.id, paymentIntent: seeded.stripePaymentIntent, choice: 'full', requestedAt: '2026-08-14T09:00:00.000Z' });
+    await repo.claimRefundOperation({ id: 'op-incident', bookingId: seeded.id, paymentIntent: seeded.paymentRef, choice: 'full', requestedAt: '2026-08-14T09:00:00.000Z' });
     let shouldFail = true;
     const context = createBookkitContext({
       config, db: {} as D1Database, repo, clock,
-      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionId: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => { if (shouldFail) throw new Error('stripe down'); return { refundId: 're_incident_recovered', amountCents: seeded.priceCents }; } } }),
+      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionRef: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => { if (shouldFail) throw new Error('stripe down'); return { refundRef: 're_incident_recovered', amountMinor: seeded.priceMinor }; } } }),
     });
 
     const first = await runReconciliation(context);
@@ -207,7 +207,7 @@ describe('runReconciliation', () => {
   });
 
   it('drains a pending alert through the configured sink and marks it delivered', async () => {
-    const seeded = booking({ id: 'recon-alert-drain', status: 'confirmed', calendarSynced: true, emailSynced: false });
+    const seeded = booking({ id: 'recon-alert-drain', status: 'confirmed' });
     const repo = fakeRepository([seeded]);
     seedSideEffect(repo, seeded.id, { family: 'email_confirmation' }, { status: 'abandoned', attemptCount: 10, failureStartedAt: '2026-08-14T09:00:00.000Z' });
     const sent: unknown[] = [];
@@ -230,7 +230,7 @@ describe('runReconciliation', () => {
   });
 
   it('does not send an obsolete action alert after the same pass auto-resolves its incident', async () => {
-    const seeded = booking({ id: 'recon-no-obsolete-alert', status: 'confirmed', calendarSynced: false, emailSynced: true });
+    const seeded = booking({ id: 'recon-no-obsolete-alert', status: 'confirmed' });
     const repo = fakeRepository([seeded]);
     seedSideEffect(repo, seeded.id, { family: 'calendar_create' }, {
       status: 'failed', attemptCount: 1, attemptedAt: '2026-08-14T09:00:00.000Z', failureStartedAt: '2026-08-14T09:00:00.000Z',
@@ -254,7 +254,7 @@ describe('runReconciliation', () => {
   });
 
   it('schedules a backoff retry for a failing alert sink without crashing the sweep', async () => {
-    const seeded = booking({ id: 'recon-alert-fail', status: 'confirmed', calendarSynced: true, emailSynced: false });
+    const seeded = booking({ id: 'recon-alert-fail', status: 'confirmed' });
     const repo = fakeRepository([seeded]);
     seedSideEffect(repo, seeded.id, { family: 'email_confirmation' }, { status: 'abandoned', attemptCount: 10, failureStartedAt: '2026-08-14T09:00:00.000Z' });
     const context = createBookkitContext({
@@ -269,7 +269,7 @@ describe('runReconciliation', () => {
   });
 
   it('attempts due side-effect siblings independently and isolates provider failures', async () => {
-    const seeded = booking({ id: 'recon-independent-rows', status: 'confirmed', calendarSynced: false, emailSynced: false });
+    const seeded = booking({ id: 'recon-independent-rows', status: 'confirmed' });
     const repo = fakeRepository([seeded]);
     seedSideEffect(repo, seeded.id, { family: 'calendar_create' }, { status: 'pending' });
     seedSideEffect(repo, seeded.id, { family: 'email_confirmation' }, { status: 'pending' });
@@ -296,7 +296,7 @@ describe('runReconciliation', () => {
 
   it('does not let terminal rows starve newer executable debt', async () => {
     const terminal = Array.from({ length: 12 }, (_, index) => booking({ id: `recon-terminal-${index}`, status: 'confirmed' }));
-    const actionable = booking({ id: 'recon-action-after-terminal', status: 'confirmed', calendarSynced: false, emailSynced: true });
+    const actionable = booking({ id: 'recon-action-after-terminal', status: 'confirmed' });
     const repo = fakeRepository([...terminal, actionable]);
     for (const seeded of terminal) seedSideEffect(repo, seeded.id, { family: 'email_confirmation' }, { status: 'abandoned', attemptCount: 10 });
     seedSideEffect(repo, actionable.id, { family: 'calendar_create' }, { status: 'pending' });
@@ -313,7 +313,7 @@ describe('runReconciliation', () => {
   });
 
   it('reprojects an open incident after ordinary HTTP recovery removes the source from execution candidates', async () => {
-    const seeded = booking({ id: 'recon-http-reprojection', status: 'confirmed', calendarSynced: true, emailSynced: false });
+    const seeded = booking({ id: 'recon-http-reprojection', status: 'confirmed' });
     const repo = fakeRepository([seeded]);
     seedSideEffect(repo, seeded.id, { family: 'email_confirmation' }, { status: 'abandoned', attemptCount: 10 });
     const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers({ alerts: { send: async () => undefined } }) });
@@ -332,7 +332,7 @@ describe('runReconciliation', () => {
   });
 
   it('leaves alert revisions undelivered when no sink is configured and supports strict cron preflight', async () => {
-    const seeded = booking({ id: 'recon-alert-missing', status: 'confirmed', emailSynced: false });
+    const seeded = booking({ id: 'recon-alert-missing', status: 'confirmed' });
     const repo = fakeRepository([seeded]);
     seedSideEffect(repo, seeded.id, { family: 'email_confirmation' }, { status: 'abandoned', attemptCount: 10 });
     const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
@@ -346,7 +346,7 @@ describe('runReconciliation', () => {
   });
 
   it('honors a bounded sourceLimit and remains resumable across invocations', async () => {
-    const seeds = Array.from({ length: 3 }, (_, index) => booking({ id: `recon-bounded-${index}`, status: 'confirmed', calendarSynced: false, emailSynced: true }));
+    const seeds = Array.from({ length: 3 }, (_, index) => booking({ id: `recon-bounded-${index}`, status: 'confirmed' }));
     const repo = fakeRepository(seeds);
     for (const seeded of seeds) seedSideEffect(repo, seeded.id, { family: 'calendar_create' }, { status: 'pending' });
     let calendarCalls = 0;

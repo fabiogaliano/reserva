@@ -56,12 +56,12 @@ describe('local smoke runtime', () => {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          tourSlug: 'oldTown',
+          serviceSlug: 'oldTown',
           start: nextSmokeSlot(),
-          people: 2,
+          quantity: 2,
           pickupType: 'default',
           locale: 'en',
-          // Plan 017 (design decision 5): the smoke-site's oldTown tour now declares two meeting
+          // Plan 017 (design decision 5): the smoke-site's oldTown service now declares two meeting
           // points (examples/smoke-site/src/config.ts), so a default-pickup checkout must supply
           // one — see resolveCheckoutMeetingPoint in src/handlers/index.ts.
           meetingPointId: 'fountain',
@@ -69,20 +69,20 @@ describe('local smoke runtime', () => {
       }), context);
       expect(checkout.status).toBe(201);
       const checkoutUrl = requireStringProperty(await checkout.json(), 'checkoutUrl');
-      const sessionId = new URL(checkoutUrl, 'http://localhost:4321').searchParams.get('session_id');
-      if (!sessionId) throw new Error('Smoke checkout did not return a session_id');
+      const sessionRef = new URL(checkoutUrl, 'http://localhost:4321').searchParams.get('session_id');
+      if (!sessionRef) throw new Error('Smoke checkout did not return a session_id');
 
-      const held = await context.repo.getBookingBySessionId(sessionId);
+      const held = await context.repo.getBookingBySessionRef(sessionRef);
       if (!held) throw new Error('Smoke checkout did not persist its booking');
-      await expect(context.providers.payments.getSession(sessionId)).resolves.toMatchObject({
+      await expect(context.providers.payments.getSession(sessionRef)).resolves.toMatchObject({
         status: 'complete',
         paymentStatus: 'paid',
-        amountTotal: held.priceCents,
+        amountTotal: held.priceMinor,
         currency: context.config.business.currency,
       });
 
       const status = await handleStatus(new Request(
-        `http://localhost:4321/api/booking/status?session_id=${encodeURIComponent(sessionId)}`,
+        `http://localhost:4321/api/booking/status?session_id=${encodeURIComponent(sessionRef)}`,
       ), context);
       expect(status.status).toBe(200);
       await expect(status.json()).resolves.toMatchObject({ status: 'confirmed' });

@@ -4,7 +4,7 @@ import { createBooking, rescheduleViaManagePage } from './helpers';
 const TOUR = 'oldTown';
 
 test('customer can cancel a booking within the cutoff, a cancellation email lands in the outbox, and the token is revoked indistinguishably from an unknown one', async ({ page, request }) => {
-  const { reference, outboxEntry } = await createBooking(page, { tour: TOUR, people: 2 });
+  const { reference, outboxEntry } = await createBooking(page, { service: TOUR, quantity: 2 });
 
   const manageUrl = new URL(outboxEntry.customerManageUrl);
   const token = manageUrl.searchParams.get('token');
@@ -47,7 +47,7 @@ test('customer can cancel a booking within the cutoff, a cancellation email land
 // `no-referrer`, which nulls Origin on this page's own form POSTs and broke Astro's checkOrigin --
 // see the plan-007 comment on the cancel test above) but trims Referer to the origin alone.
 test('manage page asset requests do not leak the token in their Referer header', async ({ page }) => {
-  const { outboxEntry } = await createBooking(page, { tour: TOUR, people: 2 });
+  const { outboxEntry } = await createBooking(page, { service: TOUR, quantity: 2 });
   const manageUrl = new URL(outboxEntry.customerManageUrl);
 
   const subresourceReferers: string[] = [];
@@ -67,7 +67,7 @@ test('manage page asset requests do not leak the token in their Referer header',
 });
 
 test('customer can reschedule to another available slot, the manage page reflects the new time, and a reschedule email lands in the outbox', async ({ page, request }) => {
-  const { reference, outboxEntry } = await createBooking(page, { tour: TOUR, people: 2 });
+  const { reference, outboxEntry } = await createBooking(page, { service: TOUR, quantity: 2 });
 
   const manageUrl = new URL(outboxEntry.customerManageUrl);
   const token = manageUrl.searchParams.get('token');
@@ -99,7 +99,7 @@ test.describe('reschedule calendar in a timezone behind UTC (regression: manage-
   test.use({ timezoneId: 'America/New_York' });
 
   test('the reschedule calendar does not mark an open day as disallowed', async ({ page, request }) => {
-    const { outboxEntry } = await createBooking(page, { tour: TOUR, people: 2 });
+    const { outboxEntry } = await createBooking(page, { service: TOUR, quantity: 2 });
 
     const manageUrl = new URL(outboxEntry.customerManageUrl);
     await page.goto(manageUrl.pathname + manageUrl.search);
@@ -108,13 +108,13 @@ test.describe('reschedule calendar in a timezone behind UTC (regression: manage-
     // guarantees isDateDisallowed is already assigned when the probe below calls it.
     await page.locator('.bk-cal-wrap').waitFor();
     const form = page.locator('[data-bookkit-reschedule]');
-    const tour = await form.getAttribute('data-tour');
-    const people = await form.getAttribute('data-people');
+    const service = await form.getAttribute('data-service');
+    const quantity = await form.getAttribute('data-quantity');
     const from = await form.getAttribute('data-from');
     const to = await form.getAttribute('data-to');
-    if (!tour || !people || !from || !to) throw new Error('Reschedule form is missing its availability data attributes');
+    if (!service || !quantity || !from || !to) throw new Error('Reschedule form is missing its availability data attributes');
 
-    const availability = await (await request.get(`/api/booking/availability?tour=${tour}&people=${people}&from=${from}&to=${to}`)).json();
+    const availability = await (await request.get(`/api/booking/availability?service=${service}&quantity=${quantity}&from=${from}&to=${to}`)).json();
     const openDay = availability.days.find((d: any) => d.slots.length > 0);
     if (!openDay) throw new Error('No available day found to probe isDateDisallowed against');
 

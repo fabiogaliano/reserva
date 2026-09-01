@@ -34,7 +34,7 @@ describe('Astro integration entry', () => {
     expect(routes.map((route) => route.pattern)).toEqual(expect.arrayContaining([
       '/api/booking/availability',
       '/api/booking/checkout',
-      '/api/booking/webhooks/stripe',
+      '/api/booking/webhooks/payment',
       '/api/booking/status',
       '/api/booking/manage',
       '/api/booking/cancel',
@@ -49,18 +49,18 @@ describe('Astro integration entry', () => {
     for (const route of routes) expect(existsSync(String(route.entrypoint))).toBe(true);
   });
 
-  // Plan 015 (decision 2): tests/workers/webhook.test.ts proves handleStripeWebhook's own behavior
+  // Plan 015 (decision 2): tests/workers/webhook.test.ts proves handlePaymentWebhook's own behavior
   // against a hand-written worker entrypoint, honestly, without pretending that worker IS the
   // generated Astro route -- this pins the other half, that the generated route's entrypoint really
-  // is the exact one-line handleStripeWebhook delegation src/routes/api/booking/webhooks/stripe.ts
+  // is the exact one-line handlePaymentWebhook delegation src/routes/api/booking/webhooks/payment.ts
   // contains (not just that some file exists at that path, which the assertion above already checks).
-  it('pins the generated Stripe webhook route to its one-line handleStripeWebhook delegation', () => {
+  it('pins the generated Stripe webhook route to its one-line handlePaymentWebhook delegation', () => {
     const { routes } = setup();
-    const webhookRoute = routes.find((route) => route.pattern === '/api/booking/webhooks/stripe');
+    const webhookRoute = routes.find((route) => route.pattern === '/api/booking/webhooks/payment');
     if (!webhookRoute) throw new Error('Stripe webhook route was not injected');
     const source = readFileSync(String(webhookRoute.entrypoint), 'utf8');
-    expect(source).toContain("import { handleStripeWebhook } from '../../../../handlers';");
-    expect(source).toContain('return handleStripeWebhook(request, await createRouteContext({ request, locals }));');
+    expect(source).toContain("import { handlePaymentWebhook } from '../../../../handlers';");
+    expect(source).toContain('return handlePaymentWebhook(request, await createRouteContext({ request, locals }));');
   });
 
   it('resolves the virtual module to the explicit user runtime without serializing config', () => {

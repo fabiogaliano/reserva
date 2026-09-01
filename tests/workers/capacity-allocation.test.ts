@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { localDateKey } from '../../src/core/time';
 import { getOccupancyIntervals, isSlotAvailable, maxConcurrentOccupancy, occupancyFor } from '../../src/core/occupancy';
 import { createBookingRepository } from '../../src/repo';
-import { config, tour } from '../fixtures';
+import { config, service } from '../fixtures';
 
 interface TestEnv {
   BOOKKIT_DB: D1Database;
@@ -34,34 +34,35 @@ beforeEach(async () => {
   await db.prepare('DELETE FROM refund_operations').run();
 });
 
-function occupancyEndsAt(endsAt: string, turnaroundMin = tour.turnaroundMin): string {
+function occupancyEndsAt(endsAt: string, turnaroundMin = service.turnaroundMin): string {
   return new Date(new Date(endsAt).getTime() + turnaroundMin * 60_000).toISOString();
 }
 
-function buildHold(id: string, startsAt: string, endsAt: string, people: number, fleetDefaultCapacity: number, now = '2026-08-09T10:00:00.000Z') {
+function buildHold(id: string, startsAt: string, endsAt: string, quantity: number, defaultCapacity: number, now = '2026-08-09T10:00:00.000Z') {
   return {
     id,
     reference: `BKT-2026-${id}`,
-    tourSlug: TOUR_SLUG,
-    people,
+    serviceSlug: TOUR_SLUG,
+    quantity,
     pickupType: 'default' as const,
     startsAt,
     endsAt,
     locale: 'en',
-    priceCents: 10000,
+    priceMinor: 10000,
+    currency: 'eur',
     holdExpiresAt: '2026-12-31T00:00:00.000Z',
     cancelToken: `cancel-${id}`,
     operatorToken: `operator-${id}`,
     createdAt: now,
     updatedAt: now,
-    occupancyUnits: occupancyFor(tour, people),
+    occupancyUnits: occupancyFor(service, quantity),
     occupancyEndsAt: occupancyEndsAt(endsAt),
     localDate: localDateKey(startsAt, TIMEZONE),
-    fleetDefaultCapacity,
+    defaultCapacity,
   };
 }
 
-function buildReschedule(expectedStartsAt: string, startsAt: string, endsAt: string, people: number, fleetDefaultCapacity: number, now = '2026-08-09T11:00:00.000Z') {
+function buildReschedule(expectedStartsAt: string, startsAt: string, endsAt: string, quantity: number, defaultCapacity: number, now = '2026-08-09T11:00:00.000Z') {
   return {
     expectedStatus: 'confirmed' as const,
     expectedStartsAt,
@@ -70,15 +71,15 @@ function buildReschedule(expectedStartsAt: string, startsAt: string, endsAt: str
     rescheduledFrom: expectedStartsAt,
     updatedAt: now,
     now,
-    occupancyUnits: occupancyFor(tour, people),
+    occupancyUnits: occupancyFor(service, quantity),
     occupancyEndsAt: occupancyEndsAt(endsAt),
     localDate: localDateKey(startsAt, TIMEZONE),
-    fleetDefaultCapacity,
+    defaultCapacity,
   };
 }
 
-async function seedConfirmed(id: string, startsAt: string, endsAt: string, people: number, fleetDefaultCapacity: number): Promise<void> {
-  const created = await repo.insertHoldWithCapacity(buildHold(id, startsAt, endsAt, people, fleetDefaultCapacity));
+async function seedConfirmed(id: string, startsAt: string, endsAt: string, quantity: number, defaultCapacity: number): Promise<void> {
+  const created = await repo.insertHoldWithCapacity(buildHold(id, startsAt, endsAt, quantity, defaultCapacity));
   if (!created) throw new Error(`seed insert for ${id} unexpectedly lost the capacity guard`);
   const confirmed = await repo.transitionToConfirmed(id, { expectedStatusIn: ['hold'], updatedAt: '2026-08-09T10:01:00.000Z' });
   if (!confirmed) throw new Error(`seed confirm for ${id} failed`);
@@ -175,7 +176,7 @@ describe('atomic capacity allocation against real D1 (BK-CAP-001 / AR-001)', () 
 
     it('the override commits first (capacity shrinks to 1 before the reschedule runs): the reschedule is rejected and final occupancy stays within the new capacity', async () => {
       await seed();
-      await repo.upsertDayOverride(localDate, 1, 'fleet reduced');
+      await repo.upsertDayOverride(localDate, 1, 'capacity reduced');
 
       const rescheduled = await repo.rescheduleWithCapacity('ra', buildReschedule('2026-08-10T13:00:00.000Z', TARGET_START, TARGET_END, 2, 2));
       expect(rescheduled).toBeNull();
@@ -186,7 +187,7 @@ describe('atomic capacity allocation against real D1 (BK-CAP-001 / AR-001)', () 
     });
 
     // The reschedule's own atomic guard resolved capacity at the moment IT ran (still 2), so it
-    // correctly succeeds -- a later override is a forward-looking fleet change, not a retroactive
+    // correctly succeeds -- a later override is a forward-looking capacity change, not a retroactive
     // eviction of an already-confirmed booking (oversell repair for pre-existing rows is out of
     // scope per the handoff). What the override DOES do is bind on every write from that point on,
     // which the final insertHoldWithCapacity call below confirms.
@@ -195,7 +196,7 @@ describe('atomic capacity allocation against real D1 (BK-CAP-001 / AR-001)', () 
       const rescheduled = await repo.rescheduleWithCapacity('ra', buildReschedule('2026-08-10T13:00:00.000Z', TARGET_START, TARGET_END, 2, 2));
       expect(rescheduled).toMatchObject({ startsAt: TARGET_START });
 
-      await repo.upsertDayOverride(localDate, 1, 'fleet reduced');
+      await repo.upsertDayOverride(localDate, 1, 'capacity reduced');
 
       const inWindow = (await db.prepare("SELECT id FROM bookings WHERE starts_at = ? AND status = 'confirmed'").bind(TARGET_START).all<{ id: string }>()).results;
       expect(inWindow.map((row) => row.id).sort()).toEqual(['c0', 'ra']); // not retroactively evicted.
@@ -206,7 +207,7 @@ describe('atomic capacity allocation against real D1 (BK-CAP-001 / AR-001)', () 
   });
 
   describe('occupancy-units parity: the SQL guard must agree with core/occupancy.ts for multi-unit parties', () => {
-    // occupancyFor(tour, 5) is 2 (tests/fixtures.ts: people > 4 costs 2 units), matching the
+    // occupancyFor(service, 5) is 2 (tests/fixtures.ts: quantity > 4 costs 2 units), matching the
     // handoff's own example for exercising multi-unit accounting.
     it('rejects a request that would push a multi-unit party over capacity, exactly where maxConcurrentOccupancy says it must', async () => {
       await seedConfirmed('multi-unit', TARGET_START, TARGET_END, 5, 2);
@@ -214,10 +215,10 @@ describe('atomic capacity allocation against real D1 (BK-CAP-001 / AR-001)', () 
       const rejected = await repo.insertHoldWithCapacity(buildHold('single-unit-over', TARGET_START, TARGET_END, 2, 2));
       expect(rejected).toBeNull();
 
-      const referenceBooking = { id: 'multi-unit', status: 'confirmed' as const, startsAt: TARGET_START, endsAt: TARGET_END, holdExpiresAt: null, people: 5 };
-      const intervals = getOccupancyIntervals({ bookings: [referenceBooking], tour, now: '2026-08-09T10:00:00.000Z' });
+      const referenceBooking = { id: 'multi-unit', status: 'confirmed' as const, startsAt: TARGET_START, endsAt: TARGET_END, holdExpiresAt: null, quantity: 5 };
+      const intervals = getOccupancyIntervals({ bookings: [referenceBooking], service, now: '2026-08-09T10:00:00.000Z' });
       expect(maxConcurrentOccupancy(intervals, TARGET_START, occupancyEndsAt(TARGET_END))).toBe(2);
-      expect(isSlotAvailable(TARGET_START, TARGET_END, { capacity: 2, intervals, requestedUnits: 1, turnaroundMin: tour.turnaroundMin })).toBe(false);
+      expect(isSlotAvailable(TARGET_START, TARGET_END, { capacity: 2, intervals, requestedUnits: 1, turnaroundMin: service.turnaroundMin })).toBe(false);
     });
 
     it('accepts a request that fits alongside a multi-unit party, exactly where maxConcurrentOccupancy says it must', async () => {
@@ -226,9 +227,9 @@ describe('atomic capacity allocation against real D1 (BK-CAP-001 / AR-001)', () 
       const accepted = await repo.insertHoldWithCapacity(buildHold('single-unit-fits', TARGET_START, TARGET_END, 2, 3));
       expect(accepted).toMatchObject({ status: 'hold', startsAt: TARGET_START });
 
-      const referenceBooking = { id: 'multi-unit', status: 'confirmed' as const, startsAt: TARGET_START, endsAt: TARGET_END, holdExpiresAt: null, people: 5 };
-      const intervals = getOccupancyIntervals({ bookings: [referenceBooking], tour, now: '2026-08-09T10:00:00.000Z' });
-      expect(isSlotAvailable(TARGET_START, TARGET_END, { capacity: 3, intervals, requestedUnits: 1, turnaroundMin: tour.turnaroundMin })).toBe(true);
+      const referenceBooking = { id: 'multi-unit', status: 'confirmed' as const, startsAt: TARGET_START, endsAt: TARGET_END, holdExpiresAt: null, quantity: 5 };
+      const intervals = getOccupancyIntervals({ bookings: [referenceBooking], service, now: '2026-08-09T10:00:00.000Z' });
+      expect(isSlotAvailable(TARGET_START, TARGET_END, { capacity: 3, intervals, requestedUnits: 1, turnaroundMin: service.turnaroundMin })).toBe(true);
     });
   });
 
@@ -248,12 +249,12 @@ describe('atomic capacity allocation against real D1 (BK-CAP-001 / AR-001)', () 
 
     function crossCheckRealSemantic(): void {
       const referenceBookings = [
-        { id: 'neighbor-a', status: 'confirmed' as const, startsAt: NEIGHBOR_A_START, endsAt: NEIGHBOR_A_END, holdExpiresAt: null, people: 2 },
-        { id: 'neighbor-b', status: 'confirmed' as const, startsAt: NEIGHBOR_B_START, endsAt: NEIGHBOR_B_END, holdExpiresAt: null, people: 2 },
+        { id: 'neighbor-a', status: 'confirmed' as const, startsAt: NEIGHBOR_A_START, endsAt: NEIGHBOR_A_END, holdExpiresAt: null, quantity: 2 },
+        { id: 'neighbor-b', status: 'confirmed' as const, startsAt: NEIGHBOR_B_START, endsAt: NEIGHBOR_B_END, holdExpiresAt: null, quantity: 2 },
       ];
-      const intervals = getOccupancyIntervals({ bookings: referenceBookings, tour, now: '2026-08-09T10:00:00.000Z' });
+      const intervals = getOccupancyIntervals({ bookings: referenceBookings, service, now: '2026-08-09T10:00:00.000Z' });
       expect(maxConcurrentOccupancy(intervals, REQUEST_START, occupancyEndsAt(REQUEST_END))).toBe(1);
-      expect(isSlotAvailable(REQUEST_START, REQUEST_END, { capacity: 2, intervals, requestedUnits: 1, turnaroundMin: tour.turnaroundMin })).toBe(true);
+      expect(isSlotAvailable(REQUEST_START, REQUEST_END, { capacity: 2, intervals, requestedUnits: 1, turnaroundMin: service.turnaroundMin })).toBe(true);
     }
 
     it('insertHoldWithCapacity accepts a request straddling two neighbors that never overlap each other, which a SUM guard would wrongly reject', async () => {
@@ -280,15 +281,15 @@ describe('atomic capacity allocation against real D1 (BK-CAP-001 / AR-001)', () 
   });
 
   describe('rescheduleWithCapacity self-heals legacy occupancy_units (patch-05-r1 Fix 3)', () => {
-    it('sets occupancy_units on a pre-migration-style NULL row it moves, matching occupancyFor(tour, people)', async () => {
+    it('sets occupancy_units on a pre-migration-style NULL row it moves, matching occupancyFor(service, quantity)', async () => {
       const now = '2026-08-09T10:00:00.000Z';
       // insertHold (not insertHoldWithCapacity) never writes occupancy_units/occupancy_ends_at,
       // reproducing a pre-migration-0008 row -- exactly the NULL-column case migrations/
       // 0008_occupancy_capacity.sql documents.
       await repo.insertHold({
-        id: 'legacy-row', reference: 'BKT-2026-legacy-row', tourSlug: TOUR_SLUG, people: 5,
+        id: 'legacy-row', reference: 'BKT-2026-legacy-row', serviceSlug: TOUR_SLUG, quantity: 5,
         pickupType: 'default', startsAt: '2026-08-10T13:00:00.000Z', endsAt: '2026-08-10T14:00:00.000Z',
-        locale: 'en', priceCents: 10000, holdExpiresAt: '2026-12-31T00:00:00.000Z',
+        locale: 'en', priceMinor: 10000, currency: 'eur', holdExpiresAt: '2026-12-31T00:00:00.000Z',
         cancelToken: 'cancel-legacy-row', operatorToken: 'operator-legacy-row', createdAt: now, updatedAt: now,
       });
       await repo.transitionToConfirmed('legacy-row', { expectedStatusIn: ['hold'], updatedAt: now });
@@ -303,7 +304,7 @@ describe('atomic capacity allocation against real D1 (BK-CAP-001 / AR-001)', () 
 
       const after = (await db.prepare('SELECT occupancy_units, occupancy_ends_at FROM bookings WHERE id = ?')
         .bind('legacy-row').all<{ occupancy_units: number | null; occupancy_ends_at: string | null }>()).results[0];
-      expect(after?.occupancy_units).toBe(occupancyFor(tour, 5)); // 2 -- was left NULL forever pre-fix.
+      expect(after?.occupancy_units).toBe(occupancyFor(service, 5)); // 2 -- was left NULL forever pre-fix.
       expect(after?.occupancy_ends_at).toBe(occupancyEndsAt(TARGET_END));
     });
   });

@@ -38,20 +38,17 @@ describe('core settings', () => {
     const merged = applySettingOverrides(config, {
       'booking.minNoticeHours': '2',
       'booking.reschedule.enabled': 'false',
-      'fleet.defaultCapacity': '4',
+      'capacity.default': '4',
       'business.contact.email': JSON.stringify('new@example.test'),
-      'payments.methods': JSON.stringify(['card']),
     });
     expect(merged.booking.minNoticeHours).toBe(2);
     expect(merged.booking.reschedule.enabled).toBe(false);
-    expect(merged.fleet.defaultCapacity).toBe(4);
+    expect(merged.capacity.default).toBe(4);
     expect(merged.business.contact.email).toBe('new@example.test');
-    expect(merged.payments.methods).toEqual(['card']);
     // Untouched values still come from the file config, and the original is not mutated.
     expect(merged.booking.maxHorizonDays).toBe(config.booking.maxHorizonDays);
     expect(config.booking.minNoticeHours).toBe(24);
-    expect(config.fleet.defaultCapacity).toBe(2);
-    expect(config.payments.methods).toEqual(['card', 'mb_way']);
+    expect(config.capacity.default).toBe(2);
   });
 
   it('ignores unknown keys, malformed JSON, and values that fail validation', () => {
@@ -60,6 +57,8 @@ describe('core settings', () => {
       'booking.minNoticeHours': 'not-json{',
       'booking.maxHorizonDays': '"twelve"',
       'booking.holdMinutes': '-3',
+      // Plan 022 (design decision 1): payments.methods was retired to the Stripe provider's own
+      // options, so a row left behind by an older deployment is just an unknown key now.
       'payments.methods': JSON.stringify(['bitcoin']),
       'legal.termsUrl': JSON.stringify('javascript:alert(1)'),
       'booking.limitedThreshold': '1',
@@ -67,7 +66,7 @@ describe('core settings', () => {
     expect(merged.booking.minNoticeHours).toBe(config.booking.minNoticeHours);
     expect(merged.booking.maxHorizonDays).toBe(config.booking.maxHorizonDays);
     expect(merged.booking.holdMinutes).toBe(config.booking.holdMinutes);
-    expect(merged.payments.methods).toEqual(config.payments.methods);
+    expect(merged).not.toHaveProperty('payments');
     expect(merged.legal.termsUrl).toBe(config.legal.termsUrl);
     expect(merged.booking.limitedThreshold).toBe(1);
   });
@@ -82,26 +81,24 @@ describe('core settings', () => {
     expect(merged.booking.maxHoldsPerIp).toBeUndefined();
   });
 
-  it('parses form values per kind: numbers, checkboxes, methods, and optional empties', () => {
+  it('parses form values per kind: numbers, checkboxes, and optional empties', () => {
     expect(parseSettingForm(definition('booking.minNoticeHours'), form({ 'booking.minNoticeHours': '1.5' }))).toBe(1.5);
     expect(parseSettingForm(definition('booking.maxHorizonDays'), form({ 'booking.maxHorizonDays': '45' }))).toBe(45);
-    expect(parseSettingForm(definition('fleet.defaultCapacity'), form({ 'fleet.defaultCapacity': '5' }))).toBe(5);
+    expect(parseSettingForm(definition('capacity.default'), form({ 'capacity.default': '5' }))).toBe(5);
     expect(parseSettingForm(definition('booking.reschedule.enabled'), form({ 'booking.reschedule.enabled': 'on' }))).toBe(true);
     expect(parseSettingForm(definition('booking.reschedule.enabled'), form({}))).toBe(false);
     expect(parseSettingForm(definition('booking.maxHoldsPerIp'), form({ 'booking.maxHoldsPerIp': '' }))).toBeNull();
     expect(parseSettingForm(definition('business.contact.whatsapp'), form({}))).toBeNull();
-    expect(parseSettingForm(definition('payments.methods'), form({ 'payments.methods': ['card', 'mb_way', 'card'] }))).toEqual(['card', 'mb_way']);
   });
 
   it('rejects invalid form values with SettingParseError', () => {
     expect(() => parseSettingForm(definition('booking.maxHorizonDays'), form({ 'booking.maxHorizonDays': '2.5' }))).toThrow(SettingParseError);
     expect(() => parseSettingForm(definition('booking.maxHorizonDays'), form({ 'booking.maxHorizonDays': '0' }))).toThrow(SettingParseError);
-    expect(() => parseSettingForm(definition('fleet.defaultCapacity'), form({ 'fleet.defaultCapacity': '-1' }))).toThrow(SettingParseError);
-    expect(() => parseSettingForm(definition('fleet.defaultCapacity'), form({ 'fleet.defaultCapacity': '2.5' }))).toThrow(SettingParseError);
+    expect(() => parseSettingForm(definition('capacity.default'), form({ 'capacity.default': '-1' }))).toThrow(SettingParseError);
+    expect(() => parseSettingForm(definition('capacity.default'), form({ 'capacity.default': '2.5' }))).toThrow(SettingParseError);
     expect(() => parseSettingForm(definition('business.name'), form({ 'business.name': '   ' }))).toThrow(SettingParseError);
     expect(() => parseSettingForm(definition('business.contact.email'), form({ 'business.contact.email': 'not-an-email' }))).toThrow(SettingParseError);
     expect(() => parseSettingForm(definition('legal.termsUrl'), form({ 'legal.termsUrl': 'ftp://example.test' }))).toThrow(SettingParseError);
-    expect(() => parseSettingForm(definition('payments.methods'), form({}))).toThrow(SettingParseError);
   });
 
   it('rejects holdMinutes form values outside [35, 1440] and accepts the boundary values (BK-CONFIG-001)', () => {
@@ -152,8 +149,8 @@ describe('merge-then-validate backstop (BK-CONFIG-001)', () => {
     // into a violation: audited every `add(...)` call in validateConfig (core/config.ts) against
     // settingDefinitions (core/settings.ts). The only true cross-field rule is locales.default must
     // be in locales.supported; the rest are single-field (timezone, holdMinutes bounds, per-locale
-    // Stripe support) or tour-level (schedule ordering, pricing coverage, occupancyFor). Neither
-    // locales nor tours is an editable SettingDefinition — both are deliberately file-only (see the
+    // Stripe support) or service-level (schedule ordering, pricing coverage, occupancyFor). Neither
+    // locales nor services is an editable SettingDefinition — both are deliberately file-only (see the
     // header comment atop core/settings.ts) — so no combination of two *currently-editable*
     // settings can produce a cross-field validateConfig violation on its own; the per-field
     // SettingKind bound is already the strongest backstop reachable from the settings page. Hand-

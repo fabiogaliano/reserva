@@ -120,10 +120,12 @@ async function assertRecovered(): Promise<void> {
   try {
     const db = proxy.env.BOOKKIT_DB as unknown as D1Database;
     const id = 'smoke-scheduled-recovery';
-    const operation = await db.prepare('SELECT side_effect_operations.status AS status, bookings.calendar_synced AS calendar_synced FROM side_effect_operations JOIN bookings ON bookings.id = side_effect_operations.booking_id WHERE side_effect_operations.booking_id = ? AND side_effect_operations.family = ?').bind(id, 'calendar_create').first<{ status: string; calendar_synced: number }>();
+    // Plan 022: the retired bookings.calendar_synced flag is gone; the event id the recovery wrote
+    // is the record that the calendar entry now exists, alongside the row's own 'succeeded' status.
+    const operation = await db.prepare('SELECT side_effect_operations.status AS status, bookings.calendar_event_id AS calendar_event_id FROM side_effect_operations JOIN bookings ON bookings.id = side_effect_operations.booking_id WHERE side_effect_operations.booking_id = ? AND side_effect_operations.family = ?').bind(id, 'calendar_create').first<{ status: string; calendar_event_id: string | null }>();
     if (!operation) throw new Error('side_effect_operations row disappeared');
     if (operation.status !== 'succeeded') throw new Error(`expected the real scheduled() dispatch to redrive the owed calendar_create row to 'succeeded', got '${operation.status}'`);
-    if (operation.calendar_synced !== 1) throw new Error('expected bookings.calendar_synced to flip to true once the calendar_create row succeeded');
+    if (operation.calendar_event_id === null) throw new Error('expected bookings.calendar_event_id to be set once the calendar_create row succeeded');
 
     const incident = await db.prepare('SELECT status, resolution_kind FROM operational_incidents WHERE booking_id = ?').bind(id).first<{ status: string; resolution_kind: string | null }>();
     if (!incident) throw new Error('operational_incidents row disappeared');

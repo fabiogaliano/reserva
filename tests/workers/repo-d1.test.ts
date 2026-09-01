@@ -28,13 +28,14 @@ describe('D1 booking repository', () => {
     const created = await repo.insertHold({
       id: 'booking-1',
       reference: 'BKT-2026-001',
-      tourSlug: 'vintage',
-      people: 2,
+      serviceSlug: 'vintage',
+      quantity: 2,
       pickupType: 'default',
       startsAt: '2026-08-01T09:00:00.000Z',
       endsAt: '2026-08-01T10:00:00.000Z',
       locale: 'en',
-      priceCents: 12000,
+      priceMinor: 12000,
+      currency: 'eur',
       holdExpiresAt: '2026-07-21T10:35:00.000Z',
       cancelToken: 'cancel-token',
       operatorToken: 'operator-token',
@@ -42,12 +43,12 @@ describe('D1 booking repository', () => {
       updatedAt: '2026-07-21T10:00:00.000Z',
     });
 
-    expect(created).toMatchObject({ status: 'hold', tourSlug: 'vintage', people: 2 });
+    expect(created).toMatchObject({ status: 'hold', serviceSlug: 'vintage', quantity: 2 });
     await repo.updateBooking(created.id, {
-      stripeSessionId: 'cs_test',
+      paymentSessionRef: 'cs_test',
       updatedAt: '2026-07-21T10:01:00.000Z',
     });
-    await expect(repo.getBookingBySessionId('cs_test')).resolves.toMatchObject({ id: created.id });
+    await expect(repo.getBookingBySessionRef('cs_test')).resolves.toMatchObject({ id: created.id });
     await expect(repo.sweepExpiredHolds('2026-07-21T10:35:00.000Z')).resolves.toBe(0);
     await expect(repo.sweepExpiredHolds('2026-07-21T10:35:00.001Z')).resolves.toBe(1);
     await expect(repo.getBookingById(created.id)).resolves.toMatchObject({ status: 'expired', holdExpiresAt: null });
@@ -57,13 +58,14 @@ describe('D1 booking repository', () => {
     const created = await repo.insertHold({
       id: 'booking-lease',
       reference: 'BKT-2026-002',
-      tourSlug: 'vintage',
-      people: 2,
+      serviceSlug: 'vintage',
+      quantity: 2,
       pickupType: 'default',
       startsAt: '2026-08-01T11:00:00.000Z',
       endsAt: '2026-08-01T12:00:00.000Z',
       locale: 'en',
-      priceCents: 12000,
+      priceMinor: 12000,
+      currency: 'eur',
       holdExpiresAt: '2026-07-21T10:35:00.000Z',
       cancelToken: 'cancel-token-lease',
       operatorToken: 'operator-token-lease',
@@ -76,13 +78,14 @@ describe('D1 booking repository', () => {
     await expect(repo.insertHold({
       id: 'booking-over-limit',
       reference: 'BKT-2026-003',
-      tourSlug: 'vintage',
-      people: 1,
+      serviceSlug: 'vintage',
+      quantity: 1,
       pickupType: 'default',
       startsAt: '2026-08-01T13:00:00.000Z',
       endsAt: '2026-08-01T14:00:00.000Z',
       locale: 'en',
-      priceCents: 12000,
+      priceMinor: 12000,
+      currency: 'eur',
       holdExpiresAt: '2026-07-21T10:35:00.000Z',
       cancelToken: 'cancel-token-over-limit',
       operatorToken: 'operator-token-over-limit',
@@ -110,13 +113,14 @@ describe('D1 booking repository', () => {
     const created = await repo.insertHold({
       id: 'booking-outbox-atomic',
       reference: 'BKT-2026-OUTBOX',
-      tourSlug: 'vintage',
-      people: 2,
+      serviceSlug: 'vintage',
+      quantity: 2,
       pickupType: 'default',
       startsAt: '2026-08-01T09:00:00.000Z',
       endsAt: '2026-08-01T10:00:00.000Z',
       locale: 'en',
-      priceCents: 12000,
+      priceMinor: 12000,
+      currency: 'eur',
       holdExpiresAt: '2026-07-21T10:35:00.000Z',
       cancelToken: 'cancel-token-outbox',
       operatorToken: 'operator-token-outbox',
@@ -148,13 +152,14 @@ describe('D1 booking repository', () => {
     const created = await repo.insertHold({
       id: 'booking-hook-outbox-atomic',
       reference: 'BKT-2026-TFOUTBOX',
-      tourSlug: 'vintage',
-      people: 2,
+      serviceSlug: 'vintage',
+      quantity: 2,
       pickupType: 'default',
       startsAt: '2026-08-01T09:00:00.000Z',
       endsAt: '2026-08-01T10:00:00.000Z',
       locale: 'en',
-      priceCents: 12000,
+      priceMinor: 12000,
+      currency: 'eur',
       holdExpiresAt: '2026-07-21T10:35:00.000Z',
       cancelToken: 'cancel-token-tf-outbox',
       operatorToken: 'operator-token-tf-outbox',
@@ -190,13 +195,14 @@ describe('D1 booking repository', () => {
     const created = await repo.insertHold({
       id: 'booking-email-split-outbox-atomic',
       reference: 'BKT-2026-EMAILSPLIT',
-      tourSlug: 'vintage',
-      people: 2,
+      serviceSlug: 'vintage',
+      quantity: 2,
       pickupType: 'default',
       startsAt: '2026-08-01T09:00:00.000Z',
       endsAt: '2026-08-01T10:00:00.000Z',
       locale: 'en',
-      priceCents: 12000,
+      priceMinor: 12000,
+      currency: 'eur',
       holdExpiresAt: '2026-07-21T10:35:00.000Z',
       cancelToken: 'cancel-token-email-split-outbox',
       operatorToken: 'operator-token-email-split-outbox',
@@ -222,11 +228,11 @@ describe('D1 booking repository', () => {
   });
 
   it('persists capacity overrides', async () => {
-    await repo.upsertDayOverride('2026-08-01', 1, 'reduced fleet');
+    await repo.upsertDayOverride('2026-08-01', 1, 'reduced capacity');
     await expect(repo.getDayOverride('2026-08-01')).resolves.toEqual({
       date: '2026-08-01',
       capacity: 1,
-      reason: 'reduced fleet',
+      reason: 'reduced capacity',
     });
     await repo.deleteDayOverride('2026-08-01');
     await expect(repo.getDayOverride('2026-08-01')).resolves.toBeNull();
@@ -237,11 +243,11 @@ describe('D1 booking repository', () => {
   describe('meeting point columns (migration 0014)', () => {
     it('round-trips meeting_point_id/meeting_point_label through insertHoldWithCapacity when set', async () => {
       const created = await repo.insertHoldWithCapacity({
-        id: 'booking-meeting-point-set', reference: 'BKT-2026-MP1', tourSlug: 'vintage', people: 2, pickupType: 'default',
-        startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceCents: 12000,
+        id: 'booking-meeting-point-set', reference: 'BKT-2026-MP1', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
+        startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
         holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'mp-set-cancel', operatorToken: 'mp-set-operator',
         meetingPointId: 'tuk-tuk-a', meetingPointLabel: 'Praça do Comércio (tuk-tuk A)',
-        occupancyUnits: 1, occupancyEndsAt: '2026-08-01T10:00:00.000Z', localDate: '2026-08-01', fleetDefaultCapacity: 5,
+        occupancyUnits: 1, occupancyEndsAt: '2026-08-01T10:00:00.000Z', localDate: '2026-08-01', defaultCapacity: 5,
         createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
       });
 
@@ -253,10 +259,10 @@ describe('D1 booking repository', () => {
 
     it('leaves meeting_point_id/meeting_point_label NULL through insertHoldWithCapacity when the caller omits them', async () => {
       const created = await repo.insertHoldWithCapacity({
-        id: 'booking-meeting-point-absent', reference: 'BKT-2026-MP2', tourSlug: 'vintage', people: 2, pickupType: 'default',
-        startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceCents: 12000,
+        id: 'booking-meeting-point-absent', reference: 'BKT-2026-MP2', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
+        startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
         holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'mp-absent-cancel', operatorToken: 'mp-absent-operator',
-        occupancyUnits: 1, occupancyEndsAt: '2026-08-01T10:00:00.000Z', localDate: '2026-08-01', fleetDefaultCapacity: 5,
+        occupancyUnits: 1, occupancyEndsAt: '2026-08-01T10:00:00.000Z', localDate: '2026-08-01', defaultCapacity: 5,
         createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
       });
 
@@ -270,8 +276,8 @@ describe('D1 booking repository', () => {
 
     it('maps a pre-0014-shaped row (meeting_point columns NULL, as every column was before this migration) cleanly through mapBooking', async () => {
       await repo.insertHold({
-        id: 'booking-meeting-point-legacy', reference: 'BKT-2026-MP3', tourSlug: 'vintage', people: 2, pickupType: 'default',
-        startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceCents: 12000,
+        id: 'booking-meeting-point-legacy', reference: 'BKT-2026-MP3', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
+        startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
         holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'mp-legacy-cancel', operatorToken: 'mp-legacy-operator',
         createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
       });
@@ -288,15 +294,15 @@ describe('D1 booking repository', () => {
   });
 
   // Plan 018 (design decision 4): migration 0015 removed the pickup_type CHECK (domain moved to
-  // config-declared option ids, TourConfig.pickupOptions) -- this is the row the old CHECK
+  // config-declared option ids, ServiceConfig.pickupOptions) -- this is the row the old CHECK
   // (pickup_type IN ('default','custom')) would have rejected, round-tripped through the real
   // application write/read paths, not just a raw SQL INSERT (see tests/workers/schema-constraints.test.ts
   // for the SQL-layer proof).
   it('inserts and reads back a booking with a non-enum pickup_type id (migration 0015)', async () => {
     const created = await repo.insertHold({
-      id: 'booking-pickup-non-enum', reference: 'BKT-2026-PICKUPNE', tourSlug: 'vintage', people: 2,
+      id: 'booking-pickup-non-enum', reference: 'BKT-2026-PICKUPNE', serviceSlug: 'vintage', quantity: 2,
       pickupType: 'custom_both',
-      startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceCents: 21000,
+      startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 21000, currency: 'eur',
       holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'pickup-ne-cancel', operatorToken: 'pickup-ne-operator',
       createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
     });
@@ -310,14 +316,30 @@ describe('D1 booking repository', () => {
   // is undeclarable under every possible config.
   it('rejects a stored empty-string pickup_type at read time (InvalidBookingRowError)', async () => {
     await repo.insertHold({
-      id: 'booking-pickup-empty', reference: 'BKT-2026-PICKUPEMPTY', tourSlug: 'vintage', people: 2, pickupType: 'default',
-      startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceCents: 12000,
+      id: 'booking-pickup-empty', reference: 'BKT-2026-PICKUPEMPTY', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
+      startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
       holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'pickup-empty-cancel', operatorToken: 'pickup-empty-operator',
       createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
     });
     await db.prepare(`UPDATE bookings SET pickup_type = '' WHERE id = ?`).bind('booking-pickup-empty').run();
 
     await expect(repo.getBookingById('booking-pickup-empty')).rejects.toThrow(/pickup_type must be a non-empty string/);
+  });
+
+  // Plan 022 (design decision 3): migration 0018 makes pickup_type nullable so plan 023's
+  // location-less service can store "no pickup at all" as NULL rather than a sentinel id. The
+  // read-time floor must let NULL through untouched (it is a declared state, not a corrupt row),
+  // which is the one case the empty-string rejection above must NOT be widened to cover.
+  it('hydrates a NULL pickup_type as pickupType: null rather than rejecting the row', async () => {
+    await repo.insertHold({
+      id: 'booking-pickup-null', reference: 'BKT-2026-PICKUPNULL', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
+      startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
+      holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'pickup-null-cancel', operatorToken: 'pickup-null-operator',
+      createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
+    });
+    await db.prepare('UPDATE bookings SET pickup_type = NULL WHERE id = ?').bind('booking-pickup-null').run();
+
+    await expect(repo.getBookingById('booking-pickup-null')).resolves.toMatchObject({ pickupType: null });
   });
 
   // BK-SEC-002: manage-token hashing, expiry, and revocation, against real SQLite (D1).
@@ -330,8 +352,8 @@ describe('D1 booking repository', () => {
 
     it('never stores a plaintext token for a new booking, even without BOOKKIT_TOKEN_ENC_KEY configured, and lookup still authenticates', async () => {
       const created = await repo.insertHold({
-        id: 'booking-noenc-1', reference: 'BKT-2026-NOENC1', tourSlug: 'vintage', people: 2, pickupType: 'default',
-        startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceCents: 12000,
+        id: 'booking-noenc-1', reference: 'BKT-2026-NOENC1', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
+        startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
         holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'noenc-cancel-token', operatorToken: 'noenc-operator-token',
         createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
       });
@@ -351,8 +373,8 @@ describe('D1 booking repository', () => {
 
     it('with BOOKKIT_TOKEN_ENC_KEY configured: hashes for lookup, encrypts for link regeneration, denies the hash presented as a token, and enforces expiry + cancel-token-only revocation', async () => {
       const created = await encRepo.insertHold({
-        id: 'booking-hash-1', reference: 'BKT-2026-HASH1', tourSlug: 'vintage', people: 2, pickupType: 'default',
-        startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceCents: 12000,
+        id: 'booking-hash-1', reference: 'BKT-2026-HASH1', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
+        startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
         holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'hash-cancel-token', operatorToken: 'hash-operator-token',
         tokensExpireAt: '2026-09-01T00:00:00.000Z',
         createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
@@ -395,8 +417,8 @@ describe('D1 booking repository', () => {
       // the token columns back to exactly what a row created before this migration looked like —
       // real plaintext, no hash, no encrypted blob.
       const created = await encRepo.insertHold({
-        id: 'booking-legacy-1', reference: 'BKT-2026-LEGACY1', tourSlug: 'vintage', people: 2, pickupType: 'default',
-        startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceCents: 12000,
+        id: 'booking-legacy-1', reference: 'BKT-2026-LEGACY1', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
+        startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
         holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'legacy-cancel-token', operatorToken: 'legacy-operator-token',
         createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
       });
@@ -434,36 +456,36 @@ describe('D1 booking repository', () => {
     it("re-running migration 0009's retroactive UPDATE revokes an already-terminal (cancelled/no_show) legacy row's customer token, while leaving its operator token usable", async () => {
       await db.prepare(
         `INSERT INTO bookings (
-           id, reference, tour_slug, people, pickup_type, starts_at, ends_at, locale, price_cents,
+           id, reference, service_slug, quantity, pickup_type, starts_at, ends_at, locale, price_minor, currency,
            status, cancel_token, operator_token, cancelled_at, cancelled_by, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         'booking-legacy-terminal-1', 'BKT-2026-LEGTERM1', 'vintage', 2, 'default',
-        '2026-08-01T09:00:00.000Z', '2026-08-01T10:00:00.000Z', 'en', 12000,
+        '2026-08-01T09:00:00.000Z', '2026-08-01T10:00:00.000Z', 'en', 12000, 'eur',
         'cancelled', 'legacy-terminal-cancel-token', 'legacy-terminal-operator-token',
         '2026-07-20T09:00:00.000Z', 'customer', '2026-07-20T09:00:00.000Z', '2026-07-20T09:00:00.000Z',
       ).run();
       // no_show has no cancelled_at, exercising the COALESCE(cancelled_at, updated_at) fallback.
       await db.prepare(
         `INSERT INTO bookings (
-           id, reference, tour_slug, people, pickup_type, starts_at, ends_at, locale, price_cents,
+           id, reference, service_slug, quantity, pickup_type, starts_at, ends_at, locale, price_minor, currency,
            status, cancel_token, operator_token, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         'booking-legacy-terminal-2', 'BKT-2026-LEGTERM2', 'vintage', 2, 'default',
-        '2026-08-01T09:00:00.000Z', '2026-08-01T10:00:00.000Z', 'en', 12000,
+        '2026-08-01T09:00:00.000Z', '2026-08-01T10:00:00.000Z', 'en', 12000, 'eur',
         'no_show', 'legacy-terminal-cancel-token-2', 'legacy-terminal-operator-token-2',
         '2026-07-20T09:00:00.000Z', '2026-07-20T09:30:00.000Z',
       ).run();
       // A non-terminal legacy row must NOT be retroactively revoked.
       await db.prepare(
         `INSERT INTO bookings (
-           id, reference, tour_slug, people, pickup_type, starts_at, ends_at, locale, price_cents,
+           id, reference, service_slug, quantity, pickup_type, starts_at, ends_at, locale, price_minor, currency,
            status, cancel_token, operator_token, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         'booking-legacy-active-1', 'BKT-2026-LEGACT1', 'vintage', 2, 'default',
-        '2026-08-01T09:00:00.000Z', '2026-08-01T10:00:00.000Z', 'en', 12000,
+        '2026-08-01T09:00:00.000Z', '2026-08-01T10:00:00.000Z', 'en', 12000, 'eur',
         'confirmed', 'legacy-active-cancel-token', 'legacy-active-operator-token',
         '2026-07-20T09:00:00.000Z', '2026-07-20T09:00:00.000Z',
       ).run();
@@ -486,14 +508,14 @@ describe('D1 booking repository', () => {
     // repo entry points — rescheduleWithCapacity, the one src/handlers/index.ts actually calls,
     // and transitionReschedule, exercised directly by tests/workers/repo-cas-transitions.test.ts)
     // — otherwise a booking moved later could have its manage link expire before the rescheduled
-    // tour, and one moved earlier would keep an over-long window relative to its new end.
+    // service, and one moved earlier would keep an over-long window relative to its new end.
     it('rescheduleWithCapacity moves tokens_expire_at to (new endsAt + tokenExpiryDays) on both a later and an earlier reschedule, and leaves it untouched when the caller omits it', async () => {
       const created = await repo.insertHoldWithCapacity({
-        id: 'booking-reschedule-expiry-1', reference: 'BKT-2026-RESCHEXP1', tourSlug: 'vintage', people: 2, pickupType: 'default',
-        startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceCents: 12000,
+        id: 'booking-reschedule-expiry-1', reference: 'BKT-2026-RESCHEXP1', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
+        startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
         holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'resched-exp-cancel-1', operatorToken: 'resched-exp-operator-1',
         tokensExpireAt: '2026-08-11T10:00:00.000Z',
-        occupancyUnits: 1, occupancyEndsAt: '2026-08-01T10:00:00.000Z', localDate: '2026-08-01', fleetDefaultCapacity: 5,
+        occupancyUnits: 1, occupancyEndsAt: '2026-08-01T10:00:00.000Z', localDate: '2026-08-01', defaultCapacity: 5,
         createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
       });
       expect(created).not.toBeNull();
@@ -507,7 +529,7 @@ describe('D1 booking repository', () => {
         startsAt: '2026-08-01T10:00:00.000Z', endsAt: '2026-08-01T11:00:00.000Z',
         rescheduledFrom: '2026-08-01T09:00:00.000Z', updatedAt: '2026-07-21T10:02:00.000Z', now: '2026-07-21T10:02:00.000Z',
         tokensExpireAt: laterExpiry,
-        occupancyUnits: 1, occupancyEndsAt: '2026-08-01T11:00:00.000Z', localDate: '2026-08-01', fleetDefaultCapacity: 5,
+        occupancyUnits: 1, occupancyEndsAt: '2026-08-01T11:00:00.000Z', localDate: '2026-08-01', defaultCapacity: 5,
       });
       expect(later).not.toBeNull();
       await expect(readExpiry()).resolves.toBe(laterExpiry);
@@ -519,7 +541,7 @@ describe('D1 booking repository', () => {
         startsAt: '2026-08-01T08:30:00.000Z', endsAt: '2026-08-01T09:30:00.000Z',
         rescheduledFrom: '2026-08-01T10:00:00.000Z', updatedAt: '2026-07-21T10:03:00.000Z', now: '2026-07-21T10:03:00.000Z',
         tokensExpireAt: earlierExpiry,
-        occupancyUnits: 1, occupancyEndsAt: '2026-08-01T09:30:00.000Z', localDate: '2026-08-01', fleetDefaultCapacity: 5,
+        occupancyUnits: 1, occupancyEndsAt: '2026-08-01T09:30:00.000Z', localDate: '2026-08-01', defaultCapacity: 5,
       });
       expect(earlier).not.toBeNull();
       await expect(readExpiry()).resolves.toBe(earlierExpiry);
@@ -530,7 +552,7 @@ describe('D1 booking repository', () => {
         expectedStatus: 'confirmed', expectedStartsAt: '2026-08-01T08:30:00.000Z',
         startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z',
         rescheduledFrom: '2026-08-01T08:30:00.000Z', updatedAt: '2026-07-21T10:04:00.000Z', now: '2026-07-21T10:04:00.000Z',
-        occupancyUnits: 1, occupancyEndsAt: '2026-08-01T10:00:00.000Z', localDate: '2026-08-01', fleetDefaultCapacity: 5,
+        occupancyUnits: 1, occupancyEndsAt: '2026-08-01T10:00:00.000Z', localDate: '2026-08-01', defaultCapacity: 5,
       });
       expect(untouched).not.toBeNull();
       await expect(readExpiry()).resolves.toBe(earlierExpiry);
@@ -538,8 +560,8 @@ describe('D1 booking repository', () => {
 
     it('transitionReschedule also moves tokens_expire_at to the caller-supplied value, and leaves it untouched when omitted', async () => {
       const created = await repo.insertHold({
-        id: 'booking-reschedule-expiry-2', reference: 'BKT-2026-RESCHEXP2', tourSlug: 'vintage', people: 2, pickupType: 'default',
-        startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceCents: 12000,
+        id: 'booking-reschedule-expiry-2', reference: 'BKT-2026-RESCHEXP2', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
+        startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
         holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'plain-resched-cancel', operatorToken: 'plain-resched-operator',
         tokensExpireAt: '2026-08-11T10:00:00.000Z',
         createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
@@ -571,8 +593,8 @@ describe('D1 booking repository', () => {
     // placeholder, ciphertext) must be rejected by BOTH lookup methods, not just its "own" one.
     it('a dumped row never authenticates via its own hash, placeholder, or encrypted blob — for either token family, against either lookup method', async () => {
       const created = await encRepo.insertHold({
-        id: 'booking-dump-1', reference: 'BKT-2026-DUMP1', tourSlug: 'vintage', people: 2, pickupType: 'default',
-        startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceCents: 12000,
+        id: 'booking-dump-1', reference: 'BKT-2026-DUMP1', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
+        startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
         holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'dump-cancel-token', operatorToken: 'dump-operator-token',
         createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
       });
@@ -602,8 +624,8 @@ describe('D1 booking repository', () => {
 
     it('fails closed (falls back to the placeholder, never throws or leaks a wrong value) when decrypting a corrupted or foreign-key-encrypted token blob', async () => {
       const created = await encRepo.insertHold({
-        id: 'booking-corrupt-1', reference: 'BKT-2026-CORRUPT1', tourSlug: 'vintage', people: 2, pickupType: 'default',
-        startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceCents: 12000,
+        id: 'booking-corrupt-1', reference: 'BKT-2026-CORRUPT1', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
+        startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
         holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'corrupt-cancel-token', operatorToken: 'corrupt-operator-token',
         createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
       });
@@ -639,8 +661,8 @@ describe('D1 booking repository', () => {
 describe('mutation side-effect outbox on real D1', () => {
   async function seedBooking(id: string): Promise<void> {
     await repo.insertHold({
-      id, reference: `BKT-2026-${id}`, tourSlug: 'vintage', people: 2, pickupType: 'default',
-      startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceCents: 12000,
+      id, reference: `BKT-2026-${id}`, serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
+      startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
       holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: `cancel-${id}`, operatorToken: `operator-${id}`,
       createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
     });

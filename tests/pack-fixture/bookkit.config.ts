@@ -2,16 +2,16 @@
 // exports subpaths (not a relative ../../src import) — this fixture exists to prove those subpaths
 // resolve and typecheck as an installed consumer sees them (plan 010).
 import type { ClientConfig } from '@reservajs/astro';
-import type { TourConfig } from '@reservajs/astro/core';
+import type { ServiceConfig } from '@reservajs/astro/core';
 
-const demoTour: TourConfig = {
+const demoTour: ServiceConfig = {
   durationMin: 60,
   turnaroundMin: 15,
   schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], firstStart: '09:00', lastStart: '17:00', intervalMin: 60 }],
-  // Config validation requires a rule for every pickup type at every people-count up to maxPeople.
+  // Config validation requires a rule for every pickup type at every quantity-count up to maxQuantity.
   pricing: [
-    { maxPeople: 4, pickup: 'default', priceCents: 5000 },
-    { maxPeople: 4, pickup: 'custom', priceCents: 6000 },
+    { maxQuantity: 4, pickup: 'default', priceMinor: 5000 },
+    { maxQuantity: 4, pickup: 'custom', priceMinor: 6000 },
   ],
   meetingPoint: { label: 'Fixture meeting point', mapsUrl: 'https://example.test/map' },
 };
@@ -25,9 +25,9 @@ export default {
     currency: 'eur',
     contact: { email: 'owner@example.test', phone: '+10000000000' },
   },
-  fleet: { defaultCapacity: 4 },
+  capacity: { default: 4 },
   admin: { accessTeamDomain: 'https://team.cloudflareaccess.com', accessAud: 'fixture-aud' },
-  tours: { demo: demoTour },
+  services: { demo: demoTour },
   booking: {
     minNoticeHours: 0,
     maxHorizonDays: 30,
@@ -38,7 +38,6 @@ export default {
     calendarMaxStaleSeconds: 900,
   },
   locales: { supported: ['en'], default: 'en' },
-  payments: { methods: ['card'] },
   // Plan 021: a packed consumer declares outbound webhooks in config; the secret is read from the
   // binding named here, which the runtime must also list in secretBindings.
   webhooks: [{ name: 'operations', url: 'https://ops.example.test/bookkit', secretBinding: 'OPERATIONS_WEBHOOK_SECRET' }],

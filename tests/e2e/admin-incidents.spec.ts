@@ -28,10 +28,10 @@ test('a one-shot provider failure opens an incident, "Try again" resolves it, a 
   // incident against directly (reproducing a genuine oversell race is unrelated to what this test
   // proves — see seed-oversell-incident.json.ts's header comment).
   await request.post('/dev/force-calendar-failure.json', { headers: DEV_POST_HEADERS });
-  const retryTarget = await createBooking(page, { tour: TOUR, people: 2 });
+  const retryTarget = await createBooking(page, { service: TOUR, quantity: 2 });
   await request.post('/dev/force-calendar-failure.json', { headers: DEV_POST_HEADERS });
-  const manualTarget = await createBooking(page, { tour: TOUR, people: 2 });
-  const oversellTarget = await createBooking(page, { tour: TOUR, people: 2 });
+  const manualTarget = await createBooking(page, { service: TOUR, quantity: 2 });
+  const oversellTarget = await createBooking(page, { service: TOUR, quantity: 2 });
 
   const seeded = await request.post('/dev/seed-oversell-incident.json', {
     headers: DEV_POST_HEADERS,

@@ -1,18 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { DuplicatePaymentIntentError } from '../src/repo';
+import { DuplicatePaymentRefError } from '../src/repo';
 import { booking } from './fixtures';
 import { fakeRepository } from './fakes';
 
 const holdInput = (id: string) => ({
   id,
   reference: `LVT-2026-${id}`,
-  tourSlug: 'vintage',
-  people: 2,
+  serviceSlug: 'vintage',
+  quantity: 2,
   pickupType: 'default' as const,
   startsAt: '2026-06-20T09:00:00.000Z',
   endsAt: '2026-06-20T10:00:00.000Z',
   locale: 'en',
-  priceCents: 10000,
+  priceMinor: 10000,
+  currency: 'eur',
   holdExpiresAt: '2026-06-20T09:35:00.000Z',
   cancelToken: `cancel-${id}`,
   operatorToken: `operator-${id}`,
@@ -108,38 +109,38 @@ describe('fakeRepository fidelity to the real D1 repository', () => {
   });
 
   it('guards duplicate payment intents in every fake write path without rejecting same-booking rewrites', async () => {
-    const source = booking({ id: 'b-pi-source', stripePaymentIntent: 'pi-duplicate' });
-    const updateTarget = booking({ id: 'b-pi-update', stripePaymentIntent: null });
-    const transitionTarget = booking({ id: 'b-pi-transition', status: 'hold', stripePaymentIntent: null });
-    const paymentDetailsTarget = booking({ id: 'b-pi-details', stripePaymentIntent: null });
+    const source = booking({ id: 'b-pi-source', paymentRef: 'pi-duplicate' });
+    const updateTarget = booking({ id: 'b-pi-update', paymentRef: null });
+    const transitionTarget = booking({ id: 'b-pi-transition', status: 'hold', paymentRef: null });
+    const paymentDetailsTarget = booking({ id: 'b-pi-details', paymentRef: null });
     const repo = fakeRepository([source, updateTarget, transitionTarget, paymentDetailsTarget]);
 
     await expect(repo.updateBooking(source.id, {
-      stripePaymentIntent: source.stripePaymentIntent,
+      paymentRef: source.paymentRef,
       updatedAt: '2026-06-14T08:01:00.000Z',
-    })).resolves.toMatchObject({ stripePaymentIntent: source.stripePaymentIntent });
+    })).resolves.toMatchObject({ paymentRef: source.paymentRef });
     await expect(repo.updateBooking(updateTarget.id, {
-      stripePaymentIntent: source.stripePaymentIntent,
+      paymentRef: source.paymentRef,
       updatedAt: '2026-06-14T08:01:00.000Z',
-    })).rejects.toBeInstanceOf(DuplicatePaymentIntentError);
+    })).rejects.toBeInstanceOf(DuplicatePaymentRefError);
     await expect(repo.transitionToConfirmed(transitionTarget.id, {
       expectedStatusIn: ['hold'],
-      stripePaymentIntent: source.stripePaymentIntent,
+      paymentRef: source.paymentRef,
       updatedAt: '2026-06-14T08:01:00.000Z',
-    })).rejects.toBeInstanceOf(DuplicatePaymentIntentError);
+    })).rejects.toBeInstanceOf(DuplicatePaymentRefError);
 
     await expect(repo.acquireConfirmationLease(paymentDetailsTarget.id, 'lease-pi-details', '2026-06-14T08:00:00.000Z', '2026-06-14T08:05:00.000Z')).resolves.toBe(true);
     await expect(repo.applyConfirmedPaymentDetails(paymentDetailsTarget.id, {
-      stripePaymentIntent: source.stripePaymentIntent,
-    }, 'lease-pi-details', '2026-06-14T08:01:00.000Z')).rejects.toBeInstanceOf(DuplicatePaymentIntentError);
+      paymentRef: source.paymentRef,
+    }, 'lease-pi-details', '2026-06-14T08:01:00.000Z')).rejects.toBeInstanceOf(DuplicatePaymentRefError);
 
-    const emptySource = booking({ id: 'b-pi-empty-source', stripePaymentIntent: '' });
-    const emptyTarget = booking({ id: 'b-pi-empty-target', stripePaymentIntent: null });
+    const emptySource = booking({ id: 'b-pi-empty-source', paymentRef: '' });
+    const emptyTarget = booking({ id: 'b-pi-empty-target', paymentRef: null });
     const emptyRepo = fakeRepository([emptySource, emptyTarget]);
     await expect(emptyRepo.updateBooking(emptyTarget.id, {
-      stripePaymentIntent: '',
+      paymentRef: '',
       updatedAt: '2026-06-14T08:01:00.000Z',
-    })).rejects.toBeInstanceOf(DuplicatePaymentIntentError);
+    })).rejects.toBeInstanceOf(DuplicatePaymentRefError);
   });
 
   it('matches real no-op and conflict-update behavior for partial booking writes', async () => {
@@ -157,10 +158,10 @@ describe('fakeRepository fidelity to the real D1 repository', () => {
     expect(repo.rows.get(seeded.id)?.updatedAt).toBe('2026-06-14T08:01:00.000Z');
 
     await repo.claimRefundOperation({
-      id: 'op-fake-write-original', bookingId: seeded.id, paymentIntent: seeded.stripePaymentIntent, choice: 'full', requestedAt: '2026-06-14T08:00:00.000Z',
+      id: 'op-fake-write-original', bookingId: seeded.id, paymentIntent: seeded.paymentRef, choice: 'full', requestedAt: '2026-06-14T08:00:00.000Z',
     });
     await repo.upsertRefundOperation({
-      id: 'op-fake-write-replacement', bookingId: seeded.id, paymentIntent: seeded.stripePaymentIntent, choice: 'full', status: 'failed',
+      id: 'op-fake-write-replacement', bookingId: seeded.id, paymentIntent: seeded.paymentRef, choice: 'full', status: 'failed',
       stripeRefundId: null, amountCents: null, requestedAt: '2026-06-14T08:02:00.000Z', resolvedAt: '2026-06-14T08:02:00.000Z',
     });
     expect(repo.refundOperations.get(seeded.id)?.id).toBe('op-fake-write-original');

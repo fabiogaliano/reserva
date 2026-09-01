@@ -29,6 +29,9 @@ function providers(env: Env): BookkitProviders {
     payments: new StripeProvider({
       secretKey: env.STRIPE_SECRET_KEY,
       webhookSecret: env.STRIPE_WEBHOOK_SECRET,
+      // Plan 022 (design decision 1): payment methods are the adapter's option now, not a
+      // core config key — a packed consumer has to be able to reach them from this subpath.
+      paymentMethods: ['card', 'mb_way'],
     }),
     calendar: new GoogleCalendarProvider({
       calendarId: env.GOOGLE_CALENDAR_ID,

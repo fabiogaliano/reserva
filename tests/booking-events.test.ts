@@ -12,7 +12,7 @@ import { createBookkitContext, type BookkitProviders } from '../src/context';
 import type { BookingEventEnvelope, BookingEventHook } from '../src/core/events';
 import { validateConfig, type ClientConfig } from '../src/core/config';
 import { defineCloudflareBookkitRuntime } from '../src/runtime-context';
-import { handleCustomerReschedule, handleStatus, handleStripeWebhook } from '../src/handlers';
+import { handleCustomerReschedule, handleStatus, handlePaymentWebhook } from '../src/handlers';
 import { booking, config } from './fixtures';
 import { fakeRepository, providers, sideEffectOperation, type FakeRepository } from './fakes';
 
@@ -31,16 +31,16 @@ function webhookConfig(events?: string[]): ClientConfig {
   });
 }
 
-function paidWebhookProviders(bookingId: string, sessionId: string, overrides: Partial<BookkitProviders> = {}): BookkitProviders {
+function paidWebhookProviders(bookingId: string, sessionRef: string, overrides: Partial<BookkitProviders> = {}): BookkitProviders {
   return providers({
     payments: {
-      createCheckout: async () => ({ url: '', sessionId: '' }),
+      createCheckout: async () => ({ url: '', sessionRef: '' }),
       parseWebhook: async () => ({
-        id: 'evt_events_layer', type: 'checkout.session.completed', bookingId, sessionId,
-        paymentIntent: 'pi_events_layer', paid: true, amountCaptured: 10000, currency: config.business.currency,
+        id: 'evt_events_layer', type: 'checkout_completed', bookingId, sessionRef,
+        paymentRef: 'pi_events_layer', paid: true, amountCaptured: 10000, currency: config.business.currency,
       }),
       getSession: async () => ({ status: 'open' }),
-      refund: async () => ({ refundId: 're_events_layer', amountCents: 0 }),
+      refund: async () => ({ refundRef: 're_events_layer', amountMinor: 0 }),
     },
     ...overrides,
   });
@@ -63,11 +63,11 @@ function verifyAttempt(attempt: { body: string; headers: Record<string, string> 
 }
 
 function stripeWebhookRequest(): Request {
-  return new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' });
+  return new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' });
 }
 
-function statusRequest(sessionId: string): Request {
-  return new Request(`https://example.test/api/booking/status?session_id=${sessionId}`);
+function statusRequest(sessionRef: string): Request {
+  return new Request(`https://example.test/api/booking/status?session_id=${sessionRef}`);
 }
 
 function rescheduleRequest(token: string, newStart: string): Request {
@@ -87,7 +87,7 @@ function recordingFetch(outcome: () => Response | Promise<Response>) {
   return { sent, fetchImpl };
 }
 
-async function confirmedBookingWithWebhook(repo: FakeRepository, seededId: string, sessionId: string, fetchImpl: unknown, pending: Promise<unknown>[]) {
+async function confirmedBookingWithWebhook(repo: FakeRepository, seededId: string, sessionRef: string, fetchImpl: unknown, pending: Promise<unknown>[]) {
   const context = createBookkitContext({
     config: webhookConfig(),
     db: {} as D1Database,
@@ -95,11 +95,11 @@ async function confirmedBookingWithWebhook(repo: FakeRepository, seededId: strin
     clock,
     secrets: async (name) => (name === 'PARTNER_WEBHOOK_SECRET' ? WEBHOOK_SECRET : undefined),
     waitUntil: (task) => pending.push(task),
-    providers: paidWebhookProviders(seededId, sessionId),
+    providers: paidWebhookProviders(seededId, sessionRef),
   });
   vi.stubGlobal('fetch', fetchImpl);
   try {
-    const response = await handleStripeWebhook(stripeWebhookRequest(), context);
+    const response = await handlePaymentWebhook(stripeWebhookRequest(), context);
     await Promise.all(pending.splice(0));
     return { context, response };
   } finally {
@@ -124,9 +124,9 @@ describe('non-durable booking event hooks', () => {
     await Promise.all(pending.splice(0));
     expect(received).toEqual(['booking.rescheduled']);
 
-    const held = booking({ id: 'hook-subscription-hold', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', stripeSessionId: 'cs_hook_subscription' });
+    const held = booking({ id: 'hook-subscription-hold', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', paymentSessionRef: 'cs_hook_subscription' });
     repo.rows.set(held.id, held);
-    await expect(handleStripeWebhook(stripeWebhookRequest(), createBookkitContext({
+    await expect(handlePaymentWebhook(stripeWebhookRequest(), createBookkitContext({
       config, db: {} as D1Database, repo, clock,
       waitUntil: (task) => pending.push(task),
       providers: paidWebhookProviders(held.id, 'cs_hook_subscription'),
@@ -199,7 +199,7 @@ describe('subscriber registration validation', () => {
 
 describe('durable webhook delivery on the confirmation path', () => {
   it('records the row atomically with the confirmation, and a later /status poll drains it', async () => {
-    const seeded = booking({ id: 'webhook-confirm-drain', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', stripeSessionId: 'cs_webhook_drain' });
+    const seeded = booking({ id: 'webhook-confirm-drain', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', paymentSessionRef: 'cs_webhook_drain' });
     const repo = fakeRepository([seeded]);
     let attempts = 0;
     const { sent, fetchImpl } = recordingFetch(() => {
@@ -238,7 +238,7 @@ describe('durable webhook delivery on the confirmation path', () => {
   it('gives a later event a distinct id and its own snapshot while the old row keeps the original', async () => {
     const seeded = booking({
       id: 'webhook-new-event', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z',
-      stripeSessionId: 'cs_webhook_new_event', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z',
+      paymentSessionRef: 'cs_webhook_new_event', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z',
     });
     const repo = fakeRepository([seeded]);
     const { sent, fetchImpl } = recordingFetch(() => { throw new TypeError('fetch failed'); });
@@ -304,7 +304,7 @@ describe('durable in-process hooks', () => {
   it('receives the occurrence snapshot, not the booking as it looks at delivery time', async () => {
     const seeded = booking({
       id: 'durable-hook-snapshot', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z',
-      stripeSessionId: 'cs_durable_snapshot', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z',
+      paymentSessionRef: 'cs_durable_snapshot', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z',
     });
     const repo = fakeRepository([seeded]);
     const delivered: Array<{ id: string; startsAt: string; status: string }> = [];
@@ -325,7 +325,7 @@ describe('durable in-process hooks', () => {
       hooks: [hook],
     });
 
-    await expect(handleStripeWebhook(stripeWebhookRequest(), context)).resolves.toMatchObject({ status: 200 });
+    await expect(handlePaymentWebhook(stripeWebhookRequest(), context)).resolves.toMatchObject({ status: 200 });
     await Promise.all(pending.splice(0));
     expect(delivered).toEqual([]);
 
@@ -344,7 +344,7 @@ describe('durable in-process hooks', () => {
   });
 
   it('abandons a row whose subscriber is no longer registered, logging how to make it deliver', async () => {
-    const seeded = booking({ id: 'durable-hook-unregistered', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', stripeSessionId: 'cs_unregistered' });
+    const seeded = booking({ id: 'durable-hook-unregistered', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', paymentSessionRef: 'cs_unregistered' });
     const repo = fakeRepository([seeded]);
     const pending: Promise<unknown>[] = [];
     const errors: Array<[string, Record<string, unknown> | undefined]> = [];
@@ -357,7 +357,7 @@ describe('durable in-process hooks', () => {
       providers: paidWebhookProviders(seeded.id, 'cs_unregistered'),
       hooks: [{ name: 'ops', durable: true, handler: async () => { throw new Error('subscriber unavailable'); } }],
     });
-    await handleStripeWebhook(stripeWebhookRequest(), withHook);
+    await handlePaymentWebhook(stripeWebhookRequest(), withHook);
     await Promise.all(pending.splice(0));
     expect(sideEffectOperation(repo, seeded.id, identity)).toMatchObject({ status: 'failed' });
 

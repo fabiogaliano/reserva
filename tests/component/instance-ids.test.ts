@@ -24,7 +24,7 @@ function labelPair(html: string, prefix: string): { id: string; labelledby: stri
 describe('per-instance element IDs (plan 014 item A)', () => {
   it('BookingWidget: two instances get distinct label ids, each aria-labelledby resolving to its own instance', async () => {
     const container = await AstroContainer.create();
-    const props = { tourSlug: 'oldTown', availabilityFrom: '2026-01-01', availabilityTo: '2026-01-02' };
+    const props = { serviceSlug: 'oldTown', availabilityFrom: '2026-01-01', availabilityTo: '2026-01-02' };
     const htmlA = await container.renderToString(BookingWidget, { props });
     const htmlB = await container.renderToString(BookingWidget, { props });
     const a = labelPair(htmlA, 'bkw-date-label');

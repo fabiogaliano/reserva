@@ -14,12 +14,12 @@ describe('booking confirmation page', () => {
         status: 'confirmed',
         booking: {
           reference: 'LVT-2026-001',
-          tourSlug: 'vintage',
+          serviceSlug: 'vintage',
           start: '2026-06-15T09:00:00.000+01:00',
           end: '2026-06-15T10:00:00.000+01:00',
-          people: 2,
-          priceCents: 10000,
-          meetingPoint: config.tours.vintage?.meetingPoint,
+          quantity: 2,
+          priceMinor: 10000,
+          meetingPoint: config.services.vintage?.meetingPoint,
           locale: 'en',
         },
       },
@@ -47,11 +47,11 @@ describe('booking confirmation page', () => {
         status: 'confirmed',
         booking: {
           reference: 'LVT-2026-002',
-          tourSlug: 'vintage',
+          serviceSlug: 'vintage',
           start: '2026-06-15T09:00:00.000+01:00',
           end: '2026-06-15T10:00:00.000+01:00',
-          people: 2,
-          priceCents: 21000,
+          quantity: 2,
+          priceMinor: 21000,
           // No meetingPoint: confirmationSummary omits it for a custom_both-shaped option
           // (requiresAddress, usesMeetingPoint: false).
           locale: 'en',

@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 // @ts-expect-error -- resolved by vitest.component.config.ts's Astro Vite pipeline, not by tsc.
 import BookingWidget from '../../src/components/BookingWidget.astro';
 
-const propsWithoutLocale = { tourSlug: 'oldTown', availabilityFrom: '2026-01-01', availabilityTo: '2026-01-02' };
+const propsWithoutLocale = { serviceSlug: 'oldTown', availabilityFrom: '2026-01-01', availabilityTo: '2026-01-02' };
 const baseProps = { ...propsWithoutLocale, locale: 'en' };
 
 async function render(props: Record<string, unknown>): Promise<string> {
