@@ -91,7 +91,7 @@ export interface BookkitContext {
 // The unprefixed, all-groups-enabled default: today's behavior for any context built without an
 // explicit routeConfig (every existing test and any runtime module that doesn't go through
 // src/routes/route-context.ts), so adding this field can't change existing behavior.
-const defaultRouteConfig: BookkitResolvedRouteConfig = { paths: resolvedRoutePaths(), groups: { admin: true, ops: true } };
+const defaultRouteConfig: BookkitResolvedRouteConfig = { paths: resolvedRoutePaths(), groups: { admin: true, ops: true, manage: true } };
 
 export interface BookkitContextInput extends Omit<BookkitContext, 'repo' | 'clock' | 'logger' | 'providers' | 'routeConfig'> {
   providers: BookkitProviders;

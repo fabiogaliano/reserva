@@ -193,11 +193,11 @@ async function runConfirmationOperation(context: BookkitContext, booking: Bookin
   const recipient = confirmationEmailRecipient(operation);
   if (recipient) {
     if (context.providers.email?.sendToRecipient) {
-      await context.providers.email.sendToRecipient(recipient, 'booking.confirmed', booking, context.config, context.routeConfig.paths);
+      await context.providers.email.sendToRecipient(recipient, 'booking.confirmed', booking, context.config, context.routeConfig);
     }
     return null;
   }
-  if (context.providers.email) await context.providers.email.send('booking.confirmed', booking, context.config, context.routeConfig.paths);
+  if (context.providers.email) await context.providers.email.send('booking.confirmed', booking, context.config, context.routeConfig);
   return null;
 }
 
@@ -557,9 +557,9 @@ function attemptForOperation(context: BookkitContext, booking: Booking, operatio
     if (recipient) {
       if (!email.sendToRecipient) return null;
       const sendToRecipient = email.sendToRecipient.bind(email);
-      return { provider: 'email', run: () => sendToRecipient(recipient, event, booking, context.config, context.routeConfig.paths) };
+      return { provider: 'email', run: () => sendToRecipient(recipient, event, booking, context.config, context.routeConfig) };
     }
-    return { provider: 'email', run: () => email.send(event, booking, context.config, context.routeConfig.paths) };
+    return { provider: 'email', run: () => email.send(event, booking, context.config, context.routeConfig) };
   }
   if (operation.family === 'hook' || operation.family === 'webhook') {
     return { provider: operation.family, run: () => deliverBookingEventOperation(context, booking, operation) };

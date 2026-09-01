@@ -1,5 +1,6 @@
 ---
 import routeConfig from 'virtual:bookkit/config';
+import { requireEnabledRoutePath } from '../routes-manifest';
 import { defaultLocale, resolveMessages, type BookkitMessages } from '../ui/messages';
 import '../ui/components.css';
 
@@ -10,7 +11,12 @@ interface Props {
   messages?: Partial<BookkitMessages>;
 }
 
-const { token = '', endpoint = routeConfig.paths.managePage, locale = defaultLocale, messages: messageOverrides = {} } = Astro.props;
+const { token = '', endpoint, locale = defaultLocale, messages: messageOverrides = {} } = Astro.props;
+// Plan 027 (design decision 8): with `config.routes.manage: false` the built-in page isn't mounted,
+// so defaulting to its path would render a form posting at a 404. Failing with the same remediating
+// error AdminDashboard already throws — naming the flag and the explicit-endpoint escape hatch — is
+// the only honest option; passing a consumer-owned endpoint stays supported.
+const action = endpoint === undefined ? requireEnabledRoutePath(routeConfig, 'managePage') : endpoint;
 const t: BookkitMessages = { ...resolveMessages(undefined, locale), ...messageOverrides };
 // A full UUID per render so two instances of this component on the same page never share an id —
 // see plan 014 item A.
@@ -20,7 +26,7 @@ const titleId = `bookkit-manage-title-${crypto.randomUUID()}`;
 <section class="bk-embed" aria-labelledby={titleId}>
   <h2 id={titleId} class="bke-title">{t['manage.entryTitle']}</h2>
   <p class="bke-hint">{t['manage.entryHint']}</p>
-  <form method="get" action={endpoint}>
+  <form method="get" action={action}>
     <label class="bke-field">
       <span class="bke-label">{t['manage.entryToken']}</span>
       <input class="bke-input" name="token" value={token} autocomplete="off" required />

@@ -48,7 +48,13 @@ export interface BrevoEmailProviderOptions {
 
 const ownerEvents = new Set<EmailBookingEvent>(['booking.confirmed', 'booking.cancelled_by_customer']);
 
-function manageUrl(config: ClientConfig, token: string, routePaths?: BookkitResolvedRouteConfig['paths']): string { return `${config.business.url.replace(/\/$/, '')}${routePaths?.managePage ?? '/booking/manage'}?token=${encodeURIComponent(token)}`; }
+// Plan 027 (design decision 8): '' when the deployment turned the built-in manage page off — the
+// renderer omits the button for an empty URL, so disabling `routes.manage` can't leave a 404 link
+// in a customer's inbox. The APIs behind the page stay mounted; only this page is gone.
+function manageUrl(config: ClientConfig, token: string, routeConfig?: BookkitResolvedRouteConfig): string {
+  if (routeConfig && !routeConfig.groups.manage) return '';
+  return `${config.business.url.replace(/\/$/, '')}${routeConfig?.paths.managePage ?? '/booking/manage'}?token=${encodeURIComponent(token)}`;
+}
 // BK-SEC-002 (patch-11-r1 LOW 1): a `nohash:`-prefixed value (src/repo.ts placeholderToken) is
 // what a DB-loaded Booking.cancelToken/operatorToken looks like when the row has no decryptable
 // cancel_token_enc/operator_token_enc — either BOOKKIT_TOKEN_ENC_KEY isn't configured, or the row
@@ -103,14 +109,14 @@ export class BrevoEmailProvider implements EmailProvider {
     event: EmailBookingEvent,
     booking: Booking,
     config: ClientConfig,
-    routePaths?: BookkitResolvedRouteConfig['paths'],
+    routeConfig?: BookkitResolvedRouteConfig,
   ): Promise<void> {
     const address = addressFor(recipient, booking, config, this.owner);
     if (!address) return;
     // BK-SEC-002 (patch-11-r1 LOW 1): '' rather than a dead link when the token isn't
     // presentable — the renderer omits the manage button for an empty URL. Kept here (not lost in
     // the sendToRecipient/send split) — see the isManageableToken doc comment.
-    const context: EmailTemplateContext = { event, booking, config, locale: emailLocaleFor(booking, config), recipient, customerManageUrl: isManageableToken(booking.cancelToken) ? manageUrl(config, booking.cancelToken, routePaths) : '', operatorManageUrl: isManageableToken(booking.operatorToken) ? manageUrl(config, booking.operatorToken, routePaths) : '', startsAtLocal: localStart(booking, config) };
+    const context: EmailTemplateContext = { event, booking, config, locale: emailLocaleFor(booking, config), recipient, customerManageUrl: isManageableToken(booking.cancelToken) ? manageUrl(config, booking.cancelToken, routeConfig) : '', operatorManageUrl: isManageableToken(booking.operatorToken) ? manageUrl(config, booking.operatorToken, routeConfig) : '', startsAtLocal: localStart(booking, config) };
     const content = toBrevoContent(this.renderer(context));
     const response = await this.request(this.endpoint, { method: 'POST', headers: { accept: 'application/json', 'api-key': this.apiKey, 'content-type': 'application/json' }, body: JSON.stringify({ ...content, sender: this.sender ?? { email: config.business.contact.email, name: config.business.name }, to: [address] }) });
     if (!response.ok) throw new BrevoResponseError(response.status, await response.text());
@@ -125,10 +131,10 @@ export class BrevoEmailProvider implements EmailProvider {
     event: EmailBookingEvent,
     booking: Booking,
     config: ClientConfig,
-    routePaths?: BookkitResolvedRouteConfig['paths'],
+    routeConfig?: BookkitResolvedRouteConfig,
   ): Promise<void> {
     for (const recipient of this.recipientsForEvent(event)) {
-      await this.sendToRecipient(recipient, event, booking, config, routePaths);
+      await this.sendToRecipient(recipient, event, booking, config, routeConfig);
     }
   }
 }

@@ -89,11 +89,15 @@ export type EmailBookingEvent = Exclude<BookingEvent, 'payment.dispute_created'>
 export type EmailRecipientRole = 'customer' | 'owner';
 
 export interface EmailProvider {
+  // Plan 027 (design decision 8): the whole resolved route config, not just its paths — an email
+  // template is a link producer, and `routes.manage: false` means the built-in manage page doesn't
+  // exist, so a renderer needs `groups.manage` to decide whether the manage button is a live link
+  // or a dead one. (PaymentProvider stays paths-only: it never links into an optional page.)
   send(
     event: EmailBookingEvent,
     booking: Booking,
     config: ClientConfig,
-    routePaths?: BookkitResolvedRouteConfig['paths'],
+    routeConfig?: BookkitResolvedRouteConfig,
   ): Promise<void>;
   // Optional per-recipient split (BK-SIDE-001): a provider that implements both of these lets the
   // mutation dispatcher record + retry each recipient as its own durable outbox operation, so an
@@ -106,7 +110,7 @@ export interface EmailProvider {
     event: EmailBookingEvent,
     booking: Booking,
     config: ClientConfig,
-    routePaths?: BookkitResolvedRouteConfig['paths'],
+    routeConfig?: BookkitResolvedRouteConfig,
   ): Promise<void>;
 }
 

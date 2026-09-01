@@ -146,6 +146,7 @@ export function bookkit(options: BookkitIntegrationOptions): AstroIntegration {
         const groupFlags: BookkitRouteGroupFlags = {
           admin: validatedConfig.routes?.admin ?? true,
           ops: validatedConfig.routes?.ops ?? true,
+          manage: validatedConfig.routes?.manage ?? true,
         };
         const resolvedRouteConfig = resolveRouteConfig(prefix, groupFlags);
 

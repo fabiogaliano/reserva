@@ -7,6 +7,7 @@ import { escapeHtml } from '../../http';
 import { isManageableToken } from '../../providers/brevo';
 import { ownerFacingIncidentTitle } from '../../reconciliation-helpers';
 import type { OperationalIncidentRecord } from '../../repo';
+import type { BookkitResolvedRouteConfig } from '../../routes-manifest';
 import { cssAssetHref, jsAssetHref } from '../asset-hrefs';
 import { formatDateTime, formatDayDate, formatPrice } from '../format';
 import { pageShell, statusBadge, statusToneOf, themeToggle } from '../layout';
@@ -80,8 +81,13 @@ export function matchesAdminFilters(booking: Booking, filters: AdminFilters, con
 // from a token that isn't presentable (see isManageableToken, src/providers/brevo.ts: a
 // `nohash:`-prefixed placeholder, meaning no decryptable blob exists to regenerate the real link
 // from). null tells each call site to render the "unavailable" fallback instead of a dead link.
-export function manageLinkHref(managePagePath: string, token: string): string | null {
-  return isManageableToken(token) ? `${managePagePath}?token=${encodeURIComponent(token)}` : null;
+// Plan 027 (design decision 8): also null when the built-in manage page is switched off
+// (config.routes.manage: false) — that route isn't mounted, so every call site must render its
+// existing "unavailable" state rather than a dead link. The whole resolved route config is the
+// argument, not just the path, so the flag and the path can never be read from different places.
+export function manageLinkHref(routeConfig: BookkitResolvedRouteConfig, token: string): string | null {
+  if (!routeConfig.groups.manage) return null;
+  return isManageableToken(token) ? `${routeConfig.paths.managePage}?token=${encodeURIComponent(token)}` : null;
 }
 
 // Plan 020 (design decision 12): relative "how long ago" phrasing for a card's first-detected
@@ -200,7 +206,6 @@ export function adminPage(
   const locale = adminLocaleFor(context.config);
   const messages = resolveMessages(context.config, locale);
   const timezone = context.config.business.timezone;
-  const managePagePath = context.routeConfig.paths.managePage;
   const filtered = tableBookings.filter((booking) => matchesAdminFilters(booking, filters, context.config));
 
   // Operators scan by when → who → what, so the row leads with date and customer; secondary
@@ -246,7 +251,7 @@ export function adminPage(
     // No row action on terminal rows (reachable since the filter widening): "Manage" would open
     // a page with no actions left, so cancelled/expired/no_show rows get an empty cell instead.
     const isTerminal = booking.status === 'cancelled' || booking.status === 'expired' || booking.status === 'no_show';
-    const manageHref = isTerminal ? null : manageLinkHref(managePagePath, booking.operatorToken);
+    const manageHref = isTerminal ? null : manageLinkHref(context.routeConfig, booking.operatorToken);
     const manageCell = isTerminal
       ? ''
       : manageHref
@@ -399,7 +404,7 @@ export function adminPage(
       const tone = statusToneOf(entry.status);
       // BK-SEC-002 (patch-11-r1 LOW 1): omitted (not a dead-link href) when the token isn't
       // presentable — admin-enhancer.ts renders the "unavailable" fallback when `u` is absent.
-      const manageHref = manageLinkHref(managePagePath, entry.operatorToken);
+      const manageHref = manageLinkHref(context.routeConfig, entry.operatorToken);
       return {
         t: formatDayTime(entry.startsAt),
         c: entry.customerName ?? entry.customerEmail ?? '—',
@@ -428,7 +433,7 @@ export function adminPage(
   // The day panel answers "what does this day actually have" — the bookings on the selected day,
   // rendered server-side for the no-JS path and rebuilt client-side from the island on selection.
   const dayBookingItem = (entry: Booking): string => {
-    const manageHref = manageLinkHref(managePagePath, entry.operatorToken);
+    const manageHref = manageLinkHref(context.routeConfig, entry.operatorToken);
     const manageMarkup = manageHref
       ? `<a href="${escapeHtml(manageHref)}">${escapeHtml(messages['admin.manage'])}</a>`
       : `<span class="bk-sub">${escapeHtml(messages['admin.manageUnavailable'])}</span>`;

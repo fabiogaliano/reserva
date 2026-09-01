@@ -4,7 +4,7 @@
 
 import { z } from 'astro/zod';
 
-export type BookkitRouteGroup = 'customer' | 'ops' | 'admin' | 'webhook';
+export type BookkitRouteGroup = 'customer' | 'ops' | 'admin' | 'webhook' | 'manage';
 
 export interface BookkitRouteEntry {
   readonly id: string;
@@ -35,24 +35,30 @@ export const routeManifest = [
   { id: 'assetsCss', group: 'customer', pattern: '/booking/assets/bookkit.css', entrypoint: './routes/booking/assets.ts' },
   { id: 'assetsJs', group: 'customer', pattern: '/booking/assets/bookkit.js', entrypoint: './routes/booking/assets-js.ts' },
   { id: 'adminPage', group: 'admin', pattern: '/booking/admin', entrypoint: './routes/booking/admin.ts' },
-  { id: 'managePage', group: 'customer', pattern: '/booking/manage', entrypoint: './routes/booking/manage.ts' },
+  { id: 'managePage', group: 'manage', pattern: '/booking/manage', entrypoint: './routes/booking/manage.ts' },
   { id: 'confirmationPage', group: 'customer', pattern: '/booking-confirmation', entrypoint: './routes/booking-confirmation.ts' },
 ] as const satisfies readonly BookkitRouteEntry[];
 
 export type BookkitRouteId = (typeof routeManifest)[number]['id'];
 
-// Feature groups a consumer can turn off via `config.routes: { admin, ops }` (plan 025 — moved here
-// from the Astro-only BookkitIntegrationOptions.routes, since admin-auth selection needs the same
-// declared intent). `customer` and `webhook` are absent here on purpose: the booking API and
-// customer pages are load-bearing, so they are never disableable.
+// Feature groups a consumer can turn off via `config.routes: { admin, ops, manage }` (plan 025 —
+// moved here from the Astro-only BookkitIntegrationOptions.routes, since admin-auth selection needs
+// the same declared intent). `customer` and `webhook` are absent here on purpose: the booking API
+// is load-bearing, so it is never disableable.
+//
+// Plan 027 (design decision 8): `manage` holds exactly ONE entry — Reserva's server-rendered
+// /booking/manage page. The manage, cancel and reschedule APIs stay in `customer` precisely so a
+// headless consumer can switch the built-in page off and build its own UI on the same endpoints.
 export interface BookkitRouteGroupFlags {
   admin: boolean;
   ops: boolean;
+  manage: boolean;
 }
 
 export function isRouteEnabled(entry: BookkitRouteEntry, groups: BookkitRouteGroupFlags): boolean {
   if (entry.group === 'admin') return groups.admin;
   if (entry.group === 'ops') return groups.ops;
+  if (entry.group === 'manage') return groups.manage;
   return true;
 }
 
@@ -85,7 +91,7 @@ export interface BookkitResolvedRouteConfig {
   groups: BookkitRouteGroupFlags;
 }
 
-export function resolveRouteConfig(prefix = '', groups: BookkitRouteGroupFlags = { admin: true, ops: true }): BookkitResolvedRouteConfig {
+export function resolveRouteConfig(prefix = '', groups: BookkitRouteGroupFlags = { admin: true, ops: true, manage: true }): BookkitResolvedRouteConfig {
   return { paths: resolvedRoutePaths(prefix), groups };
 }
 

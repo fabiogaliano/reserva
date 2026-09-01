@@ -67,7 +67,7 @@ describe('email providers', () => {
       'booking.confirmed',
       booking(),
       config,
-      resolveRouteConfig('/en').paths,
+      resolveRouteConfig('/en'),
     );
     const prefixedBody = prefixedRequest.mock.calls.map((call) => String(call[1]?.body)).join('\n');
     expect(prefixedBody).toContain('/en/booking/manage?token=');

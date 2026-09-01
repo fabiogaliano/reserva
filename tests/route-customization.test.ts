@@ -95,7 +95,7 @@ describe('requireEnabledRoutePath', () => {
     expect(requireEnabledRoutePath(enabled, 'adminPage')).toBe('/en/booking/admin');
     expect(requireEnabledRoutePath(enabled, 'managePage')).toBe('/en/booking/manage');
 
-    const withoutAdmin = resolveRouteConfig('/en', { admin: false, ops: true });
+    const withoutAdmin = resolveRouteConfig('/en', { admin: false, ops: true, manage: true });
     expect(() => requireEnabledRoutePath(withoutAdmin, 'adminPage'))
       .toThrow(/routes: \{ admin: false \}.*explicit endpoint/);
     expect(requireEnabledRoutePath(withoutAdmin, 'managePage')).toBe('/en/booking/manage');
@@ -156,7 +156,7 @@ describe('route table generation (astro:config:setup)', () => {
     const resolved = plugin.resolveId(virtualConfigId) as string;
     const source = plugin.load(resolved) as string;
     const loaded = JSON.parse(source.slice(source.indexOf('{'), source.lastIndexOf('}') + 1));
-    expect(loaded).toEqual(resolveRouteConfig('/en', { admin: true, ops: false }));
+    expect(loaded).toEqual(resolveRouteConfig('/en', { admin: true, ops: false, manage: true }));
     expect(loaded.paths.checkout).toBe('/en/api/booking/checkout');
   });
 });
@@ -180,7 +180,7 @@ describe('server-rendered HTML URL consistency', () => {
       adminAuth: async () => ({ subject: '' }),
       providers: providers(),
       secrets: async (name) => (name === 'BOOKKIT_TOKEN_ENC_KEY' ? 'route-token-key' : undefined),
-      routeConfig: resolveRouteConfig('/en', { admin: true, ops: true }),
+      routeConfig: resolveRouteConfig('/en', { admin: true, ops: true, manage: true }),
     });
 
     const response = await handleAdminGet(new Request('https://example.test/en/booking/admin'), context);
@@ -202,7 +202,7 @@ describe('server-rendered HTML URL consistency', () => {
       secrets: async (name) => (name === 'BOOKKIT_TOKEN_ENC_KEY' ? 'route-token-key' : undefined),
     });
 
-    expect(context.routeConfig.groups).toEqual({ admin: true, ops: true });
+    expect(context.routeConfig.groups).toEqual({ admin: true, ops: true, manage: true });
     const response = await handleAdminGet(new Request('https://example.test/booking/admin'), context);
     const body = await response.text();
     expect(body).toContain(`/booking/manage?token=${encodeURIComponent(seeded.operatorToken)}`);
@@ -211,8 +211,8 @@ describe('server-rendered HTML URL consistency', () => {
 
 describe('createRouteContext (route entrypoint seam)', () => {
   it('overwrites the runtime-provided context.routeConfig with the resolved per-build one from virtual:bookkit/config', async () => {
-    const unprefixedDefault = resolveRouteConfig('', { admin: true, ops: true });
-    const prefixedFromIntegration = resolveRouteConfig('/en', { admin: true, ops: false });
+    const unprefixedDefault = resolveRouteConfig('', { admin: true, ops: true, manage: true });
+    const prefixedFromIntegration = resolveRouteConfig('/en', { admin: true, ops: false, manage: true });
     vi.doMock('virtual:bookkit/runtime', () => ({
       default: {
         config,

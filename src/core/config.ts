@@ -187,6 +187,12 @@ export interface ClientConfig {
   routes?: {
     admin?: boolean;
     ops?: boolean;
+    // Plan 027 (design decision 8): controls ONLY Reserva's built-in server-rendered
+    // /booking/manage page. The manage/cancel/reschedule APIs stay mounted either way, so a
+    // headless consumer can replace the page with its own UI; when this is false, every
+    // library-owned link producer (default emails, the admin table) stops emitting links to it
+    // rather than pointing at a route that isn't mounted.
+    manage?: boolean;
   };
   ui?: {
     // Per-locale overrides for Bookkit's rendered copy, merged over its bundled catalog and
@@ -355,6 +361,7 @@ export const clientConfigSchema = z.object({
   routes: z.object({
     admin: z.boolean().optional(),
     ops: z.boolean().optional(),
+    manage: z.boolean().optional(),
   }).optional(),
   ui: z.object({
     messages: z.record(z.string(), z.record(z.string(), z.string())).optional(),
