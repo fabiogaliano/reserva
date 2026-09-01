@@ -72,6 +72,46 @@ jobs:
       - run: bunx playwright install --with-deps chromium
       - run: bun run test:e2e
 
+  # Plan 028 decision 5: the contract tables in README.md/AGENTS.md are generated from the
+  # exported constants (routeManifest, API_ERROR_CODES, BOOKING_EVENTS). This job re-renders them
+  # and fails if the committed docs differ, so documentation of a closed vocabulary cannot rot.
+  # It is also chained into local `verify`; its own job here follows the audit/verify rationale of
+  # never letting one red check mask another.
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.23
+      - run: bun install --frozen-lockfile
+      - run: bun run docs:contract:check
+
+  # Plan 028 decision 4: both tarballs are assembled exactly as `npm publish` would assemble them,
+  # so a `files`/exports mistake fails here instead of after a version is permanently published.
+  # `--dry-run` runs the same prepack build and prints the file list without contacting a registry.
+  # id-token: write is what npm's provenance preflight (publishConfig.provenance) checks for.
+  publish-dry-run:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.23
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: bun install --frozen-lockfile
+      - name: '@reservajs/astro'
+        run: npm publish --dry-run
+      - name: '@reservajs/stripe'
+        run: npm publish --dry-run
+        working-directory: packages/stripe
+
   # Plan 010 decision 3: test:pack packs the real tarball and installs it into a throwaway
   # consumer project outside the repo, so it needs its own job (like smoke) rather than sharing
   # the fast unit-test loop. It's also folded into the local `verify` aggregate, so this job is

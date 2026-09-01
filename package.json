@@ -7,6 +7,7 @@
     "provenance": true
   },
   "workspaces": [
+    ".",
     "packages/*"
   ],
   "license": "MIT",
@@ -25,21 +26,49 @@
     "scripts/reserva-migrate.ts",
     "examples/smoke-site/worker",
     "README.md",
+    "AGENTS.md",
     "LICENSE"
   ],
   "bin": {
     "reserva-migrate": "./scripts/reserva-migrate.ts"
   },
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
-    "./core": { "types": "./dist/core/index.d.ts", "default": "./dist/core/index.js" },
-    "./email": { "types": "./dist/email/index.d.ts", "default": "./dist/email/index.js" },
-    "./providers": { "types": "./dist/providers/index.d.ts", "default": "./dist/providers/index.js" },
-    "./providers/calendar-google": { "types": "./dist/providers/calendar-google/index.d.ts", "default": "./dist/providers/calendar-google/index.js" },
-    "./providers/email-brevo": { "types": "./dist/providers/email-brevo/index.d.ts", "default": "./dist/providers/email-brevo/index.js" },
-    "./providers/email-none": { "types": "./dist/providers/email-none/index.d.ts", "default": "./dist/providers/email-none/index.js" },
-    "./runtime": { "types": "./dist/runtime.d.ts", "default": "./dist/runtime.js" },
-    "./ui": { "types": "./dist/ui/messages.d.ts", "default": "./dist/ui/messages.js" },
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "default": "./dist/core/index.js"
+    },
+    "./email": {
+      "types": "./dist/email/index.d.ts",
+      "default": "./dist/email/index.js"
+    },
+    "./providers": {
+      "types": "./dist/providers/index.d.ts",
+      "default": "./dist/providers/index.js"
+    },
+    "./providers/calendar-google": {
+      "types": "./dist/providers/calendar-google/index.d.ts",
+      "default": "./dist/providers/calendar-google/index.js"
+    },
+    "./providers/email-brevo": {
+      "types": "./dist/providers/email-brevo/index.d.ts",
+      "default": "./dist/providers/email-brevo/index.js"
+    },
+    "./providers/email-none": {
+      "types": "./dist/providers/email-none/index.d.ts",
+      "default": "./dist/providers/email-none/index.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime.d.ts",
+      "default": "./dist/runtime.js"
+    },
+    "./ui": {
+      "types": "./dist/ui/messages.d.ts",
+      "default": "./dist/ui/messages.js"
+    },
     "./components/ManageBooking.astro": "./dist/components/ManageBooking.astro",
     "./components/AdminDashboard.astro": "./dist/components/AdminDashboard.astro"
   },
@@ -55,7 +84,12 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "audit": "bun audit",
-    "verify": "bun run typecheck && bun run test && bun run test:workers && bun run test:scheduled && bun run test:pack",
+    "docs:contract": "bun scripts/contract-docs.ts",
+    "docs:contract:check": "bun scripts/contract-docs.ts --check",
+    "changeset": "changeset",
+    "release:version": "changeset version",
+    "release:publish": "changeset publish",
+    "verify": "bun run typecheck && bun run docs:contract:check && bun run test && bun run test:workers && bun run test:scheduled && bun run test:pack",
     "check": "bun run audit && bun run verify"
   },
   "engines": {
@@ -81,6 +115,7 @@
   },
   "devDependencies": {
     "@astrojs/cloudflare": "^14.2.1",
+    "@changesets/cli": "^3.0.1",
     "@cloudflare/vitest-pool-workers": "^0.18.8",
     "@cloudflare/workers-types": "^5.20260814.1",
     "@playwright/test": "^1.62.1",
