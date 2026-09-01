@@ -19,7 +19,13 @@ beforeEach(async () => {
   await db.prepare('DELETE FROM bookings').run();
   await db.prepare('DELETE FROM day_overrides').run();
   await db.prepare('DELETE FROM capacity_defaults').run();
+  await db.prepare('DELETE FROM admin_change_history').run();
 });
+
+// Plan 005's required audit param, threaded through the plural/singular batched writes below.
+// The history rows it produces are covered end to end by tests/workers/admin-history.test.ts —
+// this file stays focused on the day-override/capacity-default mechanics it already covered.
+const TEST_AUDIT = { actor: 'operator@example.test', changedAt: '2026-08-01T00:00:00.000Z' };
 
 function seedHold(
   repository: BookingRepository,
@@ -79,20 +85,20 @@ describe('day overrides against real D1', () => {
 
 describe('capacity defaults against real D1', () => {
   it('round trips through upsert, a conflict-path update, and delete', async () => {
-    await repo.upsertCapacityDefault('2026-08-10', 3, 'van in service');
+    await repo.upsertCapacityDefault('2026-08-10', 3, 'van in service', TEST_AUDIT);
     await expect(repo.listCapacityDefaults()).resolves.toEqual([{ fromDate: '2026-08-10', capacity: 3, reason: 'van in service' }]);
 
-    await repo.upsertCapacityDefault('2026-08-10', 1, 'van out of service');
+    await repo.upsertCapacityDefault('2026-08-10', 1, 'van out of service', TEST_AUDIT);
     await expect(repo.listCapacityDefaults()).resolves.toEqual([{ fromDate: '2026-08-10', capacity: 1, reason: 'van out of service' }]);
 
-    await repo.deleteCapacityDefault('2026-08-10');
+    await repo.deleteCapacityDefault('2026-08-10', TEST_AUDIT);
     await expect(repo.listCapacityDefaults()).resolves.toEqual([]);
   });
 
   it('listCapacityDefaults orders by from_date regardless of insert order', async () => {
-    await repo.upsertCapacityDefault('2026-09-01', 2, null);
-    await repo.upsertCapacityDefault('2026-08-01', 4, null);
-    await repo.upsertCapacityDefault('2026-08-15', 3, null);
+    await repo.upsertCapacityDefault('2026-09-01', 2, null, TEST_AUDIT);
+    await repo.upsertCapacityDefault('2026-08-01', 4, null, TEST_AUDIT);
+    await repo.upsertCapacityDefault('2026-08-15', 3, null, TEST_AUDIT);
 
     await expect(repo.listCapacityDefaults()).resolves.toEqual([
       { fromDate: '2026-08-01', capacity: 4, reason: null },
@@ -105,27 +111,47 @@ describe('capacity defaults against real D1', () => {
 describe('plural batched day-override methods against real D1', () => {
   it('upsertDayOverrides lands every date in a single db.batch() call, and deleteDayOverrides removes exactly those dates', async () => {
     const dates = ['2026-08-01', '2026-08-02', '2026-08-03'];
-    await repo.upsertDayOverrides(dates, 1, 'holiday');
+    await repo.upsertDayOverrides(dates, 1, 'holiday', TEST_AUDIT);
     await expect(repo.listDayOverrides('2026-08-01', '2026-08-03')).resolves.toEqual(
       dates.map((date) => ({ date, capacity: 1, reason: 'holiday' })),
     );
 
-    await repo.deleteDayOverrides(['2026-08-01', '2026-08-03']);
+    await repo.deleteDayOverrides(['2026-08-01', '2026-08-03'], TEST_AUDIT);
     await expect(repo.listDayOverrides('2026-08-01', '2026-08-03')).resolves.toEqual([
       { date: '2026-08-02', capacity: 1, reason: 'holiday' },
     ]);
   });
 
+  // Plan 005: proves the change AND its per-date admin_change_history rows actually land together
+  // against real D1 — the unit-level fakeD1 test (tests/repo.test.ts) proves the mechanism (one
+  // db.batch() call); this proves the mechanism's real-D1 effect.
+  it('upsertDayOverrides writes one admin_change_history row per date, atomically with the day_overrides rows', async () => {
+    const dates = ['2026-08-01', '2026-08-02'];
+    await repo.upsertDayOverrides(dates, 2, 'batched history', TEST_AUDIT);
+
+    const history = await repo.listAdminChangeHistory(10);
+    expect(history).toHaveLength(2);
+    expect(history.every((entry) => entry.domain === 'day_override' && entry.action === 'upsert'
+      && entry.actor === TEST_AUDIT.actor && entry.changedAt === TEST_AUDIT.changedAt
+      && entry.value === JSON.stringify({ capacity: 2, reason: 'batched history' }))).toBe(true);
+    expect(new Set(history.map((entry) => entry.itemKey))).toEqual(new Set(dates));
+
+    await repo.deleteDayOverrides(dates, TEST_AUDIT);
+    const afterDelete = await repo.listAdminChangeHistory(10);
+    expect(afterDelete).toHaveLength(4);
+    expect(afterDelete.filter((entry) => entry.action === 'delete')).toHaveLength(2);
+  });
+
   it('upsertDayOverrides overwrites an existing row on conflict, same as the singular method', async () => {
     await repo.upsertDayOverride('2026-08-01', 5, 'original');
-    await repo.upsertDayOverrides(['2026-08-01'], 2, 'batched update');
+    await repo.upsertDayOverrides(['2026-08-01'], 2, 'batched update', TEST_AUDIT);
     await expect(repo.getDayOverride('2026-08-01')).resolves.toEqual({ date: '2026-08-01', capacity: 2, reason: 'batched update' });
   });
 
   it('an empty dates array is a no-op for both plural methods', async () => {
     await repo.upsertDayOverride('2026-08-01', 5, 'untouched');
-    await repo.upsertDayOverrides([], 9, 'should never land');
-    await repo.deleteDayOverrides([]);
+    await repo.upsertDayOverrides([], 9, 'should never land', TEST_AUDIT);
+    await repo.deleteDayOverrides([], TEST_AUDIT);
     await expect(repo.listDayOverrides('2026-01-01', '2026-12-31')).resolves.toEqual([
       { date: '2026-08-01', capacity: 5, reason: 'untouched' },
     ]);

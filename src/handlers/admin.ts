@@ -131,6 +131,11 @@ export function handleAdminPost(request: Request, context: BookkitContext): Prom
     const csrfToken = form.get('csrf_token');
     const csrfOk = await verifyAdminCsrfToken(context, typeof csrfToken === 'string' ? csrfToken : null, access.subject, context.clock().getTime());
     if (!csrfOk) throw new HttpError(403, 'forbidden', 'Invalid or expired CSRF token');
+    // Plan 005: every settings/capacity write below records who changed it, atomically with the
+    // change. access.subject is '' when a custom adminAuth exposes no per-user identity (see
+    // AdminIdentity's doc comment) — normalized to null here to match the design intent that an
+    // anonymous-verifier deployment records "no known actor", not the empty string.
+    const audit = { actor: access.subject || null, changedAt: nowIso(context) };
     const action = requireString(form.get('action'), 'action');
     if (action === 'incident-retry' || action === 'incident-resolve') {
       const sourceType = requireString(form.get('source_type'), 'source_type') as OperationalIncidentSourceType;
@@ -192,7 +197,7 @@ export function handleAdminPost(request: Request, context: BookkitContext): Prom
         const key = action.slice('settings-reset:'.length);
         const definition = settingDefinitions.find((entry) => entry.key === key);
         if (!definition) throw new HttpError(400, 'validation_failed', 'Unknown setting');
-        await context.repo.deleteSetting(definition.key);
+        await context.repo.deleteSetting(definition.key, audit);
         return new Response(null, { status: 303, headers: { location: location.toString(), 'cache-control': 'no-store' } });
       }
       if (action !== 'settings-save' && action !== 'settings-reset') throw new HttpError(400, 'validation_failed', 'Unknown admin action');
@@ -237,7 +242,7 @@ export function handleAdminPost(request: Request, context: BookkitContext): Prom
           throw error;
         }
       }
-      if (operations.length > 0) await context.repo.applySettingsBatch(operations);
+      if (operations.length > 0) await context.repo.applySettingsBatch(operations, audit);
       return new Response(null, { status: 303, headers: { location: location.toString(), 'cache-control': 'no-store' } });
     }
     // Day actions may target several days at once: repeated date fields (the enhancer's
@@ -261,14 +266,14 @@ export function handleAdminPost(request: Request, context: BookkitContext): Prom
     const reasonValue = form.get('reason');
     const reason = typeof reasonValue === 'string' && reasonValue.trim() ? reasonValue.trim() : null;
     if (action === 'clear') {
-      await context.repo.deleteDayOverrides(dayDates);
+      await context.repo.deleteDayOverrides(dayDates, audit);
     } else if (action === 'set' || action === 'close') {
       const capacity = action === 'close' ? 0 : requireInteger(Number(form.get('capacity')), 'capacity', 0);
-      await context.repo.upsertDayOverrides(dayDates, capacity, reason);
-    } else if (action === 'default-clear') await context.repo.deleteCapacityDefault(firstDate);
+      await context.repo.upsertDayOverrides(dayDates, capacity, reason, audit);
+    } else if (action === 'default-clear') await context.repo.deleteCapacityDefault(firstDate, audit);
     else if (action === 'default-set') {
       const capacity = requireInteger(Number(form.get('capacity')), 'capacity', 0);
-      await context.repo.upsertCapacityDefault(firstDate, capacity, reason);
+      await context.repo.upsertCapacityDefault(firstDate, capacity, reason, audit);
     } else throw new HttpError(400, 'validation_failed', 'Unknown admin action');
     // saved=day|default renders a confirmation inside the submitted form; the hash lands there.
     // Day actions also pin ?date= to the first edited day so the form reflects what was just saved.

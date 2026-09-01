@@ -17,6 +17,10 @@ import {
   SIDE_EFFECT_MAX_ATTEMPTS,
   sameSideEffectOperation,
   sideEffectOperationKey,
+  type AdminChangeAction,
+  type AdminChangeAudit,
+  type AdminChangeDomain,
+  type AdminChangeHistoryEntry,
   type BookingRepository,
   type OperationalIncidentRecord,
   type RefundOperationRecord,
@@ -51,6 +55,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
   refundOperations: Map<string, RefundOperationRecord>;
   sideEffectOperations: Map<string, SideEffectOperationRecord>;
   tokenState: Map<string, FakeTokenState>;
+  adminChangeHistory: AdminChangeHistoryEntry[];
   recordMutationSideEffectOperations(bookingId: string, seeds: SideEffectOperationSeed[], now: string): Promise<void>;
 } {
   const placeholderToken = (id: string, role: 'cancel' | 'operator') => `nohash:${id}:${role}`;
@@ -66,6 +71,27 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
   // Mirrors day_overrides / capacity_defaults (src/repo.ts:1425-1458): date/from_date -> row.
   const dayOverrides = new Map<string, { capacity: number; reason: string | null }>();
   const capacityDefaults = new Map<string, { capacity: number; reason: string | null }>();
+  // Plan 005: mirrors admin_change_history — appended in the same order the real db.batch() would
+  // insert its rows, so a test can assert ordering the same way listAdminChangeHistory does.
+  const adminChangeHistory: AdminChangeHistoryEntry[] = [];
+  let nextAdminChangeHistoryId = 1;
+  const pushAdminChangeHistory = (
+    domain: AdminChangeDomain,
+    itemKey: string,
+    action: AdminChangeAction,
+    value: string | null,
+    audit: AdminChangeAudit,
+  ) => {
+    adminChangeHistory.push({
+      id: nextAdminChangeHistoryId++,
+      domain,
+      itemKey,
+      action,
+      value,
+      actor: audit.actor,
+      changedAt: audit.changedAt,
+    });
+  };
   // Seeded rows model pre-migration legacy rows: their hash columns are null and their raw
   // token columns retain plaintext. Rows created by insertHold* use nohash placeholders at rest,
   // so only hydrated reads with a configured key can recover their presented values.
@@ -187,7 +213,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     const defaults = await repository.listCapacityDefaults();
     return defaultCapacityForDate(localDate, defaultCapacity, defaults);
   };
-  const repository: BookingRepository & { rows: Map<string, Booking>; settings: Map<string, string>; refundOperations: Map<string, RefundOperationRecord>; sideEffectOperations: Map<string, SideEffectOperationRecord>; tokenState: Map<string, FakeTokenState>; recordMutationSideEffectOperations(bookingId: string, seeds: SideEffectOperationSeed[], now: string): Promise<void> } = {
+  const repository: BookingRepository & { rows: Map<string, Booking>; settings: Map<string, string>; refundOperations: Map<string, RefundOperationRecord>; sideEffectOperations: Map<string, SideEffectOperationRecord>; tokenState: Map<string, FakeTokenState>; adminChangeHistory: AdminChangeHistoryEntry[]; recordMutationSideEffectOperations(bookingId: string, seeds: SideEffectOperationSeed[], now: string): Promise<void> } = {
     rows,
     tokenState,
     sweepExpiredHolds: async (now) => {
@@ -678,29 +704,58 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     // Mirrors src/repo.ts:1441-1443.
     deleteDayOverride: async (date) => { dayOverrides.delete(date); },
     // Bounded by handleAdminPost's 366-day cap (a year of daily overrides), so a plain db.batch()
-    // (mirrored here as a plain loop) never risks D1's per-batch statement limit.
-    upsertDayOverrides: async (dates, capacity, reason) => { for (const date of dates) dayOverrides.set(date, { capacity, reason }); },
-    deleteDayOverrides: async (dates) => { for (const date of dates) dayOverrides.delete(date); },
+    // (mirrored here as a plain loop) never risks D1's per-batch statement limit. Plan 005: one
+    // history entry per date, pushed in the same order the real batch's statements would run.
+    upsertDayOverrides: async (dates, capacity, reason, audit) => {
+      const value = JSON.stringify({ capacity, reason });
+      for (const date of dates) {
+        dayOverrides.set(date, { capacity, reason });
+        pushAdminChangeHistory('day_override', date, 'upsert', value, audit);
+      }
+    },
+    deleteDayOverrides: async (dates, audit) => {
+      for (const date of dates) {
+        dayOverrides.delete(date);
+        pushAdminChangeHistory('day_override', date, 'delete', null, audit);
+      }
+    },
     // Mirrors src/repo.ts:1444-1448 — ordered by from_date.
     listCapacityDefaults: async () => [...capacityDefaults.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([fromDate, value]) => ({ fromDate, ...value })),
     // Mirrors src/repo.ts:1450-1454 — INSERT ... ON CONFLICT(from_date) DO UPDATE (upsert-by-from_date).
-    upsertCapacityDefault: async (fromDate, capacity, reason) => { capacityDefaults.set(fromDate, { capacity, reason }); },
+    upsertCapacityDefault: async (fromDate, capacity, reason, audit) => {
+      capacityDefaults.set(fromDate, { capacity, reason });
+      pushAdminChangeHistory('capacity_default', fromDate, 'upsert', JSON.stringify({ capacity, reason }), audit);
+    },
     // Mirrors src/repo.ts:1456-1458.
-    deleteCapacityDefault: async (fromDate) => { capacityDefaults.delete(fromDate); },
+    deleteCapacityDefault: async (fromDate, audit) => {
+      capacityDefaults.delete(fromDate);
+      pushAdminChangeHistory('capacity_default', fromDate, 'delete', null, audit);
+    },
     settings,
     listSettings: async () => Object.fromEntries(settings),
     upsertSetting: async (key, value) => { settings.set(key, value); },
-    deleteSetting: async (key) => { settings.delete(key); },
+    deleteSetting: async (key, audit) => {
+      settings.delete(key);
+      pushAdminChangeHistory('setting', key, 'delete', null, audit);
+    },
     // Real D1 runs these in one implicit transaction (see src/repo.ts); tests that need to prove
     // atomicity override this whole method to reject before touching `settings` at all.
-    applySettingsBatch: async (operations) => {
+    applySettingsBatch: async (operations, audit) => {
       for (const operation of operations) {
-        if (operation.type === 'upsert') settings.set(operation.key, operation.value);
-        else settings.delete(operation.key);
+        if (operation.type === 'upsert') {
+          settings.set(operation.key, operation.value);
+          pushAdminChangeHistory('setting', operation.key, 'upsert', operation.value, audit);
+        } else {
+          settings.delete(operation.key);
+          pushAdminChangeHistory('setting', operation.key, 'delete', null, audit);
+        }
       }
     },
+    adminChangeHistory,
+    // Mirrors src/repo.ts's `ORDER BY id DESC LIMIT ?` — most-recent-first.
+    listAdminChangeHistory: async (limit) => [...adminChangeHistory].reverse().slice(0, limit),
     refundOperations,
     // Mirrors src/repo.ts's WHERE NOT EXISTS conditional insert: claims only when no operation
     // row exists yet for this booking_id, so a racing loser can be told who won.

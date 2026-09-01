@@ -51,6 +51,29 @@ export type SettingsBatchOperation =
   | { type: 'upsert'; key: string; value: string }
   | { type: 'delete'; key: string };
 
+// Plan 005: every admin-surface write records who changed what, atomically in the same D1 batch as
+// the change itself (never a second, separate write — see adminHistoryInsert below). `actor` is the
+// admin auth port's AdminIdentity.subject (src/access.ts); null when the port exposes no identity
+// (an anonymous-verifier custom adminAuth resolves an empty-string subject, which handleAdminPost
+// normalizes to null before this ever reaches the repo).
+export interface AdminChangeAudit {
+  actor: string | null;
+  changedAt: string;
+}
+
+export type AdminChangeDomain = 'setting' | 'day_override' | 'capacity_default';
+export type AdminChangeAction = 'upsert' | 'delete';
+
+export interface AdminChangeHistoryEntry {
+  id: number;
+  domain: AdminChangeDomain;
+  itemKey: string;
+  action: AdminChangeAction;
+  value: string | null;
+  actor: string | null;
+  changedAt: string;
+}
+
 export class HoldLimitExceededError extends Error {
   constructor() {
     super('Too many active holds from this IP');
@@ -537,19 +560,27 @@ export interface BookingRepository {
   deleteDayOverride(date: string): Promise<void>;
   // Plural, batched siblings of upsertDayOverride/deleteDayOverride: handleAdminPost's bulk day
   // actions (set/close/clear over a date range) use these instead of looping the singular
-  // methods, so a range submit is one D1 round trip instead of up to 366.
-  upsertDayOverrides(dates: string[], capacity: number, reason: string | null): Promise<void>;
-  deleteDayOverrides(dates: string[]): Promise<void>;
+  // methods, so a range submit is one D1 round trip instead of up to 366. `audit` is required (not
+  // optional): these are the six methods handleAdminPost — the only production caller of each —
+  // uses to mutate admin state, and an admin write with no history entry is a bug, not a valid
+  // call. One admin_change_history row per date rides the same db.batch() as the change (plan 005).
+  upsertDayOverrides(dates: string[], capacity: number, reason: string | null, audit: AdminChangeAudit): Promise<void>;
+  deleteDayOverrides(dates: string[], audit: AdminChangeAudit): Promise<void>;
   listCapacityDefaults(): Promise<CapacityDefault[]>;
-  upsertCapacityDefault(fromDate: string, capacity: number, reason: string | null): Promise<void>;
-  deleteCapacityDefault(fromDate: string): Promise<void>;
+  upsertCapacityDefault(fromDate: string, capacity: number, reason: string | null, audit: AdminChangeAudit): Promise<void>;
+  deleteCapacityDefault(fromDate: string, audit: AdminChangeAudit): Promise<void>;
   // Operator-editable config overrides (core/settings.ts): key -> JSON-encoded value.
   listSettings(): Promise<Record<string, string>>;
   upsertSetting(key: string, value: string): Promise<void>;
-  deleteSetting(key: string): Promise<void>;
+  // handleAdminPost's only single-key write path (settings-reset for one key); see applySettingsBatch
+  // below for the multi-key save/reset path. Required audit param, same rationale as above.
+  deleteSetting(key: string, audit: AdminChangeAudit): Promise<void>;
   // Applies every key of a settings section in one D1 batch (all-or-nothing) — see
-  // core/settings.ts mergeAndValidateSettings, which the admin save path runs first.
-  applySettingsBatch(operations: SettingsBatchOperation[]): Promise<void>;
+  // core/settings.ts mergeAndValidateSettings, which the admin save path runs first. One history
+  // row per operation rides the same batch.
+  applySettingsBatch(operations: SettingsBatchOperation[], audit: AdminChangeAudit): Promise<void>;
+  // Most-recent-first (plan 005); read-only, for tests and a future admin-UI history view.
+  listAdminChangeHistory(limit: number): Promise<AdminChangeHistoryEntry[]>;
   // Compare-and-set claim: succeeds (true) only when no operation row exists yet for this
   // booking_id, so a refund=full and refund=none request racing on the same booking can never
   // both proceed to call Stripe (BK-REFUND-001). The loser calls getRefundOperationByBookingId to
@@ -1200,6 +1231,19 @@ export function createBookingRepository(
     input.id, input.bookingId, input.paymentIntent, input.choice, input.status,
     input.stripeRefundId, input.amountCents, input.requestedAt, input.resolvedAt, input.error ?? null,
   );
+
+  // Plan 005: one bound statement per admin_change_history row, for the caller to fold into the
+  // same db.batch() as the change it records — never a second, separate write (see the six methods
+  // below and AdminChangeAudit's doc comment for why the caller's audit is required, not optional).
+  const adminHistoryInsert = (
+    domain: AdminChangeDomain,
+    itemKey: string,
+    action: AdminChangeAction,
+    value: string | null,
+    audit: AdminChangeAudit,
+  ) => db.prepare(
+    'INSERT INTO admin_change_history (domain, item_key, action, value, actor, changed_at) VALUES (?, ?, ?, ?, ?, ?)',
+  ).bind(domain, itemKey, action, value, audit.actor, audit.changedAt);
 
   return {
     async sweepExpiredHolds(now) {
@@ -1989,17 +2033,27 @@ export function createBookingRepository(
       await db.prepare('DELETE FROM day_overrides WHERE date = ?').bind(date).run();
     },
     // Bounded by handleAdminPost's 366-day cap (a year of daily overrides), so a single
-    // db.batch() call here never risks exceeding D1's per-batch statement limit.
-    async upsertDayOverrides(dates, capacity, reason) {
+    // db.batch() call here never risks exceeding D1's per-batch statement limit. One history row
+    // per date rides the same batch as its override write (plan 005).
+    async upsertDayOverrides(dates, capacity, reason, audit) {
       if (dates.length === 0) return;
-      await db.batch(dates.map((date) => db.prepare(
-        `INSERT INTO day_overrides (date, capacity, reason) VALUES (?, ?, ?)
-         ON CONFLICT(date) DO UPDATE SET capacity = excluded.capacity, reason = excluded.reason`,
-      ).bind(date, capacity, reason)));
+      const value = JSON.stringify({ capacity, reason });
+      const statements = dates.flatMap((date) => [
+        db.prepare(
+          `INSERT INTO day_overrides (date, capacity, reason) VALUES (?, ?, ?)
+           ON CONFLICT(date) DO UPDATE SET capacity = excluded.capacity, reason = excluded.reason`,
+        ).bind(date, capacity, reason),
+        adminHistoryInsert('day_override', date, 'upsert', value, audit),
+      ]);
+      await db.batch(statements);
     },
-    async deleteDayOverrides(dates) {
+    async deleteDayOverrides(dates, audit) {
       if (dates.length === 0) return;
-      await db.batch(dates.map((date) => db.prepare('DELETE FROM day_overrides WHERE date = ?').bind(date)));
+      const statements = dates.flatMap((date) => [
+        db.prepare('DELETE FROM day_overrides WHERE date = ?').bind(date),
+        adminHistoryInsert('day_override', date, 'delete', null, audit),
+      ]);
+      await db.batch(statements);
     },
     async listCapacityDefaults() {
       const result = await db.prepare(
@@ -2007,14 +2061,21 @@ export function createBookingRepository(
       ).all<{ from_date: string; capacity: number; reason: string | null }>();
       return result.results.map((row) => ({ fromDate: row.from_date, capacity: Number(row.capacity), reason: row.reason ?? null }));
     },
-    async upsertCapacityDefault(fromDate, capacity, reason) {
-      await db.prepare(
-        `INSERT INTO capacity_defaults (from_date, capacity, reason) VALUES (?, ?, ?)
-         ON CONFLICT(from_date) DO UPDATE SET capacity = excluded.capacity, reason = excluded.reason`,
-      ).bind(fromDate, capacity, reason).run();
+    async upsertCapacityDefault(fromDate, capacity, reason, audit) {
+      const value = JSON.stringify({ capacity, reason });
+      await db.batch([
+        db.prepare(
+          `INSERT INTO capacity_defaults (from_date, capacity, reason) VALUES (?, ?, ?)
+           ON CONFLICT(from_date) DO UPDATE SET capacity = excluded.capacity, reason = excluded.reason`,
+        ).bind(fromDate, capacity, reason),
+        adminHistoryInsert('capacity_default', fromDate, 'upsert', value, audit),
+      ]);
     },
-    async deleteCapacityDefault(fromDate) {
-      await db.prepare('DELETE FROM capacity_defaults WHERE from_date = ?').bind(fromDate).run();
+    async deleteCapacityDefault(fromDate, audit) {
+      await db.batch([
+        db.prepare('DELETE FROM capacity_defaults WHERE from_date = ?').bind(fromDate),
+        adminHistoryInsert('capacity_default', fromDate, 'delete', null, audit),
+      ]);
     },
     async listSettings() {
       const result = await db.prepare('SELECT key, value FROM settings').all<{ key: string; value: string }>();
@@ -2025,16 +2086,39 @@ export function createBookingRepository(
         'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
       ).bind(key, value).run();
     },
-    async deleteSetting(key) {
-      await db.prepare('DELETE FROM settings WHERE key = ?').bind(key).run();
+    async deleteSetting(key, audit) {
+      await db.batch([
+        db.prepare('DELETE FROM settings WHERE key = ?').bind(key),
+        adminHistoryInsert('setting', key, 'delete', null, audit),
+      ]);
     },
-    async applySettingsBatch(operations) {
+    async applySettingsBatch(operations, audit) {
       if (operations.length === 0) return;
       // D1's batch() runs its statements in an implicit transaction — if any fails, none commit.
-      const statements = operations.map((operation) => operation.type === 'upsert'
-        ? db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').bind(operation.key, operation.value)
-        : db.prepare('DELETE FROM settings WHERE key = ?').bind(operation.key));
+      const statements = operations.flatMap((operation) => operation.type === 'upsert'
+        ? [
+          db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').bind(operation.key, operation.value),
+          adminHistoryInsert('setting', operation.key, 'upsert', operation.value, audit),
+        ]
+        : [
+          db.prepare('DELETE FROM settings WHERE key = ?').bind(operation.key),
+          adminHistoryInsert('setting', operation.key, 'delete', null, audit),
+        ]);
       await db.batch(statements);
+    },
+    async listAdminChangeHistory(limit) {
+      const result = await db.prepare(
+        'SELECT id, domain, item_key, action, value, actor, changed_at FROM admin_change_history ORDER BY id DESC LIMIT ?',
+      ).bind(limit).all<{ id: number; domain: AdminChangeDomain; item_key: string; action: AdminChangeAction; value: string | null; actor: string | null; changed_at: string }>();
+      return result.results.map((row) => ({
+        id: row.id,
+        domain: row.domain,
+        itemKey: row.item_key,
+        action: row.action,
+        value: row.value ?? null,
+        actor: row.actor ?? null,
+        changedAt: row.changed_at,
+      }));
     },
     async claimRefundOperation(input) {
       // Same conditional-insert idiom as insertHold's per-IP cap: the WHERE NOT EXISTS makes this

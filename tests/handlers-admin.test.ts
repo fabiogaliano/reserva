@@ -880,3 +880,86 @@ describe('BK-SEC-001: admin CSRF layer 2 without BOOKKIT_CSRF_SECRET (layer 1 al
     expect(body).toContain('name="csrf_token" value=""');
   });
 });
+
+// Plan 005: every settings/capacity write records who changed it, atomically with the change
+// itself (src/repo.ts). These tests exercise the actor-threading in handleAdminPost specifically —
+// the atomicity guarantee (one db.batch() call per mutating method) is proven at the repo unit
+// level in tests/repo.test.ts, which exercises the real createBookingRepository implementation.
+describe('plan 005: admin_change_history (actor-attributed, batch-atomic settings/capacity audit)', () => {
+  it('settings-save records one history row per changed key with the Access subject as actor and the serialized value', async () => {
+    const repo = fakeRepository();
+    const subject = 'ops@example.test';
+    const csrfToken = await mintTestCsrfToken(subject, CSRF_NOW);
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject }), providers: providers(), secrets: csrfSecrets });
+
+    const response = await handleAdminPost(adminPostRequest({
+      action: 'settings-save',
+      section: 'legal',
+      'legal.termsUrl': 'https://example.test/new-terms',
+    }, { csrfToken }), context);
+    expect(response.status).toBe(303);
+
+    expect(repo.adminChangeHistory).toHaveLength(1);
+    const entry = repo.adminChangeHistory[0];
+    expect(entry).toMatchObject({ domain: 'setting', itemKey: 'legal.termsUrl', action: 'upsert', actor: subject, changedAt: clock().toISOString() });
+    // The recorded value is exactly what landed in `settings` — the same serialized string, not a
+    // second independent encoding of it.
+    expect(entry?.value).toBe(repo.settings.get('legal.termsUrl'));
+  });
+
+  it('an anonymous admin identity (empty-string subject) records actor: null, never the empty string', async () => {
+    const repo = fakeRepository();
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+
+    const response = await handleAdminPost(adminPostRequest({
+      action: 'settings-save',
+      section: 'legal',
+      'legal.termsUrl': 'https://example.test/new-terms',
+    }), context);
+    expect(response.status).toBe(303);
+
+    expect(repo.adminChangeHistory).toHaveLength(1);
+    expect(repo.adminChangeHistory[0]?.actor).toBeNull();
+  });
+
+  it('a day-range close action records one day_override/upsert history row per date, not one row for the whole range', async () => {
+    const repo = fakeRepository();
+    const subject = 'ops@example.test';
+    const csrfToken = await mintTestCsrfToken(subject, CSRF_NOW);
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject }), providers: providers(), secrets: csrfSecrets });
+
+    const response = await handleAdminPost(adminPostRequest([
+      ['date', '2026-06-20'], ['toDate', '2026-06-22'], ['reason', 'holiday'], ['action', 'close'],
+    ], { csrfToken }), context);
+    expect(response.status).toBe(303);
+
+    expect(repo.adminChangeHistory).toHaveLength(3);
+    expect(repo.adminChangeHistory.map((entry) => entry.itemKey)).toEqual(['2026-06-20', '2026-06-21', '2026-06-22']);
+    for (const entry of repo.adminChangeHistory) {
+      expect(entry).toMatchObject({ domain: 'day_override', action: 'upsert', actor: subject, value: JSON.stringify({ capacity: 0, reason: 'holiday' }) });
+    }
+  });
+
+  it('default-set records exactly one capacity_default/upsert history row', async () => {
+    const repo = fakeRepository();
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+
+    const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', capacity: '4', reason: 'fleet expansion', action: 'default-set' }), context);
+    expect(response.status).toBe(303);
+
+    expect(repo.adminChangeHistory).toEqual([
+      expect.objectContaining({ domain: 'capacity_default', itemKey: '2026-06-20', action: 'upsert', actor: null, value: JSON.stringify({ capacity: 4, reason: 'fleet expansion' }) }),
+    ]);
+  });
+
+  it('listAdminChangeHistory (via the repo) returns rows most-recent-first', async () => {
+    const repo = fakeRepository();
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+
+    await handleAdminPost(adminPostRequest({ date: '2026-06-20', capacity: '4', action: 'default-set' }), context);
+    await handleAdminPost(adminPostRequest({ date: '2026-06-21', capacity: '5', action: 'default-set' }), context);
+
+    const history = await repo.listAdminChangeHistory(10);
+    expect(history.map((entry) => entry.itemKey)).toEqual(['2026-06-21', '2026-06-20']);
+  });
+});

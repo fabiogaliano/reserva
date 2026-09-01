@@ -52,7 +52,7 @@ const db = bindings.BOOKKIT_DB;
 // Every table any of the 12 real migrations creates, so each test can tear the schema back to
 // nothing before rebuilding exactly the state its scenario needs -- self-contained regardless of
 // whether the pool isolates storage per test.
-const BOOKKIT_TABLES = ['operational_incidents', 'side_effect_operations', 'refund_operations', 'settings', 'capacity_defaults', 'day_overrides', 'bookings'];
+const BOOKKIT_TABLES = ['admin_change_history', 'operational_incidents', 'side_effect_operations', 'refund_operations', 'settings', 'capacity_defaults', 'day_overrides', 'bookings'];
 
 async function resetSchema() {
   for (const table of BOOKKIT_TABLES) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
