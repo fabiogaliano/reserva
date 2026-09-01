@@ -155,7 +155,7 @@ webhooks: [{ name: 'partner', url: 'https://partner.example/bookkit', secretBind
 
 ### Envelope and signature
 
-> **Unstable until plan 022.** The booking payload's field names change when the domain vocabulary is renamed. Pin the `apiVersion` and expect a breaking change in that release.
+> **The booking payload's field names are now frozen** for this release line. The v2 domain rename (`serviceSlug`, `quantity`, `priceMinor` + `currency`, `pickupType`) has landed; any further change to these names bumps `apiVersion`.
 
 Each delivery POSTs this JSON body:
 
