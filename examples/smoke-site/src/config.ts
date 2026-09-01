@@ -66,6 +66,11 @@ export default {
     // Plan 023 (design decision 1): the location module is optional per service — this one has
     // no pickup/meeting-point axis at all, so the e2e suite has a real location-less service to
     // book through (quantity-tier pricing only, no `pickup` on any rule).
+    //
+    // Plan 024 (design decisions 1-3, done criteria): also the e2e suite's real consumer-declared
+    // metadata service — one required `text` field and one `select` field, so
+    // tests/e2e/booking-metadata.spec.ts can prove the whole funnel (checkout validation -> D1 ->
+    // confirmation -> manage, both roles) with real declared/labeled/typed fields, not a fixture.
     riverCruise: {
       durationMin: 90,
       turnaroundMin: 15,
@@ -76,6 +81,18 @@ export default {
         intervalMin: 60,
       }],
       pricing: [{ maxQuantity: 6, priceMinor: 4200 }],
+      metadataFields: [
+        { key: 'dietary_notes', label: 'Dietary notes', type: 'text', required: true, maxLength: 200 },
+        {
+          key: 'seat_pref',
+          label: 'Seat preference',
+          type: 'select',
+          options: [
+            { value: 'window', label: 'Window seat' },
+            { value: 'aisle', label: 'Aisle seat' },
+          ],
+        },
+      ],
     },
   },
   booking: {

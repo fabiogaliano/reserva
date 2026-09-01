@@ -13,6 +13,15 @@ test('booking a service with no location module carries no pickup/meeting-point 
       checkoutBody = JSON.parse(request.postData() ?? '{}');
     }
   });
+  // Plan 024 (done criteria): riverCruise also declares a required text metadata field — the
+  // widget renders no input for it (no editing surface beyond checkout), so this satisfies it the
+  // same way every other test that isn't specifically about metadata does: inject a minimal valid
+  // value onto the request the widget already sends, rather than growing the widget itself.
+  await page.route('**/api/booking/checkout', async (route) => {
+    const body = JSON.parse(route.request().postData() ?? '{}');
+    body.metadata = { dietary_notes: 'n/a' };
+    await route.continue({ postData: JSON.stringify(body) });
+  });
 
   const { reference, outboxEntry } = await createBooking(page, { service: 'riverCruise', quantity: 2, path: '/river-cruise' });
   expect(reference).toBeTruthy();
