@@ -33,13 +33,11 @@ test('a one-shot provider failure opens an incident, "Try again" resolves it, a 
   const manualTarget = await createBooking(page, { tour: TOUR, people: 2 });
   const oversellTarget = await createBooking(page, { tour: TOUR, people: 2 });
 
-  const since = new Date(Date.now() - 60_000).toISOString();
-  const feed = await (await request.get(`/api/booking/feed?since=${since}`, {
-    headers: { Authorization: 'Bearer local-operator-secret' },
-  })).json();
-  const oversellBookingId = feed.bookings.find((b: any) => b.reference === oversellTarget.reference)?.id;
-  if (!oversellBookingId) throw new Error('could not resolve the oversell fixture booking id from the feed');
-  await request.post('/dev/seed-oversell-incident.json', { headers: DEV_POST_HEADERS, data: { bookingId: oversellBookingId } });
+  const seeded = await request.post('/dev/seed-oversell-incident.json', {
+    headers: DEV_POST_HEADERS,
+    data: { reference: oversellTarget.reference },
+  });
+  if (!seeded.ok()) throw new Error(`could not seed the oversell incident: ${await seeded.text()}`);
 
   // --- First reconciliation pass: opens both calendar_create incidents (immediate — a permanent
   // failure classifies 'abandoned' on the first attempt, no ten-minute wait) and delivers one

@@ -13,9 +13,14 @@ import { createRouteContext } from '../../../../../src/routes/route-context';
 // bookkit site — see outbox.json.ts's header comment for the same convention.
 export const POST: APIRoute = async ({ request, locals }: APIContext) => {
   const context = await createRouteContext({ request, locals });
-  const body = await request.json() as { bookingId?: unknown };
-  const bookingId = typeof body.bookingId === 'string' ? body.bookingId : undefined;
-  if (!bookingId) return new Response('bookingId is required', { status: 400 });
+  // Callers hold the customer-visible reference, not the internal id (the feed endpoint that
+  // once exposed ids was removed by plan 021) — resolve it server-side where the repo lives.
+  const body = await request.json() as { reference?: unknown };
+  const reference = typeof body.reference === 'string' ? body.reference : undefined;
+  if (!reference) return new Response('reference is required', { status: 400 });
+  const booking = await context.repo.getBookingByReference(reference);
+  if (!booking) return new Response(`no booking with reference ${reference}`, { status: 404 });
+  const bookingId = booking.id;
   const now = nowIso(context);
   await context.repo.upsertOpenIncident({
     id: crypto.randomUUID(),
