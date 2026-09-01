@@ -254,8 +254,7 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
       { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
       { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
     ];
-    const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = config.services.vintage!;
-    const multiPointConfig: ClientConfig = { ...config, services: { ...config.services, vintage: { ...vintageWithoutShorthand, meetingPoints: points } } };
+    const multiPointConfig: ClientConfig = { ...config, services: { ...config.services, vintage: { ...config.services.vintage!, location: { ...config.services.vintage!.location!, meetingPoints: points } } } };
 
     it('renders the resolved meeting-point label as a sub-line for a multi-point service, and is absent for a single-point service', async () => {
       const chosen = booking({
@@ -303,15 +302,16 @@ describe('pickup option label + sub-lines (plan 018 design decision 8)', () => {
     { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
     { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
   ];
-  const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = config.services.vintage!;
   const mazeTour: ServiceConfig = {
-    ...vintageWithoutShorthand,
-    meetingPoints: points,
-    pickupOptions: [
-      { id: 'default', requiresAddress: false, usesMeetingPoint: true },
-      { id: 'custom_dropoff', label: 'Custom pickup & drop-off', requiresAddress: true, usesMeetingPoint: true },
-      { id: 'meet_elsewhere', requiresAddress: false, usesMeetingPoint: true },
-    ],
+    ...config.services.vintage!,
+    location: {
+      meetingPoints: points,
+      pickupOptions: [
+        { id: 'default', requiresAddress: false, usesMeetingPoint: true },
+        { id: 'custom_dropoff', label: 'Custom pickup & drop-off', requiresAddress: true, usesMeetingPoint: true },
+        { id: 'meet_elsewhere', requiresAddress: false, usesMeetingPoint: true },
+      ],
+    },
     pricing: [
       { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
       { maxQuantity: 8, pickup: 'custom_dropoff', priceMinor: 21000 },
@@ -371,10 +371,13 @@ describe('pickup option label + sub-lines (plan 018 design decision 8)', () => {
   it('search cannot match a meeting-point label the row does not display (usesMeetingPoint: false)', async () => {
     const noMeetTour: ServiceConfig = {
       ...mazeTour,
-      pickupOptions: [
-        { id: 'default', requiresAddress: false, usesMeetingPoint: true },
-        { id: 'hotel_pickup', requiresAddress: true, usesMeetingPoint: false },
-      ],
+      location: {
+        meetingPoints: mazeTour.location!.meetingPoints!,
+        pickupOptions: [
+          { id: 'default', requiresAddress: false, usesMeetingPoint: true },
+          { id: 'hotel_pickup', requiresAddress: true, usesMeetingPoint: false },
+        ],
+      },
       pricing: [
         { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
         { maxQuantity: 8, pickup: 'hotel_pickup', priceMinor: 20000 },

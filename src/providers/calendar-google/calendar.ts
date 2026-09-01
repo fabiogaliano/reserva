@@ -1,5 +1,5 @@
 import type { Booking } from '../../core/booking';
-import { meetingPointForBooking, pickupOptionFor, type ClientConfig } from '../../core/config';
+import { meetingPointForBooking, pickupPresentationFor, type ClientConfig } from '../../core/config';
 import type { CalendarProvider } from '../../core/events';
 import type { CalEvent } from '../../core/occupancy';
 import { ProviderFailure } from '../../provider-failure';
@@ -46,17 +46,17 @@ function eventToCalEvent(event: GoogleEvent): CalEvent {
 function eventPayload(booking: Booking, config: ClientConfig | undefined, _timezone: string): GoogleEvent {
   const title = `${booking.reference} — ${booking.serviceSlug} — ${booking.quantity} quantity`;
   const service = config?.services[booking.serviceSlug];
+  // Plan 023 (design decision 4): gated on the row's own data first — a location-less booking
+  // gets no Pickup line at all, not a "Default meeting point" placeholder.
+  const presentation = service ? pickupPresentationFor(service, booking) : null;
   // Plan 017 (design decision 4): same per-booking resolution as Brevo — a removed meeting point
   // id falls back to the booking's stored label snapshot with no maps link.
-  const resolvedPoint = service ? meetingPointForBooking(service, booking.meetingPointId ?? null, booking.meetingPointLabel ?? null) : null;
-  // Plan 018 (design decision 8): re-keyed off the service's declared option instead of an unconditional
-  // "address if present, else the meeting point" — the two lines are independent gates, so an option
-  // declaring BOTH flags (Maze's combined pickup+drop-off) shows the address on the Pickup line AND
-  // the maps URL line. Undefined option (no service, or a stored pickupType no longer declared) falls
-  // back to the exact pre-018 pickupType check.
-  const option = service ? pickupOptionFor(service, booking.pickupType) : undefined;
-  const requiresAddress = option ? option.requiresAddress : booking.pickupType === 'custom';
-  const usesMeetingPoint = option ? option.usesMeetingPoint : booking.pickupType === 'default';
+  const resolvedPoint = service && presentation ? meetingPointForBooking(service, booking.meetingPointId ?? null, booking.meetingPointLabel ?? null) : null;
+  // Plan 018 (design decision 8): the two flags are independent gates, so an option declaring
+  // BOTH (Maze's combined pickup+drop-off) shows the address on the Pickup line AND the maps URL
+  // line.
+  const requiresAddress = presentation?.requiresAddress ?? false;
+  const usesMeetingPoint = presentation?.usesMeetingPoint ?? false;
   const pickupLine = requiresAddress
     ? booking.pickupAddress ?? (resolvedPoint?.label ?? 'Default meeting point')
     : resolvedPoint?.label ?? 'Default meeting point';
@@ -65,7 +65,7 @@ function eventPayload(booking: Booking, config: ClientConfig | undefined, _timez
     `Customer: ${booking.customerName ?? ''}`,
     `Email: ${booking.customerEmail ?? ''}`,
     `Phone: ${booking.customerPhone ?? ''}`,
-    `Pickup: ${pickupLine}`,
+    ...(presentation ? [`Pickup: ${pickupLine}`] : []),
     ...(usesMeetingPoint ? [resolvedPoint?.mapsUrl] : []),
   ].filter(Boolean).join('\n');
   const attendee = booking.customerEmail ? { email: booking.customerEmail, ...(booking.customerName ? { displayName: booking.customerName } : {}) } : undefined;

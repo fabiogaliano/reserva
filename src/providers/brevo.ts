@@ -1,5 +1,5 @@
 import type { Booking } from '../core/booking';
-import { meetingPointForBooking, pickupOptionFor, type ClientConfig } from '../core/config';
+import { meetingPointForBooking, pickupPresentationFor, type ClientConfig } from '../core/config';
 import { toMajorUnits } from '../core/currency';
 import type { EmailBookingEvent, EmailProvider, EmailRecipientRole } from '../core/events';
 import { ProviderFailure } from '../provider-failure';
@@ -236,11 +236,12 @@ function buildModel(context: BrevoEmailTemplateContext): EmailModel {
   // Plan 017 (design decision 4/7): per-booking meeting-point resolution — a removed id falls back
   // to the booking's stored label snapshot with no maps link. Plan 018 (design decision 8): the
   // requiresAddress/usesMeetingPoint gates are independent, so an option declaring both renders
-  // both the collected address and the meeting-point row.
-  const resolvedPoint = service ? meetingPointForBooking(service, booking.meetingPointId ?? null, booking.meetingPointLabel ?? null) : null;
-  const option = service ? pickupOptionFor(service, booking.pickupType) : undefined;
-  const requiresAddress = option ? option.requiresAddress : booking.pickupType === 'custom';
-  const usesMeetingPoint = option ? option.usesMeetingPoint : booking.pickupType === 'default';
+  // both the collected address and the meeting-point row. Plan 023 (design decision 4): gated on
+  // the row's own data first — a location-less booking gets neither row at all.
+  const presentation = service ? pickupPresentationFor(service, booking) : null;
+  const resolvedPoint = service && presentation ? meetingPointForBooking(service, booking.meetingPointId ?? null, booking.meetingPointLabel ?? null) : null;
+  const requiresAddress = presentation?.requiresAddress ?? false;
+  const usesMeetingPoint = presentation?.usesMeetingPoint ?? false;
 
   const pickupRows: EmailCardRow[] = [];
   if (requiresAddress) {

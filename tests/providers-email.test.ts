@@ -7,14 +7,16 @@ import { resolveRouteConfig } from '../src/routes-manifest';
 
 // Plan 017 (design decision 4): a canonical (post-validateConfig-shaped) multi-point service, built
 // inline per the plan's "don't edit shared fixture files" rule — fixtures.ts stays a single-point
-// `meetingPoint` shorthand service so every other suite's byte-identical assertions keep holding.
-const { meetingPoint: _meetingPoint, ...tourWithoutShorthand } = service;
+// service so every other suite's byte-identical assertions keep holding.
 const multiPointTour: ServiceConfig = {
-  ...tourWithoutShorthand,
-  meetingPoints: [
-    { id: 'default', label: 'Praça do Comércio', mapsUrl: 'https://maps.google.com/?q=Praca+do+Comercio' },
-    { id: 'belem', label: 'Belém Tower', mapsUrl: 'https://maps.google.com/?q=Belem+Tower' },
-  ],
+  ...service,
+  location: {
+    ...service.location!,
+    meetingPoints: [
+      { id: 'default', label: 'Praça do Comércio', mapsUrl: 'https://maps.google.com/?q=Praca+do+Comercio' },
+      { id: 'belem', label: 'Belém Tower', mapsUrl: 'https://maps.google.com/?q=Belem+Tower' },
+    ],
+  },
 };
 const multiPointConfig: ClientConfig = { ...config, services: { vintage: multiPointTour } };
 
@@ -22,11 +24,14 @@ const multiPointConfig: ClientConfig = { ...config, services: { vintage: multiPo
 // (Maze's combined custom pickup+drop-off) — built inline per the same "don't touch fixtures.ts" rule.
 const bothFlagsTour: ServiceConfig = {
   ...multiPointTour,
-  pickupOptions: [
-    { id: 'default', requiresAddress: false, usesMeetingPoint: true },
-    { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
-    { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
-  ],
+  location: {
+    meetingPoints: multiPointTour.location!.meetingPoints!,
+    pickupOptions: [
+      { id: 'default', requiresAddress: false, usesMeetingPoint: true },
+      { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
+      { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
+    ],
+  },
   pricing: [
     { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
     { maxQuantity: 8, pickup: 'custom_dropoff', priceMinor: 21000 },

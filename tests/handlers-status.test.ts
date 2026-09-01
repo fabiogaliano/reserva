@@ -59,10 +59,9 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       end: utcToLocalIso(seeded.endsAt, config.business.timezone),
       quantity: seeded.quantity,
       priceMinor: seeded.priceMinor,
-      // Plan 017 (design decision 3): the validated fixture config has no meetingPoint shorthand
-      // left on it (normalized into meetingPoints) — this booking has no stored meetingPointId,
-      // so confirmationSummary resolves it to the service's single declared point.
-      meetingPoint: { label: service.meetingPoint!.label, mapsUrl: service.meetingPoint!.mapsUrl },
+      // Plan 017 (design decision 3): this booking has no stored meetingPointId, so
+      // confirmationSummary resolves it to the service's single declared point.
+      meetingPoint: { label: service.location!.meetingPoints![0]!.label, mapsUrl: service.location!.meetingPoints![0]!.mapsUrl },
       locale: seeded.locale,
     });
     expect(Object.keys(payload.booking).sort()).toEqual([
@@ -86,8 +85,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
       { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
     ];
-    const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = service;
-    const multiPointConfig = { ...config, services: { ...config.services, vintage: { ...vintageWithoutShorthand, meetingPoints: points } } };
+    const multiPointConfig = { ...config, services: { ...config.services, vintage: { ...service, location: { ...service.location!, meetingPoints: points } } } };
     const clock = () => new Date('2026-06-14T08:00:00.000Z');
 
     const chosenSecond = booking({
@@ -128,19 +126,20 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
       { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
     ];
-    const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = service;
     const mazeConfig = {
       ...config,
       services: {
         ...config.services,
         vintage: {
-          ...vintageWithoutShorthand,
-          meetingPoints: points,
-          pickupOptions: [
-            { id: 'default', requiresAddress: false, usesMeetingPoint: true },
-            { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
-            { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
-          ],
+          ...service,
+          location: {
+            meetingPoints: points,
+            pickupOptions: [
+              { id: 'default', requiresAddress: false, usesMeetingPoint: true },
+              { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
+              { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
+            ],
+          },
           pricing: [
             { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
             { maxQuantity: 8, pickup: 'custom_pickup', priceMinor: 20000 },

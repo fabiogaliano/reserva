@@ -6,14 +6,16 @@ import { clearGoogleTokenCache, GoogleServiceAccountAuth } from '../src/provider
 import { GoogleCalendarProvider, mapGoogleCalendarEvent } from '../src/providers/calendar-google/calendar';
 
 // Plan 017 (design decision 4): canonical (post-validateConfig-shaped) multi-point service, built
-// inline — fixtures.ts stays a single-point `meetingPoint` shorthand service for other suites.
-const { meetingPoint: _meetingPoint, ...tourWithoutShorthand } = service;
+// inline — fixtures.ts stays a single-point service for other suites.
 const multiPointTour: ServiceConfig = {
-  ...tourWithoutShorthand,
-  meetingPoints: [
-    { id: 'default', label: 'Praça do Comércio', mapsUrl: 'https://maps.google.com/?q=Praca+do+Comercio' },
-    { id: 'belem', label: 'Belém Tower', mapsUrl: 'https://maps.google.com/?q=Belem+Tower' },
-  ],
+  ...service,
+  location: {
+    ...service.location!,
+    meetingPoints: [
+      { id: 'default', label: 'Praça do Comércio', mapsUrl: 'https://maps.google.com/?q=Praca+do+Comercio' },
+      { id: 'belem', label: 'Belém Tower', mapsUrl: 'https://maps.google.com/?q=Belem+Tower' },
+    ],
+  },
 };
 const multiPointConfig: ClientConfig = { ...config, services: { vintage: multiPointTour } };
 
@@ -21,11 +23,14 @@ const multiPointConfig: ClientConfig = { ...config, services: { vintage: multiPo
 // (Maze's combined custom pickup+drop-off) — built inline per the same "don't touch fixtures.ts" rule.
 const bothFlagsTour: ServiceConfig = {
   ...multiPointTour,
-  pickupOptions: [
-    { id: 'default', requiresAddress: false, usesMeetingPoint: true },
-    { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
-    { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
-  ],
+  location: {
+    meetingPoints: multiPointTour.location!.meetingPoints!,
+    pickupOptions: [
+      { id: 'default', requiresAddress: false, usesMeetingPoint: true },
+      { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
+      { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
+    ],
+  },
   pricing: [
     { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
     { maxQuantity: 8, pickup: 'custom_dropoff', priceMinor: 21000 },
@@ -107,9 +112,7 @@ describe('Google Calendar provider', () => {
     await provider.deleteEvent('created');
     expect(request.mock.calls[2]?.[1]).toEqual(expect.objectContaining({ method: 'PATCH' }));
     expect(String(request.mock.calls[2]?.[0])).toContain('/created?sendUpdates=all');
-    // Plan 017: ServiceConfig.meetingPoint is now optional shorthand — the fixture service still uses it
-    // (single-point, unvalidated), so the non-null assertion carries the "this fixture declares it" fact.
-    expect(String(request.mock.calls[2]?.[1]?.body)).toContain(config.services.vintage!.meetingPoint!.mapsUrl);
+    expect(String(request.mock.calls[2]?.[1]?.body)).toContain(config.services.vintage!.location!.meetingPoints![0]!.mapsUrl);
     expect(request.mock.calls[3]?.[1]).toEqual(expect.objectContaining({ method: 'DELETE' }));
   });
 

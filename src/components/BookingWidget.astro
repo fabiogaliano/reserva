@@ -11,8 +11,9 @@ interface StartOption {
 
 interface PricingRuleProp {
   maxQuantity: number;
-  // Any pickup id the service's own pricing rows declare (see core/pricing.ts ResolvedPriceTable).
-  pickup: string;
+  // Any pickup id the service's own pricing rows declare (see core/pricing.ts ResolvedPriceTable),
+  // or absent for a location-less service's tiers-only pricing (plan 023 design decision 2).
+  pickup?: string;
   priceMinor: number;
 }
 
@@ -33,9 +34,10 @@ interface Props {
   availabilityTo?: string;
   locale?: string;
   quantityOptions?: number[];
-  // @deprecated use `pickupOptions` instead. Kept as an alias mapped onto the default id/custom id
-  // pair (DEFAULT_PICKUP_OPTIONS in core/config.ts) so existing embeds keep compiling and keep
-  // rendering today's exact markup — see plan 018 (design decision 9).
+  // @deprecated use `pickupOptions` instead. Kept as an alias mapped onto a fixed default id/custom
+  // id pair so existing embeds keep compiling and keep rendering today's exact markup — see plan
+  // 018 (design decision 9). A location-less service (plan 023) must pass pickupOptions={[]}
+  // explicitly rather than relying on this alias's default.
   pickupTypes?: Array<'default' | 'custom'>;
   // Plan 018 (design decision 9): service-declared pickup options, superseding pickupTypes above.
   // Pass config.services[slug].pickupOptions mapped to {id, label, hint, usesMeetingPoint}. Absent ⇒
@@ -219,7 +221,12 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     </label>
   )}
 
-  {pickupOptionEntries.length === 1 ? (
+  {/* Plan 023 (design decision 3): zero entries means the service declares no location module at
+      all — no hidden input, no radio group, so the submitted FormData naturally has no
+      pickupType field (see the submit handler below, which only sets payload.pickupType when
+      FormData actually carries it — checkout rejects the field's mere presence for such a
+      service). */}
+  {pickupOptionEntries.length === 0 ? null : pickupOptionEntries.length === 1 ? (
     <input type="hidden" name="pickupType" value={pickupOptionEntries[0].id} data-uses-meeting-point={pickupOptionEntries[0].usesMeetingPointAttr} />
   ) : (
     <fieldset class="bkw-field">
@@ -584,9 +591,13 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
           serviceSlug: String(formData.get('serviceSlug') ?? ''),
           start: String(formData.get('start') ?? ''),
           quantity: Number(formData.get('quantity')),
-          pickupType: String(formData.get('pickupType') ?? ''),
           locale: String(formData.get('locale') ?? ''),
         };
+        // Plan 023 (design decision 3): a location-less service renders no pickupType field at all
+        // (see pickupOptionEntries.length === 0 above) — omit it from the payload rather than
+        // sending an empty string, which checkout now rejects as a present-but-unsupported field.
+        const pickupType = formData.get('pickupType');
+        if (pickupType !== null) payload.pickupType = String(pickupType);
         // Plan 017 (design decision 5): a disabled meeting-point group (pickupType 'custom', or no
         // such group at all for a single-point service) naturally drops out of FormData — follow that
         // rather than sending an empty string the server would reject as an unknown id.

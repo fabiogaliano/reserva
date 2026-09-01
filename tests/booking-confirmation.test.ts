@@ -19,7 +19,7 @@ describe('booking confirmation page', () => {
           end: '2026-06-15T10:00:00.000+01:00',
           quantity: 2,
           priceMinor: 10000,
-          meetingPoint: config.services.vintage?.meetingPoint,
+          meetingPoint: config.services.vintage?.location?.meetingPoints?.[0],
           locale: 'en',
         },
       },

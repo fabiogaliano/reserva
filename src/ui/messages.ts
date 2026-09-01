@@ -154,6 +154,9 @@ export const defaultMessages = {
   'admin.remove': 'Remove',
   'admin.search': 'Search',
   'admin.searchPlaceholder': 'Reference, tour, pickup…',
+  // Plan 023 (design decision 4): shown instead of the key above when no configured service
+  // declares a location module — text is a placeholder pending plan 026's copy pass.
+  'admin.searchPlaceholderNoPickup': 'Reference, tour…',
   'admin.filterStatus': 'Status',
   'admin.all': 'All',
   'admin.apply': 'Apply filters',

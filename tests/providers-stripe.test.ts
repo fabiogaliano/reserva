@@ -19,12 +19,15 @@ import type { ClientConfig, ServiceConfig } from '../src/core/config';
 // the two-option default/custom service so every other suite's byte-identical assertions keep holding.
 const mazeTour: ServiceConfig = {
   ...service,
-  pickupOptions: [
-    { id: 'default', requiresAddress: false, usesMeetingPoint: true },
-    { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
-    { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
-    { id: 'meet_elsewhere', requiresAddress: false, usesMeetingPoint: true },
-  ],
+  location: {
+    meetingPoints: service.location!.meetingPoints!,
+    pickupOptions: [
+      { id: 'default', requiresAddress: false, usesMeetingPoint: true },
+      { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
+      { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
+      { id: 'meet_elsewhere', requiresAddress: false, usesMeetingPoint: true },
+    ],
+  },
   pricing: [
     { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
     { maxQuantity: 8, pickup: 'custom_pickup', priceMinor: 20000 },

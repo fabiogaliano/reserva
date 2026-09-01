@@ -1,5 +1,5 @@
 import type { Booking } from '../../core/booking';
-import { adminLocaleFor, meetingPointForBooking, pickupOptionFor, resolveService, type ServiceConfig } from '../../core/config';
+import { adminLocaleFor, meetingPointForBooking, pickupOptionFor, pickupPresentationFor, resolveService, type ServiceConfig } from '../../core/config';
 import { defaultCapacityForDate, occupancyFor, type CapacityDefault } from '../../core/occupancy';
 import { enumerateDateKeys, localDateKey, utcToLocalIso } from '../../core/time';
 import type { BookkitContext } from '../../context';
@@ -55,9 +55,8 @@ function adminSectionNav(messages: ReturnType<typeof resolveMessages>, hasIncide
 function adminMeetingPointSubLabel(config: BookkitContext['config'], booking: Booking): string {
   try {
     const service = resolveService(config, booking.serviceSlug);
-    const option = pickupOptionFor(service, booking.pickupType);
-    const usesMeetingPoint = option ? option.usesMeetingPoint : booking.pickupType === 'default';
-    if (!usesMeetingPoint || (service.meetingPoints?.length ?? 0) <= 1) return '';
+    const presentation = pickupPresentationFor(service, booking);
+    if (!presentation?.usesMeetingPoint || (service.location?.meetingPoints?.length ?? 0) <= 1) return '';
     return meetingPointForBooking(service, booking.meetingPointId, booking.meetingPointLabel).label;
   } catch {
     return '';
@@ -225,13 +224,17 @@ export function adminPage(
       rowTour = undefined;
     }
     const option = rowTour ? pickupOptionFor(rowTour, booking.pickupType) : undefined;
-    // Fallback chain (decision 8): a declared option's own label, else the message-catalog key for
+    // Plan 023 (design decision 4): gate on the row's own data, not config — a location-less
+    // booking (pickupType null) renders no pickup cell content at all. A non-null pickupType keeps
+    // the pre-023 fallback chain: a declared option's own label, else the message-catalog key for
     // the 'default'/'custom' ids (unchanged copy for every config that predates this plan), else
     // the raw id verbatim for a declared-but-uncataloged one.
-    const pickupLabel = option?.label
-      ?? (booking.pickupType === 'default' ? messages['widget.pickupDefault']
-        : booking.pickupType === 'custom' ? messages['widget.pickupCustom']
-        : booking.pickupType);
+    const pickupLabel = booking.pickupType === null
+      ? ''
+      : option?.label
+        ?? (booking.pickupType === 'default' ? messages['widget.pickupDefault']
+          : booking.pickupType === 'custom' ? messages['widget.pickupCustom']
+          : booking.pickupType);
     const requiresAddress = option ? option.requiresAddress : booking.pickupType === 'custom';
     const pickupSub = requiresAddress && booking.pickupAddress
       ? `<span class="bk-sub">${escapeHtml(booking.pickupAddress)}</span>`
@@ -360,9 +363,13 @@ export function adminPage(
   const filterActions = `<div class="bk-filter-actions"><button type="submit" class="bk-btn bk-btn--secondary">${escapeHtml(messages['admin.apply'])}</button>`
     + (filters.q || filters.status ? `<a class="bk-filter-clear" href="${escapeHtml(clearHref)}">${escapeHtml(messages['admin.clearFilters'])}</a>` : '')
     + `</div>`;
+  // Plan 023 (design decision 4): a deployment where no service declares a location module drops
+  // the "pickup" mention from the search hint — the key mechanism only; final copy is plan 026's.
+  const hasLocationService = Object.values(context.config.services).some((candidate) => candidate.location);
+  const searchPlaceholder = hasLocationService ? messages['admin.searchPlaceholder'] : messages['admin.searchPlaceholderNoPickup'];
   const filterForm = `<form method="get" class="bk-filters" role="search">`
     + (editDate ? `<input type="hidden" name="date" value="${escapeHtml(editDate)}">` : '')
-    + `<label class="bk-field"><span>${escapeHtml(messages['admin.search'])}</span><input class="bk-input" type="search" name="q" value="${escapeHtml(filters.q)}" placeholder="${escapeHtml(messages['admin.searchPlaceholder'])}"></label>`
+    + `<label class="bk-field"><span>${escapeHtml(messages['admin.search'])}</span><input class="bk-input" type="search" name="q" value="${escapeHtml(filters.q)}" placeholder="${escapeHtml(searchPlaceholder)}"></label>`
     + `<label class="bk-field"><span>${escapeHtml(messages['admin.filterStatus'])}</span><select class="bk-select" name="status">${statusOptions}</select></label>`
     + filterActions + `</form>`;
 

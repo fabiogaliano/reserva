@@ -369,8 +369,7 @@ describe('checkout meetingPointId (plan 017 design decision 2)', () => {
     { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
     { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
   ];
-  const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = service;
-  const multiPointConfig = { ...config, services: { ...config.services, vintage: { ...vintageWithoutShorthand, meetingPoints: points } } };
+  const multiPointConfig = { ...config, services: { ...config.services, vintage: { ...service, location: { ...service.location!, meetingPoints: points } } } };
 
   function checkoutContext(configOverride = config) {
     const repo = fakeRepository();
@@ -416,7 +415,7 @@ describe('checkout meetingPointId (plan 017 design decision 2)', () => {
     const response = await handleCheckout(checkoutRequest({}), context);
     expect(response.status).toBe(201);
     const { bookingId } = await response.json() as { bookingId: string };
-    expect(repo.rows.get(bookingId)).toMatchObject({ meetingPointId: 'default', meetingPointLabel: service.meetingPoint!.label });
+    expect(repo.rows.get(bookingId)).toMatchObject({ meetingPointId: 'default', meetingPointLabel: service.location!.meetingPoints![0]!.label });
   });
 
   it('does not require meetingPointId for a custom pickup, and stores the resolved first point', async () => {
@@ -446,18 +445,19 @@ describe('checkout pickupType (plan 018 design decision 6)', () => {
     { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
     { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
   ];
-  const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = service;
   // A Maze-shaped four-option service, built inline — fixtures.ts stays the two-option default/custom
   // service so every other suite's byte-identical assertions keep holding.
   const mazeTour: ServiceConfig = {
-    ...vintageWithoutShorthand,
-    meetingPoints: points,
-    pickupOptions: [
-      { id: 'default', requiresAddress: false, usesMeetingPoint: true },
-      { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
-      { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
-      { id: 'meet_elsewhere', requiresAddress: false, usesMeetingPoint: true },
-    ],
+    ...service,
+    location: {
+      meetingPoints: points,
+      pickupOptions: [
+        { id: 'default', requiresAddress: false, usesMeetingPoint: true },
+        { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
+        { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
+        { id: 'meet_elsewhere', requiresAddress: false, usesMeetingPoint: true },
+      ],
+    },
     pricing: [
       { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
       { maxQuantity: 8, pickup: 'custom_pickup', priceMinor: 20000 },
@@ -504,9 +504,7 @@ describe('checkout pickupType (plan 018 design decision 6)', () => {
     });
   });
 
-  it('a legacy two-option service still accepts exactly default/custom byte-identically', async () => {
-    // config.services.vintage carries no pickupOptions — pickupOptionFor falls back to
-    // DEFAULT_PICKUP_OPTIONS, so this is the same request the pre-018 suite already exercises.
+  it('a two-option (default/custom) service still accepts both ids', async () => {
     const { repo, context } = checkoutContext(config);
     const response = await handleCheckout(checkoutRequest({ pickupType: 'custom' }), context);
     expect(response.status).toBe(201);
@@ -514,17 +512,21 @@ describe('checkout pickupType (plan 018 design decision 6)', () => {
     expect(repo.rows.get(bookingId)).toMatchObject({ pickupType: 'custom', priceMinor: 12000 });
   });
 
-  it('a legacy two-option service keeps the exact pre-018 validation error for an invalid AND a missing pickupType', async () => {
-    // The byte-identity done criterion covers error bodies too — API callers may match on the
-    // message — so the default pair must never emit the new "must be one of" wording.
+  // Plan 023: DEFAULT_PICKUP_OPTIONS injection (and its pinned error message) is gone — every
+  // location-ful service now declares its own options explicitly, so an invalid or missing
+  // pickupType always gets the generic "must be one of" / "is required" wording.
+  it('names the declared ids for an invalid pickupType, and reports missing separately', async () => {
     const { context } = checkoutContext(config);
-    for (const body of [{ pickupType: 'bogus' }, { pickupType: undefined }]) {
-      const response = await handleCheckout(checkoutRequest(body), context);
-      expect(response.status).toBe(400);
-      await expect(response.json()).resolves.toMatchObject({
-        error: { code: 'validation_failed', message: 'pickupType must be default or custom' },
-      });
-    }
+    const invalidResponse = await handleCheckout(checkoutRequest({ pickupType: 'bogus' }), context);
+    expect(invalidResponse.status).toBe(400);
+    await expect(invalidResponse.json()).resolves.toMatchObject({
+      error: { code: 'validation_failed', message: 'pickupType must be one of: default, custom' },
+    });
+    const missingResponse = await handleCheckout(checkoutRequest({ pickupType: undefined }), context);
+    expect(missingResponse.status).toBe(400);
+    await expect(missingResponse.json()).resolves.toMatchObject({
+      error: { code: 'validation_failed', message: 'pickupType is required' },
+    });
   });
 
   it('a declared service distinguishes a missing pickupType from an undeclared one', async () => {

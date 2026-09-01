@@ -1,5 +1,5 @@
 import { canCancelBooking, canRescheduleBooking, type Booking } from '../core/booking';
-import { meetingPointForBooking, pickupOptionFor, resolveService } from '../core/config';
+import { meetingPointForBooking, pickupPresentationFor, resolveService } from '../core/config';
 import { verifyPayment } from '../core/payment-verification';
 import { parseUtcInstant, utcToLocalIso } from '../core/time';
 import {
@@ -17,44 +17,44 @@ import { run, withSensitiveHeaders } from './shared';
 
 function bookingSummary(context: BookkitContext, booking: Booking): Record<string, unknown> {
   const service = resolveService(context.config, booking.serviceSlug);
-  // Plan 018 (design decision 8): the manage page renders off these two flags, not off the raw
-  // pickupType — a declared option like Maze's custom pick-up must show its address and hide the
-  // meeting point regardless of what its id happens to be. A stored id no longer declared in
-  // config degrades to the pre-018 rendering: address only for the literal 'custom' id, meeting
-  // point always shown.
-  const option = pickupOptionFor(service, booking.pickupType);
+  // Plan 023 (design decision 4): read surfaces gate on the booking ROW's data, not config — a
+  // location-less booking (pickupType null) gets no pickup/meeting-point fields at all, and a
+  // pre-023 booking of a service that later drops its location module still renders (pickupType
+  // stays non-null on that row even though the service config no longer declares any options).
+  const presentation = pickupPresentationFor(service, booking);
   return {
     reference: booking.reference,
     serviceSlug: booking.serviceSlug,
     start: utcToLocalIso(booking.startsAt, context.config.business.timezone),
     end: utcToLocalIso(booking.endsAt, context.config.business.timezone),
     quantity: booking.quantity,
-    pickupType: booking.pickupType,
-    pickupAddress: booking.pickupAddress,
-    pickupRequiresAddress: option ? option.requiresAddress : booking.pickupType === 'custom',
-    pickupUsesMeetingPoint: option ? option.usesMeetingPoint : true,
+    ...(presentation ? {
+      pickupType: booking.pickupType,
+      pickupAddress: booking.pickupAddress,
+      pickupRequiresAddress: presentation.requiresAddress,
+      pickupUsesMeetingPoint: presentation.usesMeetingPoint,
+      // Plan 017 (design decision 3): resolved per booking, not read live off the service — a
+      // stored id no longer declared in config falls back to the booking's own label snapshot
+      // instead of silently pointing the customer at whatever point happens to be first today.
+      meetingPoint: meetingPointForBooking(service, booking.meetingPointId, booking.meetingPointLabel),
+    } : {}),
     customerName: booking.customerName,
     customerEmail: booking.customerEmail,
     customerPhone: booking.customerPhone,
     locale: booking.locale,
     status: booking.status,
     priceMinor: booking.priceMinor,
-    // Plan 017 (design decision 3): resolved per booking, not read live off the service — a stored
-    // id no longer declared in config falls back to the booking's own label snapshot instead of
-    // silently pointing the customer at whatever point happens to be first today.
-    meetingPoint: meetingPointForBooking(service, booking.meetingPointId, booking.meetingPointLabel),
   };
 }
 
 function confirmationSummary(context: BookkitContext, booking: Booking): Record<string, unknown> {
   const service = resolveService(context.config, booking.serviceSlug);
-  // Plan 019 (design decision 2): gate the meeting point on the selected option's
-  // usesMeetingPoint, the same read-model filter bookingSummary already applies (plan 018
-  // decision 8) — otherwise custom_both (requiresAddress, no meeting point) would still tell the
-  // customer to meet at a dock their option never uses. A stored id no longer declared in config
-  // has no option to check, so it preserves the pre-018 behavior and includes the meeting point.
-  const option = pickupOptionFor(service, booking.pickupType);
-  const includeMeetingPoint = option ? option.usesMeetingPoint : true;
+  // Plan 019 (design decision 2), generalized by plan 023 (design decision 4): gate the meeting
+  // point on the row's own presentation — no location data at all (pickupType null) or a selected
+  // option that never used a meeting point (custom_both) must not tell the customer to meet
+  // anywhere.
+  const presentation = pickupPresentationFor(service, booking);
+  const includeMeetingPoint = presentation?.usesMeetingPoint ?? false;
   return {
     reference: booking.reference,
     serviceSlug: booking.serviceSlug,

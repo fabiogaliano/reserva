@@ -64,10 +64,9 @@ describe('GET /manage (spec §11)', () => {
       customerEmail: seeded.customerEmail,
       customerPhone: seeded.customerPhone,
       status: seeded.status,
-      // Plan 017 (design decision 3): the validated fixture config has no meetingPoint shorthand
-      // left on it (normalized into meetingPoints by validateConfig) — this booking has no stored
-      // meetingPointId, so bookingSummary resolves it to the service's single declared point.
-      meetingPoint: { label: service.meetingPoint!.label, mapsUrl: service.meetingPoint!.mapsUrl },
+      // Plan 017 (design decision 3): this booking has no stored meetingPointId, so bookingSummary
+      // resolves it to the service's single declared point.
+      meetingPoint: { label: service.location!.meetingPoints![0]!.label, mapsUrl: service.location!.meetingPoints![0]!.mapsUrl },
     });
   });
 
@@ -76,8 +75,7 @@ describe('GET /manage (spec §11)', () => {
       { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
       { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
     ];
-    const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = service;
-    const multiPointConfig = { ...config, services: { ...config.services, vintage: { ...vintageWithoutShorthand, meetingPoints: points } } };
+    const multiPointConfig = { ...config, services: { ...config.services, vintage: { ...service, location: { ...service.location!, meetingPoints: points } } } };
 
     const chosenSecond = booking({
       id: 'b-manage-meeting-point-chosen', cancelToken: 'cancel-meeting-point-chosen', operatorToken: 'operator-meeting-point-chosen',
@@ -114,19 +112,20 @@ describe('GET /manage (spec §11)', () => {
       { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
       { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
     ];
-    const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = service;
     const mazeConfig = {
       ...config,
       services: {
         ...config.services,
         vintage: {
-          ...vintageWithoutShorthand,
-          meetingPoints: points,
-          pickupOptions: [
-            { id: 'default', requiresAddress: false, usesMeetingPoint: true },
-            { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
-            { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
-          ],
+          ...service,
+          location: {
+            meetingPoints: points,
+            pickupOptions: [
+              { id: 'default', requiresAddress: false, usesMeetingPoint: true },
+              { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
+              { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
+            ],
+          },
           pricing: [
             { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
             { maxQuantity: 8, pickup: 'custom_pickup', priceMinor: 20000 },
@@ -151,7 +150,10 @@ describe('GET /manage (spec §11)', () => {
       expect(payload.booking).toMatchObject({ pickupRequiresAddress: true, pickupUsesMeetingPoint: false });
     });
 
-    it('degrades an undeclared stored id to the pre-018 flags (address iff the literal custom id, meeting point shown)', async () => {
+    // Plan 023 (design decision 4): an undeclared stored id falls back to what the row itself
+    // proves was collected (pickupAddress/meetingPointId presence), not a guess pinned to the
+    // retired default/custom pair.
+    it('degrades an undeclared stored id to what the row itself proves was collected', async () => {
       const seeded = booking({
         id: 'b-manage-pickup-undeclared', cancelToken: 'cancel-pickup-undeclared', operatorToken: 'operator-pickup-undeclared',
         startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
@@ -159,7 +161,16 @@ describe('GET /manage (spec §11)', () => {
       });
       const response = await handleManage(manageRequest(seeded.cancelToken), mazeContext([seeded]));
       const payload = await response.json() as { booking: Record<string, unknown> };
-      expect(payload.booking).toMatchObject({ pickupRequiresAddress: false, pickupUsesMeetingPoint: true });
+      expect(payload.booking).toMatchObject({ pickupRequiresAddress: false, pickupUsesMeetingPoint: false });
+
+      const seededWithEvidence = booking({
+        id: 'b-manage-pickup-undeclared-2', cancelToken: 'cancel-pickup-undeclared-2', operatorToken: 'operator-pickup-undeclared-2',
+        startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
+        pickupType: 'no_longer_declared', pickupAddress: 'Hotel Mundial, Lisbon', meetingPointId: 'square', meetingPointLabel: 'The Square',
+      });
+      const responseWithEvidence = await handleManage(manageRequest(seededWithEvidence.cancelToken), mazeContext([seededWithEvidence]));
+      const payloadWithEvidence = await responseWithEvidence.json() as { booking: Record<string, unknown> };
+      expect(payloadWithEvidence.booking).toMatchObject({ pickupRequiresAddress: true, pickupUsesMeetingPoint: true });
     });
 
     it('renderManagePage gates the address and meeting-point facts on the flags, independently', () => {

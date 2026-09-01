@@ -137,6 +137,7 @@
   "admin.remove": "Remover",
   "admin.search": "Pesquisar",
   "admin.searchPlaceholder": "Referência, tour, recolha…",
+  "admin.searchPlaceholderNoPickup": "Referência, tour…",
   "admin.filterStatus": "Estado",
   "admin.all": "Todos",
   "admin.apply": "Aplicar filtros",
