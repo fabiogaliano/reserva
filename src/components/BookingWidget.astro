@@ -329,8 +329,8 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     isDateDisallowed: (date: Date) => boolean;
   }
 
-  interface AvailabilitySlot { start: string; remaining: number; remainingBookings: number }
-  interface AvailabilityDay { date: string; status: string; closedReason?: string; slots: AvailabilitySlot[] }
+  interface AvailabilitySlot { start: string; remaining: number | null }
+  interface AvailabilityDay { date: string; status: string; closedReason: string | null; slots: AvailabilitySlot[] }
   interface AvailabilityResponse { days?: AvailabilityDay[]; limitedThreshold?: number; error?: { message?: string } }
   // Keyed by whatever pickup ids the service's own pricing rows declare (see core/pricing.ts).
   type ResolvedPriceTable = Record<string, number[]>;
@@ -455,10 +455,13 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
       time.className = 'bkw-slot-time';
       time.textContent = slot.start.slice(11, 16);
       label.append(input, time);
-      if (slot.remainingBookings > 0 && slot.remainingBookings <= data.limitedThreshold) {
+      // Plan 027 (design decision 4): the server gates the exact count against the deployment's
+      // own limitedThreshold, so a non-null `remaining` IS the scarce case — the widget no longer
+      // re-applies a threshold of its own.
+      if (slot.remaining !== null) {
         const hint = document.createElement('span');
         hint.className = 'bkw-slot-hint';
-        hint.textContent = fill(data.i18n.limited ?? '', { n: slot.remainingBookings });
+        hint.textContent = fill(data.i18n.limited ?? '', { n: slot.remaining });
         label.append(hint);
       }
       container.append(label);

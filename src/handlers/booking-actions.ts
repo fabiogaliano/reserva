@@ -1,3 +1,4 @@
+import type { ManageActionResponse } from '../core/api';
 import {
   canCancelBooking,
   canRescheduleBooking,
@@ -37,7 +38,7 @@ export function handleCustomerCancel(request: Request, context: BookkitContext):
     const body = await requestJson(request);
     const token = requireString(body.token, 'token');
     const booking = await tokenBooking(context, token);
-    if (booking.status === 'cancelled') return json({ ok: true });
+    if (booking.status === 'cancelled') return json<ManageActionResponse>({ ok: true });
     if (booking.status !== 'confirmed') throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
     if (!canCancelBooking(booking, nowIso(context), context.config.booking.cancelCutoffHours)) throw new HttpError(403, 'past_cutoff', 'The cancellation deadline has passed');
     const cancelled = cancelBooking(booking, 'customer', nowIso(context));
@@ -57,7 +58,7 @@ export function handleCustomerCancel(request: Request, context: BookkitContext):
       throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
     }
     await dispatchMutation(context, 'booking.cancelled_by_customer', updated);
-    return json({ ok: true });
+    return json<ManageActionResponse>({ ok: true });
   }).then(withSensitiveHeaders);
 }
 
@@ -122,7 +123,7 @@ export function handleCustomerReschedule(request: Request, context: BookkitConte
     const body = await requestJson(request);
     const booking = await tokenBooking(context, requireString(body.token, 'token'));
     await rescheduleWithToken(context, booking, await readNewStart(body), false);
-    return json({ ok: true });
+    return json<ManageActionResponse>({ ok: true });
   }).then(withSensitiveHeaders);
 }
 
@@ -182,7 +183,7 @@ async function reconcileCancelledRefund(
 ): Promise<Response> {
   const existing = await context.repo.getRefundOperationByBookingId(booking.id);
   if (!existing) {
-    if (refund === 'none') return json({ ok: true });
+    if (refund === 'none') return json<ManageActionResponse>({ ok: true });
     if (booking.paymentRef === null) {
       throw new HttpError(409, 'refund_payment_ref_missing', 'Cannot refund a booking without a payment reference');
     }
@@ -196,7 +197,7 @@ async function reconcileCancelledRefund(
     });
     if (claimed) {
       await resolvePendingRefund(context, booking, operationId, refund, booking.paymentRef);
-      return json({ ok: true });
+      return json<ManageActionResponse>({ ok: true });
     }
     const concurrent = await context.repo.getRefundOperationByBookingId(booking.id);
     if (!concurrent || concurrent.choice !== refund) {
@@ -205,7 +206,7 @@ async function reconcileCancelledRefund(
     if (concurrent.status !== 'succeeded') {
       await resolvePendingRefund(context, booking, concurrent.id, concurrent.choice, concurrent.paymentIntent ?? booking.paymentRef);
     }
-    return json({ ok: true });
+    return json<ManageActionResponse>({ ok: true });
   }
   if (existing.choice !== refund) {
     throw new HttpError(409, 'refund_conflict', 'A different refund decision already won for this booking');
@@ -213,7 +214,7 @@ async function reconcileCancelledRefund(
   if (existing.status !== 'succeeded') {
     await resolvePendingRefund(context, booking, existing.id, existing.choice, existing.paymentIntent ?? booking.paymentRef ?? null);
   }
-  return json({ ok: true });
+  return json<ManageActionResponse>({ ok: true });
 }
 
 async function completeClaimedOperatorCancellation(
@@ -236,7 +237,7 @@ async function completeClaimedOperatorCancellation(
     refund,
     result.booking.paymentRef ?? booking.paymentRef ?? null,
   );
-  return json({ ok: true });
+  return json<ManageActionResponse>({ ok: true });
 }
 
 export function handleOperatorCancel(request: Request, context: BookkitContext): Promise<Response> {
@@ -279,7 +280,7 @@ export function handleOperatorCancel(request: Request, context: BookkitContext):
       if (!existing || existing.choice !== refund) {
         throw new HttpError(409, 'refund_conflict', 'A different refund decision already won for this booking');
       }
-      if (existing.status === 'succeeded') return json({ ok: true });
+      if (existing.status === 'succeeded') return json<ManageActionResponse>({ ok: true });
       const fresh = await context.repo.getBookingById(booking.id);
       if (existing.status === 'requested' && fresh?.status === 'confirmed') {
         // A crash or calendar failure can leave a claimed decision before its CAS. Resume the
@@ -290,7 +291,7 @@ export function handleOperatorCancel(request: Request, context: BookkitContext):
       // refund until the booking is durably cancelled (finding #1).
       if (fresh?.status !== 'cancelled') throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
       await resolvePendingRefund(context, booking, existing.id, existing.choice, existing.paymentIntent ?? booking.paymentRef ?? null);
-      return json({ ok: true });
+      return json<ManageActionResponse>({ ok: true });
     }
 
     return completeClaimedOperatorCancellation(context, booking, operationId, refund);
@@ -303,7 +304,7 @@ export function handleOperatorReschedule(request: Request, context: BookkitConte
     const body = await requestJson(request);
     const booking = await operatorBooking(context, request, body);
     await rescheduleWithToken(context, booking, await readNewStart(body), true);
-    return json({ ok: true });
+    return json<ManageActionResponse>({ ok: true });
   }).then(withSensitiveHeaders);
 }
 
@@ -312,7 +313,7 @@ export function handleOperatorNoShow(request: Request, context: BookkitContext):
     if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const body = await requestJson(request);
     const booking = await operatorBooking(context, request, body);
-    if (booking.status === 'no_show') return json({ ok: true });
+    if (booking.status === 'no_show') return json<ManageActionResponse>({ ok: true });
     try {
       const next = markNoShow(booking, nowIso(context));
       const updated = await context.repo.transitionToNoShow(next.id, {
@@ -323,7 +324,7 @@ export function handleOperatorNoShow(request: Request, context: BookkitContext):
       // converts it to the same 409 invalid_transition the wrong-state check already uses.
       if (!updated) throw new Error('Booking cannot be marked no-show');
       await dispatchMutation(context, 'booking.no_show', updated);
-      return json({ ok: true });
+      return json<ManageActionResponse>({ ok: true });
     } catch (error) {
       throw new HttpError(409, 'invalid_transition', error instanceof Error ? error.message : 'Booking cannot be marked no-show');
     }

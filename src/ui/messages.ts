@@ -261,6 +261,17 @@ export const defaultMessages = {
 export type BookkitMessageKey = keyof typeof defaultMessages;
 export type BookkitMessages = Record<BookkitMessageKey, string>;
 
+// Plan 027 (design decision 4): the availability API returns structured scarcity, never rendered
+// status text — this is the closed set of catalog keys that renders it, exported so a consumer
+// that wants Reserva's own copy reads these (through resolveMessages/formatMessage) instead of
+// inventing English strings the way the first consumer's widget had to. `widget.limited` and
+// `widget.spotsLeft` interpolate {n} from a slot's non-null `remaining`.
+export const SLOT_STATUS_MESSAGE_KEYS = [
+  'widget.limited', 'widget.spotsLeft', 'widget.soldOut', 'widget.noSlots', 'widget.closed',
+] as const satisfies readonly BookkitMessageKey[];
+
+export type SlotStatusMessageKey = (typeof SLOT_STATUS_MESSAGE_KEYS)[number];
+
 // Plan 026 (design decision 4): a generic library must not default to Portuguese. Both real
 // consumers (consumer-a, consumer-b) set config.locales.default explicitly, so this only
 // changes behavior for a caller of resolveMessages/the components with no locale argument at all.

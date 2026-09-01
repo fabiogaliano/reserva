@@ -1,4 +1,5 @@
 import type { D1Database, D1Result } from '@cloudflare/workers-types';
+import type { ApiErrorCode } from './core/api';
 import type { Booking, BookingStatus, CancellationActor } from './core/booking';
 import type { PickupType } from './core/config';
 import type { EmailRecipientRole } from './core/events';
@@ -66,7 +67,9 @@ export class HoldLimitExceededError extends Error {
 // any `Error & {status, code}` into a clean JSON response, so no handler-level catch is needed.
 export class DuplicatePaymentRefError extends Error {
   readonly status = 409;
-  readonly code = 'duplicate_payment_ref';
+  // Plan 027 (design decision 2): typed against the closed catalog, because errorResponse
+  // (src/http.ts) turns this into the API error envelope verbatim.
+  readonly code: ApiErrorCode = 'duplicate_payment_ref';
   constructor(paymentRef: string) {
     super(`payment_ref ${paymentRef} already confirmed a different booking`);
     this.name = 'DuplicatePaymentRefError';

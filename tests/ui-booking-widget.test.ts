@@ -24,13 +24,16 @@ describe('BookingWidget.astro (BK-CAP-002: threshold + units)', () => {
     expect(widgetSource).toContain('data.limitedThreshold = limitedThreshold');
   });
 
-  it('declares remainingBookings on the client-side slot type and gates the scarcity hint on it, not the hardcoded 3', () => {
-    expect(widgetSource).toContain('interface AvailabilitySlot { start: string; remaining: number; remainingBookings: number }');
+  // Plan 027 (design decision 4): the server now gates the exact count against the deployment's
+  // limitedThreshold and publishes `remaining: number | null`, so the widget renders the hint on
+  // nullness alone — it must not carry a threshold rule of its own any more.
+  it('reads the gated remaining count and applies no threshold rule of its own', () => {
+    expect(widgetSource).toContain('interface AvailabilitySlot { start: string; remaining: number | null }');
     expect(widgetSource).toContain('interface WidgetData');
-    expect(widgetSource).toMatch(/limitedThreshold: number;/); // WidgetData field
-    expect(widgetSource).toContain('slot.remainingBookings > 0 && slot.remainingBookings <= data.limitedThreshold');
-    // The old hardcoded gate must be gone, not just supplemented.
-    expect(widgetSource).not.toMatch(/slot\.remaining\s*<=\s*3/);
+    expect(widgetSource).toContain('if (slot.remaining !== null)');
+    // No client-side threshold comparison of any kind survives.
+    expect(widgetSource).not.toMatch(/slot\.remaining\w*\s*<=\s*/);
+    expect(widgetSource).not.toContain('remainingBookings');
   });
 });
 

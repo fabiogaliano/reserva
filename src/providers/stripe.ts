@@ -1,4 +1,5 @@
 import Stripe from 'stripe';
+import type { ApiErrorCode } from '../core/api';
 import type { Booking } from '../core/booking';
 import type { ClientConfig } from '../core/config';
 import { pickupOptionFor, resolveService } from '../core/config';
@@ -107,7 +108,7 @@ export function stripeLocaleFor(locale: string): string {
 
 export class StripeWebhookVerificationError extends Error {
   readonly status = 400;
-  readonly code = 'invalid_payment_signature';
+  readonly code: ApiErrorCode = 'invalid_payment_signature';
 
   constructor() {
     super('Stripe webhook signature verification failed');

@@ -64,8 +64,11 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       meetingPoint: { label: service.location!.meetingPoints![0]!.label, mapsUrl: service.location!.meetingPoints![0]!.mapsUrl },
       locale: seeded.locale,
     });
+    // Plan 027 (design decision 2): the status payload is a Pick of the one WireBooking
+    // projection plus presentation, and every key is always present (null when empty) — this list
+    // is the leak guard: no ids, no tokens, no customer contact details.
     expect(Object.keys(payload.booking).sort()).toEqual([
-      'end', 'locale', 'meetingPoint', 'priceMinor', 'quantity', 'reference', 'serviceSlug', 'start',
+      'currency', 'end', 'locale', 'meetingPoint', 'metadataRows', 'priceMinor', 'quantity', 'reference', 'serviceSlug', 'start',
     ]);
     expect(payload.booking).not.toHaveProperty('customerEmail');
     expect(payload.booking).not.toHaveProperty('customerPhone');
@@ -167,9 +170,10 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       });
       const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_pickup_false'), mazeContext([seeded]));
       const payload = await response.json() as { booking: Record<string, unknown> };
-      expect(payload.booking).not.toHaveProperty('meetingPoint');
+      // Plan 027: present-as-null rather than absent, so a consumer never branches on key presence.
+      expect(payload.booking.meetingPoint).toBeNull();
       expect(payload.booking).not.toHaveProperty('pickupAddress');
-      expect(Object.keys(payload.booking).sort()).toEqual(['end', 'locale', 'priceMinor', 'quantity', 'reference', 'serviceSlug', 'start']);
+      expect(Object.keys(payload.booking).sort()).toEqual(['currency', 'end', 'locale', 'meetingPoint', 'metadataRows', 'priceMinor', 'quantity', 'reference', 'serviceSlug', 'start']);
     });
 
     it('includes the chosen point for a declared usesMeetingPoint: true option (custom_dropoff)', async () => {
@@ -334,7 +338,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_expiring'), context);
     expect(response.status).toBe(200);
     expectSensitiveHeaders(response);
-    await expect(response.json()).resolves.toEqual({ status: 'expired' });
+    await expect(response.json()).resolves.toEqual({ status: 'expired', booking: null });
     expect(repo.rows.get(seeded.id)?.status).toBe('expired');
   });
 
@@ -372,7 +376,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_expired_mismatch'), context);
     expect(response.status).toBe(200);
     expectSensitiveHeaders(response);
-    await expect(response.json()).resolves.toEqual({ status: 'pending' });
+    await expect(response.json()).resolves.toEqual({ status: 'pending', booking: null });
     expect(warnings).toEqual([{
       message: 'payment verification rejected',
       data: { bookingId: seeded.id, reason: 'amount_mismatch' },
@@ -393,7 +397,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_unknown'), context);
     expect(response.status).toBe(200);
     expectSensitiveHeaders(response);
-    await expect(response.json()).resolves.toEqual({ status: 'not_found' });
+    await expect(response.json()).resolves.toEqual({ status: 'not_found', booking: null });
   });
 
   it('reports pending for a still-open session, without touching Stripe-side effects', async () => {
@@ -429,7 +433,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_open'), context);
     expect(response.status).toBe(200);
     expectSensitiveHeaders(response);
-    await expect(response.json()).resolves.toEqual({ status: 'pending' });
+    await expect(response.json()).resolves.toEqual({ status: 'pending', booking: null });
     expect(calendarCreates).toBe(0);
     expect(repo.rows.get(seeded.id)?.status).toBe('hold');
   });
@@ -455,8 +459,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     expect(response.status).toBe(200);
     expectSensitiveHeaders(response);
     const payload = await response.json() as Record<string, unknown>;
-    expect(payload).toEqual({ status: 'confirmed' });
-    expect(payload).not.toHaveProperty('booking');
+    expect(payload).toEqual({ status: 'confirmed', booking: null });
   });
 
   it('does not renew confirmed details when fulfillment updates the booking', async () => {
@@ -487,7 +490,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_confirmed_renewal'), context);
     expect(response.status).toBe(200);
     expectSensitiveHeaders(response);
-    await expect(response.json()).resolves.toEqual({ status: 'confirmed' });
+    await expect(response.json()).resolves.toEqual({ status: 'confirmed', booking: null });
     expect(repo.rows.get(seeded.id)).toMatchObject({ createdAt: seeded.createdAt, updatedAt: now });
     expect(sideEffectOperation(repo, seeded.id, { family: 'calendar_create' })).toMatchObject({ status: 'succeeded' });
   });
@@ -572,7 +575,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_cancelled'), context);
     expect(response.status).toBe(200);
     expectSensitiveHeaders(response);
-    await expect(response.json()).resolves.toEqual({ status: 'cancelled' });
+    await expect(response.json()).resolves.toEqual({ status: 'cancelled', booking: null });
 
     const noShowRepo = fakeRepository([booking({ id: 'b-status-no-show', status: 'no_show', paymentSessionRef: 'cs_status_no_show' })]);
     const noShowContext = createBookkitContext({
@@ -584,6 +587,6 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     });
     const noShowResponse = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_no_show'), noShowContext);
     expectSensitiveHeaders(noShowResponse);
-    await expect(noShowResponse.json()).resolves.toEqual({ status: 'cancelled' });
+    await expect(noShowResponse.json()).resolves.toEqual({ status: 'cancelled', booking: null });
   });
 });

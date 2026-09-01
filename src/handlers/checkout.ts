@@ -1,3 +1,4 @@
+import type { CheckoutResponse } from '../core/api';
 import type { Booking } from '../core/booking';
 import { DEFAULT_TOKEN_EXPIRY_DAYS, pickupOptionFor, resolveMeetingPoint, resolveService, type MetadataField, type PickupType, type ServiceConfig } from '../core/config';
 import { availabilityForDay, capacityForDate, defaultCapacityForDate, occupancyFor } from '../core/occupancy';
@@ -293,7 +294,7 @@ export function handleCheckout(request: Request, context: BookkitContext): Promi
       // backfill path (getBookingBySessionRef / metadata.bookingId), same as before this fix.
       const checkout = await context.providers.payments.createCheckout(booking, context.config, context.routeConfig.paths);
       await context.repo.updateBooking(booking.id, { paymentSessionRef: checkout.sessionRef, updatedAt: nowIso(context) });
-      return json({ checkoutUrl: checkout.url, bookingId: booking.id, reference: booking.reference }, 201);
+      return json<CheckoutResponse>({ checkoutUrl: checkout.url, bookingId: booking.id, reference: booking.reference }, 201);
     } catch (error) {
       await context.repo.expireHold(booking.id, nowIso(context)).catch(() => undefined);
       throw error;

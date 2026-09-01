@@ -1,12 +1,13 @@
-export interface ErrorBody {
-  error: { code: string; message: string };
-}
+import { isApiErrorCode, type ApiErrorCode, type ApiErrorEnvelope } from './core/api';
 
+// Plan 027 (design decision 2): `code` is the closed API_ERROR_CODES union, not a free string — a
+// code that isn't in the catalog no longer compiles, which is what lets a consumer switch
+// exhaustively on failure causes.
 export class HttpError extends Error {
   readonly status: number;
-  readonly code: string;
+  readonly code: ApiErrorCode;
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: ApiErrorCode, message: string) {
     super(message);
     this.name = 'HttpError';
     this.status = status;
@@ -22,19 +23,22 @@ export function json<T>(value: T, status = 200, headers: HeadersInit = {}): Resp
 
 export function errorResponse(error: unknown): Response {
   if (error instanceof HttpError) {
-    return json<ErrorBody>({ error: { code: error.code, message: error.message } }, error.status);
+    return json<ApiErrorEnvelope>({ error: { code: error.code, message: error.message } }, error.status);
   }
+  // A foreign error that already describes itself as an HTTP failure (a provider error, a caller's
+  // own thrown shape) is honored only when its code is in the catalog — otherwise the envelope
+  // would carry a code no consumer can enumerate, which is exactly what the closed set forbids.
   if (error instanceof Error && 'status' in error && 'code' in error) {
     const status = Number((error as Error & { status: unknown }).status);
     const code = (error as Error & { code: unknown }).code;
-    if (Number.isInteger(status) && status >= 400 && status <= 599 && typeof code === 'string') {
-      return json<ErrorBody>({ error: { code, message: error.message } }, status);
+    if (Number.isInteger(status) && status >= 400 && status <= 599 && isApiErrorCode(code)) {
+      return json<ApiErrorEnvelope>({ error: { code, message: error.message } }, status);
     }
   }
-  return json<ErrorBody>({ error: { code: 'internal_error', message: 'An unexpected error occurred' } }, 500);
+  return json<ApiErrorEnvelope>({ error: { code: 'internal_error', message: 'An unexpected error occurred' } }, 500);
 }
 
-export function badRequest(code: string, message: string): never {
+export function badRequest(code: ApiErrorCode, message: string): never {
   throw new HttpError(400, code, message);
 }
 

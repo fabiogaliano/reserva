@@ -1,4 +1,5 @@
-import { canCancelBooking, canRescheduleBooking, type Booking } from '../core/booking';
+import type { ConfirmationBooking, ManageBooking, ManageResponse, StatusResponse } from '../core/api';
+import { canCancelBooking, canRescheduleBooking, toWireBooking, type Booking } from '../core/booking';
 import { meetingPointForBooking, metadataRowsForBooking, pickupPresentationFor, resolveService } from '../core/config';
 import { verifyPayment } from '../core/payment-verification';
 import { parseUtcInstant, utcToLocalIso } from '../core/time';
@@ -15,63 +16,72 @@ import { nowIso } from '../context';
 import { HttpError, json } from '../http';
 import { run, withSensitiveHeaders } from './shared';
 
-function bookingSummary(context: BookkitContext, booking: Booking): Record<string, unknown> {
+// Plan 027 (design decision 2): both summaries below are built from `toWireBooking` — the one
+// public booking projection — and their exported types are `Pick`ed from `WireBooking`, so a
+// change to that projection breaks these at compile time instead of letting a pushed booking and a
+// pulled booking describe the same row differently. What they add on top is presentation only:
+// business-local start/end (the projection's are UTC), the meeting point resolved against the
+// booking's own stored id, and locale-resolved metadata labels.
+function manageBookingPayload(context: BookkitContext, booking: Booking): ManageBooking {
   const service = resolveService(context.config, booking.serviceSlug);
+  const wire = toWireBooking(booking);
   // Plan 023 (design decision 4): read surfaces gate on the booking ROW's data, not config — a
-  // location-less booking (pickupType null) gets no pickup/meeting-point fields at all, and a
-  // pre-023 booking of a service that later drops its location module still renders (pickupType
-  // stays non-null on that row even though the service config no longer declares any options).
+  // location-less booking (pickupType null) has no pickup presentation at all, and a pre-023
+  // booking of a service that later drops its location module still renders (pickupType stays
+  // non-null on that row even though the service config no longer declares any options). Plan 027:
+  // the fields stay present as `null` rather than vanishing, so a consumer never branches on key
+  // presence.
   const presentation = pickupPresentationFor(service, booking);
-  // Plan 024 (design decision 3): omitted entirely (not an empty array) when the booking carries
-  // no metadata — matches the pickup/meetingPoint fields' own conditional-presence convention
-  // above, and this doubles as the admin operator's view of the same booking (role toggles inside
-  // manage-page.ts, not a separate render path).
-  const metadataRows = metadataRowsForBooking(service, booking.metadata, booking.locale, context.config.locales.default);
   return {
-    reference: booking.reference,
-    serviceSlug: booking.serviceSlug,
-    start: utcToLocalIso(booking.startsAt, context.config.business.timezone),
-    end: utcToLocalIso(booking.endsAt, context.config.business.timezone),
-    quantity: booking.quantity,
-    ...(presentation ? {
-      pickupType: booking.pickupType,
-      pickupAddress: booking.pickupAddress,
-      pickupRequiresAddress: presentation.requiresAddress,
-      pickupUsesMeetingPoint: presentation.usesMeetingPoint,
-      // Plan 017 (design decision 3): resolved per booking, not read live off the service — a
-      // stored id no longer declared in config falls back to the booking's own label snapshot
-      // instead of silently pointing the customer at whatever point happens to be first today.
-      meetingPoint: meetingPointForBooking(service, booking.meetingPointId, booking.meetingPointLabel),
-    } : {}),
-    customerName: booking.customerName,
-    customerEmail: booking.customerEmail,
-    customerPhone: booking.customerPhone,
-    locale: booking.locale,
-    status: booking.status,
-    priceMinor: booking.priceMinor,
-    ...(metadataRows.length > 0 ? { metadata: metadataRows } : {}),
+    reference: wire.reference,
+    serviceSlug: wire.serviceSlug,
+    start: utcToLocalIso(wire.startsAt, context.config.business.timezone),
+    end: utcToLocalIso(wire.endsAt, context.config.business.timezone),
+    quantity: wire.quantity,
+    pickupType: wire.pickupType,
+    pickupAddress: wire.pickupAddress,
+    pickupRequiresAddress: presentation ? presentation.requiresAddress : null,
+    pickupUsesMeetingPoint: presentation ? presentation.usesMeetingPoint : null,
+    // Plan 017 (design decision 3): resolved per booking, not read live off the service — a stored
+    // id no longer declared in config falls back to the booking's own label snapshot instead of
+    // silently pointing the customer at whatever point happens to be first today.
+    meetingPoint: presentation ? meetingPointForBooking(service, wire.meetingPointId, wire.meetingPointLabel) : null,
+    customerName: wire.customerName,
+    customerEmail: wire.customerEmail,
+    customerPhone: wire.customerPhone,
+    locale: wire.locale,
+    status: wire.status,
+    priceMinor: wire.priceMinor,
+    currency: wire.currency,
+    metadata: wire.metadata,
+    // Plan 024 (design decision 3): labeled rows for rendering; the raw values stay on `metadata`
+    // above. This payload doubles as the admin operator's view of the same booking (role toggles
+    // inside manage-page.ts, not a separate render path).
+    metadataRows: metadataRowsForBooking(service, booking.metadata, wire.locale, context.config.locales.default),
   };
 }
 
-function confirmationSummary(context: BookkitContext, booking: Booking): Record<string, unknown> {
+function confirmationBookingPayload(context: BookkitContext, booking: Booking): ConfirmationBooking {
   const service = resolveService(context.config, booking.serviceSlug);
+  const wire = toWireBooking(booking);
   // Plan 019 (design decision 2), generalized by plan 023 (design decision 4): gate the meeting
   // point on the row's own presentation — no location data at all (pickupType null) or a selected
   // option that never used a meeting point (custom_both) must not tell the customer to meet
   // anywhere.
   const presentation = pickupPresentationFor(service, booking);
-  const includeMeetingPoint = presentation?.usesMeetingPoint ?? false;
-  const metadataRows = metadataRowsForBooking(service, booking.metadata, booking.locale, context.config.locales.default);
   return {
-    reference: booking.reference,
-    serviceSlug: booking.serviceSlug,
-    start: utcToLocalIso(booking.startsAt, context.config.business.timezone),
-    end: utcToLocalIso(booking.endsAt, context.config.business.timezone),
-    quantity: booking.quantity,
-    priceMinor: booking.priceMinor,
-    ...(includeMeetingPoint ? { meetingPoint: meetingPointForBooking(service, booking.meetingPointId, booking.meetingPointLabel) } : {}),
-    locale: booking.locale,
-    ...(metadataRows.length > 0 ? { metadata: metadataRows } : {}),
+    reference: wire.reference,
+    serviceSlug: wire.serviceSlug,
+    start: utcToLocalIso(wire.startsAt, context.config.business.timezone),
+    end: utcToLocalIso(wire.endsAt, context.config.business.timezone),
+    quantity: wire.quantity,
+    priceMinor: wire.priceMinor,
+    currency: wire.currency,
+    meetingPoint: presentation?.usesMeetingPoint
+      ? meetingPointForBooking(service, wire.meetingPointId, wire.meetingPointLabel)
+      : null,
+    locale: wire.locale,
+    metadataRows: metadataRowsForBooking(service, booking.metadata, wire.locale, context.config.locales.default),
   };
 }
 
@@ -84,7 +94,7 @@ export function handleStatus(request: Request, context: BookkitContext): Promise
     const sessionRef = new URL(request.url).searchParams.get('session_id');
     if (!sessionRef) throw new HttpError(400, 'validation_failed', 'session_id is required');
     const booking = await context.repo.getBookingBySessionRef(sessionRef);
-    if (!booking) return json({ status: 'not_found' });
+    if (!booking) return json<StatusResponse>({ status: 'not_found', booking: null });
     let current = booking;
     if (current.status === 'hold' || current.status === 'expired') {
       const session = await context.providers.payments.getSession(sessionRef);
@@ -106,7 +116,7 @@ export function handleStatus(request: Request, context: BookkitContext): Promise
         }
       } else if (session.status === 'complete') {
         context.logger.warn?.('payment verification rejected', { bookingId: current.id, reason: verification.reason });
-        return json({ status: 'pending' });
+        return json<StatusResponse>({ status: 'pending', booking: null });
       } else if (session.status === 'expired' && current.status === 'hold') {
         current = await context.repo.expireHold(current.id, nowIso(context))
           ?? await context.repo.getBookingById(current.id)
@@ -153,12 +163,12 @@ export function handleStatus(request: Request, context: BookkitContext): Promise
     }
     if (current.status === 'confirmed') {
       const age = parseUtcInstant(nowIso(context)).getTime() - parseUtcInstant(current.createdAt).getTime();
-      if (age > STATUS_DETAIL_GRACE_MS) return json({ status: 'confirmed' });
-      return json({ status: 'confirmed', booking: confirmationSummary(context, current) });
+      if (age > STATUS_DETAIL_GRACE_MS) return json<StatusResponse>({ status: 'confirmed', booking: null });
+      return json<StatusResponse>({ status: 'confirmed', booking: confirmationBookingPayload(context, current) });
     }
-    if (current.status === 'expired') return json({ status: 'expired' });
-    if (current.status === 'cancelled' || current.status === 'no_show') return json({ status: 'cancelled' });
-    return json({ status: 'pending' });
+    if (current.status === 'expired') return json<StatusResponse>({ status: 'expired', booking: null });
+    if (current.status === 'cancelled' || current.status === 'no_show') return json<StatusResponse>({ status: 'cancelled', booking: null });
+    return json<StatusResponse>({ status: 'pending', booking: null });
   }).then(withSensitiveHeaders);
 }
 
@@ -197,6 +207,6 @@ export function handleManage(request: Request, context: BookkitContext): Promise
     // mutation's undelivered side effects should get to piggyback on.
     await runOwedMutationSideEffects(context, booking);
     const operator = !customer;
-    return json({ booking: bookingSummary(context, booking), role: operator ? 'operator' : 'customer', canCancel: operator ? booking.status === 'confirmed' : canCancelBooking(booking, now, context.config.booking.cancelCutoffHours), canReschedule: operator ? booking.status === 'confirmed' : canRescheduleBooking(booking, now, context.config.booking.reschedule.cutoffHours, context.config.booking.reschedule.enabled), canNoShow: operator && booking.status === 'confirmed' && parseUtcInstant(booking.startsAt).getTime() < parseUtcInstant(now).getTime(), deadline: new Date(parseUtcInstant(booking.startsAt).getTime() - context.config.booking.cancelCutoffHours * 3_600_000).toISOString() });
+    return json<ManageResponse>({ booking: manageBookingPayload(context, booking), role: operator ? 'operator' : 'customer', canCancel: operator ? booking.status === 'confirmed' : canCancelBooking(booking, now, context.config.booking.cancelCutoffHours), canReschedule: operator ? booking.status === 'confirmed' : canRescheduleBooking(booking, now, context.config.booking.reschedule.cutoffHours, context.config.booking.reschedule.enabled), canNoShow: operator && booking.status === 'confirmed' && parseUtcInstant(booking.startsAt).getTime() < parseUtcInstant(now).getTime(), deadline: new Date(parseUtcInstant(booking.startsAt).getTime() - context.config.booking.cancelCutoffHours * 3_600_000).toISOString() });
   }).then(withSensitiveHeaders);
 }

@@ -79,10 +79,13 @@ export const manageEnhancerJs = `(() => {
       time.className = 'bk-slot-time';
       time.textContent = slot.start.slice(11, 16);
       button.append(time);
-      if (slot.remainingBookings > 0 && slot.remainingBookings <= 3 && i18n.limited) {
+      // Plan 027 (design decision 4): the server already applied the deployment's own
+      // limitedThreshold, so a non-null remaining IS the scarce case — this no longer re-decides
+      // scarcity against a hardcoded 3.
+      if (slot.remaining !== null && i18n.limited) {
         const hint = document.createElement('span');
         hint.className = 'bk-slot-hint';
-        hint.textContent = i18n.limited.replace('{n}', String(slot.remainingBookings));
+        hint.textContent = i18n.limited.replace('{n}', String(slot.remaining));
         button.append(hint);
       }
       button.addEventListener('click', () => {

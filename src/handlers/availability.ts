@@ -1,5 +1,6 @@
+import type { AvailabilityDay, AvailabilityResponse } from '../core/api';
 import { resolveService } from '../core/config';
-import { availabilityForDay, capacityForDate, defaultCapacityForDate, type CalEvent } from '../core/occupancy';
+import { availabilityForDay, capacityForDate, defaultCapacityForDate, type CalEvent, type DayAvailability } from '../core/occupancy';
 import { priceFor } from '../core/pricing';
 import { generateSlots } from '../core/slots';
 import { addDaysToDateKey, enumerateDateKeys, localDateKey, localDateTimeToUtcIso, parseUtcInstant } from '../core/time';
@@ -168,7 +169,25 @@ function availabilityInput(request: Request, context: BookkitContext): Availabil
   return { quantity, dates, service };
 }
 
-async function availabilityPayload(context: BookkitContext, now: string, input: AvailabilityInput): Promise<{ payload: { timezone: string; limitedThreshold: number; days: unknown[] }; stale: boolean }> {
+// Plan 027 (design decision 4): scarcity leaves the library as a structured number, never a
+// rendered string, and the exact count is published only inside the scarce band — at or below
+// `limitedThreshold` a consumer gets the number it needs to say "only N left" (the copy keys are
+// exported: SLOT_STATUS_MESSAGE_KEYS, src/ui/messages.ts), and above it the field is null so a
+// deployment's real capacity stays private. Slots that fit nothing are already filtered out
+// upstream, so `remaining` is never 0.
+function wireDay(day: DayAvailability, limitedThreshold: number): AvailabilityDay {
+  return {
+    date: day.date,
+    status: day.status,
+    closedReason: day.closedReason ?? null,
+    slots: day.slots.map((slot) => ({
+      start: slot.start,
+      remaining: slot.remainingBookings <= limitedThreshold ? slot.remainingBookings : null,
+    })),
+  };
+}
+
+async function availabilityPayload(context: BookkitContext, now: string, input: AvailabilityInput): Promise<{ payload: AvailabilityResponse; stale: boolean }> {
   const { quantity, dates, service } = input;
   const firstDay = dates[0];
   const lastDay = dates[dates.length - 1];
@@ -190,17 +209,18 @@ async function availabilityPayload(context: BookkitContext, now: string, input: 
   const overrides = await context.repo.listDayOverrides(firstDay, lastDay);
   const overridesByDate = new Map(overrides.map((override) => [override.date, override]));
   const capacityDefaults = await context.repo.listCapacityDefaults();
+  const limitedThreshold = context.config.booking.limitedThreshold;
   const days = dates.map((date) => {
     const capacityInfo = capacityForDate(date, defaultCapacityForDate(date, context.config.capacity.default, capacityDefaults), overridesByDate);
     if (generateSlots(service, date, context.config.business.timezone).length === 0) {
-      return {
+      return wireDay({
         date,
         status: 'closed' as const,
         ...(capacityInfo.closedReason ? { closedReason: capacityInfo.closedReason } : {}),
         slots: [],
-      };
+      }, limitedThreshold);
     }
-    return availabilityForDay({
+    return wireDay(availabilityForDay({
       date,
       timezone: context.config.business.timezone,
       service,
@@ -213,13 +233,13 @@ async function availabilityPayload(context: BookkitContext, now: string, input: 
       now,
       minNoticeHours: context.config.booking.minNoticeHours,
       maxHorizonDays: context.config.booking.maxHorizonDays,
-      limitedThreshold: context.config.booking.limitedThreshold,
-    });
+      limitedThreshold,
+    }), limitedThreshold);
   });
   return {
-    // The widget consumes this with every availability refresh, so its slot hints follow the
-    // same server policy as the day-level statuses instead of a consumer-supplied default.
-    payload: { timezone: context.config.business.timezone, limitedThreshold: context.config.booking.limitedThreshold, days },
+    // The threshold travels with the payload so a consumer can explain the scarcity policy behind
+    // both the day statuses and each slot's gated `remaining`, instead of assuming one.
+    payload: { timezone: context.config.business.timezone, limitedThreshold, days },
     stale: calendar.stale,
   };
 }

@@ -26,7 +26,7 @@ test('a stale availability response cannot overwrite a newer party-size selectio
       days: [{
         date: from,
         status: 'open',
-        slots: [{ start: `${from}T${startTime}:00.000Z`, remaining: 5, remainingBookings: 5 }],
+        slots: [{ start: `${from}T${startTime}:00.000Z`, remaining: null }],
       }],
     });
     if (quantity === '2') await staleGate;

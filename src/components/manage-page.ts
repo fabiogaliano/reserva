@@ -1,3 +1,4 @@
+import type { ManageBooking } from '../core/api';
 import { escapeHtml } from '../http';
 import { formatDateTime, formatPrice } from '../ui/format';
 import { factList, pageShell, statusBadge, themeToggle } from '../ui/layout';
@@ -31,28 +32,11 @@ export interface ManagePageOptions {
   };
 }
 
-interface ManageBookingPayload {
-  reference?: string;
-  serviceSlug?: string;
-  start?: string;
-  quantity?: number;
-  pickupType?: string;
-  pickupAddress?: string | null;
-  // Plan 018 (design decision 8): the chosen pickup option's flags, resolved by the manage
-  // handler (bookingSummary) — the id alone can't say whether an address or meeting point applies.
-  pickupRequiresAddress?: boolean;
-  pickupUsesMeetingPoint?: boolean;
-  customerName?: string | null;
-  customerEmail?: string | null;
-  customerPhone?: string | null;
-  status?: string;
-  priceMinor?: number;
-  meetingPoint?: { label?: string; mapsUrl?: string };
-  // Plan 024 (design decision 3): labeled, presentation-ready rows from metadataRowsForBooking
-  // (core/config.ts) — the boolean-to-copy resolution happens here, matching how settings-page.ts
-  // already resolves a boolean setting's display text.
-  metadata?: Array<{ key: string; label: string; value: string | number | boolean }>;
-}
+// Plan 027 (design decision 2): the manage payload's shape has one declaration — the exported
+// `ManageBooking` wire type — and this renderer reads a Partial of it rather than restating the
+// fields. Partial because the page also renders for a direct caller's hand-built payload (and for
+// the error page's empty object), where every field may be missing.
+type ManageBookingPayload = Partial<ManageBooking>;
 
 // Defaults keep the original two-argument call shape working (tests and any consumer calling this
 // directly); the manage route passes the resolved options so copy, locale, and styling apply.
@@ -117,7 +101,7 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
   // reused rather than inventing a second one); everything else renders as its plain string form.
   // Every value is attacker-controlled free text for `text` fields, so it goes through escapeHtml
   // like every other fact here.
-  for (const row of booking.metadata ?? []) {
+  for (const row of booking.metadataRows ?? []) {
     const displayValue = typeof row.value === 'boolean'
       ? (row.value ? messages['admin.on'] : messages['admin.off'])
       : String(row.value);

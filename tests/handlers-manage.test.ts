@@ -299,8 +299,8 @@ describe('metadata on the manage page (plan 024)', () => {
     const context = metadataContext([seeded]);
 
     const customerResponse = await handleManage(manageRequest(seeded.cancelToken), context);
-    const customerPayload = await customerResponse.json() as { booking: { metadata?: Array<{ key: string; label: string; value: unknown }> } };
-    expect(customerPayload.booking.metadata).toEqual([
+    const customerPayload = await customerResponse.json() as { booking: { metadataRows?: Array<{ key: string; label: string; value: unknown }> } };
+    expect(customerPayload.booking.metadataRows).toEqual([
       { key: 'dietary_notes', label: 'Dietary notes', value: 'Vegan' },
       { key: 'vegetarian', label: 'Vegetarian', value: true },
     ]);
@@ -313,19 +313,23 @@ describe('metadata on the manage page (plan 024)', () => {
     expect(customerHtml).toContain('<dd>On</dd>');
 
     const operatorResponse = await handleManage(manageRequest(seeded.operatorToken), context);
-    const operatorPayload = await operatorResponse.json() as { booking: { metadata?: Array<{ key: string; label: string; value: unknown }> } };
-    expect(operatorPayload.booking.metadata).toEqual(customerPayload.booking.metadata);
+    const operatorPayload = await operatorResponse.json() as { booking: { metadataRows?: Array<{ key: string; label: string; value: unknown }> } };
+    expect(operatorPayload.booking.metadataRows).toEqual(customerPayload.booking.metadataRows);
     const operatorHtml = renderManagePage(operatorPayload as unknown as Record<string, unknown>, '/manage', { locale: 'en' });
     expect(operatorHtml).toContain('Dietary notes');
     expect(operatorHtml).toContain('Vegan');
   });
 
-  it('omits the metadata key entirely from the payload when the booking carries none', async () => {
+  // Plan 027 (design decision 6, the empty-value rule): metadata is a collection, so a booking
+  // with none carries `{}` and `[]` rather than a missing key — a consumer never branches on
+  // presence, and the raw values (`metadata`) stay distinct from the rendered rows.
+  it('carries empty metadata collections, not missing keys, when the booking has none', async () => {
     const seeded = booking({ id: 'b-manage-no-metadata', status: 'confirmed', metadata: null });
     const context = metadataContext([seeded]);
     const response = await handleManage(manageRequest(seeded.cancelToken), context);
     const payload = await response.json() as { booking: Record<string, unknown> };
-    expect(payload.booking).not.toHaveProperty('metadata');
+    expect(payload.booking.metadata).toEqual({});
+    expect(payload.booking.metadataRows).toEqual([]);
   });
 
   it('HTML-escapes a hostile metadata value on both the customer and operator page renders', async () => {

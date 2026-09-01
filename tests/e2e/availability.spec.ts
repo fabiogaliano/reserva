@@ -35,8 +35,10 @@ test('availability response carries the exact fields the widget consumes', async
 
   const slot = openDay.slots[0];
   expect(typeof slot.start).toBe('string');
-  expect(typeof slot.remaining).toBe('number');
-  expect(typeof slot.remainingBookings).toBe('number');
+  // Plan 027 (design decision 4): structured scarcity — a number only inside the threshold band,
+  // null above it, and never a rendered status string.
+  expect(slot.remaining === null || typeof slot.remaining === 'number').toBe(true);
+  if (slot.remaining !== null) expect(slot.remaining).toBeLessThanOrEqual(availability.limitedThreshold);
 });
 
 test('booking a slot decreases its remaining count by one, and selling it out removes it from the widget and the API', async ({ page, request }) => {
@@ -50,23 +52,29 @@ test('booking a slot decreases its remaining count by one, and selling it out re
   // (3 in this fixture) and only ever counts down, so however many other specs' bookings already
   // landed on this exact slot before this test ran, driving it the rest of the way to zero (rather
   // than assuming a fixed starting count) keeps this test independent of run order.
-  let remaining = openDay.slots[0].remaining;
-  expect(remaining).toBeGreaterThan(0);
-
-  while (remaining > 0) {
+  // Plan 027 (design decision 4): the exact count is published only once it is at or below the
+  // deployment's limitedThreshold, so this drives the slot to sold-out and asserts the countdown
+  // over whatever part of it is visible, rather than assuming a starting number.
+  let previous: number | null = openDay.slots[0].remaining;
+  let soldOut = false;
+  for (let attempt = 0; attempt < 10 && !soldOut; attempt += 1) {
     await createBooking(page, { service: TOUR, quantity: PEOPLE });
     const after = await fetchAvailability(request);
     const day = after.days.find((d: any) => d.date === targetDate);
     const slot = day?.slots.find((s: any) => s.start === targetStart);
-    remaining -= 1;
-    if (remaining > 0) {
-      expect(slot).toBeTruthy();
-      expect(slot.remaining).toBe(remaining);
-    } else {
+    if (!slot) {
       // Sold out: the slot must be gone from the API response entirely, not merely reported as 0.
-      expect(slot).toBeUndefined();
+      soldOut = true;
+      break;
     }
+    if (slot.remaining !== null) {
+      expect(slot.remaining).toBeLessThanOrEqual(before.limitedThreshold);
+      expect(slot.remaining).toBeGreaterThan(0);
+      if (previous !== null) expect(slot.remaining).toBe(previous - 1);
+    }
+    previous = slot.remaining;
   }
+  expect(soldOut).toBe(true);
 
   // The widget must not offer the sold-out slot either — re-render the same date and confirm no
   // radio carries its time label (other slots on the same day may still be open).

@@ -80,9 +80,9 @@ describe('consumer-declared metadata through the real smoke runtime + D1 (plan 0
         `http://localhost:4321/api/booking/status?session_id=${encodeURIComponent(sessionRef)}`,
       ), context);
       expect(status.status).toBe(200);
-      const statusPayload = await status.json() as { status: string; booking: { metadata?: Array<{ key: string; label: string; value: unknown }> } };
+      const statusPayload = await status.json() as { status: string; booking: { metadataRows?: Array<{ key: string; label: string; value: unknown }> } };
       expect(statusPayload.status).toBe('confirmed');
-      expect(statusPayload.booking.metadata).toEqual([
+      expect(statusPayload.booking.metadataRows).toEqual([
         { key: 'dietary_notes', label: 'Dietary notes', value: 'Vegan, no nuts' },
         { key: 'seat_pref', label: 'Seat preference', value: 'Window seat' },
       ]);
@@ -95,17 +95,17 @@ describe('consumer-declared metadata through the real smoke runtime + D1 (plan 0
         `http://localhost:4321/api/booking/manage?token=${encodeURIComponent(confirmed.cancelToken)}`,
       ), context);
       expect(customerManage.status).toBe(200);
-      const customerPayload = await customerManage.json() as { role: string; booking: { metadata?: unknown } };
+      const customerPayload = await customerManage.json() as { role: string; booking: { metadataRows?: unknown } };
       expect(customerPayload.role).toBe('customer');
-      expect(customerPayload.booking.metadata).toEqual(statusPayload.booking.metadata);
+      expect(customerPayload.booking.metadataRows).toEqual(statusPayload.booking.metadataRows);
 
       const operatorManage = await handleManage(new Request(
         `http://localhost:4321/api/booking/manage?token=${encodeURIComponent(confirmed.operatorToken)}`,
       ), context);
       expect(operatorManage.status).toBe(200);
-      const operatorPayload = await operatorManage.json() as { role: string; booking: { metadata?: unknown } };
+      const operatorPayload = await operatorManage.json() as { role: string; booking: { metadataRows?: unknown } };
       expect(operatorPayload.role).toBe('operator');
-      expect(operatorPayload.booking.metadata).toEqual(statusPayload.booking.metadata);
+      expect(operatorPayload.booking.metadataRows).toEqual(statusPayload.booking.metadataRows);
     } finally {
       infoSpy.mockRestore();
     }

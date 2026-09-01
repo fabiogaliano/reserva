@@ -1,3 +1,4 @@
+import type { ApiErrorCode } from './core/api';
 import { confirmBooking, type Booking } from './core/booking';
 import { resolveService } from './core/config';
 import type { BookingEvent, EmailBookingEvent, EmailRecipientRole, PaymentCustomerDetails } from './core/events';
@@ -114,7 +115,7 @@ function providerNameForConfirmationOperation(operation: SideEffectOperationIden
 
 export class ConfirmationInProgressError extends Error {
   readonly status = 503;
-  readonly code = 'confirmation_in_progress';
+  readonly code: ApiErrorCode = 'confirmation_in_progress';
 
   constructor() {
     super('Booking confirmation is already in progress');
