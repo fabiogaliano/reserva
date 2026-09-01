@@ -9,12 +9,18 @@ import { nowIso } from '../context';
 import { HttpError, json, parseDate, requireInteger, requireString } from '../http';
 import { run } from './shared';
 
-function validDateRange(from: string, to: string): string[] {
+// Plan 027 (design decision 3): the bound is the deployment's own booking horizon, not a fixed
+// 62 days — that constant is why the first consumer's widget had to chunk-and-merge availability
+// requests, and a consumer must never have to. Nothing bookable exists past `maxHorizonDays`
+// (core/occupancy.ts filters those slots out anyway), so a request may span the whole window and no
+// more. The span is still bounded BEFORE enumerating (zero-padded keys compare lexicographically),
+// so an adversarial multi-century range fails fast instead of allocating one key per day.
+function validDateRange(from: string, to: string, maxHorizonDays: number): string[] {
   parseDate(from, 'from');
   parseDate(to, 'to');
-  // Bound the span before enumerating (zero-padded keys compare lexicographically),
-  // so an adversarial multi-century range fails fast instead of allocating one key per day.
-  if (to > addDaysToDateKey(from, 61)) throw new HttpError(400, 'validation_failed', 'Date range cannot exceed 62 days');
+  if (to > addDaysToDateKey(from, maxHorizonDays)) {
+    throw new HttpError(400, 'validation_failed', `Date range cannot exceed the booking horizon of ${maxHorizonDays} days (config.booking.maxHorizonDays); request a narrower range`);
+  }
   return enumerateDateKeys(from, to);
 }
 
@@ -151,7 +157,7 @@ function availabilityInput(request: Request, context: BookkitContext): Availabil
   const quantity = requireInteger(Number(url.searchParams.get('quantity')), 'quantity');
   const from = requireString(url.searchParams.get('from'), 'from');
   const to = requireString(url.searchParams.get('to'), 'to');
-  const dates = validDateRange(from, to);
+  const dates = validDateRange(from, to, context.config.booking.maxHorizonDays);
   const service = resolveService(context.config, serviceSlug);
   assertSupportedPartySize(service, quantity);
   try {

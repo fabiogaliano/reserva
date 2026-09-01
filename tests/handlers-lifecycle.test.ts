@@ -249,7 +249,11 @@ describe('Bookkit handlers', () => {
 
     const response = await handleAvailability(new Request('https://example.test/api/booking/availability?service=vintage&quantity=2&from=1000-01-01&to=9999-12-31'), context);
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: 'Date range cannot exceed 62 days' } });
+    // Plan 027 (design decision 3): the bound is now the deployment's own maxHorizonDays (180 in
+    // the fixture), and the message names the config key so a caller can correct the request.
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'validation_failed', message: 'Date range cannot exceed the booking horizon of 180 days (config.booking.maxHorizonDays); request a narrower range' },
+    });
     // Enumerating ~3.3M date keys takes seconds and would also drive occupancyReads above 0;
     // this zero proves the cheap span guard rejects the range before ever building that array.
     expect(occupancyReads).toBe(0);
