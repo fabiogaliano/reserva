@@ -9,6 +9,7 @@ import {
 } from '../../handlers';
 import { renderManageErrorPage, renderManagePage, type ManagePageOptions } from '../../components/manage-page';
 import { nowIso } from '../../context';
+import { resolveLocale } from '../../core/locale';
 import { addDaysToDateKey, localDateKey, localDateTimeToUtcIso, parseUtcInstant } from '../../core/time';
 import { errorResponse, HttpError, requestFormData } from '../../http';
 import { cssAssetHref, jsAssetHref } from '../../ui/asset-hrefs';
@@ -40,9 +41,12 @@ export async function GET({ request, locals }: APIContext): Promise<Response> {
   if (!response.headers.get('content-type')?.includes('application/json')) return response;
   const payload = await response.json() as Record<string, unknown>;
   const booking = payload.booking && typeof payload.booking === 'object' ? payload.booking as Record<string, unknown> : {};
+  // Plan 027 (design decision 5): the booking's own stored locale wins (it was negotiated at
+  // checkout); the error page, which has no booking, negotiates the `?locale=` hint instead of
+  // trusting it verbatim.
   const locale = typeof booking.locale === 'string'
     ? booking.locale
-    : new URL(request.url).searchParams.get('locale') ?? context.config.locales.default;
+    : resolveLocale(context.config.locales, new URL(request.url).searchParams.get('locale'));
   const options: ManagePageOptions = {
     messages: resolveMessages(context.config, locale),
     locale,

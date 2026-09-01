@@ -3,6 +3,7 @@ export * from './booking';
 export * from './config';
 export * from './currency';
 export * from './events';
+export * from './locale';
 export * from './occupancy';
 export * from './pricing';
 export * from './reference';

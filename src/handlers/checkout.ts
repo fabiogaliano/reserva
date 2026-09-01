@@ -3,6 +3,7 @@ import type { Booking } from '../core/booking';
 import { DEFAULT_TOKEN_EXPIRY_DAYS, pickupOptionFor, resolveMeetingPoint, resolveService, type MetadataField, type PickupType, type ServiceConfig } from '../core/config';
 import { availabilityForDay, capacityForDate, defaultCapacityForDate, occupancyFor } from '../core/occupancy';
 import { priceFor } from '../core/pricing';
+import { resolveLocale } from '../core/locale';
 import { generateUniqueReference } from '../core/reference';
 import { generateSlots } from '../core/slots';
 import { localDateKey, parseUtcInstant } from '../core/time';
@@ -222,8 +223,10 @@ export function handleCheckout(request: Request, context: BookkitContext): Promi
     const service = resolveService(context.config, serviceSlug);
     const location = resolveCheckoutLocation(service, body);
     const metadata = validateCheckoutMetadata(service, serviceSlug, body.metadata);
-    const locale = requireString(body.locale, 'locale');
-    if (!context.config.locales.supported.includes(locale)) throw new HttpError(400, 'validation_failed', 'Unsupported locale');
+    // Plan 027 (design decision 5): a bare or regional variant tag negotiates onto a supported
+    // locale (`pt` -> `pt-PT`) instead of being rejected; only what the deployment actually
+    // supports is ever stored on the booking, so emails and pages have a catalog for it.
+    const locale = resolveLocale(context.config.locales, requireString(body.locale, 'locale'));
     const now = nowIso(context);
     await context.repo.sweepExpiredHolds(now);
     assertSupportedPartySize(service, quantity);
