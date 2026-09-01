@@ -124,7 +124,7 @@ The email template renderer lives in `src/email/` and is provider-agnostic: `@re
    });
    ```
 
-   A non-Brevo transport (Resend, Postmark, SES, …) implements `EmailProvider` (`send`/`sendToRecipient`) and imports `renderDefaultEmail` from `@reservajs/astro/email` the same way — the renderer has no Brevo dependency.
+   A non-Brevo transport (Resend, Postmark, SES, …) implements `EmailProvider` (`send`/`sendToRecipient`) and imports `renderDefaultEmail` from `@reservajs/astro/email` the same way — the renderer has no Brevo dependency. Both methods receive the deployment's resolved route config (`BookkitResolvedRouteConfig`) as their last argument: use `paths.managePage` to build manage links, and skip them entirely when `groups.manage` is false.
 
 ## Config validation
 
@@ -228,9 +228,11 @@ The signing key is the secret named by `secretBinding`, in the spec's `whsec_<ba
 
 Every route is server-only with `prerender: false`:
 
-- `GET /api/booking/availability?tour=&people=&from=&to=`
-- `POST /api/booking/checkout` — body: `{ tourSlug, start, people, pickupType, locale, meetingPointId? }`. `meetingPointId` is optional on the wire, but the *resolved* id is always what gets stored. It is required (400 `validation_failed`) when the tour declares more than one `meetingPoints` entry and `pickupType` is `'default'`; when supplied it must match a declared id (checked for either `pickupType`). A single-point tour, or a request that omits it where it isn't required, resolves to the tour's first (or only) declared point. `BookingWidget.astro`'s own `meetingPoints` prop (see "Components, theming, and UI copy") sends this automatically once a tour has 2+ points.
-- `POST /api/booking/webhooks/stripe`
+- `GET /api/booking/availability?service=&quantity=&from=&to=` — bookable slots per day. Each slot carries `remaining: number | null`: the number of further bookings of the requested quantity that still fit, published only while it is at or below `config.booking.limitedThreshold` and `null` above it (exact capacity is deployment-private). The range may span up to `config.booking.maxHorizonDays`; there is no separate request-size cap, so a consumer never chunks.
+- `POST /api/booking/quote` — body: `{ serviceSlug, quantity, pickup?, locale? }` → `{ priceMinor, currency }`. The same validation and pricing path checkout charges on, with nothing stored: a consumer that shows a price never computes one. `pickup` is required exactly where checkout requires `pickupType`, and rejected for a service with no location module.
+- `GET /api/booking/catalog?locale=` — the rendering contract: everything needed to build a booking flow before a date is chosen. Per service: `slug`, locale-resolved `title`, `durationMin`, `location` (declared meeting points and pickup options, or `null` for a service with no location module), and `metadataFields` (declared fields with locale-resolved labels, `[]` for none). Top level: `locales`, `currency`, `maxHorizonDays`. Never exposes turnaround, raw schedules, pricing rules, capacity, or occupancy — money is the quote endpoint's answer, and times and scarcity are availability's. Projected from the merged config, so an admin settings change shows up on the next read; `Cache-Control: public, max-age=60` and nothing cached library-side.
+- `POST /api/booking/checkout` — body: `{ serviceSlug, start, quantity, pickupType?, locale, meetingPointId?, metadata? }`. `meetingPointId` is optional on the wire, but the *resolved* id is always what gets stored. It is required (400 `validation_failed`) when the service declares more than one `meetingPoints` entry and the selected pickup option uses a meeting point; when supplied it must match a declared id. A single-point service, or a request that omits it where it isn't required, resolves to the service's first (or only) declared point. `pickupType` must be omitted entirely for a service with no location module.
+- `POST /api/booking/webhooks/payment`
 - `GET /api/booking/status?session_id=`
 - `GET /api/booking/manage?token=`
 - `POST /api/booking/cancel`
@@ -238,10 +240,48 @@ Every route is server-only with `prerender: false`:
 - `POST /api/booking/operator/cancel`
 - `POST /api/booking/operator/reschedule`
 - `POST /api/booking/operator/no-show`
+- `GET /api/booking/ops/health` — one read-only answer to "is this deployment healthy and current?", behind the same admin auth as every operator route (403 otherwise): `schema` (migrations applied and fingerprint match), `outbox` (pending/abandoned side-effect counts, grouped by family, plus the oldest pending age in seconds), `incidents` (open count). It takes no parameters, returns no booking data, and mutates nothing.
 - `GET|POST /booking/admin`
-- `GET /booking/manage?token=`
+- `GET /booking/manage?token=` — the only route in the `manage` group; see `config.routes` below
 - `GET /booking-confirmation?session_id=`
 - `GET /booking/assets/bookkit.css` and `GET /booking/assets/bookkit.js` — static first-party assets for the server-rendered pages; see "Components, theming, and UI copy"
+
+### Wire types and error codes
+
+Every request and response shape above is exported as a type from
+`@reservajs/astro/core` — `AvailabilityResponse`, `QuoteRequest`/`QuoteResponse`,
+`CheckoutRequest`/`CheckoutResponse`, `CatalogResponse`, `StatusResponse`,
+`ManageResponse`, `ManageActionResponses`, `OpsHealthResponse`, and
+`ApiErrorEnvelope`. The handlers are typed against these same declarations, so a
+consumer importing them cannot drift from what this deployment actually sends.
+Collections are always present and empty (`[]`, `{}`) and optional modules are
+always present and `null`, so nothing needs to branch on key presence.
+
+Every failure, at every status code, is `{ error: { code, message } }`. The
+`code` is one of a closed set exported as a runtime value —
+`API_ERROR_CODES` (with the derived `ApiErrorCode` union and an `isApiErrorCode`
+guard) — so a consumer can switch exhaustively over failure causes and enumerate
+them without scraping this document:
+
+| Group | Codes |
+| --- | --- |
+| Request shape | `validation_failed`, `method_not_allowed`, `payload_too_large` |
+| Authorization | `forbidden`, `not_found` |
+| Booking rules | `past_cutoff`, `invalid_transition`, `slot_unavailable`, `too_many_holds` |
+| Payment verification | `payment_session_mismatch`, `payment_amount_mismatch`, `invalid_payment_signature`, `duplicate_payment_ref` |
+| Concurrency | `confirmation_in_progress` |
+| Refunds | `refund_conflict`, `refund_payment_ref_missing`, `refund_failed` |
+| Dependencies | `calendar_unavailable` |
+| Unclassified fault | `internal_error` |
+
+`validation_failed` messages always name the offending field and the rule that
+rejected it.
+
+Locale-bearing endpoints (availability, quote, checkout, catalog, manage)
+negotiate the requested tag against `config.locales.supported` by longest prefix
+match, so a client sending `pt` gets `pt-BR` where that is what the deployment
+supports, and an unsupported tag falls back to `locales.default`.
+
 
 The endpoint files are intentionally thin. They import `virtual:bookkit/runtime`, create a request-scoped context, and delegate to the handler exports. JSON errors use `{ error: { code, message } }`. Admin and operator authorization runs through the `adminAuth` port in the runtime context — Cloudflare Access is the default implementation; see "Admin access and booking tokens".
 
@@ -252,7 +292,7 @@ Bookkit mounts its routes with `injectRoute()`, never through a project-level `s
 One `bookkit()` option changes where routes are mounted, and one `config` field turns route groups off. Neither renames an individual route:
 
 - `routePrefix?: string` (a `bookkit()` option — a mounting detail, not shared with the runtime) — prepended to every injected route pattern, and to every URL that bookkit's components and server-rendered pages produce: widget endpoint defaults, `ManageBooking`/`AdminDashboard` form actions, and the manage/admin pages' own links and redirects. The value is normalized: a leading slash is added, a trailing slash is stripped, and `''` or `'/'` mean no prefix. It is validated with Zod the same way `config` is: whitespace, `..` traversal, URL syntax characters (`:`, `?`, `#`, `\`), and repeated slashes throw at `astro:config:setup` instead of building a broken route.
-- `config.routes?: { admin?: boolean; ops?: boolean }` — turns off the admin dashboard route and/or the operator routes. Both default to `true`. The public booking API and customer manage routes are load-bearing and cannot be disabled. A disabled group is never injected, and no server-rendered link points at it. It lives on the shared `config` object (not a `bookkit()`-only option) because both `bookkit()` and `defineCloudflareBookkitRuntime` read it: the integration uses it to decide which routes to inject, and the runtime factory uses it to decide whether an `adminAuth` strategy is required — see "Admin access and booking tokens".
+- `config.routes?: { admin?: boolean; ops?: boolean; manage?: boolean }` — turns off the admin dashboard route, the operator routes, and/or Reserva's own server-rendered `/booking/manage` page. All three default to `true`. `manage` controls that one page and nothing else: `GET /api/booking/manage`, `POST /api/booking/cancel` and `POST /api/booking/reschedule` stay mounted, which is what lets a consumer replace the page with its own UI on the same endpoints. The public booking API is load-bearing and cannot be disabled. A disabled group is never injected, and no library-generated link points at it: with `manage: false` the built-in emails omit their manage buttons, the admin dashboard renders its existing "unavailable" state instead of a dead link, and `<ManageBooking />` throws unless given an explicit `endpoint` — the same remediating error `<AdminDashboard />` throws with `admin: false`. It lives on the shared `config` object (not a `bookkit()`-only option) because both `bookkit()` and `defineCloudflareBookkitRuntime` read it: the integration uses it to decide which routes to inject, and the runtime factory uses it to decide whether an `adminAuth` strategy is required — see "Admin access and booking tokens".
 
 ```ts
 // config.ts (shared by bookkit() and the runtime entrypoint)
@@ -275,15 +315,15 @@ The local demo at `examples/smoke-site` is intentionally unprefixed. It is the z
 
 ## Components, theming, and UI copy
 
-The package includes three embeddable components: `BookingWidget.astro` (the customer funnel: party size, a [cally](https://wicky.nillia.ms/cally/) calendar month grid driven by the availability API, time-slot chips with scarcity hints, pickup cards rendered from an optional `pickupOptions` prop (`Array<{ id, label?, hint?, usesMeetingPoint? }>`, from `config.tours[slug].pickupOptions`) — label/hint fall back to the shipped catalog copy for the `default`/`custom` ids, then to the raw id; a single declared option renders a hidden input instead of a radio group, as it always has — an optional `meetingPoints` prop (`Array<{ id, label }>`, from `config.tours[slug].meetingPoints`) that renders a meeting-point radio group only when a tour has 2+ points — 0 or 1 renders nothing, and the group hides/disables itself per pickup option's `usesMeetingPoint` rather than a hardcoded `pickupType === 'custom'` check — an optional live price row via the `pricing`/`currency` props, its table now keyed by each pickup option's own id), `ManageBooking.astro` (token entry form for the manage page), and `AdminDashboard.astro` (quick day-override form that links to the full admin page). The full pages — confirmation, `/booking/manage`, `/booking/admin` — are server-rendered by the injected routes and share the same design language.
+The package includes three embeddable components: `BookingWidget.astro` (the customer funnel: party size, a [cally](https://wicky.nillia.ms/cally/) calendar month grid driven by the availability API, time-slot chips with scarcity hints, pickup cards and a meeting-point group), `ManageBooking.astro` (token entry form for the manage page), and `AdminDashboard.astro` (quick day-override form that links to the full admin page). The full pages — confirmation, `/booking/manage`, `/booking/admin` — are server-rendered by the injected routes and share the same design language.
 
-`pickupOptions` supersedes the widget's older `pickupTypes` prop (`Array<'default' | 'custom'>`), which is now `@deprecated` but still supported: when `pickupOptions` is omitted, `pickupTypes` is mapped onto the default id/custom id pair (`DEFAULT_PICKUP_OPTIONS`) and renders byte-identical markup to before `pickupOptions` existed, including omitting the `data-uses-meeting-point` attribute the explicit-options path adds to each radio. Existing embeds that only pass `pickupTypes` (or neither prop) need no changes.
+`BookingWidget.astro` is the library's own reference consumer of the API above, so it takes no copies of facts the deployment already owns. It reads the service's pickup options and meeting points from `GET /api/booking/catalog` (a service with no location module renders neither), and every price it shows comes from `POST /api/booking/quote` — the endpoint checkout charges on — so the amount displayed can never disagree with the amount charged. It has no `pricing`, `currency`, `pickupOptions`, `pickupTypes`, `meetingPoints`, or `limitedThreshold` props: pass `serviceSlug`, the availability window, and optionally `locale`, `quantityOptions`, `contactEmail`/`contactPhone`, `messages`, or explicit `checkoutEndpoint`/`availabilityEndpoint`/`catalogEndpoint`/`quoteEndpoint` overrides. A meeting-point group renders only when a service declares 2+ points, and hides and disables itself for a pickup option whose `usesMeetingPoint` is false. Since it fetches the catalog before revealing the form, a deployment that cannot answer for itself leaves the `<noscript>`-style contact fallback in place rather than a form with no options.
 
 `AdminDashboard.astro` reads the request at render time (it runs the same `adminAuth` check as the built-in admin page and mints its own CSRF token from the resulting identity, so its form works once `BOOKKIT_CSRF_SECRET` is configured — see "Admin access and booking tokens"): render it only on a server-rendered page (`export const prerender = false`, or `output: 'server'`) behind whichever admin auth strategy this deployment configures, not on a static/prerendered one. When the auth check denies the request it renders a short notice instead of the form, rather than a form whose POST can only 403.
 
 **Theming.** All styling flows through `--bk-*` custom properties (light defaults plus `prefers-color-scheme: dark` overrides). Rebrand by overriding the tokens in site CSS — for example `.bk-widget, .bk-embed, :root { --bk-accent: #d9a406; }` — without touching bookkit. The components' styles live in `src/ui/components.css`, imported from their frontmatter so the consumer's Astro build bundles them once per page. The server-rendered pages never pass through a consumer build, so their stylesheet (`src/ui/theme.ts`) is served from `/booking/assets/bookkit.css` instead; `/booking/assets/bookkit.js` serves the calendar web component (a vendored self-contained bundle — regenerate with `bun scripts/vendor-cally.ts` after upgrading the `cally` dependency) plus the manage page's progressive reschedule enhancer. Pages reference both assets through content-hashed URLs (`?v=…`), so the routes send immutable year-long cache headers and any bookkit change busts browser caches automatically.
 
-**CSP.** Nothing bookkit renders is inline: the pages use only external same-origin assets (`style-src 'self'`/`script-src 'self'` suffice), forms are plain POSTs, and the pending-payment confirmation state polls via meta refresh, not script. `BookingWidget.astro`'s `<script>` is a hoisted Astro module (not `is:inline`), emitted as an external hashed file by the consumer's build, and its per-render data (copy, pricing, locale) travels in a non-executable JSON island. The manage page's reschedule keeps a native `datetime-local` input as the no-JS fallback; the served enhancer upgrades it to a calendar plus availability-backed slot picker. `BookingWidget.astro` itself requires JavaScript to book (checkout is a `fetch`, not a form POST) — without it, visitors see a `<noscript>` message with the business contact instead of the dead form; pass `contactEmail`/`contactPhone` to surface it.
+**CSP.** Nothing bookkit renders is inline: the pages use only external same-origin assets (`style-src 'self'`/`script-src 'self'` suffice), forms are plain POSTs, and the pending-payment confirmation state polls via meta refresh, not script. `BookingWidget.astro`'s `<script>` is a hoisted Astro module (not `is:inline`), emitted as an external hashed file by the consumer's build, and its per-render data (copy and locale — no prices, which come from the quote endpoint) travels in a non-executable JSON island. The manage page's reschedule keeps a native `datetime-local` input as the no-JS fallback; the served enhancer upgrades it to a calendar plus availability-backed slot picker. `BookingWidget.astro` itself requires JavaScript to book (checkout is a `fetch`, not a form POST) — without it, visitors see a `<noscript>` message with the business contact instead of the dead form; pass `contactEmail`/`contactPhone` to surface it.
 
 **UI copy and locales.** English and European Portuguese (`pt-PT`) are bundled, with English used by components when no locale is supplied (a generic library must not default to Portuguese). Every rendered string uses the typed key set in `src/ui/messages.ts` (`defaultMessages`, exported from the package root, contains the English fallback). Add partial per-locale overrides under `config.ui.messages` and/or pass a `messages` prop to the components; resolution layers region-specific copy over its base language, deployment overrides over bundled copy, and English as the final fallback. Customer pages pick their locale from the booking (`booking.locale`), a `?locale=` query parameter, or `config.locales.default`. The admin dashboard and settings use `config.admin.locale` when set and otherwise fall back to `config.locales.default`; an explicit `locale` prop still takes precedence for `AdminDashboard.astro`. This keeps an operator UI such as `pt-PT` separate from English customer pages, emails, and Stripe Checkout without copying catalog keys into `ui.messages`. The admin locale does not need to appear in `locales.supported`, because it is never sent to Stripe. Dates and prices are formatted with `Intl` in the business timezone. Stripe Checkout receives `pt`, Stripe’s equivalent locale tag for European Portuguese.
 
