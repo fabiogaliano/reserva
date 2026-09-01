@@ -8,7 +8,7 @@ const now = Date.parse('2026-06-14T08:00:00.000Z');
 // production deployments must set this secret for the token to actually protect anything (see
 // src/admin-csrf.ts csrfSecret).
 const secrets = async (name: string) => (name === 'BOOKKIT_CSRF_SECRET' ? 'unit-test-secret' : undefined);
-const context = { config: { admin: { accessAud: 'test-audience' } }, secrets };
+const context = { config: { admin: { access: { aud: 'test-audience' } } }, secrets };
 
 function requestWith(headers: HeadersInit): Request {
   return new Request(ADMIN_URL, { method: 'POST', headers });
@@ -100,10 +100,21 @@ describe('mintAdminCsrfToken / verifyAdminCsrfToken (BK-SEC-001 layer 2: per-ses
     await expect(verifyAdminCsrfToken(context, token, 'ops@example.test', now)).resolves.toBe(false);
   });
 
-  it('rejects a token minted under a different Access audience but the same secret (accessAud is mixed in for domain separation)', async () => {
-    const otherAudContext = { config: { admin: { accessAud: 'a-different-audience' } }, secrets };
+  it('rejects a token minted under a different Access audience but the same secret (the aud is mixed in for domain separation)', async () => {
+    const otherAudContext = { config: { admin: { access: { aud: 'a-different-audience' } } }, secrets };
     const token = await mintAdminCsrfToken(otherAudContext, 'ops@example.test', now);
     await expect(verifyAdminCsrfToken(context, token, 'ops@example.test', now)).resolves.toBe(false);
+  });
+
+  // Plan 025 (design decision 5): a deployment with no `config.admin.access` at all (a custom
+  // `adminAuth`) derives the literal 'custom' instead of an aud — proves it gets genuinely distinct
+  // key material from an Access deployment sharing the same BOOKKIT_CSRF_SECRET, not an accidental
+  // collision (e.g. both resolving to the empty string).
+  it('derives a distinct key for a custom (no admin.access) deployment than for an Access deployment sharing the same secret', async () => {
+    const customContext = { config: { admin: {} }, secrets };
+    const token = await mintAdminCsrfToken(customContext, 'ops@example.test', now);
+    await expect(verifyAdminCsrfToken(context, token, 'ops@example.test', now)).resolves.toBe(false);
+    await expect(verifyAdminCsrfToken(customContext, token, 'ops@example.test', now)).resolves.toBe(true);
   });
 
   it('rejects a tampered payload even when the signature part is left untouched', async () => {
@@ -128,13 +139,13 @@ describe('mintAdminCsrfToken / verifyAdminCsrfToken (BK-SEC-001 layer 2: per-ses
   // accessAud as the HMAC key — is rejected once a real secret is configured, i.e. the real
   // verifier's key material is never reducible to public information alone.
   it('is unforgeable from accessAud alone: a token HMAC-signed with only the public accessAud as key is rejected', async () => {
-    const forged = await forgeToken(context.config.admin.accessAud, 'ops@example.test', now + ADMIN_CSRF_TOKEN_TTL_MS);
+    const forged = await forgeToken(context.config.admin.access.aud, 'ops@example.test', now + ADMIN_CSRF_TOKEN_TTL_MS);
     await expect(verifyAdminCsrfToken(context, forged, 'ops@example.test', now)).resolves.toBe(false);
   });
 });
 
 describe('mintAdminCsrfToken / verifyAdminCsrfToken without BOOKKIT_CSRF_SECRET (BK-SEC-001 finding 1 fix: layer 2 fails open, layer 1 does not)', () => {
-  const noSecretContext = { config: { admin: { accessAud: 'test-audience' } } };
+  const noSecretContext = { config: { admin: { access: { aud: 'test-audience' } } } };
 
   it('mintAdminCsrfToken returns undefined — no real secret means no token is emitted', async () => {
     await expect(mintAdminCsrfToken(noSecretContext, 'ops@example.test', now)).resolves.toBeUndefined();

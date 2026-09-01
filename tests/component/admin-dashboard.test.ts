@@ -37,13 +37,13 @@ describe('AdminDashboard.astro (plan 009: works with CSRF enabled)', () => {
     expect(html).toContain('Cloudflare Access authorization required to manage this booking.');
   });
 
-  it('renders the notice when verifyAccess throws', async () => {
+  it('renders the notice when adminAuth throws', async () => {
     const html = await render({ [ACCESS_HEADER]: 'throw', [SECRET_HEADER]: 'component-test-secret' });
     expect(html).not.toContain('<form');
     expect(html).toContain('Cloudflare Access authorization required to manage this booking.');
   });
 
-  it('renders the notice when no verifyAccess is wired up at all', async () => {
+  it('renders the notice when no adminAuth is wired up at all', async () => {
     const html = await render({});
     expect(html).not.toContain('<form');
     expect(html).toContain('Cloudflare Access authorization required to manage this booking.');

@@ -59,9 +59,8 @@ describe('validateRouteOptions (Zod, same throw-on-safeParse-failure style as va
     expect(validateRouteOptions({})).toEqual({});
   });
 
-  it('accepts a valid prefix and route group flags', () => {
-    expect(validateRouteOptions({ routePrefix: '/en', routes: { admin: false, ops: false } }))
-      .toEqual({ routePrefix: '/en', routes: { admin: false, ops: false } });
+  it('accepts a valid prefix', () => {
+    expect(validateRouteOptions({ routePrefix: '/en' })).toEqual({ routePrefix: '/en' });
   });
 
   it('rejects a prefix containing whitespace', () => {
@@ -123,8 +122,11 @@ describe('route table generation (astro:config:setup)', () => {
     expect(routes.map((route) => route.pattern)).toEqual(routeManifest.map((entry) => `/en${entry.pattern}`));
   });
 
-  it('routes: { ops: false } omits every operator route and nothing else', () => {
-    const { routes } = setup({ ...baseOptions, routes: { ops: false } });
+  // Plan 025 (design decision 3): routes.admin/routes.ops now live on `config.routes`, not on
+  // BookkitIntegrationOptions — the integration reads the same validated config the runtime factory
+  // reads for admin-auth selection, instead of two independently-settable options.
+  it('config.routes: { ops: false } omits every operator route and nothing else', () => {
+    const { routes } = setup({ ...baseOptions, config: { ...config, routes: { ops: false } } });
     const patterns = routes.map((route) => route.pattern);
     expect(patterns).toHaveLength(12);
     for (const opsPattern of ['/api/booking/operator/cancel', '/api/booking/operator/reschedule', '/api/booking/operator/no-show']) {
@@ -135,8 +137,8 @@ describe('route table generation (astro:config:setup)', () => {
     expect(patterns).toContain('/api/booking/checkout');
   });
 
-  it('routes: { admin: false } omits only the admin dashboard route', () => {
-    const { routes } = setup({ ...baseOptions, routes: { admin: false } });
+  it('config.routes: { admin: false } omits only the admin dashboard route', () => {
+    const { routes } = setup({ ...baseOptions, config: { ...config, routes: { admin: false } } });
     const patterns = routes.map((route) => route.pattern);
     expect(patterns).toHaveLength(14);
     expect(patterns).not.toContain('/booking/admin');
@@ -147,7 +149,7 @@ describe('route table generation (astro:config:setup)', () => {
   });
 
   it('exposes the resolved (prefixed) paths and group flags through virtual:bookkit/config', () => {
-    const { viteConfig } = setup({ ...baseOptions, routePrefix: '/en', routes: { ops: false } });
+    const { viteConfig } = setup({ ...baseOptions, routePrefix: '/en', config: { ...config, routes: { ops: false } } });
     const plugins = (viteConfig.vite as { plugins: Array<{ resolveId(id: string): string | undefined; load(id: string): string | undefined }> }).plugins;
     const plugin = plugins.find((candidate) => candidate.resolveId(virtualConfigId) !== undefined);
     if (!plugin) throw new Error('route-config plugin not registered');
@@ -175,7 +177,7 @@ describe('server-rendered HTML URL consistency', () => {
       db: {} as D1Database,
       repo: fakeRepository([seeded], { tokenEncryptionKey: 'route-token-key' }),
       clock,
-      verifyAccess: async () => true,
+      adminAuth: async () => ({ subject: '' }),
       providers: providers(),
       secrets: async (name) => (name === 'BOOKKIT_TOKEN_ENC_KEY' ? 'route-token-key' : undefined),
       routeConfig: resolveRouteConfig('/en', { admin: true, ops: true }),
@@ -195,7 +197,7 @@ describe('server-rendered HTML URL consistency', () => {
       db: {} as D1Database,
       repo: fakeRepository([seeded], { tokenEncryptionKey: 'route-token-key' }),
       clock,
-      verifyAccess: async () => true,
+      adminAuth: async () => ({ subject: '' }),
       providers: providers(),
       secrets: async (name) => (name === 'BOOKKIT_TOKEN_ENC_KEY' ? 'route-token-key' : undefined),
     });

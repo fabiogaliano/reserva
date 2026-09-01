@@ -109,7 +109,7 @@ describe('pageShell (data-theme + toggle placement)', () => {
 
 describe('admin handler wiring (context.viewerTheme → rendered page)', () => {
   it('emits the toggle and reflects the cookie-derived theme on the admin page', async () => {
-    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock: () => new Date('2026-06-14T08:00:00.000Z'), verifyAccess: async () => true, providers: providers(), viewerTheme: 'dark' });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock: () => new Date('2026-06-14T08:00:00.000Z'), adminAuth: async () => ({ subject: '' }), providers: providers(), viewerTheme: 'dark' });
     const response = await handleAdminGet(new Request('https://example.test/api/booking/admin'), context);
     const body = await response.text();
     expect(body).toContain('data-theme="dark"');

@@ -53,7 +53,7 @@ describe('admin incidents (plan 020 design decisions 12-14)', () => {
       db: {} as D1Database,
       repo: fakeRepository(),
       clock,
-      verifyAccess: async () => true,
+      adminAuth: async () => ({ subject: '' }),
       providers: providers(),
       secrets: csrfSecrets,
     });
@@ -75,7 +75,7 @@ describe('admin incidents (plan 020 design decisions 12-14)', () => {
       action: 'calendar', severity: 'action_required', attemptCount: 10, sourceUpdatedAt: '2026-06-14T07:00:00.000Z',
       now: '2026-06-14T07:00:00.000Z', escalate: false,
     });
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
     const response = await handleAdminGet(new Request(ADMIN_URL), context);
     expect(response.status).toBe(200);
@@ -95,7 +95,7 @@ describe('admin incidents (plan 020 design decisions 12-14)', () => {
       action: 'oversell', severity: 'action_required', attemptCount: 1, sourceUpdatedAt: '2026-06-14T07:00:00.000Z',
       now: '2026-06-14T07:00:00.000Z', escalate: false,
     });
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
     const getResponse = await handleAdminGet(new Request(ADMIN_URL), context);
     const html = await getResponse.text();
@@ -122,7 +122,7 @@ describe('admin incidents (plan 020 design decisions 12-14)', () => {
     });
     let calendarCalls = 0;
     const context = createBookkitContext({
-      config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, secrets: csrfSecrets,
+      config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), secrets: csrfSecrets,
       providers: providers({ calendar: { listEvents: async () => [], createEvent: async () => { calendarCalls += 1; return 'cal_retry'; }, deleteEvent: async () => undefined, patchEvent: async () => undefined } }),
     });
 
@@ -150,7 +150,7 @@ describe('admin incidents (plan 020 design decisions 12-14)', () => {
     });
     let refundCalls = 0;
     const context = createBookkitContext({
-      config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, secrets: csrfSecrets,
+      config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), secrets: csrfSecrets,
       providers: providers({
         payments: {
           createCheckout: async () => ({ url: '', sessionRef: '' }),
@@ -179,7 +179,7 @@ describe('admin incidents (plan 020 design decisions 12-14)', () => {
       action: 'calendar', severity: 'action_required', attemptCount: 10, sourceUpdatedAt: '2026-06-14T07:00:00.000Z',
       now: '2026-06-14T07:00:00.000Z', escalate: false,
     });
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => ({ iss: 'https://access.test', aud: 'app', email: 'ops@example.test' }), providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: 'ops@example.test', email: 'ops@example.test' }), providers: providers(), secrets: csrfSecrets });
     const opsToken = await mintTestCsrfToken('ops@example.test', CSRF_NOW);
 
     const blank = await handleAdminPost(adminPostRequest({ action: 'incident-resolve', source_type: 'side_effect', source_key: `${seeded.id}:calendar_create`, note: '   ' }, opsToken), context);
@@ -200,7 +200,7 @@ describe('admin incidents (plan 020 design decisions 12-14)', () => {
 
   it('rejects incident-retry/incident-resolve for an unknown or already-resolved incident with 400', async () => {
     const repo = fakeRepository();
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminPost(adminPostRequest({ action: 'incident-retry', source_type: 'side_effect', source_key: 'missing:calendar_create' }), context);
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed' } });
@@ -208,7 +208,7 @@ describe('admin incidents (plan 020 design decisions 12-14)', () => {
 
   it('enforces the same Origin/CSRF guards as every other admin POST action', async () => {
     const repo = fakeRepository();
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const badOrigin = await handleAdminPost(new Request(ADMIN_URL, {
       method: 'POST', body: new URLSearchParams({ action: 'incident-retry', source_type: 'refund', source_key: 'x', csrf_token: DEFAULT_CSRF_TOKEN }),
       headers: { origin: 'https://evil.test', 'sec-fetch-site': 'cross-site' },

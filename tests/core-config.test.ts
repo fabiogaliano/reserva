@@ -350,15 +350,38 @@ describe('core config and pricing validation', () => {
   });
 
   it('requires the admin domain to be a bare HTTPS Cloudflare Access origin', () => {
-    for (const accessTeamDomain of [
+    for (const teamDomain of [
       'http://team.cloudflareaccess.com',
       'https://team.cloudflareaccess.com/admin',
       'https://team.cloudflareaccess.com?next=/admin',
       'https://team.example.com',
     ]) {
-      expect(() => validateConfig({ ...config, admin: { ...config.admin, accessTeamDomain } })).toThrow();
+      expect(() => validateConfig({ ...config, admin: { ...config.admin, access: { ...config.admin.access, teamDomain } } })).toThrow();
     }
     expect(() => validateConfig(config)).not.toThrow();
+  });
+
+  // Plan 025 (design decision 3): admin.access is optional as a pair — declaring one field without
+  // the other is a config error, and omitting it entirely (a custom-adminAuth deployment) is valid
+  // at the config-schema layer (the runtime-definition boundary enforces that an auth path actually
+  // exists — see tests/runtime-context-admin-auth.test.ts).
+  it('accepts admin.access absent entirely (custom-adminAuth deployment)', () => {
+    const { access: _omit, ...adminWithoutAccess } = config.admin;
+    expect(() => validateConfig({ ...config, admin: adminWithoutAccess })).not.toThrow();
+  });
+
+  it('rejects admin.access declared as a partial pair', () => {
+    expect(() => validateConfig({ ...config, admin: { ...config.admin, access: { teamDomain: config.admin.access!.teamDomain } } })).toThrow();
+    expect(() => validateConfig({ ...config, admin: { ...config.admin, access: { aud: config.admin.access!.aud } } })).toThrow();
+  });
+
+  // Plan 025 (design decision 3): routes.admin/routes.ops moved here from the Astro-only
+  // BookkitIntegrationOptions.routes — both are optional booleans, defaulted (`?? true`) by
+  // whoever reads them (the integration and the runtime factory), not by this schema.
+  it('accepts routes.admin/routes.ops as optional booleans, and rejects a non-boolean value', () => {
+    expect(validateConfig({ ...config, routes: { admin: false, ops: false } }).routes).toEqual({ admin: false, ops: false });
+    expect(validateConfig(config).routes).toBeUndefined();
+    expect(() => validateConfig({ ...config, routes: { admin: 'nope' } })).toThrow();
   });
 
   it('accepts equal season endpoints as a one-day inclusive range', () => {

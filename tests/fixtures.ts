@@ -34,7 +34,7 @@ export const config: ClientConfig = {
     contact: { email: 'owner@example.test', phone: '+351000000000' },
   },
   capacity: { default: 2 },
-  admin: { accessTeamDomain: 'https://team.cloudflareaccess.com', accessAud: 'aud' },
+  admin: { access: { teamDomain: 'https://team.cloudflareaccess.com', aud: 'aud' } },
   services: { vintage: service },
   booking: {
     minNoticeHours: 24,

@@ -33,7 +33,7 @@ export default {
     contact: { email: 'owner@example.test', phone: '+10000000000' },
   },
   capacity: { default: 4 },
-  admin: { accessTeamDomain: 'https://team.cloudflareaccess.com', accessAud: 'fixture-aud' },
+  admin: { access: { teamDomain: 'https://team.cloudflareaccess.com', aud: 'fixture-aud' } },
   services: { demo: demoTour },
   booking: {
     minNoticeHours: 0,

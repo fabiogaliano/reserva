@@ -61,7 +61,7 @@ function adminPostRequest(fields: Record<string, string> | Array<[string, string
 // can even be extracted from the form.
 describe('request body size limit (audit finding #10)', () => {
   it('rejects an admin POST whose declared Content-Length exceeds the 256 KB form limit with 413', async () => {
-    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const request = new Request(ADMIN_URL, {
       method: 'POST',
       headers: {
@@ -77,11 +77,11 @@ describe('request body size limit (audit finding #10)', () => {
 });
 
 describe('access control (spec §11: admin requires Cloudflare Access)', () => {
-  it('rejects GET and POST when verifyAccess is absent, returns false, or throws', async () => {
-    const variants: Array<{ label: string; verifyAccess?: () => boolean | Promise<boolean> }> = [
+  it('rejects GET and POST when adminAuth is absent, resolves null, or throws', async () => {
+    const variants: Array<{ label: string; adminAuth?: () => Promise<{ subject: string } | null> }> = [
       { label: 'absent' },
-      { label: 'returns false', verifyAccess: () => false },
-      { label: 'throws', verifyAccess: () => { throw new Error('access check exploded'); } },
+      { label: 'resolves null', adminAuth: async () => null },
+      { label: 'throws', adminAuth: () => { throw new Error('access check exploded'); } },
     ];
     for (const variant of variants) {
       const context = createBookkitContext({
@@ -90,12 +90,12 @@ describe('access control (spec §11: admin requires Cloudflare Access)', () => {
         repo: fakeRepository(),
         clock,
         providers: providers(),
-        ...(variant.verifyAccess ? { verifyAccess: variant.verifyAccess } : {}),
+        ...(variant.adminAuth ? { adminAuth: variant.adminAuth } : {}),
       });
       const getResponse = await handleAdminGet(adminGetRequest(), context);
-      expect(getResponse.status, `GET with verifyAccess ${variant.label}`).toBe(403);
+      expect(getResponse.status, `GET with adminAuth ${variant.label}`).toBe(403);
       const postResponse = await handleAdminPost(adminPostRequest({ action: 'clear', date: '2026-06-20' }), context);
-      expect(postResponse.status, `POST with verifyAccess ${variant.label}`).toBe(403);
+      expect(postResponse.status, `POST with adminAuth ${variant.label}`).toBe(403);
     }
   });
 });
@@ -108,7 +108,7 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
     const cancelledFuture = booking({ id: 'b-admin-cancelled', reference: 'LVT-2026-103', status: 'cancelled', cancelledAt: '2026-06-13T08:00:00.000Z', cancelledBy: 'customer', startsAt: '2026-06-23T09:00:00.000Z', endsAt: '2026-06-23T10:00:00.000Z', operatorToken: 'op-cancelled', cancelToken: 'cancel-cancelled' });
     const pastConfirmed = booking({ id: 'b-admin-past', reference: 'LVT-2026-104', status: 'confirmed', startsAt: '2026-06-10T09:00:00.000Z', endsAt: '2026-06-10T10:00:00.000Z', operatorToken: 'op-past', cancelToken: 'cancel-past' });
     const repo = fakeRepository([futureConfirmed, futureUnexpiredHold, futureExpiredHold, cancelledFuture, pastConfirmed]);
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
     const response = await handleAdminGet(adminGetRequest(), context);
     expect(response.status).toBe(200);
@@ -128,7 +128,7 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
     const cancelledFuture = booking({ id: 'b-admin-filter-cancelled', reference: 'LVT-2026-110', status: 'cancelled', cancelledAt: '2026-06-13T08:00:00.000Z', cancelledBy: 'customer', startsAt: '2026-06-23T09:00:00.000Z', endsAt: '2026-06-23T10:00:00.000Z', operatorToken: 'op-filter-cancelled', cancelToken: 'cancel-filter-cancelled' });
     const pastConfirmed = booking({ id: 'b-admin-filter-past', reference: 'LVT-2026-111', status: 'confirmed', startsAt: '2026-06-10T09:00:00.000Z', endsAt: '2026-06-10T10:00:00.000Z', operatorToken: 'op-filter-past', cancelToken: 'cancel-filter-past' });
     const repo = fakeRepository([cancelledFuture, pastConfirmed]);
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
     const byStatus = await (await handleAdminGet(new Request(`${ADMIN_URL}?status=cancelled`), context)).text();
     expect(byStatus).toContain(cancelledFuture.reference);
@@ -141,7 +141,7 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
   });
 
   it('separates page destinations from the dashboard’s in-page section menu', async () => {
-    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
     const response = await handleAdminGet(adminGetRequest(), context);
     const body = await response.text();
@@ -163,7 +163,7 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
       locales: { supported: ['en'], default: 'en' },
     };
     const localizedBooking = booking({ startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z' });
-    const context = createBookkitContext({ config: localizedConfig, db: {} as D1Database, repo: fakeRepository([localizedBooking]), clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config: localizedConfig, db: {} as D1Database, repo: fakeRepository([localizedBooking]), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
     const dashboard = await handleAdminGet(adminGetRequest(), context);
     const dashboardBody = await dashboard.text();
@@ -187,7 +187,7 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
       if (name === 'BOOKKIT_TOKEN_ENC_KEY') return 'handlers-admin-token-key';
       return csrfSecrets(name);
     };
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets });
 
     const response = await handleAdminGet(adminGetRequest(), context);
     const body = await response.text();
@@ -208,7 +208,7 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
       operatorToken: 'nohash:11111111-1111-1111-1111-111111111111', cancelToken: 'cancel-token-nohash-secret',
     });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
     const response = await handleAdminGet(adminGetRequest(), context);
     const body = await response.text();
@@ -221,7 +221,7 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
   // `no-referrer` would null the browser's Origin header on that same-origin POST, tripping
   // Astro's checkOrigin default (see the WHY comment at the response site in src/handlers/index.ts).
   it('sets cache-control: no-store and referrer-policy: same-origin', async () => {
-    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminGet(adminGetRequest(), context);
     expect(response.headers.get('cache-control')).toBe('no-store');
     expect(response.headers.get('referrer-policy')).toBe('same-origin');
@@ -237,7 +237,7 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
       operatorToken: 'op-multiunit', cancelToken: 'cancel-multiunit',
     });
     const repo = fakeRepository([multiUnit]);
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers() });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers() });
     const response = await handleAdminGet(adminGetRequest(), context);
     const body = await response.text();
     // One booking, two capacity units, capacity 2 (fixture's capacity.defaultCapacity) — the label must
@@ -263,7 +263,7 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
         meetingPointId: 'station', meetingPointLabel: 'The Station',
       });
       const multiRepo = fakeRepository([chosen]);
-      const multiContext = createBookkitContext({ config: multiPointConfig, db: {} as D1Database, repo: multiRepo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+      const multiContext = createBookkitContext({ config: multiPointConfig, db: {} as D1Database, repo: multiRepo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
       const multiResponse = await handleAdminGet(adminGetRequest(), multiContext);
       const multiBody = await multiResponse.text();
       expect(multiBody).toContain('<span class="bk-sub">The Station</span>');
@@ -272,7 +272,7 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
         id: 'b-admin-single-point', reference: 'LVT-2026-401', startsAt: '2026-06-21T09:00:00.000Z', endsAt: '2026-06-21T10:00:00.000Z',
         operatorToken: 'op-single-point', cancelToken: 'cancel-single-point',
       })]);
-      const singleContext = createBookkitContext({ config, db: {} as D1Database, repo: singleRepo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+      const singleContext = createBookkitContext({ config, db: {} as D1Database, repo: singleRepo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
       const singleResponse = await handleAdminGet(adminGetRequest(), singleContext);
       const singleBody = await singleResponse.text();
       expect(singleBody).not.toContain('bk-sub">The Station');
@@ -285,7 +285,7 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
         meetingPointId: 'station', meetingPointLabel: 'The Station',
       });
       const repo = fakeRepository([chosen]);
-      const context = createBookkitContext({ config: multiPointConfig, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+      const context = createBookkitContext({ config: multiPointConfig, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
       const response = await handleAdminGet(new Request(`${ADMIN_URL}?q=station`), context);
       const body = await response.text();
       expect(body).toContain(chosen.reference);
@@ -327,7 +327,7 @@ describe('pickup option label + sub-lines (plan 018 design decision 8)', () => {
       pickupType: 'custom_dropoff', pickupAddress: 'Hotel Avenida', meetingPointId: 'station', meetingPointLabel: 'The Station',
     });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({ config: mazeConfig, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config: mazeConfig, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminGet(adminGetRequest(), context);
     const body = await response.text();
     expect(body).toContain('Custom pickup &amp; drop-off');
@@ -346,7 +346,7 @@ describe('pickup option label + sub-lines (plan 018 design decision 8)', () => {
       operatorToken: 'op-catalog-custom', cancelToken: 'cancel-catalog-custom', pickupType: 'custom', pickupAddress: 'Hotel Avenida',
     });
     const repo = fakeRepository([defaultSeeded, customSeeded]);
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminGet(adminGetRequest(), context);
     const body = await response.text();
     expect(body).toContain('Meeting point');
@@ -360,7 +360,7 @@ describe('pickup option label + sub-lines (plan 018 design decision 8)', () => {
       pickupType: 'meet_elsewhere', meetingPointId: 'square', meetingPointLabel: 'The Square',
     });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({ config: mazeConfig, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config: mazeConfig, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminGet(adminGetRequest(), context);
     const body = await response.text();
     expect(body).toContain('>meet_elsewhere<');
@@ -390,7 +390,7 @@ describe('pickup option label + sub-lines (plan 018 design decision 8)', () => {
       pickupType: 'hotel_pickup', pickupAddress: 'Hotel Avenida', meetingPointId: 'station', meetingPointLabel: 'The Station',
     });
     const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({ config: noMeetConfig, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config: noMeetConfig, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
     // The row hides the meeting point for this option, so the stored label must be invisible to
     // search too — the haystack and the renderer share adminMeetingPointSubLabel.
@@ -407,7 +407,7 @@ describe('POST /admin day overrides (spec §11)', () => {
     const repo = fakeRepository();
     const calls: Array<[string[], number, string | null]> = [];
     repo.upsertDayOverrides = async (dates, capacity, reason) => { calls.push([dates, capacity, reason]); };
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
     const request = adminPostRequest({ date: '2026-06-20', capacity: '3', reason: '  closed for maintenance  ', action: 'set' });
     const response = await handleAdminPost(request, context);
@@ -420,7 +420,7 @@ describe('POST /admin day overrides (spec §11)', () => {
     const repo = fakeRepository();
     const calls: Array<[string[], number, string | null]> = [];
     repo.upsertDayOverrides = async (dates, capacity, reason) => { calls.push([dates, capacity, reason]); };
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
     const response = await handleAdminPost(adminPostRequest([
       ['date', '2026-06-22'], ['date', '2026-06-20'], ['date', '2026-06-20'], ['reason', 'holiday'], ['action', 'close'],
@@ -438,7 +438,7 @@ describe('POST /admin day overrides (spec §11)', () => {
     const deletes: string[][] = [];
     repo.upsertDayOverrides = async (dates, capacity) => { upserts.push([dates, capacity]); };
     repo.deleteDayOverrides = async (dates) => { deletes.push(dates); };
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
     await handleAdminPost(adminPostRequest({ date: '2026-06-20', toDate: '2026-06-22', capacity: '1', action: 'set' }), context);
     expect(upserts).toEqual([[['2026-06-20', '2026-06-21', '2026-06-22'], 1]]);
@@ -447,7 +447,7 @@ describe('POST /admin day overrides (spec §11)', () => {
   });
 
   it('rejects toDate before date with 400 validation_failed', async () => {
-    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', toDate: '2026-06-19', capacity: '1', action: 'set' }), context);
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed' } });
@@ -457,7 +457,7 @@ describe('POST /admin day overrides (spec §11)', () => {
     const repo = fakeRepository();
     const calls: Array<[string[], number, string | null]> = [];
     repo.upsertDayOverrides = async (dates, capacity, reason) => { calls.push([dates, capacity, reason]); };
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', capacity: '0', reason: '   ', action: 'set' }), context);
     expect(response.status).toBe(303);
@@ -468,7 +468,7 @@ describe('POST /admin day overrides (spec §11)', () => {
     const repo = fakeRepository();
     const calls: string[][] = [];
     repo.deleteDayOverrides = async (dates) => { calls.push(dates); };
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'clear' }), context);
     expect(response.status).toBe(303);
@@ -476,14 +476,14 @@ describe('POST /admin day overrides (spec §11)', () => {
   });
 
   it('rejects an unknown action with 400 validation_failed', async () => {
-    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'delete-everything' }), context);
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed' } });
   });
 
   it('rejects an invalid date with 400', async () => {
-    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminPost(adminPostRequest({ date: 'not-a-date', action: 'clear' }), context);
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed' } });
@@ -498,7 +498,7 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
   it('renders the settings page with editable fields and marks overridden settings', async () => {
     const repo = fakeRepository();
     repo.settings.set('booking.minNoticeHours', '2');
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminGet(settingsGetRequest(), context);
     expect(response.status).toBe(200);
     expect(response.headers.get('cache-control')).toBe('no-store');
@@ -518,7 +518,7 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
 
   it('saves, resets, and validates the normal number of capacity vehicles', async () => {
     const repo = fakeRepository();
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
     const save = await handleAdminPost(adminPostRequest({ action: 'settings-save', section: 'capacity', 'capacity.default': '4' }), context);
     expect(save.status).toBe(303);
@@ -537,7 +537,7 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
   // must carry it as an HTML max= constraint, mirroring min=, so a value like 1441 is rejected
   // client-side too — not just at parseSettingForm/mergeAndValidateSettings.
   it('renders min and max attributes on the holdMinutes number input', async () => {
-    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminGet(settingsGetRequest(), context);
     const body = await response.text();
     const holdMinutesInput = /<input[^>]*name="booking\.holdMinutes"[^>]*>/.exec(body)?.[0] ?? '';
@@ -549,7 +549,7 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     const repo = fakeRepository();
     repo.settings.set('booking.minNoticeHours', '2');
     repo.settings.set('booking.maxHorizonDays', '120');
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
     const reset = await handleAdminPost(adminPostRequest({ action: 'settings-reset:booking.minNoticeHours' }), context);
     expect(reset.status).toBe(303);
@@ -566,7 +566,7 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     const repo = fakeRepository();
     // Pre-existing override that the save sets back to the config value (24) — must be deleted.
     repo.settings.set('booking.minNoticeHours', '2');
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const request = adminPostRequest({
       action: 'settings-save',
       section: 'policy',
@@ -593,7 +593,7 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     repo.settings.set('booking.minNoticeHours', '2');
     repo.settings.set('booking.maxHorizonDays', '120');
     repo.settings.set('legal.termsUrl', '"https://elsewhere.test/terms"');
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminPost(adminPostRequest({ action: 'settings-reset', section: 'policy' }), context);
     expect(response.status).toBe(303);
     expect(repo.settings.has('booking.minNoticeHours')).toBe(false);
@@ -604,7 +604,7 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
 
   it('rejects invalid values and unknown sections with 400 validation_failed', async () => {
     const repo = fakeRepository();
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const bad = await handleAdminPost(adminPostRequest({ action: 'settings-save', section: 'legal', 'legal.termsUrl': 'not a url' }), context);
     expect(bad.status).toBe(400);
     await expect(bad.json()).resolves.toMatchObject({ error: { code: 'validation_failed' } });
@@ -632,7 +632,7 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
 
   it('rejects settings-save with holdMinutes=0 (400, no row written) and accepts a valid holdMinutes', async () => {
     const repo = fakeRepository();
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
     const bad = await handleAdminPost(adminPostRequest(policyFields({ 'booking.holdMinutes': '0' })), context);
     expect(bad.status).toBe(400);
@@ -657,7 +657,7 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
   // reachable one), reaching mergeAndValidateSettings — not just a single field's SettingKind bound.
   it('field-attributes a mergeAndValidateSettings cross-field rejection in the HttpError message', async () => {
     const repo = fakeRepository();
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     // createBookkitContext runs `config` through validateConfig, so it can't hold a broken value —
     // but `baseConfig` (the pristine file config the handler merges over, src/handlers/index.ts
     // `base = context.baseConfig ?? context.config`) isn't re-validated there. Setting it directly
@@ -681,7 +681,7 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
   it('propagates an applySettingsBatch failure as a 500 without redirecting to a saved state', async () => {
     const repo = fakeRepository();
     repo.applySettingsBatch = async () => { throw new Error('D1 batch failed'); };
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
     const response = await handleAdminPost(adminPostRequest(policyFields({ 'booking.minNoticeHours': '2', 'booking.maxHorizonDays': '90' })), context);
     expect(response.status).toBe(500);
@@ -694,7 +694,7 @@ describe('BK-SEC-001: admin mutation origin + CSRF guard (src/admin-csrf.ts)', (
     const repo = fakeRepository();
     const calls: string[] = [];
     repo.deleteDayOverrides = async (dates) => { calls.push(...dates); };
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'clear' }, {
       headers: { origin: 'https://evil.test', 'sec-fetch-site': 'cross-site' },
     }), context);
@@ -703,7 +703,7 @@ describe('BK-SEC-001: admin mutation origin + CSRF guard (src/admin-csrf.ts)', (
   });
 
   it('rejects Sec-Fetch-Site: same-site (deliberately not trusted as same-origin — see admin-csrf.ts)', async () => {
-    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'clear' }, {
       headers: { origin: ADMIN_ORIGIN, 'sec-fetch-site': 'same-site' },
     }), context);
@@ -711,7 +711,7 @@ describe('BK-SEC-001: admin mutation origin + CSRF guard (src/admin-csrf.ts)', (
   });
 
   it('rejects a POST with neither Sec-Fetch-Site nor Origin present', async () => {
-    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'clear' }, { headers: {} }), context);
     expect(response.status).toBe(403);
   });
@@ -720,7 +720,7 @@ describe('BK-SEC-001: admin mutation origin + CSRF guard (src/admin-csrf.ts)', (
     const repo = fakeRepository();
     const calls: string[] = [];
     repo.deleteDayOverrides = async (dates) => { calls.push(...dates); };
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'clear' }, {
       headers: { 'sec-fetch-site': 'same-origin' },
     }), context);
@@ -729,13 +729,13 @@ describe('BK-SEC-001: admin mutation origin + CSRF guard (src/admin-csrf.ts)', (
   });
 
   it('rejects a POST with no csrf_token field even with valid same-origin headers and Access', async () => {
-    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'clear' }, { csrfToken: null }), context);
     expect(response.status).toBe(403);
   });
 
   it('rejects an expired csrf_token', async () => {
-    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     // Minted far enough in the past that its expiry already fell before CSRF_NOW (the fixed clock
     // every context in this file uses).
     const expired = await mintTestCsrfToken('', CSRF_NOW - ADMIN_CSRF_TOKEN_TTL_MS - 1_000);
@@ -744,7 +744,7 @@ describe('BK-SEC-001: admin mutation origin + CSRF guard (src/admin-csrf.ts)', (
   });
 
   it('rejects a csrf_token minted for a different Access user (foreign subject)', async () => {
-    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const foreignUser = await mintTestCsrfToken('someone-else@example.test', CSRF_NOW);
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'clear' }, { csrfToken: foreignUser }), context);
     expect(response.status).toBe(403);
@@ -754,7 +754,7 @@ describe('BK-SEC-001: admin mutation origin + CSRF guard (src/admin-csrf.ts)', (
     const repo = fakeRepository();
     const calls: string[] = [];
     repo.deleteDayOverrides = async (dates) => { calls.push(...dates); };
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const getResponse = await handleAdminGet(adminGetRequest(), context);
     const body = await getResponse.text();
     const match = /name="csrf_token" value="([^"]+)"/.exec(body);
@@ -766,7 +766,7 @@ describe('BK-SEC-001: admin mutation origin + CSRF guard (src/admin-csrf.ts)', (
 
   it('accepts the exact token embedded in the rendered settings page on a subsequent settings-save POST', async () => {
     const repo = fakeRepository();
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const getResponse = await handleAdminGet(new Request(`${ADMIN_URL}?view=settings`), context);
     const body = await getResponse.text();
     const match = /name="csrf_token" value="([^"]+)"/.exec(body);
@@ -801,17 +801,17 @@ describe('BK-SEC-001: admin mutation origin + CSRF guard (src/admin-csrf.ts)', (
   ];
 
   it.each(mutationActions)('action=%s: cross-origin is rejected by the guard; same-origin+token reaches the action (never 403)', async (_label, fields) => {
-    const crossOriginContext = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const crossOriginContext = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const crossOrigin = await handleAdminPost(adminPostRequest(fields, { headers: { origin: 'https://evil.test', 'sec-fetch-site': 'cross-site' } }), crossOriginContext);
     expect(crossOrigin.status).toBe(403);
 
-    const sameOriginContext = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const sameOriginContext = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const sameOrigin = await handleAdminPost(adminPostRequest(fields), sameOriginContext);
     expect(sameOrigin.status).not.toBe(403);
   });
 
   it('sets Cache-Control: no-store on the admin POST redirect response', async () => {
-    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'clear' }), context);
     expect(response.status).toBe(303);
     expect(response.headers.get('cache-control')).toBe('no-store');
@@ -823,7 +823,7 @@ describe('BK-SEC-001: admin mutation origin + CSRF guard (src/admin-csrf.ts)', (
   // now sets no-store on every admin POST response, success or error. Covers the guard's own 403 as
   // the concrete example, but the fix is applied to the whole error path, not this one status code.
   it('sets Cache-Control: no-store on an admin POST that 403s (cross-origin, no mutation)', async () => {
-    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'clear' }, {
       headers: { origin: 'https://evil.test', 'sec-fetch-site': 'cross-site' },
     }), context);
@@ -832,7 +832,7 @@ describe('BK-SEC-001: admin mutation origin + CSRF guard (src/admin-csrf.ts)', (
   });
 
   it('sets Cache-Control: no-store on an admin POST that 400s (validation failure)', async () => {
-    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, verifyAccess: async () => true, providers: providers(), secrets: csrfSecrets });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'delete-everything' }), context);
     expect(response.status).toBe(400);
     expect(response.headers.get('cache-control')).toBe('no-store');
@@ -850,7 +850,7 @@ describe('BK-SEC-001: admin CSRF layer 2 without BOOKKIT_CSRF_SECRET (layer 1 al
     const repo = fakeRepository();
     const calls: string[] = [];
     repo.deleteDayOverrides = async (dates) => { calls.push(...dates); };
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers() });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers() });
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'clear' }, {
       csrfToken: null,
       headers: { 'sec-fetch-site': 'same-origin' },
@@ -863,7 +863,7 @@ describe('BK-SEC-001: admin CSRF layer 2 without BOOKKIT_CSRF_SECRET (layer 1 al
     const repo = fakeRepository();
     const calls: string[] = [];
     repo.deleteDayOverrides = async (dates) => { calls.push(...dates); };
-    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, verifyAccess: async () => true, providers: providers() });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers() });
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'clear' }, {
       csrfToken: null,
       headers: { origin: 'https://evil.test', 'sec-fetch-site': 'cross-site' },
@@ -873,7 +873,7 @@ describe('BK-SEC-001: admin CSRF layer 2 without BOOKKIT_CSRF_SECRET (layer 1 al
   });
 
   it('the rendered admin form carries an empty csrf_token field rather than throwing', async () => {
-    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, verifyAccess: async () => true, providers: providers() });
+    const context = createBookkitContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers() });
     const response = await handleAdminGet(adminGetRequest(), context);
     expect(response.status).toBe(200);
     const body = await response.text();
