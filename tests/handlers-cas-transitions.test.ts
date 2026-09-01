@@ -10,7 +10,8 @@ import {
   handleStripeWebhook,
 } from '../src/handlers';
 import { booking, config } from './fixtures';
-import { fakeRepository, providers } from './fakes';
+import { sideEffectOperationKey, type SideEffectOperationIdentity } from '../src/repo';
+import { fakeRepository, providers, sideEffectOperation } from './fakes';
 
 // BK-DATA-001: every status-changing handler now writes through a compare-and-set repo
 // method. These tests force the exact race the CAS closes — a concurrent transition lands
@@ -218,14 +219,16 @@ describe('stale compare-and-set transitions', () => {
         cancelledAt: '2026-06-14T08:00:00.000Z',
         cancelledBy: 'customer',
         updatedAt: '2026-06-14T08:00:00.000Z',
-        mutationSideEffectKinds: [
-          'email:booking.cancelled_by_customer',
-          'tourflow:booking.cancelled_by_customer',
-          'calendar_delete',
+        mutationSideEffects: [
+          { family: 'email', event: 'booking.cancelled_by_customer', eventPayloadJson: null, eventIdPrefix: null },
+          { family: 'hook', name: 'ops', event: 'booking.cancelled_by_customer', eventPayloadJson: null, eventIdPrefix: null },
+          { family: 'calendar_delete', eventPayloadJson: null, eventIdPrefix: null },
         ],
       });
       return realRefundTransition(refund, id, input);
     };
+    const emailIdentity: SideEffectOperationIdentity = { family: 'email', event: 'booking.cancelled_by_customer' };
+    const hookIdentity: SideEffectOperationIdentity = { family: 'hook', name: 'ops', event: 'booking.cancelled_by_customer' };
     const emails: string[] = [];
     const opsEvents: string[] = [];
     let emailAttempts = 0;
@@ -259,8 +262,8 @@ describe('stale compare-and-set transitions', () => {
             if (emailAttempts === 1) throw new Error('email unavailable');
           },
         },
-        ops: { push: async (event) => { opsEvents.push(event); } },
       }),
+      hooks: [{ name: 'ops', durable: true, handler: async (event) => { opsEvents.push(event); } }],
     });
     const request = new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' });
 
@@ -273,13 +276,13 @@ describe('stale compare-and-set transitions', () => {
     expect(opsEvents).toEqual(['booking.cancelled_by_customer']);
     expect(calendarDeletes).toBe(1);
     expect(repo.rows.get(seeded.id)?.calendarEventId).toBeNull();
-    expect(repo.sideEffectOperations.get(`${seeded.id}:email:booking.cancelled_by_customer`)).toMatchObject({ status: 'failed', attemptCount: 1 });
-    expect(repo.sideEffectOperations.get(`${seeded.id}:tourflow:booking.cancelled_by_customer`)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
-    expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_delete`)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
-    expect([...repo.sideEffectOperations.values()].map((operation) => operation.kind).sort()).toEqual([
+    expect(sideEffectOperation(repo, seeded.id, emailIdentity)).toMatchObject({ status: 'failed', attemptCount: 1 });
+    expect(sideEffectOperation(repo, seeded.id, hookIdentity)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
+    expect(sideEffectOperation(repo, seeded.id, { family: 'calendar_delete' })).toMatchObject({ status: 'succeeded', attemptCount: 1 });
+    expect([...repo.sideEffectOperations.values()].map(sideEffectOperationKey).sort()).toEqual([
       'calendar_delete',
       'email:booking.cancelled_by_customer',
-      'tourflow:booking.cancelled_by_customer',
+      'hook:ops:booking.cancelled_by_customer',
     ]);
 
     const second = await handleStripeWebhook(request, context);
@@ -287,7 +290,7 @@ describe('stale compare-and-set transitions', () => {
     expect(emails).toEqual(['booking.cancelled_by_customer', 'booking.cancelled_by_customer']);
     expect(opsEvents).toEqual(['booking.cancelled_by_customer']);
     expect(calendarDeletes).toBe(1);
-    expect(repo.sideEffectOperations.get(`${seeded.id}:email:booking.cancelled_by_customer`)).toMatchObject({ status: 'succeeded', attemptCount: 2 });
+    expect(sideEffectOperation(repo, seeded.id, emailIdentity)).toMatchObject({ status: 'succeeded', attemptCount: 2 });
   });
 
   it('a payment confirmation that loses a race to a concurrent operator cancel does not resurrect the booking', async () => {
@@ -299,7 +302,6 @@ describe('stale compare-and-set transitions', () => {
       stripePaymentIntent: null,
       calendarSynced: false,
       emailSynced: false,
-      tourflowSynced: false,
     });
     const repo = fakeRepository([seeded]);
     const realTransition = repo.confirmWithSideEffectOperations;

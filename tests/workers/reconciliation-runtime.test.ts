@@ -90,7 +90,7 @@ describe('runReconciliation against real D1', () => {
     const id = 'recon-d1-backoff';
     await seedConfirmed(id);
     await db.prepare(
-      `INSERT INTO side_effect_operations (booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at, failure_started_at, next_attempt_at)
+      `INSERT INTO side_effect_operations (booking_id, family, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at, failure_started_at, next_attempt_at)
        VALUES (?, 'calendar_create', 'failed', NULL, 2, ?, ?, 'calendar unavailable', ?, ?, ?, NULL)`,
     ).bind(id, '2026-08-14T09:59:00.000Z', '2026-08-14T09:59:00.000Z', '2026-08-14T09:00:00.000Z', '2026-08-14T09:59:00.000Z', '2026-08-14T09:49:00.000Z').run();
 
@@ -112,7 +112,7 @@ describe('runReconciliation against real D1', () => {
     await runReconciliation(context);
     expect(calendarCalls).toBe(1);
     await expect(context.repo.listSideEffectOperations(id)).resolves.toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: 'calendar_create', status: 'failed', attemptCount: 3 }),
+      expect.objectContaining({ family: 'calendar_create', status: 'failed', attemptCount: 3 }),
     ]));
 
     // Attempt 3's 20-minute window (10:10 -> 10:30) elapses; this time the retry succeeds.
@@ -121,7 +121,7 @@ describe('runReconciliation against real D1', () => {
     await runReconciliation(context);
     expect(calendarCalls).toBe(2);
     await expect(context.repo.listSideEffectOperations(id)).resolves.toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: 'calendar_create', status: 'succeeded' }),
+      expect.objectContaining({ family: 'calendar_create', status: 'succeeded' }),
     ]));
   });
 
@@ -157,12 +157,12 @@ describe('runReconciliation against real D1', () => {
     for (const id of [...terminalIds, 'recon-d1-actionable']) await seedConfirmed(id);
     for (const id of terminalIds) {
       await db.prepare(
-        `INSERT INTO side_effect_operations (booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at, failure_started_at, next_attempt_at)
+        `INSERT INTO side_effect_operations (booking_id, family, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at, failure_started_at, next_attempt_at)
          VALUES (?, 'email_confirmation', 'abandoned', NULL, 10, ?, ?, 'terminal', ?, ?, ?, NULL)`,
       ).bind(id, '2026-08-14T08:00:00.000Z', '2026-08-14T08:00:00.000Z', '2026-08-14T08:00:00.000Z', '2026-08-14T08:00:00.000Z', '2026-08-14T08:00:00.000Z').run();
     }
     await db.prepare(
-      `INSERT INTO side_effect_operations (booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at, failure_started_at, next_attempt_at)
+      `INSERT INTO side_effect_operations (booking_id, family, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at, failure_started_at, next_attempt_at)
        VALUES ('recon-d1-actionable', 'calendar_create', 'pending', NULL, 0, NULL, NULL, NULL, ?, ?, NULL, NULL)`,
     ).bind('2026-08-14T09:59:00.000Z', '2026-08-14T09:59:00.000Z').run();
     let calendarCalls = 0;
@@ -176,7 +176,7 @@ describe('runReconciliation against real D1', () => {
     expect(summary.sideEffectBookingsProcessed).toBe(1);
     expect(summary.incidentsOpened).toBe(10);
     await expect(context.repo.listSideEffectOperations('recon-d1-actionable')).resolves.toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: 'calendar_create', status: 'succeeded' }),
+      expect.objectContaining({ family: 'calendar_create', status: 'succeeded' }),
     ]));
   });
 
@@ -185,7 +185,7 @@ describe('runReconciliation against real D1', () => {
     await seedConfirmed(id);
     const context = createBookkitContext({ config, db, clock, providers: providers() });
     await db.prepare(
-      `INSERT INTO side_effect_operations (booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at)
+      `INSERT INTO side_effect_operations (booking_id, family, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at)
        VALUES (?, 'oversell', 'succeeded', 'capacity_exceeded', 1, ?, ?, NULL, ?, ?)`,
     ).bind(id, '2026-08-14T09:00:00.000Z', '2026-08-14T09:00:00.000Z', '2026-08-14T09:00:00.000Z', '2026-08-14T09:00:00.000Z').run();
 

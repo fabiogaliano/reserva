@@ -19,4 +19,5 @@ export const BOOKKIT_MIGRATIONS = [
   '0014_meeting_points.sql',
   '0015_pickup_options.sql',
   '0016_operational_reconciliation.sql',
+  '0017_side_effect_operation_identity.sql',
 ] as const;

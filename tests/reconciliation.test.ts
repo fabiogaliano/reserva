@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { createBookkitContext } from '../src/context';
 import { runReconciliation } from '../src/reconciliation';
 import { booking, config } from './fixtures';
-import { fakeRepository, providers } from './fakes';
+import type { SideEffectOperationIdentity } from '../src/repo';
+import { fakeRepository, providers, seedSideEffectOperation, type FakeRepository } from './fakes';
 
 const clock = () => new Date('2026-08-14T10:00:00.000Z');
 
@@ -14,17 +15,16 @@ function advanceableClock(startIso: string): { clock: () => Date; advance: (isoT
   return { clock: () => new Date(now), advance: (isoTime) => { now = isoTime; } };
 }
 
-function seedSideEffect(repo: ReturnType<typeof fakeRepository>, bookingId: string, kind: string, patch: Partial<{
+function seedSideEffect(repo: FakeRepository, bookingId: string, identity: SideEffectOperationIdentity, patch: Partial<{
   status: 'pending' | 'in_flight' | 'succeeded' | 'failed' | 'abandoned';
   attemptCount: number;
   failureStartedAt: string | null;
   nextAttemptAt: string | null;
   attemptedAt: string | null;
 }>): void {
-  repo.sideEffectOperations.set(`${bookingId}:${kind}`, {
-    bookingId, kind: kind as never, status: patch.status ?? 'pending', providerResultId: null,
-    attemptCount: patch.attemptCount ?? 0, attemptedAt: patch.attemptedAt ?? null, resolvedAt: null,
-    error: null, createdAt: '2026-08-14T09:00:00.000Z', updatedAt: '2026-08-14T09:00:00.000Z',
+  seedSideEffectOperation(repo, bookingId, identity, {
+    status: patch.status ?? 'pending', attemptCount: patch.attemptCount ?? 0,
+    attemptedAt: patch.attemptedAt ?? null, createdAt: '2026-08-14T09:00:00.000Z', updatedAt: '2026-08-14T09:00:00.000Z',
     failureStartedAt: patch.failureStartedAt ?? null, nextAttemptAt: patch.nextAttemptAt ?? null,
   });
 }
@@ -43,7 +43,7 @@ describe('runReconciliation', () => {
   it('opens a delayed incident once a failed side-effect row has been failing for ten uninterrupted minutes, and resolves it automatically once a later drain succeeds', async () => {
     const seeded = booking({ id: 'recon-delayed-incident', status: 'confirmed', calendarSynced: false, emailSynced: true });
     const repo = fakeRepository([seeded]);
-    seedSideEffect(repo, seeded.id, 'calendar_create', {
+    seedSideEffect(repo, seeded.id, { family: 'calendar_create' }, {
       status: 'failed', attemptCount: 2, failureStartedAt: '2026-08-14T09:49:00.000Z',
       attemptedAt: '2026-08-14T09:59:00.000Z', nextAttemptAt: null,
     });
@@ -85,7 +85,7 @@ describe('runReconciliation', () => {
   it('does not open an incident for a failed side-effect row still inside the ten-minute window', async () => {
     const seeded = booking({ id: 'recon-too-soon', status: 'confirmed', calendarSynced: false, emailSynced: true });
     const repo = fakeRepository([seeded]);
-    seedSideEffect(repo, seeded.id, 'calendar_create', {
+    seedSideEffect(repo, seeded.id, { family: 'calendar_create' }, {
       status: 'failed', attemptCount: 1, failureStartedAt: '2026-08-14T09:55:00.000Z',
     });
     const context = createBookkitContext({
@@ -101,7 +101,7 @@ describe('runReconciliation', () => {
   it('opens an action_required incident immediately for an abandoned side-effect row', async () => {
     const seeded = booking({ id: 'recon-abandoned', status: 'confirmed', calendarSynced: true, emailSynced: false });
     const repo = fakeRepository([seeded]);
-    seedSideEffect(repo, seeded.id, 'email_confirmation', {
+    seedSideEffect(repo, seeded.id, { family: 'email_confirmation' }, {
       status: 'abandoned', attemptCount: 10, failureStartedAt: '2026-08-14T09:59:59.000Z',
     });
     const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
@@ -194,7 +194,7 @@ describe('runReconciliation', () => {
   it('reports an unreported oversell marker as an action_required incident exactly once', async () => {
     const seeded = booking({ id: 'recon-oversell', status: 'confirmed' });
     const repo = fakeRepository([seeded]);
-    seedSideEffect(repo, seeded.id, 'oversell', { status: 'succeeded' });
+    seedSideEffect(repo, seeded.id, { family: 'oversell' }, { status: 'succeeded' });
     const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const first = await runReconciliation(context);
@@ -209,7 +209,7 @@ describe('runReconciliation', () => {
   it('drains a pending alert through the configured sink and marks it delivered', async () => {
     const seeded = booking({ id: 'recon-alert-drain', status: 'confirmed', calendarSynced: true, emailSynced: false });
     const repo = fakeRepository([seeded]);
-    seedSideEffect(repo, seeded.id, 'email_confirmation', { status: 'abandoned', attemptCount: 10, failureStartedAt: '2026-08-14T09:00:00.000Z' });
+    seedSideEffect(repo, seeded.id, { family: 'email_confirmation' }, { status: 'abandoned', attemptCount: 10, failureStartedAt: '2026-08-14T09:00:00.000Z' });
     const sent: unknown[] = [];
     const context = createBookkitContext({
       config, db: {} as D1Database, repo, clock, providers: providers({ alerts: { send: async (alert) => { sent.push(alert); } } }),
@@ -232,7 +232,7 @@ describe('runReconciliation', () => {
   it('does not send an obsolete action alert after the same pass auto-resolves its incident', async () => {
     const seeded = booking({ id: 'recon-no-obsolete-alert', status: 'confirmed', calendarSynced: false, emailSynced: true });
     const repo = fakeRepository([seeded]);
-    seedSideEffect(repo, seeded.id, 'calendar_create', {
+    seedSideEffect(repo, seeded.id, { family: 'calendar_create' }, {
       status: 'failed', attemptCount: 1, attemptedAt: '2026-08-14T09:00:00.000Z', failureStartedAt: '2026-08-14T09:00:00.000Z',
     });
     await repo.upsertOpenIncident({
@@ -256,7 +256,7 @@ describe('runReconciliation', () => {
   it('schedules a backoff retry for a failing alert sink without crashing the sweep', async () => {
     const seeded = booking({ id: 'recon-alert-fail', status: 'confirmed', calendarSynced: true, emailSynced: false });
     const repo = fakeRepository([seeded]);
-    seedSideEffect(repo, seeded.id, 'email_confirmation', { status: 'abandoned', attemptCount: 10, failureStartedAt: '2026-08-14T09:00:00.000Z' });
+    seedSideEffect(repo, seeded.id, { family: 'email_confirmation' }, { status: 'abandoned', attemptCount: 10, failureStartedAt: '2026-08-14T09:00:00.000Z' });
     const context = createBookkitContext({
       config, db: {} as D1Database, repo, clock, providers: providers({ alerts: { send: async () => { throw new Error('slack webhook down'); } } }),
     });
@@ -271,9 +271,9 @@ describe('runReconciliation', () => {
   it('attempts due side-effect siblings independently and isolates provider failures', async () => {
     const seeded = booking({ id: 'recon-independent-rows', status: 'confirmed', calendarSynced: false, emailSynced: false });
     const repo = fakeRepository([seeded]);
-    seedSideEffect(repo, seeded.id, 'calendar_create', { status: 'pending' });
-    seedSideEffect(repo, seeded.id, 'email_confirmation', { status: 'pending' });
-    seedSideEffect(repo, seeded.id, 'email:booking.cancelled_by_operator', {
+    seedSideEffect(repo, seeded.id, { family: 'calendar_create' }, { status: 'pending' });
+    seedSideEffect(repo, seeded.id, { family: 'email_confirmation' }, { status: 'pending' });
+    seedSideEffect(repo, seeded.id, { family: 'email', event: 'booking.cancelled_by_operator' }, {
       status: 'failed', attemptCount: 4, attemptedAt: '2026-08-14T09:30:00.000Z', failureStartedAt: '2026-08-14T09:30:00.000Z',
     });
     let confirmationEmails = 0;
@@ -298,8 +298,8 @@ describe('runReconciliation', () => {
     const terminal = Array.from({ length: 12 }, (_, index) => booking({ id: `recon-terminal-${index}`, status: 'confirmed' }));
     const actionable = booking({ id: 'recon-action-after-terminal', status: 'confirmed', calendarSynced: false, emailSynced: true });
     const repo = fakeRepository([...terminal, actionable]);
-    for (const seeded of terminal) seedSideEffect(repo, seeded.id, 'email_confirmation', { status: 'abandoned', attemptCount: 10 });
-    seedSideEffect(repo, actionable.id, 'calendar_create', { status: 'pending' });
+    for (const seeded of terminal) seedSideEffect(repo, seeded.id, { family: 'email_confirmation' }, { status: 'abandoned', attemptCount: 10 });
+    seedSideEffect(repo, actionable.id, { family: 'calendar_create' }, { status: 'pending' });
     let calendarCalls = 0;
     const context = createBookkitContext({
       config, db: {} as D1Database, repo, clock,
@@ -315,7 +315,7 @@ describe('runReconciliation', () => {
   it('reprojects an open incident after ordinary HTTP recovery removes the source from execution candidates', async () => {
     const seeded = booking({ id: 'recon-http-reprojection', status: 'confirmed', calendarSynced: true, emailSynced: false });
     const repo = fakeRepository([seeded]);
-    seedSideEffect(repo, seeded.id, 'email_confirmation', { status: 'abandoned', attemptCount: 10 });
+    seedSideEffect(repo, seeded.id, { family: 'email_confirmation' }, { status: 'abandoned', attemptCount: 10 });
     const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers({ alerts: { send: async () => undefined } }) });
     await runReconciliation(context);
 
@@ -334,7 +334,7 @@ describe('runReconciliation', () => {
   it('leaves alert revisions undelivered when no sink is configured and supports strict cron preflight', async () => {
     const seeded = booking({ id: 'recon-alert-missing', status: 'confirmed', emailSynced: false });
     const repo = fakeRepository([seeded]);
-    seedSideEffect(repo, seeded.id, 'email_confirmation', { status: 'abandoned', attemptCount: 10 });
+    seedSideEffect(repo, seeded.id, { family: 'email_confirmation' }, { status: 'abandoned', attemptCount: 10 });
     const context = createBookkitContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const summary = await runReconciliation(context);
@@ -348,7 +348,7 @@ describe('runReconciliation', () => {
   it('honors a bounded sourceLimit and remains resumable across invocations', async () => {
     const seeds = Array.from({ length: 3 }, (_, index) => booking({ id: `recon-bounded-${index}`, status: 'confirmed', calendarSynced: false, emailSynced: true }));
     const repo = fakeRepository(seeds);
-    for (const seeded of seeds) seedSideEffect(repo, seeded.id, 'calendar_create', { status: 'pending' });
+    for (const seeded of seeds) seedSideEffect(repo, seeded.id, { family: 'calendar_create' }, { status: 'pending' });
     let calendarCalls = 0;
     const context = createBookkitContext({
       config, db: {} as D1Database, repo, clock,

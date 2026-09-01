@@ -251,13 +251,16 @@ describe('refund_operations concurrent claim uniqueness on real D1', () => {
       stripeRefundId: 're_atomic', amountCents: 12000, requestedAt: timestamp, resolvedAt: timestamp,
     }, id, {
       expectedStatusIn: ['confirmed'], cancelledAt: timestamp, cancelledBy: 'operator', updatedAt: timestamp,
-      mutationSideEffectKinds: ['calendar_delete', 'email:booking.cancelled_by_operator'],
+      mutationSideEffects: [
+        { family: 'calendar_delete', eventPayloadJson: null, eventIdPrefix: null },
+        { family: 'email', event: 'booking.cancelled_by_operator', eventPayloadJson: null, eventIdPrefix: null },
+      ],
     });
     expect(updated).toMatchObject({ status: 'cancelled' });
     await expect(repo.getRefundOperationByBookingId(id)).resolves.toMatchObject({ status: 'succeeded', stripeRefundId: 're_atomic' });
     await expect(repo.listSideEffectOperations(id)).resolves.toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: 'calendar_delete', status: 'pending' }),
-      expect.objectContaining({ kind: 'email:booking.cancelled_by_operator', status: 'pending' }),
+      expect.objectContaining({ family: 'calendar_delete', status: 'pending' }),
+      expect.objectContaining({ family: 'email', event: 'booking.cancelled_by_operator', status: 'pending' }),
     ]));
 
     const lostId = 'refund-atomic-cas-loss';

@@ -42,7 +42,6 @@
     "./providers/payments-stripe": "./src/providers/payments-stripe/index.ts",
     "./providers/email-brevo": "./src/providers/email-brevo/index.ts",
     "./providers/email-none": "./src/providers/email-none/index.ts",
-    "./providers/ops-tourflow": "./src/providers/ops-tourflow/index.ts",
     "./runtime": "./src/runtime.ts",
     "./components/BookingWidget.astro": "./src/components/BookingWidget.astro",
     "./components/ManageBooking.astro": "./src/components/ManageBooking.astro",

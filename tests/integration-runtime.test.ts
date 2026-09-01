@@ -45,7 +45,7 @@ describe('Cloudflare runtime helpers', () => {
             };
           }
           if (query.startsWith('PRAGMA table_info(side_effect_operations)')) {
-            return { results: ['failure_started_at', 'next_attempt_at'].map((name) => ({ name })) };
+            return { results: ['family', 'name', 'event', 'discriminator', 'event_payload_json', 'failure_started_at', 'next_attempt_at'].map((name) => ({ name })) };
           }
           if (query.startsWith('PRAGMA table_info(refund_operations)')) {
             return {
@@ -56,9 +56,10 @@ describe('Cloudflare runtime helpers', () => {
           if (query.includes('idx_side_effect_operations_reconciliation')) {
             return {
               results: [
-                { type: 'table', name: 'side_effect_operations', sql: "CHECK (kind IN ('calendar_create', 'calendar_delete', 'email_confirmation', 'oversell')), status TEXT CHECK (status IN ('pending','in_flight','succeeded','failed','abandoned'))" },
+                { type: 'table', name: 'side_effect_operations', sql: "CHECK (family IN ('calendar_create','calendar_delete','email_confirmation','oversell','email','hook','webhook')), status TEXT CHECK (status IN ('pending','in_flight','succeeded','failed','abandoned'))" },
                 { type: 'index', name: 'idx_side_effect_operations_pending', sql: null },
                 { type: 'index', name: 'idx_side_effect_operations_reconciliation', sql: null },
+                { type: 'index', name: 'idx_side_effect_operations_identity', sql: null },
               ],
             };
           }
@@ -89,13 +90,13 @@ describe('Cloudflare runtime helpers', () => {
     const request = new Request('https://example.test/api/booking/status');
     const context = await definition.createContext({
       request,
-      locals: { env: { BOOKKIT_DB: db, BOOKKIT_CACHE: cache, TOURFLOW_SHARED_SECRET: 'secret' } },
+      locals: { env: { BOOKKIT_DB: db, BOOKKIT_CACHE: cache, BOOKKIT_OPERATOR_SECRET: 'secret' } },
     });
     expect(context.config).toStrictEqual(definition.config);
     expect(context.db).toBe(db);
     expect(context.cache).toBe(cache);
     expect('env' in context).toBe(false);
-    await expect(context.secrets?.('TOURFLOW_SHARED_SECRET')).resolves.toBe('secret');
+    await expect(context.secrets?.('BOOKKIT_OPERATOR_SECRET')).resolves.toBe('secret');
     await expect(context.secrets?.('STRIPE_SECRET_KEY')).resolves.toBeUndefined();
 
     const nextContext = await definition.createContext({

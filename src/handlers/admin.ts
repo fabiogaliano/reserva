@@ -18,9 +18,8 @@ import { nowIso } from '../context';
 import type {
   OperationalIncidentSourceType,
   SettingsBatchOperation,
-  SideEffectOperationKind,
 } from '../repo';
-import { reprojectIncidentAfterAdminRetry } from '../reconciliation';
+import { reprojectIncidentAfterAdminRetry, sideEffectIncidentSourceKey } from '../reconciliation';
 import { attemptRefund } from '../refund-executor';
 import { resolveMessages } from '../ui/messages';
 import { adminPage, incidentsSection, type AdminFilters } from '../ui/pages/admin-page';
@@ -161,8 +160,13 @@ export function handleAdminPost(request: Request, context: BookkitContext): Prom
       const booking = await context.repo.getBookingById(incident.bookingId);
       if (!booking) throw new HttpError(404, 'not_found', 'Booking not found');
       if (sourceType === 'side_effect') {
-        const kind = sourceKey.slice(incident.bookingId.length + 1) as SideEffectOperationKind;
-        await retrySideEffectOperation(context, booking, kind);
+        // Plan 021: the incident's source_key is a rendering of an operation's identity, not a
+        // parseable encoding of it — so find the row by rebuilding each candidate's key and
+        // comparing, never by slicing the identity back out of the string.
+        const operations = await context.repo.listSideEffectOperations(incident.bookingId);
+        const operation = operations.find((candidate) => sideEffectIncidentSourceKey(candidate) === sourceKey);
+        if (!operation) throw new HttpError(404, 'not_found', 'Operation not found');
+        await retrySideEffectOperation(context, booking, operation);
       } else {
         const refundOperation = await context.repo.getRefundOperationByBookingId(incident.bookingId);
         if (refundOperation) {

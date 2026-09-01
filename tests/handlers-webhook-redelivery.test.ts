@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { createBookkitContext } from '../src/context';
 import { handleCustomerCancel, handleStripeWebhook } from '../src/handlers';
 import { booking, config } from './fixtures';
-import { fakeRepository, providers } from './fakes';
+import type { SideEffectOperationIdentity } from '../src/repo';
+import { fakeRepository, providers, sideEffectOperation } from './fakes';
 
 // Spec §11's most specific required case: webhook non-2xx on calendar OR email failure
 // must cause a Stripe redelivery that re-runs only the still-unsynced sink. The gating
@@ -18,7 +19,6 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
       stripePaymentIntent: null,
       calendarSynced: false,
       emailSynced: false,
-      tourflowSynced: false,
     });
     const repo = fakeRepository([seeded]);
     let calendarCalls = 0;
@@ -140,8 +140,8 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
       stripePaymentIntent: paymentIntent,
     });
     const repo = fakeRepository([seeded]);
-    const kind = 'email:booking.cancelled_by_operator';
-    await repo.recordMutationSideEffectOperations(seeded.id, [kind], '2026-06-14T07:00:00.000Z');
+    const identity: SideEffectOperationIdentity = { family: 'email', event: 'booking.cancelled_by_operator' };
+    await repo.recordMutationSideEffectOperations(seeded.id, [{ ...identity, eventPayloadJson: null, eventIdPrefix: null }], '2026-06-14T07:00:00.000Z');
     let emails = 0;
     const context = createBookkitContext({
       config,
@@ -172,7 +172,7 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
 
     expect(response.status).toBe(200);
     expect(emails).toBe(1);
-    expect(repo.sideEffectOperations.get(`${seeded.id}:${kind}`)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
+    expect(sideEffectOperation(repo, seeded.id, identity)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
   });
 
   // Mirrors the checkout-side calendar_create/email redelivery tests above, but for the
@@ -244,15 +244,14 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
       stripePaymentIntent: null,
       calendarSynced: false,
       emailSynced: false,
-      tourflowSynced: false,
     });
     const repo = fakeRepository([seeded]);
     let calendarCalls = 0;
     let emailCalls = 0;
-    let opsPushed = 0;
+    let hookCalls = 0;
     const warnings: Array<[string, Record<string, unknown> | undefined]> = [];
-    // dispatchNonCritical (the ops/analytics sink) runs fire-and-forget via waitUntil rather
-    // than being awaited by the handler; collect it so the test can wait for it to settle.
+    // A non-durable booking-event hook runs fire-and-forget via waitUntil rather than being
+    // awaited by the handler; collect it so the test can wait for it to settle.
     const pending: Promise<unknown>[] = [];
     const context = createBookkitContext({
       config,
@@ -289,13 +288,14 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
             if (emailCalls === 1) throw new Error('email provider down');
           },
         },
-        ops: {
-          push: async () => {
-            opsPushed += 1;
-            throw new Error('ops sink unavailable');
-          },
-        },
       }),
+      hooks: [{
+        name: 'ops',
+        handler: async () => {
+          hookCalls += 1;
+          throw new Error('subscriber unavailable');
+        },
+      }],
     });
 
     const first = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
@@ -316,11 +316,11 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
     const afterSecond = repo.rows.get(seeded.id);
     expect(afterSecond).toMatchObject({ status: 'confirmed', calendarSynced: true, emailSynced: true });
 
-    // The ops (tourflow) sink is fire-and-forget: even though it always throws here, the
-    // webhook response must still be 200, and the failure is only logged.
+    // A non-durable hook is fire-and-forget: even though it always throws here, the webhook
+    // response must still be 200, and the failure is only logged.
     await Promise.all(pending);
-    expect(opsPushed).toBeGreaterThan(0);
-    expect(warnings.some(([message]) => message === 'bookkit ops sink failed')).toBe(true);
+    expect(hookCalls).toBeGreaterThan(0);
+    expect(warnings.some(([message]) => message === 'bookkit booking event hook failed')).toBe(true);
   });
 
   // The already-cancelled branch of the charge.refunded handler (src/handlers/index.ts ~550-556)

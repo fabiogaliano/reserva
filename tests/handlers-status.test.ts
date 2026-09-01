@@ -4,7 +4,8 @@ import { createBookkitContext } from '../src/context';
 import { handleStatus, handleStripeWebhook } from '../src/handlers';
 import { utcToLocalIso } from '../src/core/time';
 import { booking, config, tour } from './fixtures';
-import { fakeRepository, providers } from './fakes';
+import type { SideEffectOperationIdentity } from '../src/repo';
+import { fakeRepository, providers, seedSideEffectOperation, sideEffectOperation } from './fakes';
 
 function expectSensitiveHeaders(response: Response): void {
   expect(response.headers.get('cache-control')).toBe('no-store');
@@ -22,7 +23,6 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       createdAt: '2026-06-14T07:30:00.000Z',
       calendarSynced: false,
       emailSynced: false,
-      tourflowSynced: false,
     });
     const repo = fakeRepository([seeded]);
     let calendarCreates = 0;
@@ -199,7 +199,6 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       stripePaymentIntent: null,
       calendarSynced: false,
       emailSynced: false,
-      tourflowSynced: false,
     });
     const repo = fakeRepository([seeded]);
     // Simulate another worker (e.g. the webhook) mid-confirmation, as handlers-lifecycle does.
@@ -247,7 +246,6 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       stripePaymentIntent: null,
       calendarSynced: false,
       emailSynced: false,
-      tourflowSynced: false,
     });
     const repo = fakeRepository([seeded]);
     // Gate the session lookup so both handlers have read the hold row before either
@@ -465,15 +463,13 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       emailSynced: true,
     });
     const repo = fakeRepository([seeded]);
-    repo.sideEffectOperations.set(`${seeded.id}:calendar_create`, {
-      bookingId: seeded.id, kind: 'calendar_create', status: 'failed', providerResultId: null,
-      attemptCount: 1, attemptedAt: seeded.updatedAt, resolvedAt: seeded.updatedAt, error: 'Calendar unavailable',
-      createdAt: seeded.updatedAt, updatedAt: seeded.updatedAt, failureStartedAt: null, nextAttemptAt: null,
+    seedSideEffectOperation(repo, seeded.id, { family: 'calendar_create' }, {
+      status: 'failed', attemptCount: 1, attemptedAt: seeded.updatedAt, resolvedAt: seeded.updatedAt,
+      error: 'Calendar unavailable', createdAt: seeded.updatedAt, updatedAt: seeded.updatedAt,
     });
-    repo.sideEffectOperations.set(`${seeded.id}:email_confirmation`, {
-      bookingId: seeded.id, kind: 'email_confirmation', status: 'succeeded', providerResultId: null,
-      attemptCount: 1, attemptedAt: seeded.updatedAt, resolvedAt: seeded.updatedAt, error: null,
-      createdAt: seeded.updatedAt, updatedAt: seeded.updatedAt, failureStartedAt: null, nextAttemptAt: null,
+    seedSideEffectOperation(repo, seeded.id, { family: 'email_confirmation' }, {
+      status: 'succeeded', attemptCount: 1, attemptedAt: seeded.updatedAt, resolvedAt: seeded.updatedAt,
+      createdAt: seeded.updatedAt, updatedAt: seeded.updatedAt,
     });
     const context = createBookkitContext({
       config,
@@ -496,16 +492,16 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       calendarSynced: true, emailSynced: true,
     });
     const repo = fakeRepository([seeded]);
-    await repo.recordMutationSideEffectOperations(seeded.id, [
-      'email:booking.rescheduled:customer:1', 'tourflow:booking.rescheduled:1',
-    ], '2026-06-14T07:00:00.000Z');
-    const email = repo.sideEffectOperations.get(`${seeded.id}:email:booking.rescheduled:customer:1`);
-    const tourflow = repo.sideEffectOperations.get(`${seeded.id}:tourflow:booking.rescheduled:1`);
-    if (!email || !tourflow) throw new Error('mutation rows were not seeded');
-    repo.sideEffectOperations.set(`${seeded.id}:email:booking.rescheduled:customer:1`, { ...email, status: 'failed', error: 'retry later' });
-    repo.sideEffectOperations.set(`${seeded.id}:tourflow:booking.rescheduled:1`, {
-      ...tourflow, status: 'in_flight', attemptedAt: '2026-06-14T07:59:00.000Z', attemptCount: 1,
-    });
+    const emailIdentity: SideEffectOperationIdentity = { family: 'email', name: 'customer', event: 'booking.rescheduled', discriminator: '1' };
+    const hookIdentity: SideEffectOperationIdentity = { family: 'hook', name: 'ops', event: 'booking.rescheduled', discriminator: '1' };
+    await repo.recordMutationSideEffectOperations(seeded.id, [emailIdentity, hookIdentity].map((identity) => ({
+      ...identity, eventPayloadJson: null, eventIdPrefix: null,
+    })), '2026-06-14T07:00:00.000Z');
+    const email = sideEffectOperation(repo, seeded.id, emailIdentity);
+    const hook = sideEffectOperation(repo, seeded.id, hookIdentity);
+    if (!email || !hook) throw new Error('mutation rows were not seeded');
+    Object.assign(email, { status: 'failed', error: 'retry later' });
+    Object.assign(hook, { status: 'in_flight', attemptedAt: '2026-06-14T07:59:00.000Z', attemptCount: 1 });
     const sentEvents: string[] = [];
     const configuredProviders = providers({ email: {
       send: async (event) => { sentEvents.push(event); },
@@ -514,7 +510,6 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
         throw new Error('reschedule retry remains owed');
       },
     } });
-    delete configuredProviders.ops;
     const context = createBookkitContext({
       config, db: {} as D1Database, repo,
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
@@ -525,8 +520,8 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_mutation_isolation'), context);
     expect(response.status).toBe(200);
     expect(sentEvents).toEqual(['booking.rescheduled']);
-    expect(repo.sideEffectOperations.get(`${seeded.id}:email:booking.rescheduled:customer:1`)).toMatchObject({ status: 'failed' });
-    expect(repo.sideEffectOperations.get(`${seeded.id}:tourflow:booking.rescheduled:1`)).toMatchObject({ status: 'in_flight' });
+    expect(sideEffectOperation(repo, seeded.id, emailIdentity)).toMatchObject({ status: 'failed' });
+    expect(sideEffectOperation(repo, seeded.id, hookIdentity)).toMatchObject({ status: 'in_flight' });
   });
 
   it('returns sensitive headers for a missing session_id error', async () => {

@@ -155,9 +155,28 @@ describe('checkBookkitMigrationsApplied schema fingerprint against real D1', () 
   // this the same way every other rebuild-collision scenario above is caught.
   it('fails distinctly when a real schema stopped before 0016 has a colliding "0016" ledger row', async () => {
     await resetSchema();
-    const before0016 = bindings.TEST_MIGRATIONS.filter((migration) => migration.name !== '0016_operational_reconciliation.sql');
+    // 0017 must be excluded (and faked) too: its rebuild carries 0016's backoff columns forward, so
+    // it cannot even execute against a schema where 0016 never really ran.
+    const before0016 = bindings.TEST_MIGRATIONS.filter((migration) =>
+      migration.name !== '0016_operational_reconciliation.sql' && migration.name !== '0017_side_effect_operation_identity.sql');
     await applyD1Migrations(db, before0016, 'd1_migrations');
-    await db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').bind('0016_operational_reconciliation.sql').run();
+    for (const name of ['0016_operational_reconciliation.sql', '0017_side_effect_operation_identity.sql']) {
+      await db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').bind(name).run();
+    }
+
+    await expect(checkBookkitMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
+    await expect(checkBookkitMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
+  });
+
+  // Plan 021: a consumer migration reusing the '0017_...sql' filename without ever running
+  // bookkit's identity rebuild leaves the whole outbox addressed by the retired `kind` column —
+  // every enqueue and every claim would fail at runtime, so sideEffectOperationsSchemaPresent has
+  // to catch it here instead.
+  it('fails distinctly when a real schema stopped before 0017 has a colliding "0017" ledger row', async () => {
+    await resetSchema();
+    const before0017 = bindings.TEST_MIGRATIONS.filter((migration) => migration.name !== '0017_side_effect_operation_identity.sql');
+    await applyD1Migrations(db, before0017, 'd1_migrations');
+    await db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').bind('0017_side_effect_operation_identity.sql').run();
 
     await expect(checkBookkitMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
     await expect(checkBookkitMigrationsApplied(db)).rejects.not.toThrow(/is missing/);

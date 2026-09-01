@@ -7,11 +7,11 @@ import {
   confirmBookingFromPayment,
   isActionableSideEffectStatus,
   isConfirmationSideEffectOperation,
+  missingConfirmationEventOperations,
   runOwedMutationSideEffects,
 } from '../confirmation';
 import type { BookkitContext } from '../context';
 import { nowIso } from '../context';
-import { CONFIRMATION_TOURFLOW_KIND } from '../repo';
 import { HttpError, json } from '../http';
 import { run, withSensitiveHeaders } from './shared';
 
@@ -105,26 +105,24 @@ export function handleStatus(request: Request, context: BookkitContext): Promise
           ?? current;
       }
     } else if (current.status === 'confirmed') {
-      // Unfiltered (not just isConfirmationSideEffectOperation) so the Tourflow row's status is
-      // available below too — that helper deliberately excludes CONFIRMATION_TOURFLOW_KIND (see
-      // its doc comment in src/confirmation.ts).
+      // Unfiltered (not just isConfirmationSideEffectOperation) so the booking.confirmed
+      // subscriber rows are visible below too — that helper deliberately excludes them (see its
+      // doc comment in src/confirmation.ts).
       const allOperations = await context.repo.listSideEffectOperations(current.id);
       const confirmationOperations = allOperations.filter(isConfirmationSideEffectOperation);
-      const tourflowOperation = allOperations.find((operation) => operation.kind === CONFIRMATION_TOURFLOW_KIND);
-      // Plan 011 (design decision 5): also runs the confirmation-lease-guarded repair path when an
-      // ops provider is configured and this booking still owes a Tourflow confirmation — the only
-      // way a legacy booking with no row yet (ops configured after it was originally confirmed)
-      // gets one lazily created (ensureConfirmationSideEffectOperations). No provider, or already
-      // synced, adds nothing here; runOwedMutationSideEffects below is what actually delivers it.
+      // Plan 011 (design decision 5), generalized by plan 021: also runs the confirmation-lease-
+      // guarded repair path when a registered durable subscriber has no row at all — the only way a
+      // legacy booking (subscriber registered after it was originally confirmed) gets one lazily
+      // created (ensureConfirmationSideEffectOperations). runOwedMutationSideEffects below is what
+      // actually delivers it.
       //
       // Plan 016 (design decision 6): isActionableSideEffectStatus excludes 'abandoned' (not just
-      // 'succeeded') from the first clause, and the third clause also stops once the Tourflow row
-      // is abandoned — otherwise a permanently-failed push would keep tripping needsFulfillment
-      // (and re-entering confirmBookingFromPayment) on every future request forever, even though
-      // the claim predicate itself would just no-op every time.
+      // 'succeeded'), so a permanently-failed delivery cannot keep tripping needsFulfillment (and
+      // re-entering confirmBookingFromPayment) on every future request forever, even though the
+      // claim predicate itself would just no-op every time.
       const needsFulfillment = confirmationOperations.some((operation) => isActionableSideEffectStatus(operation.status))
         || (confirmationOperations.length === 0 && (!current.calendarSynced || !current.emailSynced))
-        || (Boolean(context.providers.ops) && !current.tourflowSynced && tourflowOperation?.status !== 'abandoned');
+        || missingConfirmationEventOperations(context, allOperations);
       if (needsFulfillment) {
         try {
           current = await confirmBookingFromPayment(context, current);
@@ -135,7 +133,7 @@ export function handleStatus(request: Request, context: BookkitContext): Promise
       }
     }
     // BK-SIDE-001 (handoff 13): a booking-touching request — drain any mutation-path side effects
-    // (per-recipient email, Tourflow push) still owed from a prior cancel/reschedule/no-show whose
+    // (per-recipient email, subscriber delivery) still owed from a prior cancel/reschedule/no-show whose
     // delivery attempt didn't finish. Confirmed/cancelled/no_show are the only statuses a mutation
     // event ever fires for; hold/expired never have rows here.
     if (current.status === 'confirmed' || current.status === 'cancelled' || current.status === 'no_show') {

@@ -106,15 +106,15 @@ describe('requireEnabledRoutePath', () => {
 describe('route table generation (astro:config:setup)', () => {
   // Hard requirement: a consumer passing no new options must see the exact same route table as
   // before this feature existed — same patterns, same order.
-  it('no options: default injected route patterns are byte-identical to the current 16', () => {
+  it('no options: default injected route patterns are byte-identical to the current 15', () => {
     const { routes } = setup(baseOptions);
     expect(routes.map((route) => route.pattern)).toEqual(routeManifest.map((entry) => entry.pattern));
-    expect(routes).toHaveLength(16);
+    expect(routes).toHaveLength(15);
   });
 
   it('routePrefix mounts every route under the prefix, in the same order', () => {
     const { routes } = setup({ ...baseOptions, routePrefix: '/en' });
-    expect(routes).toHaveLength(16);
+    expect(routes).toHaveLength(15);
     expect(routes.map((route) => route.pattern)).toEqual(routeManifest.map((entry) => `/en${entry.pattern}`));
   });
 
@@ -123,11 +123,11 @@ describe('route table generation (astro:config:setup)', () => {
     expect(routes.map((route) => route.pattern)).toEqual(routeManifest.map((entry) => `/en${entry.pattern}`));
   });
 
-  it('routes: { ops: false } omits every Tourflow/operator route and nothing else', () => {
+  it('routes: { ops: false } omits every operator route and nothing else', () => {
     const { routes } = setup({ ...baseOptions, routes: { ops: false } });
     const patterns = routes.map((route) => route.pattern);
     expect(patterns).toHaveLength(12);
-    for (const opsPattern of ['/api/booking/operator/cancel', '/api/booking/operator/reschedule', '/api/booking/operator/no-show', '/api/booking/feed']) {
+    for (const opsPattern of ['/api/booking/operator/cancel', '/api/booking/operator/reschedule', '/api/booking/operator/no-show']) {
       expect(patterns).not.toContain(opsPattern);
     }
     // Customer + webhook + admin routes are unaffected.
@@ -138,7 +138,7 @@ describe('route table generation (astro:config:setup)', () => {
   it('routes: { admin: false } omits only the admin dashboard route', () => {
     const { routes } = setup({ ...baseOptions, routes: { admin: false } });
     const patterns = routes.map((route) => route.pattern);
-    expect(patterns).toHaveLength(15);
+    expect(patterns).toHaveLength(14);
     expect(patterns).not.toContain('/booking/admin');
   });
 

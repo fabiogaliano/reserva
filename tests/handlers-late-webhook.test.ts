@@ -18,7 +18,6 @@ describe('late checkout.session.completed on an already-expired hold (spec §6)'
       pickupAddress: null,
       calendarSynced: false,
       emailSynced: false,
-      tourflowSynced: false,
     });
     const occupied = booking({
       id: 'b-late-occupied',

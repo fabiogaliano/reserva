@@ -1,4 +1,5 @@
 import type { Booking } from '../../src/core/booking';
+import type { BookingEventHook } from '../../src/core/events';
 import type { CalEvent } from '../../src/core/occupancy';
 import { handleStripeWebhook } from '../../src/handlers';
 import { StripeProvider } from '../../src/providers/stripe';
@@ -21,12 +22,12 @@ const STRIPE_TEST_SECRET_KEY = 'sk_test_bookkit_worker';
 // consumer choice, not a requirement).
 export const calendarEvents = new Map<string, CalEvent>();
 export const emailOutbox: Array<{ event: string; bookingId: string }> = [];
-export const opsOutbox: Array<{ event: string; bookingId: string }> = [];
+export const hookOutbox: Array<{ event: string; bookingId: string }> = [];
 
 export function resetWebhookWorkerOutboxes(): void {
   calendarEvents.clear();
   emailOutbox.length = 0;
-  opsOutbox.length = 0;
+  hookOutbox.length = 0;
 }
 
 const providers: BookkitProviders = {
@@ -52,14 +53,19 @@ const providers: BookkitProviders = {
       emailOutbox.push({ event, bookingId: booking.id });
     },
   },
-  ops: {
-    async push(event, booking) {
-      opsOutbox.push({ event, bookingId: booking.id });
-    },
-  },
 };
 
-const runtime = defineCloudflareBookkitRuntime(config, { providers });
+// Plan 021: a durable hook, so its delivery rides the same outbox row (and the same D1 batch as the
+// confirmation) the production stack uses for a webhook subscriber.
+const hooks: BookingEventHook[] = [{
+  name: 'ops',
+  durable: true,
+  async handler(event, booking) {
+    hookOutbox.push({ event, bookingId: booking.id });
+  },
+}];
+
+const runtime = defineCloudflareBookkitRuntime(config, { providers, hooks });
 
 export default {
   // Standard modules-format signature (env/ctx unused: getWorkerEnv/getWorkerWaitUntil in

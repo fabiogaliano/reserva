@@ -29,7 +29,6 @@ export const routeManifest = [
   { id: 'operatorCancel', group: 'ops', pattern: '/api/booking/operator/cancel', entrypoint: './routes/api/booking/operator/cancel.ts' },
   { id: 'operatorReschedule', group: 'ops', pattern: '/api/booking/operator/reschedule', entrypoint: './routes/api/booking/operator/reschedule.ts' },
   { id: 'operatorNoShow', group: 'ops', pattern: '/api/booking/operator/no-show', entrypoint: './routes/api/booking/operator/no-show.ts' },
-  { id: 'feed', group: 'ops', pattern: '/api/booking/feed', entrypoint: './routes/api/booking/feed.ts' },
   { id: 'assetsCss', group: 'customer', pattern: '/booking/assets/bookkit.css', entrypoint: './routes/booking/assets.ts' },
   { id: 'assetsJs', group: 'customer', pattern: '/booking/assets/bookkit.js', entrypoint: './routes/booking/assets-js.ts' },
   { id: 'adminPage', group: 'admin', pattern: '/booking/admin', entrypoint: './routes/booking/admin.ts' },

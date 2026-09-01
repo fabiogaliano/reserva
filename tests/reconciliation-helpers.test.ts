@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   INCIDENT_DELAY_THRESHOLD_MS,
-  actionForSideEffectKind,
+  actionForSideEffectOperation,
   buildOperationalAlert,
   computeNextAttemptAt,
   isDelayIncidentDue,
   isEligibleForAutomaticClaim,
-  isMutationEmailOrTourflowKind,
   ownerFacingIncidentTitle,
   projectIncident,
 } from '../src/reconciliation-helpers';
@@ -65,39 +64,26 @@ describe('isDelayIncidentDue', () => {
   });
 });
 
-describe('actionForSideEffectKind', () => {
-  it('maps calendar kinds', () => {
-    expect(actionForSideEffectKind('calendar_create')).toBe('calendar');
-    expect(actionForSideEffectKind('calendar_delete')).toBe('calendar');
+describe('actionForSideEffectOperation', () => {
+  it('maps both calendar families', () => {
+    expect(actionForSideEffectOperation({ family: 'calendar_create' })).toBe('calendar');
+    expect(actionForSideEffectOperation({ family: 'calendar_delete' })).toBe('calendar');
   });
-  it('maps the confirmation email kinds (combined and both split recipients)', () => {
-    expect(actionForSideEffectKind('email_confirmation')).toBe('confirmation_email');
-    expect(actionForSideEffectKind('email:booking.confirmed:customer')).toBe('confirmation_email');
-    expect(actionForSideEffectKind('email:booking.confirmed:owner')).toBe('confirmation_email');
+  it('maps the confirmation email identities (combined and both split recipients)', () => {
+    expect(actionForSideEffectOperation({ family: 'email_confirmation' })).toBe('confirmation_email');
+    expect(actionForSideEffectOperation({ family: 'email', name: 'customer', event: 'booking.confirmed' })).toBe('confirmation_email');
+    expect(actionForSideEffectOperation({ family: 'email', name: 'owner', event: 'booking.confirmed' })).toBe('confirmation_email');
   });
-  it('maps a non-confirmation email mutation kind to customer_notification', () => {
-    expect(actionForSideEffectKind('email:booking.cancelled_by_customer')).toBe('customer_notification');
-    expect(actionForSideEffectKind('email:booking.rescheduled:2')).toBe('customer_notification');
+  it('maps a non-confirmation email mutation identity to customer_notification', () => {
+    expect(actionForSideEffectOperation({ family: 'email', event: 'booking.cancelled_by_customer' })).toBe('customer_notification');
+    expect(actionForSideEffectOperation({ family: 'email', name: 'customer', event: 'booking.rescheduled', discriminator: '2' })).toBe('customer_notification');
   });
-  it('maps a tourflow kind to operations_sync', () => {
-    expect(actionForSideEffectKind('tourflow:booking.confirmed')).toBe('operations_sync');
-    expect(actionForSideEffectKind('tourflow:booking.no_show')).toBe('operations_sync');
+  it('maps subscriber deliveries to operations_sync', () => {
+    expect(actionForSideEffectOperation({ family: 'hook', name: 'ops', event: 'booking.confirmed' })).toBe('operations_sync');
+    expect(actionForSideEffectOperation({ family: 'webhook', name: 'partner', event: 'booking.no_show' })).toBe('operations_sync');
   });
   it('maps oversell to oversell', () => {
-    expect(actionForSideEffectKind('oversell')).toBe('oversell');
-  });
-});
-
-describe('isMutationEmailOrTourflowKind', () => {
-  it('accepts calendar_delete and email:/tourflow: kinds', () => {
-    expect(isMutationEmailOrTourflowKind('calendar_delete')).toBe(true);
-    expect(isMutationEmailOrTourflowKind('email:booking.cancelled_by_customer')).toBe(true);
-    expect(isMutationEmailOrTourflowKind('tourflow:booking.confirmed')).toBe(true);
-  });
-  it('rejects confirmation-path-only kinds', () => {
-    expect(isMutationEmailOrTourflowKind('calendar_create')).toBe(false);
-    expect(isMutationEmailOrTourflowKind('email_confirmation')).toBe(false);
-    expect(isMutationEmailOrTourflowKind('oversell')).toBe(false);
+    expect(actionForSideEffectOperation({ family: 'oversell' })).toBe('oversell');
   });
 });
 

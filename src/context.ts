@@ -2,14 +2,13 @@ import type { D1Database } from '@cloudflare/workers-types';
 import type { AccessClaims } from './access';
 import { validateConfig, type ClientConfig } from './core/config';
 import type {
-  AnalyticsSink,
+  BookingEventHook,
   CalendarProvider,
   EmailProvider,
   OperationalAlertSink,
-  OpsSink,
   PaymentProvider,
 } from './core/events';
-import { noopAnalyticsSink } from './core/events';
+import { validateBookingEventHooks } from './core/events';
 import { createBookingRepository, type BookingRepository } from './repo';
 import { resolvedRoutePaths, type BookkitResolvedRouteConfig } from './routes-manifest';
 import type { ThemePreference } from './ui/theme';
@@ -23,8 +22,6 @@ export interface BookkitProviders {
   payments: PaymentProvider;
   calendar?: CalendarProvider;
   email?: EmailProvider;
-  ops?: OpsSink;
-  analytics?: AnalyticsSink;
   // Optional for HTTP-only/test contexts. Production scheduled entrypoints should call
   // runReconciliation with requireAlertSink so a missing central alert channel fails preflight;
   // pending revisions are never acknowledged when this provider is absent.
@@ -52,6 +49,10 @@ export interface BookkitContext {
   secrets?: SecretLookup;
   clock: BookkitClock;
   logger: BookkitLogger;
+  // Plan 021 (design decision 1): in-process booking-event listeners registered by the consumer's
+  // runtime module. Validated (names, uniqueness, subscribed events) when the context is built, so
+  // a typo fails at startup rather than by silently never firing.
+  hooks?: readonly BookingEventHook[];
   // The default Cloudflare Access wiring (runtime-context.ts) resolves to the verified JWT claims
   // (AccessClaims) rather than collapsing to a boolean, so the admin CSRF token (src/admin-csrf.ts)
   // can bind itself to a specific Access user. A caller-supplied verifyAccess is only contractually
@@ -93,6 +94,7 @@ export interface BookkitContextInput extends Omit<BookkitContext, 'repo' | 'cloc
 }
 
 export function createBookkitContext(input: BookkitContextInput): BookkitContext {
+  validateBookingEventHooks(input.hooks ?? []);
   return {
     ...input,
     config: validateConfig(input.config),
@@ -103,10 +105,7 @@ export function createBookkitContext(input: BookkitContextInput): BookkitContext
     repo: input.repo ?? createBookingRepository(input.db, input.secrets),
     clock: input.clock ?? (() => new Date()),
     logger: input.logger ?? console,
-    providers: {
-      ...input.providers,
-      analytics: input.providers.analytics ?? noopAnalyticsSink,
-    },
+    providers: input.providers,
     confirmationLocks: input.confirmationLocks ?? new Map(),
     routeConfig: input.routeConfig ?? defaultRouteConfig,
   };

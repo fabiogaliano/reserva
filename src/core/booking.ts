@@ -34,7 +34,6 @@ export interface Booking {
   calendarEventId: string | null;
   calendarSynced: boolean;
   emailSynced: boolean;
-  tourflowSynced: boolean;
   remindedAt: string | null;
   reviewRequestedAt: string | null;
   cancelToken: string;

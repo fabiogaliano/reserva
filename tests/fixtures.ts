@@ -65,7 +65,6 @@ export function booking(overrides: Partial<Booking> = {}): Booking {
     calendarEventId: null,
     calendarSynced: false,
     emailSynced: false,
-    tourflowSynced: false,
     remindedAt: null,
     reviewRequestedAt: null,
     cancelToken: 'cancel-token',

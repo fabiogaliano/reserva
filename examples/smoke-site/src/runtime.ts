@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import type { CalEvent } from '../../../src/core/occupancy';
-import type { OperationalAlert, StripeEventParsed } from '../../../src/core/events';
+import type { BookingEventHook, OperationalAlert, StripeEventParsed } from '../../../src/core/events';
 import { defineCloudflareBookkitRuntime, type BookkitProviders } from '../../../src/runtime';
 import { pickupOptionFor, resolveTour } from '../../../src/core/config';
 import config from './config';
@@ -11,7 +11,7 @@ import config from './config';
 interface Env {
   BOOKKIT_DB: D1Database;
   BOOKKIT_TOKEN_ENC_KEY: string;
-  TOURFLOW_SHARED_SECRET: string;
+  BOOKKIT_OPERATOR_SECRET: string;
   // Plan 009: configured so the e2e suite exercises the admin CSRF layer (src/admin-csrf.ts) the
   // way the README recommends for production, instead of its fail-open "no secret configured" path.
   BOOKKIT_CSRF_SECRET: string;
@@ -145,16 +145,6 @@ const providers: BookkitProviders = {
       });
     },
   },
-  ops: {
-    async push(event, booking) {
-      console.info('[bookkit demo] ops event', { event, reference: booking.reference });
-    },
-  },
-  analytics: {
-    async track(event, booking) {
-      console.info('[bookkit demo] analytics event', { event, reference: booking.reference });
-    },
-  },
   alerts: {
     async send(alert) {
       alertOutbox.push(alert);
@@ -163,8 +153,20 @@ const providers: BookkitProviders = {
   },
 };
 
+// Plan 021: what the retired ops/analytics provider sinks became — an in-process listener on the
+// booking-event catalog. Non-durable (the default): fired post-commit, never retried.
+const hooks: BookingEventHook[] = [
+  {
+    name: 'demo-log',
+    async handler(event, booking, hookContext) {
+      console.info('[bookkit demo] booking event', { event, id: hookContext.id, reference: booking.reference });
+    },
+  },
+];
+
 export default defineCloudflareBookkitRuntime<Env>(config, {
   providers,
-  secretBindings: ['BOOKKIT_TOKEN_ENC_KEY', 'TOURFLOW_SHARED_SECRET', 'BOOKKIT_CSRF_SECRET'],
+  hooks,
+  secretBindings: ['BOOKKIT_TOKEN_ENC_KEY', 'BOOKKIT_OPERATOR_SECRET', 'BOOKKIT_CSRF_SECRET'],
   verifyAccess: () => true,
 });

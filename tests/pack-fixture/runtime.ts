@@ -1,7 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { BrevoEmailProvider } from '@reservajs/astro/providers/email-brevo';
 import { GoogleCalendarProvider } from '@reservajs/astro/providers/calendar-google';
-import { TourflowOpsSink } from '@reservajs/astro/providers/ops-tourflow';
 import { StripeProvider } from '@reservajs/astro/providers/payments-stripe';
 import { defineCloudflareBookkitRuntime, type BookkitProviders } from '@reservajs/astro/runtime';
 import config from './bookkit.config';
@@ -20,8 +19,7 @@ interface Env {
   GOOGLE_SA_PRIVATE_KEY: string;
   GOOGLE_IMPERSONATE_EMAIL: string;
   GOOGLE_CALENDAR_ID: string;
-  TOURFLOW_SHARED_SECRET: string;
-  TOURFLOW_WEBHOOK_URL: string;
+  OPERATIONS_WEBHOOK_SECRET: string;
   OPERATIONS_ALERT_WEBHOOK_URL: string;
   OPERATIONS_ALERT_TOKEN: string;
 }
@@ -39,10 +37,6 @@ function providers(env: Env): BookkitProviders {
       impersonateEmail: env.GOOGLE_IMPERSONATE_EMAIL,
     }),
     email: new BrevoEmailProvider({ apiKey: env.BREVO_API_KEY }),
-    ops: new TourflowOpsSink({
-      webhookUrl: env.TOURFLOW_WEBHOOK_URL,
-      sharedSecret: env.TOURFLOW_SHARED_SECRET,
-    }),
     alerts: {
       async send(alert) {
         const response = await fetch(env.OPERATIONS_ALERT_WEBHOOK_URL, {
@@ -61,5 +55,5 @@ function providers(env: Env): BookkitProviders {
 
 export default defineCloudflareBookkitRuntime<Env>(config, {
   providers: ({ env }) => providers(env),
-  secretBindings: ['BOOKKIT_TOKEN_ENC_KEY', 'BOOKKIT_CSRF_SECRET', 'TOURFLOW_SHARED_SECRET'],
+  secretBindings: ['BOOKKIT_TOKEN_ENC_KEY', 'BOOKKIT_CSRF_SECRET', 'OPERATIONS_WEBHOOK_SECRET'],
 });

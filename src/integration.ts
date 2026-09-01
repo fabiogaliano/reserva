@@ -27,14 +27,14 @@ export interface BookkitIntegrationOptions {
   // validated first via Zod (see `validateRouteOptions`) to reject obviously broken values.
   routePrefix?: string;
   // Feature groups that can be turned off. `admin` = the admin dashboard route; `ops` = the
-  // Tourflow feed/operator routes. Public booking API + customer manage routes are load-bearing and
+  // operator action routes. Public booking API + customer manage routes are load-bearing and
   // always mounted (see routes-manifest.ts's `isRouteEnabled`). Both default to `true`.
   routes?: { admin?: boolean; ops?: boolean };
 }
 
 // Canonical secret names for bookkit's optional providers, sourced from scripts/manual-*.ts (the
-// existing hand-rolled env var conventions for Stripe/Brevo/Google) and TOURFLOW_SHARED_SECRET
-// (already used in examples/runtime.ts and the README). All optional: every provider is opt-in, so
+// existing hand-rolled env var conventions for Stripe/Brevo/Google) and BOOKKIT_OPERATOR_SECRET
+// (the operator endpoints' shared secret; see README). All optional: every provider is opt-in, so
 // a consumer wiring up only Stripe must not fail env validation over a missing Brevo/Google key.
 // This only declares the names for typed access and build-time visibility — it does not change how
 // providers or `secrets()` read them; see README "Secrets and astro:env" for the full contract.
@@ -42,7 +42,7 @@ const bookkitSecretEnvSchema = {
   STRIPE_SECRET_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
   STRIPE_WEBHOOK_SECRET: envField.string({ context: 'server', access: 'secret', optional: true }),
   BREVO_API_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
-  TOURFLOW_SHARED_SECRET: envField.string({ context: 'server', access: 'secret', optional: true }),
+  BOOKKIT_OPERATOR_SECRET: envField.string({ context: 'server', access: 'secret', optional: true }),
   GOOGLE_SA_EMAIL: envField.string({ context: 'server', access: 'secret', optional: true }),
   GOOGLE_SA_PRIVATE_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
   GOOGLE_IMPERSONATE_EMAIL: envField.string({ context: 'server', access: 'secret', optional: true }),

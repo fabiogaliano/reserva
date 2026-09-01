@@ -4,10 +4,11 @@ import { runOwedMutationSideEffects } from '../src/confirmation';
 import { createBookkitContext, type BookkitProviders } from '../src/context';
 import { handleStatus, handleStripeWebhook } from '../src/handlers';
 import { booking, config } from './fixtures';
-import { fakeRepository, providers } from './fakes';
+import { sameSideEffectOperation, type SideEffectOperationIdentity } from '../src/repo';
+import { fakeRepository, providers, seedSideEffectOperation, sideEffectOperation } from './fakes';
 
-const CUSTOMER_KIND = 'email:booking.confirmed:customer';
-const OWNER_KIND = 'email:booking.confirmed:owner';
+const CUSTOMER: SideEffectOperationIdentity = { family: 'email', name: 'customer', event: 'booking.confirmed' };
+const OWNER: SideEffectOperationIdentity = { family: 'email', name: 'owner', event: 'booking.confirmed' };
 
 function paidWebhookProviders(bookingId: string, sessionId: string, overrides: Partial<BookkitProviders> = {}) {
   return providers({
@@ -26,7 +27,7 @@ function paidWebhookProviders(bookingId: string, sessionId: string, overrides: P
 
 // Plan 012: per-recipient confirmation email operations. Complements confirmation-outbox.test.ts
 // (which covers the plain-send/combined shape) with coverage for a split-capable provider's
-// email:booking.confirmed:customer / email:booking.confirmed:owner rows.
+// per-recipient email rows (family 'email', name 'customer'/'owner', event 'booking.confirmed').
 describe('confirmation-path per-recipient email outbox (plan 012)', () => {
   it('sends only the owner recipient on retry after an owner-recipient failure, never resending the already-delivered customer message', async () => {
     const seeded = booking({ id: 'b-email-split-owner-fails', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', stripeSessionId: 'cs_email_owner_fails' });
@@ -50,15 +51,15 @@ describe('confirmation-path per-recipient email outbox (plan 012)', () => {
 
     await expect(handleStripeWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context)).resolves.toMatchObject({ status: 500 });
     expect(recipients).toEqual(['customer', 'owner']);
-    expect(repo.sideEffectOperations.get(`${seeded.id}:${CUSTOMER_KIND}`)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
-    expect(repo.sideEffectOperations.get(`${seeded.id}:${OWNER_KIND}`)).toMatchObject({ status: 'failed', attemptCount: 1 });
+    expect(sideEffectOperation(repo, seeded.id, CUSTOMER)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
+    expect(sideEffectOperation(repo, seeded.id, OWNER)).toMatchObject({ status: 'failed', attemptCount: 1 });
     expect(repo.rows.get(seeded.id)).toMatchObject({ emailSynced: false });
 
     await expect(handleStripeWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context)).resolves.toMatchObject({ status: 200 });
     // Only ONE more attempt happened (the owner retry) — the customer recipient is never sent again.
     expect(recipients).toEqual(['customer', 'owner', 'owner']);
     expect(recipients.filter((recipient) => recipient === 'customer')).toHaveLength(1);
-    expect(repo.sideEffectOperations.get(`${seeded.id}:${OWNER_KIND}`)).toMatchObject({ status: 'succeeded', attemptCount: 2 });
+    expect(sideEffectOperation(repo, seeded.id, OWNER)).toMatchObject({ status: 'succeeded', attemptCount: 2 });
     expect(repo.rows.get(seeded.id)).toMatchObject({ emailSynced: true });
   });
 
@@ -69,8 +70,8 @@ describe('confirmation-path per-recipient email outbox (plan 012)', () => {
     const emailSyncedAfterResolve: Record<string, boolean> = {};
     repo.resolveSideEffectOperation = async (input) => {
       const result = await originalResolve(input);
-      if (input.kind === CUSTOMER_KIND || input.kind === OWNER_KIND) {
-        emailSyncedAfterResolve[input.kind] = repo.rows.get(input.bookingId)?.emailSynced ?? false;
+      if (input.identity.family === 'email' && input.identity.name) {
+        emailSyncedAfterResolve[input.identity.name] = repo.rows.get(input.bookingId)?.emailSynced ?? false;
       }
       return result;
     };
@@ -88,8 +89,8 @@ describe('confirmation-path per-recipient email outbox (plan 012)', () => {
 
     await expect(handleStripeWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context)).resolves.toMatchObject({ status: 200 });
 
-    expect(emailSyncedAfterResolve[CUSTOMER_KIND]).toBe(false);
-    expect(emailSyncedAfterResolve[OWNER_KIND]).toBe(true);
+    expect(emailSyncedAfterResolve.customer).toBe(false);
+    expect(emailSyncedAfterResolve.owner).toBe(true);
     expect(repo.rows.get(seeded.id)).toMatchObject({ emailSynced: true });
   });
 
@@ -108,27 +109,24 @@ describe('confirmation-path per-recipient email outbox (plan 012)', () => {
     await expect(handleStripeWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context)).resolves.toMatchObject({ status: 200 });
 
     expect(sendCalls).toBe(1);
-    const emailRows = (await repo.listSideEffectOperations(seeded.id)).filter((row) => row.kind === 'email_confirmation' || row.kind.startsWith('email:booking.confirmed:'));
-    expect(emailRows).toEqual([expect.objectContaining({ kind: 'email_confirmation', status: 'succeeded' })]);
+    const emailRows = (await repo.listSideEffectOperations(seeded.id)).filter((row) => row.family === 'email_confirmation' || row.family === 'email');
+    expect(emailRows).toEqual([expect.objectContaining({ family: 'email_confirmation', status: 'succeeded' })]);
     expect(repo.rows.get(seeded.id)).toMatchObject({ emailSynced: true });
   });
 
   it('retries a seeded failed legacy combined row through send() and never creates split rows, even once the provider becomes split-capable', async () => {
     const seeded = booking({
       id: 'b-email-legacy-upgrade', status: 'confirmed', stripeSessionId: 'cs_email_legacy_upgrade',
-      calendarSynced: true, emailSynced: false, tourflowSynced: true,
+      calendarSynced: true, emailSynced: false,
     });
     const repo = fakeRepository([seeded]);
     const createdAt = '2026-06-14T08:00:00.000Z';
-    repo.sideEffectOperations.set(`${seeded.id}:calendar_create`, {
-      bookingId: seeded.id, kind: 'calendar_create', status: 'succeeded', providerResultId: null,
-      attemptCount: 1, attemptedAt: createdAt, resolvedAt: createdAt, error: null, createdAt, updatedAt: createdAt,
-      failureStartedAt: null, nextAttemptAt: null,
+    seedSideEffectOperation(repo, seeded.id, { family: 'calendar_create' }, {
+      status: 'succeeded', attemptCount: 1, attemptedAt: createdAt, resolvedAt: createdAt, createdAt, updatedAt: createdAt,
     });
-    repo.sideEffectOperations.set(`${seeded.id}:email_confirmation`, {
-      bookingId: seeded.id, kind: 'email_confirmation', status: 'failed', providerResultId: null,
-      attemptCount: 1, attemptedAt: createdAt, resolvedAt: createdAt, error: 'legacy failure', createdAt, updatedAt: createdAt,
-      failureStartedAt: null, nextAttemptAt: null,
+    seedSideEffectOperation(repo, seeded.id, { family: 'email_confirmation' }, {
+      status: 'failed', attemptCount: 1, attemptedAt: createdAt, resolvedAt: createdAt, error: 'legacy failure',
+      createdAt, updatedAt: createdAt,
     });
     let sendCalls = 0;
     let sendToRecipientCalls = 0;
@@ -148,9 +146,9 @@ describe('confirmation-path per-recipient email outbox (plan 012)', () => {
     expect(response.status).toBe(200);
     expect(sendToRecipientCalls).toBe(0);
     expect(sendCalls).toBe(1);
-    expect(repo.sideEffectOperations.get(`${seeded.id}:email_confirmation`)).toMatchObject({ status: 'succeeded' });
-    expect(repo.sideEffectOperations.has(`${seeded.id}:${CUSTOMER_KIND}`)).toBe(false);
-    expect(repo.sideEffectOperations.has(`${seeded.id}:${OWNER_KIND}`)).toBe(false);
+    expect(sideEffectOperation(repo, seeded.id, { family: 'email_confirmation' })).toMatchObject({ status: 'succeeded' });
+    expect(sideEffectOperation(repo, seeded.id, CUSTOMER) !== undefined).toBe(false);
+    expect(sideEffectOperation(repo, seeded.id, OWNER) !== undefined).toBe(false);
     expect(repo.rows.get(seeded.id)).toMatchObject({ emailSynced: true });
   });
 
@@ -158,7 +156,7 @@ describe('confirmation-path per-recipient email outbox (plan 012)', () => {
     const seeded = booking({ id: 'b-email-split-mutation-drain-excluded' });
     const repo = fakeRepository([seeded]);
     const now = '2026-06-14T08:00:00.000Z';
-    await repo.recordMutationSideEffectOperations(seeded.id, [CUSTOMER_KIND, OWNER_KIND], now);
+    await repo.recordMutationSideEffectOperations(seeded.id, [CUSTOMER, OWNER].map((identity) => ({ ...identity, eventPayloadJson: null, eventIdPrefix: null })), now);
     let calls = 0;
     const context = createBookkitContext({
       config, db: {} as D1Database, repo, clock: () => new Date(now),
@@ -172,8 +170,8 @@ describe('confirmation-path per-recipient email outbox (plan 012)', () => {
     await runOwedMutationSideEffects(context, seeded);
 
     expect(calls).toBe(0);
-    expect(repo.sideEffectOperations.get(`${seeded.id}:${CUSTOMER_KIND}`)).toMatchObject({ status: 'pending', attemptCount: 0 });
-    expect(repo.sideEffectOperations.get(`${seeded.id}:${OWNER_KIND}`)).toMatchObject({ status: 'pending', attemptCount: 0 });
+    expect(sideEffectOperation(repo, seeded.id, CUSTOMER)).toMatchObject({ status: 'pending', attemptCount: 0 });
+    expect(sideEffectOperation(repo, seeded.id, OWNER)).toMatchObject({ status: 'pending', attemptCount: 0 });
   });
 
   it('a repository failure resolving the customer row does not block the independent owner row', async () => {
@@ -182,7 +180,7 @@ describe('confirmation-path per-recipient email outbox (plan 012)', () => {
     const resolveOperation = repo.resolveSideEffectOperation;
     let failCustomerSuccessWrite = true;
     repo.resolveSideEffectOperation = async (input) => {
-      if (input.kind === CUSTOMER_KIND && input.status === 'succeeded' && failCustomerSuccessWrite) {
+      if (sameSideEffectOperation(input.identity, CUSTOMER) && input.status === 'succeeded' && failCustomerSuccessWrite) {
         failCustomerSuccessWrite = false;
         throw new Error('D1 write failed after Brevo accepted the customer email');
       }
@@ -203,13 +201,13 @@ describe('confirmation-path per-recipient email outbox (plan 012)', () => {
 
     await expect(handleStripeWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context)).resolves.toMatchObject({ status: 500 });
     expect(recipients).toEqual(['customer', 'owner']);
-    expect(repo.sideEffectOperations.get(`${seeded.id}:${CUSTOMER_KIND}`)).toMatchObject({ status: 'failed', attemptCount: 1 });
-    expect(repo.sideEffectOperations.get(`${seeded.id}:${OWNER_KIND}`)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
+    expect(sideEffectOperation(repo, seeded.id, CUSTOMER)).toMatchObject({ status: 'failed', attemptCount: 1 });
+    expect(sideEffectOperation(repo, seeded.id, OWNER)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
 
     await expect(handleStripeWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context)).resolves.toMatchObject({ status: 200 });
     expect(recipients).toEqual(['customer', 'owner', 'customer']);
-    expect(repo.sideEffectOperations.get(`${seeded.id}:${CUSTOMER_KIND}`)).toMatchObject({ status: 'succeeded', attemptCount: 2 });
-    expect(repo.sideEffectOperations.get(`${seeded.id}:${OWNER_KIND}`)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
+    expect(sideEffectOperation(repo, seeded.id, CUSTOMER)).toMatchObject({ status: 'succeeded', attemptCount: 2 });
+    expect(sideEffectOperation(repo, seeded.id, OWNER)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
     expect(repo.rows.get(seeded.id)).toMatchObject({ emailSynced: true });
   });
 });

@@ -3,7 +3,7 @@ import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { runOwedMutationSideEffects } from '../../src/confirmation';
 import { createBookkitContext } from '../../src/context';
-import { CONFIRMATION_EMAIL_KINDS, CONFIRMATION_TOURFLOW_KIND, createBookingRepository, HoldLimitExceededError, type SideEffectOperationKind } from '../../src/repo';
+import { createBookingRepository, HoldLimitExceededError, type SideEffectOperationIdentity, type SideEffectOperationSeed } from '../../src/repo';
 import { config } from '../fixtures';
 import { providers } from '../fakes';
 
@@ -162,21 +162,24 @@ describe('D1 booking repository', () => {
       updatedAt: '2026-07-21T10:00:00.000Z',
     });
     await repo.acquireConfirmationLease(created.id, 'lease-tf-outbox', '2026-07-21T10:00:00.000Z', '2026-07-21T10:05:00.000Z');
-    await db.prepare(`CREATE TRIGGER fail_tourflow_outbox
-      BEFORE INSERT ON side_effect_operations WHEN NEW.kind = '${CONFIRMATION_TOURFLOW_KIND}'
-      BEGIN SELECT RAISE(ABORT, 'tourflow outbox insert failed'); END`).run();
+    await db.prepare(`CREATE TRIGGER fail_hook_outbox
+      BEFORE INSERT ON side_effect_operations WHEN NEW.family = 'hook'
+      BEGIN SELECT RAISE(ABORT, 'hook outbox insert failed'); END`).run();
 
     await expect(repo.confirmWithSideEffectOperations(created.id, {
       expectedStatusIn: ['hold'],
       leaseToken: 'lease-tf-outbox',
       oversold: false,
       updatedAt: '2026-07-21T10:01:00.000Z',
-      tourflowKind: CONFIRMATION_TOURFLOW_KIND,
-    })).rejects.toThrow('tourflow outbox insert failed');
+      eventSeeds: [{
+        family: 'hook', name: 'ops', event: 'booking.confirmed',
+        eventPayloadJson: '{"apiVersion":1}', eventIdPrefix: null,
+      }],
+    })).rejects.toThrow('hook outbox insert failed');
 
     expect((await repo.getBookingById(created.id))?.status).toBe('hold');
     await expect(db.prepare('SELECT * FROM side_effect_operations WHERE booking_id = ?').bind(created.id).all()).resolves.toMatchObject({ results: [] });
-    await db.prepare('DROP TRIGGER fail_tourflow_outbox').run();
+    await db.prepare('DROP TRIGGER fail_hook_outbox').run();
   });
 
   // Plan 012: proves the split confirmation-path email rows share confirmWithSideEffectOperations'
@@ -202,7 +205,7 @@ describe('D1 booking repository', () => {
     });
     await repo.acquireConfirmationLease(created.id, 'lease-email-split-outbox', '2026-07-21T10:00:00.000Z', '2026-07-21T10:05:00.000Z');
     await db.prepare(`CREATE TRIGGER fail_email_split_outbox
-      BEFORE INSERT ON side_effect_operations WHEN NEW.kind = 'email:booking.confirmed:owner'
+      BEFORE INSERT ON side_effect_operations WHEN NEW.family = 'email' AND NEW.name = 'owner'
       BEGIN SELECT RAISE(ABORT, 'email split outbox insert failed'); END`).run();
 
     await expect(repo.confirmWithSideEffectOperations(created.id, {
@@ -210,7 +213,7 @@ describe('D1 booking repository', () => {
       leaseToken: 'lease-email-split-outbox',
       oversold: false,
       updatedAt: '2026-07-21T10:01:00.000Z',
-      emailKinds: [...CONFIRMATION_EMAIL_KINDS],
+      emailRecipients: ['customer', 'owner'],
     })).rejects.toThrow('email split outbox insert failed');
 
     expect((await repo.getBookingById(created.id))?.status).toBe('hold');
@@ -218,14 +221,13 @@ describe('D1 booking repository', () => {
     await db.prepare('DROP TRIGGER fail_email_split_outbox').run();
   });
 
-  it('persists capacity overrides and returns only changed feed rows', async () => {
+  it('persists capacity overrides', async () => {
     await repo.upsertDayOverride('2026-08-01', 1, 'reduced fleet');
     await expect(repo.getDayOverride('2026-08-01')).resolves.toEqual({
       date: '2026-08-01',
       capacity: 1,
       reason: 'reduced fleet',
     });
-    await expect(repo.listSince('2026-01-01T00:00:00.000Z')).resolves.toEqual([]);
     await repo.deleteDayOverride('2026-08-01');
     await expect(repo.getDayOverride('2026-08-01')).resolves.toBeNull();
   });
@@ -646,38 +648,40 @@ describe('mutation side-effect outbox on real D1', () => {
 
   it('fences a stale resolver token after a mutation-side-effect reclaim', async () => {
     await seedBooking('mutation-stale-lease');
-    const kind = 'email:booking.no_show';
+    const identity: SideEffectOperationIdentity = { family: 'email', event: 'booking.no_show' };
     const oldClaimedAt = '2026-07-21T08:00:00.000Z';
     await db.prepare(
       `INSERT INTO side_effect_operations (
-         booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
-       ) VALUES (?, ?, 'in_flight', NULL, 1, ?, NULL, NULL, ?, ?)`,
-    ).bind('mutation-stale-lease', kind, oldClaimedAt, oldClaimedAt, oldClaimedAt).run();
+         booking_id, family, name, event, discriminator, event_payload_json,
+         status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
+       ) VALUES (?, 'email', NULL, ?, NULL, NULL, 'in_flight', NULL, 1, ?, NULL, NULL, ?, ?)`,
+    ).bind('mutation-stale-lease', identity.event, oldClaimedAt, oldClaimedAt, oldClaimedAt).run();
 
     const reclaimedAt = '2026-07-21T08:06:00.000Z';
-    await expect(repo.claimMutationSideEffectOperation('mutation-stale-lease', kind, reclaimedAt)).resolves.toBe(2);
+    await expect(repo.claimMutationSideEffectOperation('mutation-stale-lease', identity, reclaimedAt)).resolves.toBe(2);
     await expect(repo.resolveMutationSideEffectOperation({
-      bookingId: 'mutation-stale-lease', kind, status: 'failed', claimedAt: oldClaimedAt,
+      bookingId: 'mutation-stale-lease', identity, status: 'failed', claimedAt: oldClaimedAt,
       error: 'late original worker', resolvedAt: '2026-07-21T08:06:01.000Z',
     })).resolves.toBe(false);
-    await expect(repo.claimMutationSideEffectOperation('mutation-stale-lease', kind, '2026-07-21T08:07:00.000Z')).resolves.toBeNull();
+    await expect(repo.claimMutationSideEffectOperation('mutation-stale-lease', identity, '2026-07-21T08:07:00.000Z')).resolves.toBeNull();
     await expect(repo.resolveMutationSideEffectOperation({
-      bookingId: 'mutation-stale-lease', kind, status: 'succeeded', claimedAt: reclaimedAt,
+      bookingId: 'mutation-stale-lease', identity, status: 'succeeded', claimedAt: reclaimedAt,
       resolvedAt: '2026-07-21T08:07:00.000Z',
     })).resolves.toBe(true);
     await expect(repo.listSideEffectOperations('mutation-stale-lease')).resolves.toEqual([
-      expect.objectContaining({ kind, status: 'succeeded', attemptCount: 2, attemptedAt: reclaimedAt }),
+      expect.objectContaining({ ...identity, name: null, status: 'succeeded', attemptCount: 2, attemptedAt: reclaimedAt }),
     ]);
   });
 
   it('reclaims a stale in-flight operation through the mutation drain', async () => {
     await seedBooking('mutation-stale-drain');
-    const kind = 'email:booking.no_show';
+    const identity: SideEffectOperationIdentity = { family: 'email', event: 'booking.no_show' };
     await db.prepare(
       `INSERT INTO side_effect_operations (
-         booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
-       ) VALUES (?, ?, 'in_flight', NULL, 1, ?, NULL, NULL, ?, ?)`,
-    ).bind('mutation-stale-drain', kind, '2026-07-21T08:00:00.000Z', '2026-07-21T08:00:00.000Z', '2026-07-21T08:00:00.000Z').run();
+         booking_id, family, name, event, discriminator, event_payload_json,
+         status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
+       ) VALUES (?, 'email', NULL, ?, NULL, NULL, 'in_flight', NULL, 1, ?, NULL, NULL, ?, ?)`,
+    ).bind('mutation-stale-drain', identity.event, '2026-07-21T08:00:00.000Z', '2026-07-21T08:00:00.000Z', '2026-07-21T08:00:00.000Z').run();
     const current = await repo.getBookingById('mutation-stale-drain');
     if (!current) throw new Error('seed booking missing');
     let sends = 0;
@@ -689,7 +693,7 @@ describe('mutation side-effect outbox on real D1', () => {
     await runOwedMutationSideEffects(context, current);
     expect(sends).toBe(1);
     await expect(repo.listSideEffectOperations(current.id)).resolves.toEqual([
-      expect.objectContaining({ kind, status: 'succeeded', attemptCount: 2 }),
+      expect.objectContaining({ ...identity, name: null, status: 'succeeded', attemptCount: 2 }),
     ]);
   });
 
@@ -703,7 +707,9 @@ describe('mutation side-effect outbox on real D1', () => {
     const common = {
       expectedStatus: 'confirmed' as const, expectedStartsAt: original.startsAt,
       rescheduledFrom: original.startsAt, updatedAt: '2026-07-21T10:02:00.000Z',
-      mutationSideEffectKinds: ['email:booking.rescheduled'] satisfies SideEffectOperationKind[],
+      mutationSideEffects: [{
+        family: 'email', event: 'booking.rescheduled', eventPayloadJson: null, eventIdPrefix: null,
+      }] satisfies SideEffectOperationSeed[],
     };
 
     const winner = await repo.transitionReschedule(original.id, {
@@ -716,7 +722,7 @@ describe('mutation side-effect outbox on real D1', () => {
     expect(winner).toMatchObject({ startsAt: '2026-08-02T09:00:00.000Z' });
     expect(loser).toBeNull();
     await expect(repo.listSideEffectOperations(original.id)).resolves.toEqual([
-      expect.objectContaining({ kind: 'email:booking.rescheduled:1', status: 'pending' }),
+      expect.objectContaining({ family: 'email', event: 'booking.rescheduled', discriminator: '1', status: 'pending' }),
     ]);
   });
 
@@ -729,7 +735,8 @@ describe('mutation side-effect outbox on real D1', () => {
 
     await expect(repo.transitionToCancelled('mutation-atomic', {
       expectedStatusIn: ['confirmed'], cancelledAt: '2026-07-21T10:02:00.000Z', cancelledBy: 'operator',
-      updatedAt: '2026-07-21T10:02:00.000Z', mutationSideEffectKinds: ['email:booking.cancelled_by_operator'],
+      updatedAt: '2026-07-21T10:02:00.000Z',
+      mutationSideEffects: [{ family: 'email', event: 'booking.cancelled_by_operator', eventPayloadJson: null, eventIdPrefix: null }],
     })).rejects.toThrow('mutation outbox insert failed');
     await expect(repo.getBookingById('mutation-atomic')).resolves.toMatchObject({ status: 'confirmed' });
     await db.prepare('DROP TRIGGER fail_mutation_outbox').run();

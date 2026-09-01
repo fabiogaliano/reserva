@@ -117,20 +117,21 @@ describe('side-effect operation backoff gating and retry bypass on real D1', () 
     await seedConfirmed(id);
     await repo.transitionToCancelled(id, {
       expectedStatusIn: ['confirmed'], cancelledAt: '2026-07-21T11:00:00.000Z', cancelledBy: 'operator',
-      updatedAt: '2026-07-21T11:00:00.000Z', mutationSideEffectKinds: ['calendar_delete'],
+      updatedAt: '2026-07-21T11:00:00.000Z',
+      mutationSideEffects: [{ family: 'calendar_delete', eventPayloadJson: null, eventIdPrefix: null }],
     });
 
-    const firstClaim = await repo.claimMutationSideEffectOperation(id, 'calendar_delete', '2026-07-21T11:00:01.000Z');
+    const firstClaim = await repo.claimMutationSideEffectOperation(id, { family: 'calendar_delete' }, '2026-07-21T11:00:01.000Z');
     expect(firstClaim).toBe(1);
     await repo.resolveMutationSideEffectOperation({
-      bookingId: id, kind: 'calendar_delete', claimedAt: '2026-07-21T11:00:01.000Z', status: 'failed',
+      bookingId: id, identity: { family: 'calendar_delete' }, claimedAt: '2026-07-21T11:00:01.000Z', status: 'failed',
       error: 'calendar unavailable', resolvedAt: '2026-07-21T11:00:02.000Z', nextAttemptAt: '2026-07-21T11:05:00.000Z',
     });
 
-    const tooSoon = await repo.claimMutationSideEffectOperation(id, 'calendar_delete', '2026-07-21T11:01:00.000Z');
+    const tooSoon = await repo.claimMutationSideEffectOperation(id, { family: 'calendar_delete' }, '2026-07-21T11:01:00.000Z');
     expect(tooSoon).toBeNull();
 
-    const bypassed = await repo.claimMutationSideEffectOperationForRetry(id, 'calendar_delete', '2026-07-21T11:01:00.000Z');
+    const bypassed = await repo.claimMutationSideEffectOperationForRetry(id, { family: 'calendar_delete' }, '2026-07-21T11:01:00.000Z');
     expect(bypassed).toBe(2);
   });
 });

@@ -17,7 +17,7 @@ const WEBHOOK_SECRET_PREFIX = 'whsec_';
 const SIGNATURE_SCHEME = 'v1';
 const MAX_ERROR_BODY_CHARS = 200;
 
-// Mirrors BrevoResponseError/the retired Tourflow error class: a bounded body in the message and a
+// Mirrors BrevoResponseError: a bounded body in the message and a
 // structured `status`, so plan 016's classification decides retryable vs. permanent.
 export class WebhookResponseError extends ProviderFailure {
   constructor(name: string, status: number, body: string) {

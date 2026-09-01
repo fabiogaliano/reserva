@@ -124,18 +124,34 @@ export interface PaymentProvider {
   refund(paymentIntent: string, expectedAmountCents: number): Promise<{ refundId: string; amountCents: number }>;
 }
 
-export interface OpsSink {
-  push(event: BookingEvent, booking: Booking): Promise<void>;
-  mapBooking?(booking: Booking, config: ClientConfig): unknown;
+export function isBookingEvent(value: string): value is BookingEvent {
+  return (BOOKING_EVENTS as readonly string[]).includes(value);
 }
 
-export interface AnalyticsSink {
-  track(event: BookingEvent, booking: Booking): Promise<void>;
+// Plan 021 (design decision 1): a subscriber's `events` filter is checked against the catalog at
+// startup, and the rejection lists the whole valid vocabulary — an agent wiring a hook learns every
+// event name from the error alone, without reading source.
+export function unknownBookingEventsMessage(event: string): string {
+  return `Unknown booking event "${event}". Valid events: ${BOOKING_EVENTS.join(', ')}.`;
 }
 
-export const noopAnalyticsSink: AnalyticsSink = {
-  track: async () => undefined,
-};
+export function invalidSubscriberNameMessage(name: string): string {
+  return `Invalid name "${name}": use 1-32 characters matching ${BOOKING_EVENT_SUBSCRIBER_NAME_PATTERN.source}.`;
+}
+
+export function validateBookingEventHooks(hooks: readonly BookingEventHook[]): void {
+  const seen = new Set<string>();
+  for (const hook of hooks) {
+    if (!BOOKING_EVENT_SUBSCRIBER_NAME_PATTERN.test(hook.name)) {
+      throw new Error(`Booking event hook: ${invalidSubscriberNameMessage(hook.name)}`);
+    }
+    if (seen.has(hook.name)) throw new Error(`Booking event hook name "${hook.name}" is registered twice; names must be unique.`);
+    seen.add(hook.name);
+    for (const event of hook.events ?? []) {
+      if (!isBookingEvent(event)) throw new Error(`Booking event hook "${hook.name}": ${unknownBookingEventsMessage(event)}`);
+    }
+  }
+}
 
 // Plan 020 (design decision 10): the independent alert channel to the central technical operator.
 // Deliberately narrow — exactly these seven fields, reference/operation metadata only. Excludes

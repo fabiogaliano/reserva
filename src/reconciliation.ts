@@ -13,7 +13,7 @@ import { nowIso } from './context';
 import { resumeClaimedOperatorCancellation } from './operator-cancellation';
 import { attemptRefund } from './refund-executor';
 import {
-  actionForSideEffectKind,
+  actionForSideEffectOperation,
   buildOperationalAlert,
   computeNextAttemptAt,
   INCIDENT_DELAY_THRESHOLD_MS,
@@ -25,6 +25,7 @@ import {
 } from './reconciliation-helpers';
 import {
   MUTATION_SIDE_EFFECT_LEASE_MS,
+  sideEffectOperationKey,
   type OperationalIncidentAction,
   type OperationalIncidentRecord,
   type OperationalIncidentSourceType,
@@ -116,12 +117,18 @@ async function applyIncidentProjection(
   }
 }
 
+// Plan 021: the ledger key for a side-effect row, built from its identity columns — the TypeScript
+// twin of src/repo.ts's sideEffectSourceKeySql and migration 0017's re-keying expression.
+export function sideEffectIncidentSourceKey(operation: SideEffectOperationRecord): string {
+  return `${operation.bookingId}:${sideEffectOperationKey(operation)}`;
+}
+
 // Plan 020 (design decision 6): a side-effect row's incident signal — 'abandoned' is immediately
 // action_required (a permanent or tenth-attempt failure); a still-retrying 'failed' row only
 // signals once its uninterrupted failure_started_at has been due for ten minutes; anything else
 // (pending/in_flight/succeeded) reports no current debt.
 function sideEffectSignal(operation: SideEffectOperationRecord, nowIsoValue: string): IncidentSourceSignal {
-  const action = actionForSideEffectKind(operation.kind);
+  const action = actionForSideEffectOperation(operation);
   if (operation.status === 'abandoned') {
     return { detected: true, severity: 'action_required', action, attemptCount: operation.attemptCount, sourceUpdatedAt: operation.updatedAt };
   }
@@ -135,7 +142,7 @@ async function projectSideEffectIncidentsForBooking(context: BookkitContext, tal
   const operations = await context.repo.listSideEffectOperations(bookingId);
   const now = nowIso(context);
   for (const operation of operations) {
-    const sourceKey = `${bookingId}:${operation.kind}`;
+    const sourceKey = sideEffectIncidentSourceKey(operation);
     const signal = sideEffectSignal(operation, now);
     await applyIncidentProjection(context, tally, bookingId, 'side_effect', sourceKey, signal.action, signal);
   }
@@ -219,7 +226,7 @@ async function processSideEffectCandidate(
     await runScheduledSideEffectOperation(context, booking, operation);
   } catch (error) {
     context.logger.warn?.('bookkit reconciliation side effect attempt failed', {
-      bookingId: operation.bookingId, kind: operation.kind, error: String(error),
+      bookingId: operation.bookingId, operation: sideEffectOperationKey(operation), error: String(error),
     });
   }
 }

@@ -1,14 +1,14 @@
 import { verifyPayment } from '../core/payment-verification';
 import {
+  cancellationSideEffectSeeds,
   confirmBookingFromPayment,
+  dispatchDisputeEvent,
   dispatchMutation,
-  dispatchNonCritical,
   runOwedMutationSideEffects,
 } from '../confirmation';
 import type { BookkitContext } from '../context';
 import { nowIso } from '../context';
 import { HttpError, json } from '../http';
-import { cancellationSideEffectKinds } from './booking-actions';
 import { run } from './shared';
 
 export function handleStripeWebhook(request: Request, context: BookkitContext): Promise<Response> {
@@ -76,7 +76,7 @@ export function handleStripeWebhook(request: Request, context: BookkitContext): 
               // still gets 200 so a retry never causes redelivery storms.
               expectedStatusIn: ['hold', 'confirmed', 'expired'],
               cancelledAt: timestamp, cancelledBy: 'operator', updatedAt: timestamp,
-              mutationSideEffectKinds: cancellationSideEffectKinds(context, booking, 'booking.cancelled_by_operator'),
+              mutationSideEffects: cancellationSideEffectSeeds(context, booking, 'booking.cancelled_by_operator', timestamp),
             });
             // A concurrent transition (e.g. a customer cancel) can win this race. Only the CAS
             // winner may record and dispatch operator-cancellation side effects.
@@ -101,7 +101,7 @@ export function handleStripeWebhook(request: Request, context: BookkitContext): 
         : null;
       const booking = byPayment ?? (event.bookingId ? await context.repo.getBookingById(event.bookingId) : null);
       context.logger.warn?.('Stripe dispute created', { eventId: event.id, bookingId: booking?.id ?? event.bookingId });
-      if (booking) dispatchNonCritical(context, 'payment.dispute_created', booking);
+      if (booking) await dispatchDisputeEvent(context, booking, event.id);
     }
     return json({ received: true });
   });

@@ -39,9 +39,6 @@ describe('fakeRepository fidelity to the real D1 repository', () => {
     await expect(repo.listUpcoming('2026-06-14T08:00:00.000Z')).resolves.toEqual([
       expect.objectContaining({ cancelToken: seeded.cancelToken, operatorToken: seeded.operatorToken }),
     ]);
-    await expect(repo.listSince('2026-06-14T08:00:00.000Z')).resolves.toEqual([
-      expect.objectContaining({ cancelToken: seeded.cancelToken, operatorToken: seeded.operatorToken }),
-    ]);
     await expect(repo.getBookingByReference(seeded.reference)).resolves.toMatchObject({
       cancelToken: seeded.cancelToken,
       operatorToken: seeded.operatorToken,
@@ -68,9 +65,6 @@ describe('fakeRepository fidelity to the real D1 repository', () => {
       operatorToken: seeded.operatorToken,
     });
     await expect(repo.listUpcoming('2026-06-14T08:00:00.000Z')).resolves.toEqual([
-      expect.objectContaining({ cancelToken: seeded.cancelToken, operatorToken: seeded.operatorToken }),
-    ]);
-    await expect(repo.listSince('2026-06-14T08:00:00.000Z')).resolves.toEqual([
       expect.objectContaining({ cancelToken: seeded.cancelToken, operatorToken: seeded.operatorToken }),
     ]);
   });

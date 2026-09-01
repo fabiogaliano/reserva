@@ -72,7 +72,6 @@ const EXPECTED_EXPORT_SUBPATHS = [
   './providers/payments-stripe',
   './providers/email-brevo',
   './providers/email-none',
-  './providers/ops-tourflow',
   './runtime',
   './components/BookingWidget.astro',
   './components/ManageBooking.astro',

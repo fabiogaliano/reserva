@@ -86,7 +86,7 @@ async function seedAndAssert(): Promise<void> {
     // (RETRY_BACKOFF_MINUTES, src/reconciliation-helpers.ts) and past the 10-minute delayed-
     // incident threshold, so both the retry gate and the incident-already-open precondition hold.
     await db.prepare(
-      `INSERT INTO side_effect_operations (booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at, failure_started_at, next_attempt_at)
+      `INSERT INTO side_effect_operations (booking_id, family, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at, failure_started_at, next_attempt_at)
        VALUES (?, 'calendar_create', 'failed', NULL, 2, ?, NULL, 'calendar unavailable', ?, ?, ?, NULL)`,
     ).bind(id, '2026-08-14T09:49:00.000Z', '2026-08-14T09:30:00.000Z', '2026-08-14T09:49:00.000Z', '2026-08-14T09:49:00.000Z').run();
 
@@ -120,7 +120,7 @@ async function assertRecovered(): Promise<void> {
   try {
     const db = proxy.env.BOOKKIT_DB as unknown as D1Database;
     const id = 'smoke-scheduled-recovery';
-    const operation = await db.prepare('SELECT side_effect_operations.status AS status, bookings.calendar_synced AS calendar_synced FROM side_effect_operations JOIN bookings ON bookings.id = side_effect_operations.booking_id WHERE side_effect_operations.booking_id = ? AND side_effect_operations.kind = ?').bind(id, 'calendar_create').first<{ status: string; calendar_synced: number }>();
+    const operation = await db.prepare('SELECT side_effect_operations.status AS status, bookings.calendar_synced AS calendar_synced FROM side_effect_operations JOIN bookings ON bookings.id = side_effect_operations.booking_id WHERE side_effect_operations.booking_id = ? AND side_effect_operations.family = ?').bind(id, 'calendar_create').first<{ status: string; calendar_synced: number }>();
     if (!operation) throw new Error('side_effect_operations row disappeared');
     if (operation.status !== 'succeeded') throw new Error(`expected the real scheduled() dispatch to redrive the owed calendar_create row to 'succeeded', got '${operation.status}'`);
     if (operation.calendar_synced !== 1) throw new Error('expected bookings.calendar_synced to flip to true once the calendar_create row succeeded');

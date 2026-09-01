@@ -29,12 +29,13 @@ const FINGERPRINT_BOOKINGS_SQL = `CREATE TABLE bookings (
   cancelled_by TEXT CHECK (cancelled_by IN ('customer','operator') OR cancelled_by IS NULL)
 )`;
 const FINGERPRINT_PAYMENT_INDEX_SQL = 'CREATE UNIQUE INDEX idx_bookings_payment_intent ON bookings (stripe_payment_intent) WHERE stripe_payment_intent IS NOT NULL';
-// Plan 016: 'abandoned' is 0013's addition to the `status` CHECK, mirroring 'calendar_delete' for
-// 0012 above — both need to be present for a "fully migrated" fake fixture (fingerprintOk: true).
-const FINGERPRINT_SIDE_EFFECT_SQL = "CREATE TABLE side_effect_operations (kind TEXT CHECK (kind IN ('calendar_create', 'calendar_delete', 'email_confirmation', 'oversell')), status TEXT CHECK (status IN ('pending','in_flight','succeeded','failed','abandoned')))";
+// Plan 016: 'abandoned' is 0013's addition to the `status` CHECK. Plan 021: 0017 replaced `kind`
+// with the structured identity columns and their family CHECK — all of it has to be present for a
+// "fully migrated" fake fixture (fingerprintOk: true).
+const FINGERPRINT_SIDE_EFFECT_SQL = "CREATE TABLE side_effect_operations (family TEXT CHECK (family IN ('calendar_create','calendar_delete','email_confirmation','oversell','email','hook','webhook')), status TEXT CHECK (status IN ('pending','in_flight','succeeded','failed','abandoned')))";
 // Plan 020 (design decision 5): failure_started_at/next_attempt_at are 0016's additive columns on
-// side_effect_operations.
-const FINGERPRINT_SIDE_EFFECT_COLUMNS = ['failure_started_at', 'next_attempt_at'];
+// side_effect_operations. Plan 021: 0017's identity columns and the serialized event envelope.
+const FINGERPRINT_SIDE_EFFECT_COLUMNS = ['family', 'name', 'event', 'discriminator', 'event_payload_json', 'failure_started_at', 'next_attempt_at'];
 // Plan 020 (design decision 7): 0016's byte-preserving refund_operations rebuild widens `status`
 // and appends the execution-lease/backoff columns.
 const FINGERPRINT_REFUND_SQL = "CREATE TABLE refund_operations (status TEXT CHECK (status IN ('requested','in_flight','succeeded','failed','abandoned')))";
@@ -79,6 +80,7 @@ function fakeD1(
               { type: 'table', name: 'side_effect_operations', sql: FINGERPRINT_SIDE_EFFECT_SQL },
               { type: 'index', name: 'idx_side_effect_operations_pending', sql: null },
               { type: 'index', name: 'idx_side_effect_operations_reconciliation', sql: null },
+              { type: 'index', name: 'idx_side_effect_operations_identity', sql: null },
             ] : []) as T[],
           };
         }
@@ -131,7 +133,7 @@ describe('checkBookkitMigrationsApplied', () => {
       'SELECT name FROM bookkit_migrations',
       'PRAGMA table_info(bookings)',
       "SELECT type, name, sql FROM sqlite_master WHERE name IN ('bookings', 'idx_bookings_payment_intent')",
-      "SELECT type, name, sql FROM sqlite_master WHERE name IN ('side_effect_operations', 'idx_side_effect_operations_pending', 'idx_side_effect_operations_reconciliation')",
+      "SELECT type, name, sql FROM sqlite_master WHERE name IN ('side_effect_operations', 'idx_side_effect_operations_pending', 'idx_side_effect_operations_reconciliation', 'idx_side_effect_operations_identity')",
       'PRAGMA table_info(side_effect_operations)',
       "SELECT type, name, sql FROM sqlite_master WHERE name IN ('refund_operations', 'idx_refund_operations_status', 'idx_refund_operations_reconciliation')",
       'PRAGMA table_info(refund_operations)',
@@ -217,9 +219,10 @@ describe('migration check memoization', () => {
           if (query.includes('idx_side_effect_operations_reconciliation')) {
             return {
               results: [
-                { type: 'table', name: 'side_effect_operations', sql: "CHECK (kind IN ('calendar_create', 'calendar_delete', 'email_confirmation', 'oversell')), status TEXT CHECK (status IN ('pending','in_flight','succeeded','failed','abandoned'))" },
+                { type: 'table', name: 'side_effect_operations', sql: FINGERPRINT_SIDE_EFFECT_SQL },
                 { type: 'index', name: 'idx_side_effect_operations_pending', sql: null },
                 { type: 'index', name: 'idx_side_effect_operations_reconciliation', sql: null },
+                { type: 'index', name: 'idx_side_effect_operations_identity', sql: null },
               ],
             };
           }

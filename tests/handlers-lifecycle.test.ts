@@ -3,9 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { createBookkitContext } from '../src/context';
 import type { Booking } from '../src/core/booking';
 import type { ClientConfig, TourConfig } from '../src/core/config';
-import { handleAvailability, handleCheckout, handleFeed, handleOperatorNoShow, handleStripeWebhook } from '../src/handlers';
+import { handleAvailability, handleCheckout, handleOperatorNoShow, handleStripeWebhook } from '../src/handlers';
 import { booking, config, tour } from './fixtures';
-import { fakeRepository, providers } from './fakes';
+import { fakeRepository, providers, sideEffectOperation } from './fakes';
 
 describe('Bookkit handlers', () => {
   it('persists a checkout session and confirms idempotently on webhook replay', async () => {
@@ -71,7 +71,6 @@ describe('Bookkit handlers', () => {
       stripePaymentIntent: null,
       calendarSynced: false,
       emailSynced: false,
-      tourflowSynced: false,
     });
     const repo = fakeRepository([seeded]);
     await repo.acquireConfirmationLease(seeded.id, 'stalled-worker', '2026-06-14T08:00:00.000Z', '2026-06-14T08:05:00.000Z');
@@ -182,13 +181,15 @@ describe('Bookkit handlers', () => {
     expect(calendarCreates).toBe(0);
   });
 
+  // Plan 021: a dispute is not a booking transition, so its durable row is written directly and
+  // drained detached — the webhook response must not wait for a slow subscriber.
   it('reports Stripe disputes through waitUntil without delaying the webhook response', async () => {
     const seeded = booking({ id: 'b-dispute', stripePaymentIntent: 'pi_dispute' });
     const repo = fakeRepository([seeded]);
     const pending: Promise<unknown>[] = [];
-    let pushedEvent: string | undefined;
-    let releaseOps = (): void => undefined;
-    const blockedOps = new Promise<void>((resolve) => { releaseOps = resolve; });
+    let deliveredEvent: string | undefined;
+    let releaseHook = (): void => undefined;
+    const blockedHook = new Promise<void>((resolve) => { releaseHook = resolve; });
     const context = createBookkitContext({
       config,
       db: {} as D1Database,
@@ -201,43 +202,26 @@ describe('Bookkit handlers', () => {
           getSession: async () => ({ status: 'open' }),
           refund: async () => ({ refundId: 're_test', amountCents: 0 }),
         },
-        ops: {
-          push: async (event) => {
-            pushedEvent = event;
-            await blockedOps;
-          },
-        },
       }),
+      hooks: [{
+        name: 'ops',
+        durable: true,
+        handler: async (event) => {
+          deliveredEvent = event;
+          await blockedHook;
+        },
+      }],
     });
 
     const response = await handleStripeWebhook(new Request('https://example.test/api/booking/webhooks/stripe', { method: 'POST' }), context);
     expect(response.status).toBe(200);
-    expect(pushedEvent).toBe('payment.dispute_created');
+    expect(deliveredEvent).toBe('payment.dispute_created');
     expect(pending).toHaveLength(1);
-    releaseOps();
+    releaseHook();
     await Promise.all(pending);
-  });
-
-  it('returns a redacted, canonicalized feed payload', async () => {
-    const seeded = booking({ id: 'b-feed', status: 'confirmed', updatedAt: '2026-06-15T10:00:00.000Z' });
-    const repo = fakeRepository([seeded]);
-    const context = createBookkitContext({
-      config,
-      db: {} as D1Database,
-      repo,
-      secrets: async () => 'expected-secret',
-      providers: providers(),
-    });
-    const response = await handleFeed(new Request('https://example.test/api/booking/feed?since=2026-06-01T01:00:00%2B01:00', {
-      headers: { authorization: 'Bearer expected-secret' },
-    }), context);
-    const payload = await response.json() as { bookings: Array<Record<string, unknown>> };
-    expect(response.status).toBe(200);
-    expect(response.headers.get('cache-control')).toBe('no-store');
-    expect(payload.bookings[0]).toMatchObject({ id: seeded.id, reference: seeded.reference, status: 'confirmed' });
-    expect(payload.bookings[0]).not.toHaveProperty('cancelToken');
-    expect(payload.bookings[0]).not.toHaveProperty('operatorToken');
-    expect(payload.bookings[0]).not.toHaveProperty('stripeSessionId');
+    expect(sideEffectOperation(repo, seeded.id, {
+      family: 'hook', name: 'ops', event: 'payment.dispute_created', discriminator: 'evt_dispute',
+    })).toMatchObject({ status: 'succeeded' });
   });
 
   it('rejects impossible availability dates as validation errors', async () => {
@@ -270,7 +254,7 @@ describe('Bookkit handlers', () => {
     expect(occupancyReads).toBe(0);
   });
 
-  it('rejects feed and operator actions without constant-time shared-secret auth', async () => {
+  it('rejects operator actions without constant-time shared-secret auth', async () => {
     const seeded = booking({ id: 'b1', status: 'confirmed', startsAt: '2026-06-15T09:00:00.000Z' });
     const repo = fakeRepository([seeded]);
     const context = createBookkitContext({
@@ -281,8 +265,6 @@ describe('Bookkit handlers', () => {
       secrets: async () => 'expected-secret',
       providers: providers(),
     });
-    const feed = await handleFeed(new Request('https://example.test/api/booking/feed?since=2026-01-01T00:00:00.000Z', { headers: { authorization: 'Bearer wrong' } }), context);
-    expect(feed.status).toBe(403);
     const noShow = await handleOperatorNoShow(new Request('https://example.test/api/booking/operator/no-show', { method: 'POST', body: JSON.stringify({ bookingId: 'b1' }), headers: { 'content-type': 'application/json', authorization: 'Bearer wrong' } }), context);
     expect(noShow.status).toBe(403);
   });

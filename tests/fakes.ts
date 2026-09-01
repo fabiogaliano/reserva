@@ -11,17 +11,18 @@ import {
 } from '../src/core/occupancy';
 import { sha256Base64Url } from '../src/http';
 import {
-  CONFIRMATION_TOURFLOW_KIND,
   DuplicatePaymentIntentError,
   HoldLimitExceededError,
   MUTATION_SIDE_EFFECT_LEASE_MS,
   SIDE_EFFECT_MAX_ATTEMPTS,
+  sameSideEffectOperation,
+  sideEffectOperationKey,
   type BookingRepository,
-  type ConfirmationEmailKind,
-  type MutationSideEffectOperationKind,
   type OperationalIncidentRecord,
   type RefundOperationRecord,
+  type SideEffectOperationIdentity,
   type SideEffectOperationRecord,
+  type SideEffectOperationSeed,
 } from '../src/repo';
 import { booking } from './fixtures';
 
@@ -49,7 +50,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
   refundOperations: Map<string, RefundOperationRecord>;
   sideEffectOperations: Map<string, SideEffectOperationRecord>;
   tokenState: Map<string, FakeTokenState>;
-  recordMutationSideEffectOperations(bookingId: string, kinds: MutationSideEffectOperationKind[], now: string): Promise<void>;
+  recordMutationSideEffectOperations(bookingId: string, seeds: SideEffectOperationSeed[], now: string): Promise<void>;
 } {
   const placeholderToken = (id: string, role: 'cancel' | 'operator') => `nohash:${id}:${role}`;
   const storeTokens = (item: Booking): Booking => ({
@@ -86,26 +87,44 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
   const operationalIncidents = new Map<string, OperationalIncidentRecord>();
   const incidentKey = (sourceType: string, sourceKey: string) => `${sourceType}:${sourceKey}`;
   const rescheduleTransitionVersions = new Map(seed.map((item) => [item.id, 0]));
-  const sideEffectKey = (bookingId: string, kind: SideEffectOperationRecord['kind']) => `${bookingId}:${kind}`;
-  const isMutationSideEffectOperationKind = (kind: string): kind is MutationSideEffectOperationKind => (
-    kind === 'calendar_delete' || kind.startsWith('email:') || kind.startsWith('tourflow:')
-  );
+  // Plan 021: the same rendering src/reconciliation.ts's sideEffectIncidentSourceKey builds, so a
+  // fake incident's source_key still addresses its row (mirrors the real table's identity index).
+  const sideEffectKey = (bookingId: string, identity: SideEffectOperationIdentity) =>
+    `${bookingId}:${sideEffectOperationKey(identity)}`;
+  const identityOf = (identity: SideEffectOperationIdentity) => ({
+    family: identity.family,
+    name: identity.name ?? null,
+    event: identity.event ?? null,
+    discriminator: identity.discriminator ?? null,
+  });
+  const identitySort = (a: SideEffectOperationRecord, b: SideEffectOperationRecord) =>
+    a.family.localeCompare(b.family) || (a.name ?? '').localeCompare(b.name ?? '')
+    || (a.event ?? '').localeCompare(b.event ?? '') || (a.discriminator ?? '').localeCompare(b.discriminator ?? '');
+  const insertOperation = (bookingId: string, identity: SideEffectOperationIdentity, now: string, overrides: Partial<SideEffectOperationRecord> = {}) => {
+    const key = sideEffectKey(bookingId, identity);
+    if (sideEffectOperations.has(key)) return;
+    sideEffectOperations.set(key, {
+      bookingId, ...identityOf(identity), eventPayloadJson: null, status: 'pending', providerResultId: null,
+      attemptCount: 0, attemptedAt: null, resolvedAt: null, error: null, createdAt: now, updatedAt: now,
+      failureStartedAt: null, nextAttemptAt: null, ...overrides,
+    });
+  };
   // BK-SIDE-001 (handoff 13) HIGH-1(a): mirrors src/repo.ts's mutationSideEffectInsert — called
   // by transitionToCancelled/transitionToNoShow/rescheduleWithCapacity below ONLY after each has
   // already confirmed its own CAS won (the real repo's atomicity guarantee, reproduced here by
   // simple call ordering rather than SQL, since the fake has no concurrent writers to race), and
   // ON CONFLICT DO NOTHING (never overwrites an existing row) so a retried dispatch of the same
   // mutation instance resumes its row instead of duplicating or clobbering it.
-  const recordMutationKinds = (bookingId: string, kinds: MutationSideEffectOperationKind[] | undefined, now: string, rescheduleVersion?: number) => {
-    for (const baseKind of kinds ?? []) {
-      const candidate = rescheduleVersion === undefined ? baseKind : `${baseKind}:${rescheduleVersion}`;
-      if (!isMutationSideEffectOperationKind(candidate)) throw new Error('Unsupported side effect operation kind');
-      const key = sideEffectKey(bookingId, candidate);
-      if (!sideEffectOperations.has(key)) sideEffectOperations.set(key, {
-        bookingId, kind: candidate, status: 'pending', providerResultId: null, attemptCount: 0,
-        attemptedAt: null, resolvedAt: null, error: null, createdAt: now, updatedAt: now,
-        failureStartedAt: null, nextAttemptAt: null,
-      });
+  const recordMutationSeeds = (bookingId: string, seeds: SideEffectOperationSeed[] | undefined, now: string, rescheduleVersion?: number) => {
+    for (const seed of seeds ?? []) {
+      // Plan 021: mirrors the repository's json_set of '$.id' inside the winning batch — the
+      // reschedule version is only knowable here, and the stored envelope must already carry it.
+      const discriminator = rescheduleVersion === undefined ? (seed.discriminator ?? null) : String(rescheduleVersion);
+      const identity = { ...identityOf(seed), discriminator };
+      const payload = seed.eventPayloadJson === null || rescheduleVersion === undefined
+        ? seed.eventPayloadJson
+        : JSON.stringify({ ...JSON.parse(seed.eventPayloadJson), id: `${seed.eventIdPrefix}:${rescheduleVersion}` });
+      insertOperation(bookingId, identity, now, { eventPayloadJson: payload });
     }
   };
   // Mirrors the occupancy_units / occupancy_ends_at columns migration 0008 adds (see
@@ -167,7 +186,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     const defaults = await repository.listCapacityDefaults();
     return defaultCapacityForDate(localDate, fleetDefaultCapacity, defaults);
   };
-  const repository: BookingRepository & { rows: Map<string, Booking>; settings: Map<string, string>; refundOperations: Map<string, RefundOperationRecord>; sideEffectOperations: Map<string, SideEffectOperationRecord>; tokenState: Map<string, FakeTokenState>; recordMutationSideEffectOperations(bookingId: string, kinds: MutationSideEffectOperationKind[], now: string): Promise<void> } = {
+  const repository: BookingRepository & { rows: Map<string, Booking>; settings: Map<string, string>; refundOperations: Map<string, RefundOperationRecord>; sideEffectOperations: Map<string, SideEffectOperationRecord>; tokenState: Map<string, FakeTokenState>; recordMutationSideEffectOperations(bookingId: string, seeds: SideEffectOperationSeed[], now: string): Promise<void> } = {
     rows,
     tokenState,
     sweepExpiredHolds: async (now) => {
@@ -278,7 +297,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         );
         if (active.length >= input.maxActiveHoldsForIp) throw new HoldLimitExceededError();
       }
-      const created: Booking = { ...booking(), ...input, pickupAddress: null, customerName: null, customerEmail: null, customerPhone: null, status: 'hold', stripeSessionId: null, stripePaymentIntent: null, calendarEventId: null, calendarSynced: false, emailSynced: false, tourflowSynced: false, remindedAt: null, reviewRequestedAt: null, cancelledAt: null, cancelledBy: null, rescheduledFrom: null };
+      const created: Booking = { ...booking(), ...input, pickupAddress: null, customerName: null, customerEmail: null, customerPhone: null, status: 'hold', stripeSessionId: null, stripePaymentIntent: null, calendarEventId: null, calendarSynced: false, emailSynced: false, remindedAt: null, reviewRequestedAt: null, cancelledAt: null, cancelledBy: null, rescheduledFrom: null };
       const stored = storeTokens(created);
       rows.set(stored.id, stored);
       // BK-SEC-002: a newly created row is hash-backed from the start (never "legacy"), mirroring
@@ -322,7 +341,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       }
       const used = maxConcurrentInInterval(input.startsAt, input.occupancyEndsAt, input.createdAt);
       if (used + input.occupancyUnits > capacity) return null;
-      const created: Booking = { ...booking(), ...input, pickupAddress: null, customerName: null, customerEmail: null, customerPhone: null, status: 'hold', stripeSessionId: null, stripePaymentIntent: null, calendarEventId: null, calendarSynced: false, emailSynced: false, tourflowSynced: false, remindedAt: null, reviewRequestedAt: null, cancelledAt: null, cancelledBy: null, rescheduledFrom: null };
+      const created: Booking = { ...booking(), ...input, pickupAddress: null, customerName: null, customerEmail: null, customerPhone: null, status: 'hold', stripeSessionId: null, stripePaymentIntent: null, calendarEventId: null, calendarSynced: false, emailSynced: false, remindedAt: null, reviewRequestedAt: null, cancelledAt: null, cancelledBy: null, rescheduledFrom: null };
       const stored = storeTokens(created);
       rows.set(stored.id, stored);
       occupancyMeta.set(stored.id, { units: input.occupancyUnits, endsAt: input.occupancyEndsAt });
@@ -363,7 +382,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       if (state && state.cancelTokenRevokedAt === null) state.cancelTokenRevokedAt = input.cancelledAt;
       // BK-SIDE-001 (handoff 13): only reached once the CAS above has already confirmed this
       // transition applies — see recordMutationKinds's doc comment.
-      recordMutationKinds(id, input.mutationSideEffectKinds, input.updatedAt);
+      recordMutationSeeds(id, input.mutationSideEffects, input.updatedAt);
       return hydrateBooking(updated);
     },
     upsertRefundOperationAndTransitionToCancelled: async (refund, id, input) => {
@@ -375,7 +394,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       if (!current || !input.expectedStatusIn.includes(current.status)) return null;
       const updated: Booking = { ...current, status: 'no_show', updatedAt: input.updatedAt };
       rows.set(id, updated);
-      recordMutationKinds(id, input.mutationSideEffectKinds, input.updatedAt);
+      recordMutationSeeds(id, input.mutationSideEffects, input.updatedAt);
       const state = tokenState.get(id);
       if (state && state.cancelTokenRevokedAt === null) state.cancelTokenRevokedAt = input.updatedAt;
       return hydrateBooking(updated);
@@ -394,47 +413,27 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       const current = rows.get(id);
       if (!current || !input.expectedStatusIn.includes(current.status) || leases.get(id)?.token !== input.leaseToken) return null;
       guardDuplicatePaymentIntent(id, input.stripePaymentIntent);
-      const { expectedStatusIn, leaseToken, oversold, updatedAt, tourflowKind, emailKinds, ...patch } = input;
+      const { expectedStatusIn, leaseToken, oversold, updatedAt, eventSeeds, emailRecipients, ...patch } = input;
       const defined = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
       const updated: Booking = { ...current, ...defined, status: 'confirmed', holdExpiresAt: null, updatedAt };
       rows.set(id, updated);
-      const key0 = sideEffectKey(id, 'calendar_create');
-      if (!sideEffectOperations.has(key0)) sideEffectOperations.set(key0, {
-        bookingId: id, kind: 'calendar_create', status: 'pending', providerResultId: null, attemptCount: 0,
-        attemptedAt: null, resolvedAt: null, error: null, createdAt: updatedAt, updatedAt,
-        failureStartedAt: null, nextAttemptAt: null,
-      });
+      insertOperation(id, { family: 'calendar_create' }, updatedAt);
       // Plan 012 (design decision 1/2): split rows (one per recipient) when the caller resolved a
       // split-capable provider; otherwise the single legacy combined row, unchanged from before
       // this plan. This is a brand-new confirmation, so no row of either shape can already exist
       // (mirrors src/repo.ts's confirmWithSideEffectOperations comment).
-      const emailKindList: readonly (ConfirmationEmailKind | 'email_confirmation')[] = emailKinds && emailKinds.length > 0 ? emailKinds : ['email_confirmation'];
-      for (const kind of emailKindList) {
-        const key = sideEffectKey(id, kind);
-        if (!sideEffectOperations.has(key)) sideEffectOperations.set(key, {
-          bookingId: id, kind, status: 'pending', providerResultId: null, attemptCount: 0,
-          attemptedAt: null, resolvedAt: null, error: null, createdAt: updatedAt, updatedAt,
-          failureStartedAt: null, nextAttemptAt: null,
-        });
-      }
+      const emailIdentities: SideEffectOperationIdentity[] = emailRecipients && emailRecipients.length > 0
+        ? emailRecipients.map((recipient) => ({ family: 'email', name: recipient, event: 'booking.confirmed' }))
+        : [{ family: 'email_confirmation' }];
+      for (const identity of emailIdentities) insertOperation(id, identity, updatedAt);
       if (oversold) {
-        const key = sideEffectKey(id, 'oversell');
-        if (!sideEffectOperations.has(key)) sideEffectOperations.set(key, {
-          bookingId: id, kind: 'oversell', status: 'succeeded', providerResultId: 'capacity_exceeded',
-          attemptCount: 0, attemptedAt: null, resolvedAt: updatedAt, error: null, createdAt: updatedAt, updatedAt,
-          failureStartedAt: null, nextAttemptAt: null,
+        insertOperation(id, { family: 'oversell' }, updatedAt, {
+          status: 'succeeded', providerResultId: 'capacity_exceeded', resolvedAt: updatedAt,
         });
       }
-      // Plan 011 (design decision 2): mirrors src/repo.ts — the Tourflow row is created in the
+      // Plan 021 (design decision 4): mirrors src/repo.ts — each subscriber's row is created in the
       // same "transaction" (here: the same synchronous call) as the status transition.
-      if (tourflowKind) {
-        const key = sideEffectKey(id, tourflowKind);
-        if (!sideEffectOperations.has(key)) sideEffectOperations.set(key, {
-          bookingId: id, kind: tourflowKind, status: 'pending', providerResultId: null, attemptCount: 0,
-          attemptedAt: null, resolvedAt: null, error: null, createdAt: updatedAt, updatedAt,
-          failureStartedAt: null, nextAttemptAt: null,
-        });
-      }
+      for (const seed of eventSeeds ?? []) insertOperation(id, seed, updatedAt, { eventPayloadJson: seed.eventPayloadJson });
       return hydrateBooking(updated);
     },
     applyConfirmedPaymentDetails: async (id, patch, leaseToken, updatedAt) => {
@@ -454,58 +453,53 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       rows.set(id, updated);
       return true;
     },
-    ensureConfirmationSideEffectOperations: async (id, leaseToken, now, tourflowKind, emailKinds) => {
+    ensureConfirmationSideEffectOperations: async (id, leaseToken, now, eventSeeds, emailRecipients) => {
       if (rows.get(id)?.status !== 'confirmed' || leases.get(id)?.token !== leaseToken) return;
       const booking = rows.get(id);
       if (!booking) return;
-      const calendarKey = sideEffectKey(id, 'calendar_create');
-      if (!sideEffectOperations.has(calendarKey)) sideEffectOperations.set(calendarKey, {
-        bookingId: id, kind: 'calendar_create', status: booking.calendarSynced ? 'succeeded' : 'pending',
+      insertOperation(id, { family: 'calendar_create' }, now, {
+        status: booking.calendarSynced ? 'succeeded' : 'pending',
         providerResultId: booking.calendarEventId,
-        attemptCount: 0, attemptedAt: null, resolvedAt: booking.calendarSynced ? now : null, error: null,
-        createdAt: now, updatedAt: now, failureStartedAt: null, nextAttemptAt: null,
+        resolvedAt: booking.calendarSynced ? now : null,
       });
       // Plan 012 (design decision 1/2/3): same split-vs-combined choice
       // confirmWithSideEffectOperations makes for a brand-new confirmation, applied here for
       // legacy repair. A split row is only ever inserted when no legacy combined
       // email_confirmation row already exists for this booking — mirrors src/repo.ts's
       // NOT EXISTS guard (design decision 3).
-      const emailKindList: readonly (ConfirmationEmailKind | 'email_confirmation')[] = emailKinds && emailKinds.length > 0 ? emailKinds : ['email_confirmation'];
-      const combinedRowExists = sideEffectOperations.has(sideEffectKey(id, 'email_confirmation'));
-      const skipSplit = emailKinds && emailKinds.length > 0 && combinedRowExists;
+      const emailIdentities: SideEffectOperationIdentity[] = emailRecipients && emailRecipients.length > 0
+        ? emailRecipients.map((recipient) => ({ family: 'email', name: recipient, event: 'booking.confirmed' }))
+        : [{ family: 'email_confirmation' }];
+      const combinedRowExists = sideEffectOperations.has(sideEffectKey(id, { family: 'email_confirmation' }));
+      const skipSplit = emailRecipients && emailRecipients.length > 0 && combinedRowExists;
       if (!skipSplit) {
-        for (const kind of emailKindList) {
-          const key = sideEffectKey(id, kind);
-          if (!sideEffectOperations.has(key)) sideEffectOperations.set(key, {
-            bookingId: id, kind, status: booking.emailSynced ? 'succeeded' : 'pending', providerResultId: null,
-            attemptCount: 0, attemptedAt: null, resolvedAt: booking.emailSynced ? now : null, error: null,
-            createdAt: now, updatedAt: now, failureStartedAt: null, nextAttemptAt: null,
+        for (const identity of emailIdentities) {
+          insertOperation(id, identity, now, {
+            status: booking.emailSynced ? 'succeeded' : 'pending',
+            resolvedAt: booking.emailSynced ? now : null,
           });
         }
       }
-      // Plan 011 (design decision 2): legacy-repair path — only when tourflow_synced is still
-      // false, mirroring src/repo.ts's WHERE ... AND tourflow_synced = 0 guard.
-      if (tourflowKind && !booking.tourflowSynced) {
-        const key = sideEffectKey(id, tourflowKind);
-        if (!sideEffectOperations.has(key)) sideEffectOperations.set(key, {
-          bookingId: id, kind: tourflowKind, status: 'pending', providerResultId: null,
-          attemptCount: 0, attemptedAt: null, resolvedAt: null, error: null,
-          createdAt: now, updatedAt: now, failureStartedAt: null, nextAttemptAt: null,
-        });
-      }
+      // Plan 021 (design decision 4): the legacy-repair path for a subscriber registered after
+      // this booking was confirmed — always 'pending', because the row's own status is the only
+      // record of whether that subscriber has been told.
+      for (const seed of eventSeeds ?? []) insertOperation(id, seed, now, { eventPayloadJson: seed.eventPayloadJson });
+    },
+    recordBookingEventOperations: async (bookingId, seeds, now) => {
+      for (const seed of seeds) insertOperation(bookingId, seed, now, { eventPayloadJson: seed.eventPayloadJson });
     },
     listSideEffectOperations: async (bookingId) => [...sideEffectOperations.values()]
       .filter((operation) => operation.bookingId === bookingId)
-      .sort((a, b) => a.kind.localeCompare(b.kind)),
-    recordMutationSideEffectOperations: async (bookingId, kinds, now) => {
-      recordMutationKinds(bookingId, kinds, now);
+      .sort(identitySort),
+    recordMutationSideEffectOperations: async (bookingId, seeds, now) => {
+      recordMutationSeeds(bookingId, seeds, now);
     },
     // Plan 016 (design decision 4): 'abandoned' is terminal (never reclaimed, mirroring
     // src/repo.ts's status NOT IN ('succeeded', 'abandoned')), and attempt_count is capped the
     // same way src/repo.ts's claim SQL binds SIDE_EFFECT_MAX_ATTEMPTS.
     // Plan 020 (design decision 5): additionally requires next_attempt_at to be null or <= now.
-    claimSideEffectOperation: async (bookingId, kind, leaseToken, attemptedAt) => {
-      const key = sideEffectKey(bookingId, kind);
+    claimSideEffectOperation: async (bookingId, identity, leaseToken, attemptedAt) => {
+      const key = sideEffectKey(bookingId, identity);
       const current = sideEffectOperations.get(key);
       if (!current || current.status === 'succeeded' || current.status === 'abandoned'
         || current.attemptCount >= SIDE_EFFECT_MAX_ATTEMPTS || leases.get(bookingId)?.token !== leaseToken
@@ -519,8 +513,8 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     },
     // Plan 020 (design decision 5): the admin retry bypass — ignores next_attempt_at and the
     // attempt-count cap, but still requires lease ownership and a non-succeeded row.
-    claimSideEffectOperationForRetry: async (bookingId, kind, leaseToken, attemptedAt) => {
-      const key = sideEffectKey(bookingId, kind);
+    claimSideEffectOperationForRetry: async (bookingId, identity, leaseToken, attemptedAt) => {
+      const key = sideEffectKey(bookingId, identity);
       const current = sideEffectOperations.get(key);
       if (!current || current.status === 'succeeded' || leases.get(bookingId)?.token !== leaseToken) return null;
       const attemptNumber = current.attemptCount + 1;
@@ -536,7 +530,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     // legacy combined row when one exists for this booking, otherwise every split row. Becomes
     // true only when every row in that set is 'succeeded'.
     resolveSideEffectOperation: async (input) => {
-      const key = sideEffectKey(input.bookingId, input.kind);
+      const key = sideEffectKey(input.bookingId, input.identity);
       const operation = sideEffectOperations.get(key);
       const current = rows.get(input.bookingId);
       if (!operation || !current || operation.status === 'succeeded' || operation.status === 'abandoned'
@@ -547,17 +541,18 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         failureStartedAt: input.status === 'failed' ? (operation.failureStartedAt ?? input.resolvedAt) : null,
         nextAttemptAt: input.status === 'failed' ? (input.nextAttemptAt ?? null) : null,
       });
-      if (input.kind === 'calendar_create') {
+      if (input.identity.family === 'calendar_create') {
         rows.set(input.bookingId, {
           ...current, calendarSynced: input.status === 'succeeded', calendarEventId: input.providerResultId ?? null,
           updatedAt: input.resolvedAt,
         });
         return true;
       }
-      const combined = sideEffectOperations.get(sideEffectKey(input.bookingId, 'email_confirmation'));
+      const combined = sideEffectOperations.get(sideEffectKey(input.bookingId, { family: 'email_confirmation' }));
       const applicable = combined
         ? [combined]
-        : [...sideEffectOperations.values()].filter((row) => row.bookingId === input.bookingId && row.kind.startsWith('email:booking.confirmed:'));
+        : [...sideEffectOperations.values()].filter((row) => row.bookingId === input.bookingId
+          && row.family === 'email' && row.event === 'booking.confirmed');
       const emailSynced = applicable.every((row) => row.status === 'succeeded');
       rows.set(input.bookingId, { ...current, emailSynced, updatedAt: input.resolvedAt });
       return true;
@@ -566,8 +561,8 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     // in_flight above, unchanged — attempt_count >= SIDE_EFFECT_MAX_ATTEMPTS is the explicit
     // belt-and-braces guard, mirroring src/repo.ts's claim SQL.
     // Plan 020 (design decision 5): additionally requires next_attempt_at to be null or <= now.
-    claimMutationSideEffectOperation: async (bookingId, kind, attemptedAt) => {
-      const key = sideEffectKey(bookingId, kind);
+    claimMutationSideEffectOperation: async (bookingId, identity, attemptedAt) => {
+      const key = sideEffectKey(bookingId, identity);
       const current = sideEffectOperations.get(key);
       const staleBefore = new Date(Date.parse(attemptedAt) - MUTATION_SIDE_EFFECT_LEASE_MS).toISOString();
       const reclaimable = current?.status === 'in_flight'
@@ -585,8 +580,8 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     },
     // Plan 020 (design decision 5): the admin retry bypass — ignores next_attempt_at and the
     // attempt-count cap, but still refuses a live (non-stale) in_flight lease.
-    claimMutationSideEffectOperationForRetry: async (bookingId, kind, attemptedAt) => {
-      const key = sideEffectKey(bookingId, kind);
+    claimMutationSideEffectOperationForRetry: async (bookingId, identity, attemptedAt) => {
+      const key = sideEffectKey(bookingId, identity);
       const current = sideEffectOperations.get(key);
       const staleBefore = new Date(Date.parse(attemptedAt) - MUTATION_SIDE_EFFECT_LEASE_MS).toISOString();
       const reclaimable = current?.status === 'in_flight'
@@ -601,7 +596,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       return attemptNumber;
     },
     resolveMutationSideEffectOperation: async (input) => {
-      const key = sideEffectKey(input.bookingId, input.kind);
+      const key = sideEffectKey(input.bookingId, input.identity);
       const current = sideEffectOperations.get(key);
       if (!current || current.status !== 'in_flight' || current.attemptedAt !== input.claimedAt) return false;
       sideEffectOperations.set(key, {
@@ -612,24 +607,6 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       });
       return true;
     },
-    // Plan 011 (design decision 4): mirrors src/repo.ts's atomic pair — the row only resolves (and
-    // the flag only flips) when this call actually won the claimedAt-gated race.
-    resolveConfirmationTourflowOperation: async (input) => {
-      const key = sideEffectKey(input.bookingId, CONFIRMATION_TOURFLOW_KIND);
-      const current = sideEffectOperations.get(key);
-      if (!current || current.status !== 'in_flight' || current.attemptedAt !== input.claimedAt) return false;
-      sideEffectOperations.set(key, {
-        ...current, status: input.status, providerResultId: null,
-        error: input.error ?? null, resolvedAt: input.resolvedAt, updatedAt: input.resolvedAt,
-        failureStartedAt: input.status === 'failed' ? (current.failureStartedAt ?? input.resolvedAt) : null,
-        nextAttemptAt: input.status === 'failed' ? (input.nextAttemptAt ?? null) : null,
-      });
-      if (input.status === 'succeeded') {
-        const booking = rows.get(input.bookingId);
-        if (booking) rows.set(input.bookingId, { ...booking, tourflowSynced: true, updatedAt: input.resolvedAt });
-      }
-      return true;
-    },
     sideEffectOperations,
     transitionReschedule: async (id, input) => {
       const current = rows.get(id);
@@ -638,7 +615,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       rows.set(id, updated);
       const version = (rescheduleTransitionVersions.get(id) ?? 0) + 1;
       rescheduleTransitionVersions.set(id, version);
-      recordMutationKinds(id, input.mutationSideEffectKinds, input.updatedAt, version);
+      recordMutationSeeds(id, input.mutationSideEffects, input.updatedAt, version);
       // patch-11-r1 MEDIUM 2: mirrors src/repo.ts's COALESCE(?, tokens_expire_at) — the real
       // repo binds `input.tokensExpireAt ?? null`, so both an omitted field and an explicit null
       // fall through to COALESCE's "keep the existing value" branch; only a real string moves it.
@@ -673,7 +650,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       if (state && input.tokensExpireAt != null) state.tokensExpireAt = input.tokensExpireAt;
       const version = (rescheduleTransitionVersions.get(id) ?? 0) + 1;
       rescheduleTransitionVersions.set(id, version);
-      recordMutationKinds(id, input.mutationSideEffectKinds, input.updatedAt, version);
+      recordMutationSeeds(id, input.mutationSideEffects, input.updatedAt, version);
       return hydrateBooking(updated);
     },
     listOccupancyBookings: async (from, to) => [...rows.values()]
@@ -688,11 +665,6 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     listAllFrom: async (startsAtFrom) => [...rows.values()]
       .filter((item) => item.startsAt >= startsAtFrom)
       .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
-      .map(hydrateBooking),
-    // Mirrors src/repo.ts:268 — updated_at > since, ordered by updated_at.
-    listSince: async (since) => [...rows.values()]
-      .filter((item) => item.updatedAt > since)
-      .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))
       .map(hydrateBooking),
     // Mirrors src/repo.ts:1425-1428 — exact-date lookup.
     getDayOverride: async (date) => {
@@ -844,7 +816,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       const backoffMinutes = (attemptCount: number) => [5, 10, 20, 40, 60][Math.min(Math.max(attemptCount, 1) - 1, 4)] ?? 60;
       return [...sideEffectOperations.values()]
         .filter((row) => {
-          if (row.kind === 'oversell' || row.attemptCount >= SIDE_EFFECT_MAX_ATTEMPTS) return false;
+          if (row.family === 'oversell' || row.attemptCount >= SIDE_EFFECT_MAX_ATTEMPTS) return false;
           if (row.nextAttemptAt !== null && row.nextAttemptAt > now) return false;
           if (row.status === 'pending') return true;
           if (row.status === 'in_flight') return row.attemptedAt !== null && row.attemptedAt < staleBefore;
@@ -854,7 +826,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         })
         .sort((a, b) => {
           const byTime = (a.nextAttemptAt ?? a.attemptedAt ?? a.createdAt).localeCompare(b.nextAttemptAt ?? b.attemptedAt ?? b.createdAt);
-          return byTime || a.bookingId.localeCompare(b.bookingId) || a.kind.localeCompare(b.kind);
+          return byTime || a.bookingId.localeCompare(b.bookingId) || identitySort(a, b);
         })
         .slice(0, limit);
     },
@@ -870,7 +842,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     listSideEffectIncidentCandidateBookingIds: async (failureDueBefore, limit) => {
       const candidates = [...sideEffectOperations.values()]
         .filter((row) => (row.status === 'abandoned' || (row.status === 'failed' && row.failureStartedAt !== null && row.failureStartedAt <= failureDueBefore))
-          && !operationalIncidents.has(incidentKey('side_effect', `${row.bookingId}:${row.kind}`)));
+          && !operationalIncidents.has(incidentKey('side_effect', sideEffectKey(row.bookingId, row))));
       const byBooking = new Map<string, string>();
       for (const row of candidates) {
         const existing = byBooking.get(row.bookingId);
@@ -907,7 +879,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     // is simply "no incident row has ever been opened for this marker yet".
     listUnreportedOversellMarkers: async (limit) => {
       const markers = [...sideEffectOperations.values()]
-        .filter((row) => row.kind === 'oversell' && row.status === 'succeeded'
+        .filter((row) => row.family === 'oversell' && row.status === 'succeeded'
           && !operationalIncidents.has(incidentKey('oversell', row.bookingId)));
       return markers.sort((a, b) => a.updatedAt.localeCompare(b.updatedAt)).slice(0, limit);
     },
@@ -1038,6 +1010,49 @@ export function fakeRefundTracker(
       return resultFor(paymentIntent, idempotencyKeys.length);
     },
   };
+}
+
+export type FakeRepository = ReturnType<typeof fakeRepository>;
+
+// Plan 021: tests address an outbox row by its identity columns, never by a hand-built key string —
+// the same rule src/ follows, so a test can't encode a key shape the repository doesn't produce.
+export function seedSideEffectOperation(
+  repo: FakeRepository,
+  bookingId: string,
+  identity: SideEffectOperationIdentity,
+  overrides: Partial<SideEffectOperationRecord> = {},
+): SideEffectOperationRecord {
+  const now = overrides.createdAt ?? '2026-06-14T08:00:00.000Z';
+  const row: SideEffectOperationRecord = {
+    bookingId,
+    family: identity.family,
+    name: identity.name ?? null,
+    event: identity.event ?? null,
+    discriminator: identity.discriminator ?? null,
+    eventPayloadJson: null,
+    status: 'pending',
+    providerResultId: null,
+    attemptCount: 0,
+    attemptedAt: null,
+    resolvedAt: null,
+    error: null,
+    createdAt: now,
+    updatedAt: now,
+    failureStartedAt: null,
+    nextAttemptAt: null,
+    ...overrides,
+  };
+  repo.sideEffectOperations.set(`${bookingId}:${sideEffectOperationKey(identity)}`, row);
+  return row;
+}
+
+export function sideEffectOperation(
+  repo: FakeRepository,
+  bookingId: string,
+  identity: SideEffectOperationIdentity,
+): SideEffectOperationRecord | undefined {
+  return [...repo.sideEffectOperations.values()]
+    .find((row) => row.bookingId === bookingId && sameSideEffectOperation(row, identity));
 }
 
 export function providers(overrides: Partial<BookkitProviders> = {}): BookkitProviders {

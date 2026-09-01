@@ -4,7 +4,8 @@ import { mintAdminCsrfToken } from '../src/admin-csrf';
 import { createBookkitContext } from '../src/context';
 import { handleAdminGet, handleAdminPost } from '../src/handlers';
 import { booking, config } from './fixtures';
-import { fakeRepository, providers } from './fakes';
+import type { SideEffectOperationIdentity } from '../src/repo';
+import { fakeRepository, providers, seedSideEffectOperation, type FakeRepository } from './fakes';
 
 const clock = () => new Date('2026-06-14T08:00:00.000Z');
 const CSRF_NOW = clock().getTime();
@@ -33,12 +34,11 @@ function adminPostRequest(fields: Record<string, string>, csrfToken: string | nu
   });
 }
 
-function seedSideEffect(repo: ReturnType<typeof fakeRepository>, bookingId: string, kind: string): void {
-  repo.sideEffectOperations.set(`${bookingId}:${kind}`, {
-    bookingId, kind: kind as never, status: 'abandoned', providerResultId: null,
-    attemptCount: 10, attemptedAt: '2026-06-14T07:00:00.000Z', resolvedAt: null,
+function seedSideEffect(repo: FakeRepository, bookingId: string, identity: SideEffectOperationIdentity): void {
+  seedSideEffectOperation(repo, bookingId, identity, {
+    status: 'abandoned', attemptCount: 10, attemptedAt: '2026-06-14T07:00:00.000Z',
     error: 'provider down', createdAt: '2026-06-14T06:00:00.000Z', updatedAt: '2026-06-14T07:00:00.000Z',
-    failureStartedAt: '2026-06-14T06:00:00.000Z', nextAttemptAt: null,
+    failureStartedAt: '2026-06-14T06:00:00.000Z',
   });
 }
 
@@ -69,7 +69,7 @@ describe('admin incidents (plan 020 design decisions 12-14)', () => {
   it('GET renders an open incident card with its owner-facing title, never the word "abandoned"', async () => {
     const seeded = booking({ id: 'inc-render', status: 'confirmed', calendarSynced: false });
     const repo = fakeRepository([seeded]);
-    seedSideEffect(repo, seeded.id, 'calendar_create');
+    seedSideEffect(repo, seeded.id, { family: 'calendar_create' });
     await repo.upsertOpenIncident({
       id: 'incident-1', bookingId: seeded.id, sourceType: 'side_effect', sourceKey: `${seeded.id}:calendar_create`,
       action: 'calendar', severity: 'action_required', attemptCount: 10, sourceUpdatedAt: '2026-06-14T07:00:00.000Z',
@@ -114,7 +114,7 @@ describe('admin incidents (plan 020 design decisions 12-14)', () => {
   it('incident-retry dispatches a side_effect incident to retrySideEffectOperation and redirects with a notice', async () => {
     const seeded = booking({ id: 'inc-retry-se', status: 'confirmed', calendarSynced: false });
     const repo = fakeRepository([seeded]);
-    seedSideEffect(repo, seeded.id, 'calendar_create');
+    seedSideEffect(repo, seeded.id, { family: 'calendar_create' });
     await repo.upsertOpenIncident({
       id: 'incident-se', bookingId: seeded.id, sourceType: 'side_effect', sourceKey: `${seeded.id}:calendar_create`,
       action: 'calendar', severity: 'action_required', attemptCount: 10, sourceUpdatedAt: '2026-06-14T07:00:00.000Z',
@@ -172,7 +172,7 @@ describe('admin incidents (plan 020 design decisions 12-14)', () => {
   it('incident-resolve requires a trimmed 1-500 char note, records who/when, and only resolves the incident (never the underlying row)', async () => {
     const seeded = booking({ id: 'inc-resolve', status: 'confirmed', calendarSynced: false });
     const repo = fakeRepository([seeded]);
-    seedSideEffect(repo, seeded.id, 'calendar_create');
+    seedSideEffect(repo, seeded.id, { family: 'calendar_create' });
     await repo.upsertOpenIncident({
       id: 'incident-resolve', bookingId: seeded.id, sourceType: 'side_effect', sourceKey: `${seeded.id}:calendar_create`,
       action: 'calendar', severity: 'action_required', attemptCount: 10, sourceUpdatedAt: '2026-06-14T07:00:00.000Z',

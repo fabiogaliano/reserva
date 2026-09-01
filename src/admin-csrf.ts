@@ -67,8 +67,8 @@ async function hmacSign(secret: string, message: string): Promise<string> {
 //     (src/providers/stripe.ts) — they never surface on BookkitContext or ClientConfig, so they are
 //     not reachable from here without reaching into a specific payment provider's internals (which
 //     would break for any non-Stripe or fake PaymentProvider).
-//   - context.secrets can read TOURFLOW_SHARED_SECRET, but it's optional (unset for any deployment
-//     that doesn't use the Tourflow feed) and mixing an unrelated feature's secret into CSRF signing
+//   - context.secrets can read BOOKKIT_OPERATOR_SECRET, but it's optional (unset for any deployment
+//     that doesn't use the operator endpoints) and mixing an unrelated feature's secret into CSRF signing
 //     crosses trust domains for no real gain (see docs/decisions.md #4).
 // So the only fit-for-purpose secret is BOOKKIT_CSRF_SECRET itself. When it isn't configured, there
 // is no secret to sign with — this returns undefined and mint/verify below take the token layer

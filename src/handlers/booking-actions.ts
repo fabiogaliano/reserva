@@ -9,7 +9,7 @@ import {
 import { DEFAULT_TOKEN_EXPIRY_DAYS } from '../core/config';
 import { occupancyFor } from '../core/occupancy';
 import { localDateKey, parseUtcInstant } from '../core/time';
-import { dispatchMutation, mutationSideEffectKinds, runOwedMutationSideEffects } from '../confirmation';
+import { cancellationSideEffectSeeds, dispatchMutation, mutationSideEffectSeeds, runOwedMutationSideEffects } from '../confirmation';
 import type { BookkitContext } from '../context';
 import { getSecret, nowIso } from '../context';
 import { resumeClaimedOperatorCancellation } from '../operator-cancellation';
@@ -20,16 +20,10 @@ import { checkSlot } from './checkout';
 import { run, withSensitiveHeaders } from './shared';
 import { tokenBooking } from './status-manage';
 
-export function cancellationSideEffectKinds(
-  context: BookkitContext,
-  booking: Booking,
-  event: 'booking.cancelled_by_customer' | 'booking.cancelled_by_operator',
-) {
-  return [
-    ...mutationSideEffectKinds(context, event),
-    ...(booking.calendarEventId ? ['calendar_delete' as const] : []),
-  ];
-}
+// The shared-secret alternative to a per-booking operator token on the operator endpoints. Declared
+// in the astro:env schema (src/integration.ts) and read through the same SecretLookup every other
+// secret uses; a deployment must still list it in the runtime's `secretBindings`.
+export const OPERATOR_SECRET_NAME = 'BOOKKIT_OPERATOR_SECRET';
 
 async function calendarPatch(context: BookkitContext, booking: Booking): Promise<void> {
   if (booking.calendarEventId && context.providers.calendar) {
@@ -50,7 +44,7 @@ export function handleCustomerCancel(request: Request, context: BookkitContext):
     const updated = await context.repo.transitionToCancelled(cancelled.id, {
       expectedStatusIn: ['confirmed'], expectedStartsAt: booking.startsAt,
       cancelledAt: cancelled.updatedAt, cancelledBy: 'customer', updatedAt: cancelled.updatedAt,
-      mutationSideEffectKinds: cancellationSideEffectKinds(context, booking, 'booking.cancelled_by_customer'),
+      mutationSideEffects: cancellationSideEffectSeeds(context, booking, 'booking.cancelled_by_customer', cancelled.updatedAt),
     });
     if (!updated) {
       // CAS loss always surfaces as a conflict here (never an idempotent 200): a concurrent
@@ -106,7 +100,7 @@ async function rescheduleWithToken(context: BookkitContext, booking: Booking, ne
     now,
     tokensExpireAt,
     occupancyUnits, occupancyEndsAt, localDate, fleetDefaultCapacity: context.config.fleet.defaultCapacity,
-    mutationSideEffectKinds: mutationSideEffectKinds(context, 'booking.rescheduled'),
+    mutationSideEffects: mutationSideEffectSeeds(context, 'booking.rescheduled', next, next.updatedAt),
   });
   if (!updated) {
     const fresh = await context.repo.getBookingById(next.id);
@@ -140,7 +134,7 @@ async function operatorBooking(
 ): Promise<Booking> {
   const operatorToken = typeof body.operatorToken === 'string' ? body.operatorToken : null;
   if (operatorToken) return tokenBooking(context, operatorToken, true, refundRecovery);
-  const expected = await getSecret(context, 'TOURFLOW_SHARED_SECRET');
+  const expected = await getSecret(context, OPERATOR_SECRET_NAME);
   const supplied = bearerToken(request);
   if (!expected || !supplied || !constantTimeEqual(expected, supplied)) throw new HttpError(403, 'forbidden', 'Operator authorization required');
   const bookingId = requireString(body.bookingId, 'bookingId');
@@ -323,7 +317,7 @@ export function handleOperatorNoShow(request: Request, context: BookkitContext):
       const next = markNoShow(booking, nowIso(context));
       const updated = await context.repo.transitionToNoShow(next.id, {
         expectedStatusIn: ['confirmed'], updatedAt: next.updatedAt,
-        mutationSideEffectKinds: mutationSideEffectKinds(context, 'booking.no_show'),
+        mutationSideEffects: mutationSideEffectSeeds(context, 'booking.no_show', next, next.updatedAt),
       });
       // CAS loss is always a conflict here, not an idempotent 200 — the caught error below
       // converts it to the same 409 invalid_transition the wrong-state check already uses.

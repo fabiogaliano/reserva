@@ -2,6 +2,8 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { verifyAccessJwt } from './access';
 import { createBookkitContext, type BookkitCache, type BookkitContext, type BookkitContextInput, type BookkitProviders, type BookkitLogger } from './context';
 import { validateConfig, type ClientConfig } from './core/config';
+import { OPERATOR_SECRET_NAME } from './handlers/booking-actions';
+import { validateBookingEventHooks, type BookingEventHook } from './core/events';
 import { BOOKKIT_MIGRATIONS } from './migrations-manifest';
 
 export interface BookkitRuntimeRequest {
@@ -50,6 +52,10 @@ export interface CloudflareBookkitRuntimeOptions<TEnv extends object = UntypedBo
   db?: CloudflareBinding<D1Database, TEnv>;
   cache?: CloudflareBinding<BookkitCache, TEnv> | null;
   providers: BookkitProviders | ((bindings: CloudflareRuntimeBindings<TEnv>) => BookkitProviders | Promise<BookkitProviders>);
+  // Plan 021 (design decision 1): in-process booking-event listeners. Validated eagerly at
+  // definition time, not per request, so a bad name or a misspelled event fails the deployment
+  // rather than one booking's dispatch.
+  hooks?: readonly BookingEventHook[];
   secretBindings?: ReadonlyArray<keyof TEnv & string>;
   verifyAccess?: (bindings: CloudflareRuntimeBindings<TEnv>) => boolean | Promise<boolean>;
   logger?: BookkitLogger | ((bindings: CloudflareRuntimeBindings<TEnv>) => BookkitLogger);
@@ -194,7 +200,6 @@ async function bookingsSchemaPresent(db: MigrationsQueryable): Promise<boolean> 
     "check(statusin('hold','confirmed','cancelled','expired','no_show'))",
     'check(calendar_syncedin(0,1))',
     'check(email_syncedin(0,1))',
-    'check(tourflow_syncedin(0,1))',
     "check(cancelled_byin('customer','operator')orcancelled_byisnull)",
   ];
   const paymentIndexSql = 'createuniqueindexidx_bookings_payment_intentonbookings(stripe_payment_intent)wherestripe_payment_intentisnotnull';
@@ -212,7 +217,7 @@ async function bookingsSchemaPresent(db: MigrationsQueryable): Promise<boolean> 
 
 async function sideEffectOperationsSchemaPresent(db: MigrationsQueryable): Promise<boolean> {
   const [result, columnsResult] = await Promise.all([
-    db.prepare(`SELECT type, name, sql FROM sqlite_master WHERE name IN ('side_effect_operations', 'idx_side_effect_operations_pending', 'idx_side_effect_operations_reconciliation')`)
+    db.prepare(`SELECT type, name, sql FROM sqlite_master WHERE name IN ('side_effect_operations', 'idx_side_effect_operations_pending', 'idx_side_effect_operations_reconciliation', 'idx_side_effect_operations_identity')`)
       .all<{ type: string; name: string; sql: string | null }>(),
     db.prepare('PRAGMA table_info(side_effect_operations)').all<{ name: string }>(),
   ]);
@@ -223,8 +228,18 @@ async function sideEffectOperationsSchemaPresent(db: MigrationsQueryable): Promi
   // running bookkit's ALTER TABLE would still satisfy the ledger while leaving both absent — same
   // collision class REQUIRED_BOOKINGS_COLUMNS already guards for `bookings`.
   const reconciliationIndex = result.results.find((row) => row.type === 'index' && row.name === 'idx_side_effect_operations_reconciliation');
+  // Plan 021: identity moved from the single `kind` string to family/name/event/discriminator, and
+  // dedupe now depends on the COALESCE expression index (SQLite treats NULLs in a plain UNIQUE as
+  // distinct, so without this exact index every enqueue would insert a duplicate row instead of
+  // hitting ON CONFLICT DO NOTHING) — a 0017 filename collision has to fail loudly here.
+  const identityIndex = result.results.find((row) => row.type === 'index' && row.name === 'idx_side_effect_operations_identity');
+  const tableSql = table?.sql?.toLowerCase().replace(/\s+/g, '') ?? '';
   const columns = new Set(columnsResult.results.map((row) => row.name));
-  return Boolean(index) && Boolean(reconciliationIndex) && Boolean(table?.sql?.includes('calendar_delete')) && Boolean(table?.sql?.includes('abandoned'))
+  return Boolean(index) && Boolean(reconciliationIndex) && Boolean(identityIndex)
+    && tableSql.includes("familyin('calendar_create','calendar_delete','email_confirmation','oversell','email','hook','webhook')")
+    && tableSql.includes('abandoned')
+    && columns.has('family') && columns.has('name') && columns.has('event') && columns.has('discriminator')
+    && columns.has('event_payload_json') && !columns.has('kind')
     && columns.has('failure_started_at') && columns.has('next_attempt_at');
 }
 
@@ -319,8 +334,9 @@ export function defineCloudflareBookkitRuntime<TEnv extends object>(
   options: CloudflareBookkitRuntimeOptions<TEnv>,
 ): BookkitRuntimeDefinition {
   const config = validateConfig(configInput);
+  validateBookingEventHooks(options.hooks ?? []);
   const migrationsTable = requireMigrationsTableName(options.migrationsTable ?? D1_MIGRATIONS_TABLE);
-  const secretBindings = new Set<string>(options.secretBindings ?? ['TOURFLOW_SHARED_SECRET']);
+  const secretBindings = new Set<string>(options.secretBindings ?? [OPERATOR_SECRET_NAME]);
   const confirmationLocks = new Map<string, Promise<void>>();
   // Memoized across every request this isolate handles: the schema check must run once at
   // first context creation, not on every request (see checkBookkitMigrationsApplied above).
@@ -349,6 +365,7 @@ export function defineCloudflareBookkitRuntime<TEnv extends object>(
         config,
         db,
         providers,
+        ...(options.hooks ? { hooks: options.hooks } : {}),
         ...(cache ? { cache } : {}),
         secrets: async (name) => {
           if (!secretBindings.has(name)) return undefined;

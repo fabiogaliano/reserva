@@ -2,12 +2,12 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { runOwedMutationSideEffects } from '../src/confirmation';
 import type { BookkitProviders } from '../src/context';
-import type { EmailBookingEvent, EmailProvider, EmailRecipientRole } from '../src/core/events';
+import type { BookingEventHook, EmailBookingEvent, EmailProvider, EmailRecipientRole } from '../src/core/events';
 import { createBookkitContext } from '../src/context';
 import { handleCustomerReschedule, handleOperatorNoShow } from '../src/handlers';
-import type { SideEffectOperationKind } from '../src/repo';
+import { sideEffectOperationKey, type SideEffectOperationIdentity, type SideEffectOperationSeed } from '../src/repo';
 import { booking, config } from './fixtures';
-import { fakeRepository, providers } from './fakes';
+import { fakeRepository, providers, sideEffectOperation } from './fakes';
 
 const clock = () => new Date('2026-06-14T08:00:00.000Z');
 
@@ -23,10 +23,20 @@ function rescheduleRequest(token: string, newStart: string): Request {
   });
 }
 
-function providersWithoutEmail(overrides: Omit<Partial<BookkitProviders>, 'email'>): BookkitProviders {
+function providersWithoutEmail(overrides: Omit<Partial<BookkitProviders>, 'email'> = {}): BookkitProviders {
   const configured = providers(overrides);
   delete configured.email;
   return configured;
+}
+
+// A durable hook is the plan-021 replacement for v1's ops sink: its delivery debt is an outbox row
+// claimed, retried, and abandoned exactly like an email row's.
+function durableHook(name: string, handler: BookingEventHook['handler']): BookingEventHook {
+  return { name, durable: true, handler };
+}
+
+function seed(identity: SideEffectOperationIdentity, eventPayloadJson: string | null = null): SideEffectOperationSeed {
+  return { ...identity, eventPayloadJson, eventIdPrefix: null };
 }
 
 describe('mutation side-effect outbox', () => {
@@ -36,31 +46,32 @@ describe('mutation side-effect outbox', () => {
     const rescheduled = booking({ id: 'mutation-reschedule' });
     const repo = fakeRepository([cancelled, noShow, rescheduled]);
     const now = '2026-06-14T08:00:00.000Z';
-    const cancelKind: SideEffectOperationKind = 'email:booking.cancelled_by_customer';
-    const noShowKind: SideEffectOperationKind = 'tourflow:booking.no_show';
-    const rescheduleKind: SideEffectOperationKind = 'email:booking.rescheduled:customer:from-to';
+    const cancelIdentity: SideEffectOperationIdentity = { family: 'email', event: 'booking.cancelled_by_customer' };
+    const noShowIdentity: SideEffectOperationIdentity = { family: 'hook', name: 'ops', event: 'booking.no_show' };
+    const rescheduleIdentity: SideEffectOperationIdentity = { family: 'email', name: 'customer', event: 'booking.rescheduled' };
 
     await repo.transitionToCancelled(cancelled.id, {
       expectedStatusIn: ['confirmed'], cancelledAt: now, cancelledBy: 'customer', updatedAt: now,
-      mutationSideEffectKinds: [cancelKind],
+      mutationSideEffects: [seed(cancelIdentity)],
     });
     await repo.transitionToNoShow(noShow.id, {
-      expectedStatusIn: ['confirmed'], updatedAt: now, mutationSideEffectKinds: [noShowKind],
+      expectedStatusIn: ['confirmed'], updatedAt: now, mutationSideEffects: [seed(noShowIdentity)],
     });
     await repo.rescheduleWithCapacity(rescheduled.id, {
       expectedStatus: 'confirmed', expectedStartsAt: rescheduled.startsAt,
       startsAt: '2026-06-16T09:00:00.000Z', endsAt: '2026-06-16T10:00:00.000Z',
       rescheduledFrom: rescheduled.startsAt, updatedAt: now, now,
       occupancyUnits: 1, occupancyEndsAt: '2026-06-16T10:30:00.000Z', localDate: '2026-06-16', fleetDefaultCapacity: 4,
-      mutationSideEffectKinds: [rescheduleKind],
+      mutationSideEffects: [seed(rescheduleIdentity)],
     });
 
     expect(repo.rows.get(cancelled.id)?.status).toBe('cancelled');
     expect(repo.rows.get(noShow.id)?.status).toBe('no_show');
     expect(repo.rows.get(rescheduled.id)?.startsAt).toBe('2026-06-16T09:00:00.000Z');
-    expect(repo.sideEffectOperations.get(`${cancelled.id}:${cancelKind}`)).toMatchObject({ status: 'pending' });
-    expect(repo.sideEffectOperations.get(`${noShow.id}:${noShowKind}`)).toMatchObject({ status: 'pending' });
-    expect(repo.sideEffectOperations.get(`${rescheduled.id}:${rescheduleKind}:1`)).toMatchObject({ status: 'pending' });
+    expect(sideEffectOperation(repo, cancelled.id, cancelIdentity)).toMatchObject({ status: 'pending' });
+    expect(sideEffectOperation(repo, noShow.id, noShowIdentity)).toMatchObject({ status: 'pending' });
+    // The reschedule transition version is assigned inside the winning write, not by the caller.
+    expect(sideEffectOperation(repo, rescheduled.id, { ...rescheduleIdentity, discriminator: '1' })).toMatchObject({ status: 'pending' });
   });
 
   it('retries a failed row on a later idempotent booking-touching request', async () => {
@@ -76,19 +87,19 @@ describe('mutation side-effect outbox', () => {
     });
 
     await expect(handleOperatorNoShow(operatorNoShowRequest(seeded.operatorToken), context)).resolves.toMatchObject({ status: 200 });
-    const kind = 'email:booking.no_show';
-    expect(repo.sideEffectOperations.get(`${seeded.id}:${kind}`)).toMatchObject({ status: 'failed', attemptCount: 1 });
+    const identity: SideEffectOperationIdentity = { family: 'email', event: 'booking.no_show' };
+    expect(sideEffectOperation(repo, seeded.id, identity)).toMatchObject({ status: 'failed', attemptCount: 1 });
 
     await expect(handleOperatorNoShow(operatorNoShowRequest(seeded.operatorToken), context)).resolves.toMatchObject({ status: 200 });
     expect(calls).toBe(2);
-    expect(repo.sideEffectOperations.get(`${seeded.id}:${kind}`)).toMatchObject({ status: 'succeeded', attemptCount: 2 });
+    expect(sideEffectOperation(repo, seeded.id, identity)).toMatchObject({ status: 'succeeded', attemptCount: 2 });
   });
 
   it('claims once when two drains overlap, preventing a double send', async () => {
     const seeded = booking({ id: 'mutation-claim-cas' });
     const repo = fakeRepository([seeded]);
-    const kind: SideEffectOperationKind = 'email:booking.no_show';
-    await repo.recordMutationSideEffectOperations(seeded.id, [kind], '2026-06-14T08:00:00.000Z');
+    const identity: SideEffectOperationIdentity = { family: 'email', event: 'booking.no_show' };
+    await repo.recordMutationSideEffectOperations(seeded.id, [seed(identity)], '2026-06-14T08:00:00.000Z');
     let started = (): void => undefined;
     const startedSend = new Promise<void>((resolve) => { started = resolve; });
     let release = (): void => undefined;
@@ -110,7 +121,7 @@ describe('mutation side-effect outbox', () => {
 
     release();
     await first;
-    expect(repo.sideEffectOperations.get(`${seeded.id}:${kind}`)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
+    expect(sideEffectOperation(repo, seeded.id, identity)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
   });
 
   it('creates and fires distinct durable rows for A→B→A→B reschedules under one clock instant', async () => {
@@ -129,10 +140,10 @@ describe('mutation side-effect outbox', () => {
     await expect(handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, '2026-06-15T09:30:00.000Z'), context)).resolves.toMatchObject({ status: 200 });
 
     const operations = await repo.listSideEffectOperations(seeded.id);
-    const reschedules = operations.filter((operation) => operation.kind.startsWith('email:booking.rescheduled:'));
+    const reschedules = operations.filter((operation) => operation.family === 'email' && operation.event === 'booking.rescheduled');
     expect(sent).toEqual(['booking.rescheduled', 'booking.rescheduled', 'booking.rescheduled']);
     expect(reschedules).toHaveLength(3);
-    expect(new Set(reschedules.map((operation) => operation.kind)).size).toBe(3);
+    expect(new Set(reschedules.map(sideEffectOperationKey)).size).toBe(3);
     expect(reschedules).toEqual(expect.arrayContaining([
       expect.objectContaining({ status: 'succeeded', attemptCount: 1 }),
     ]));
@@ -144,10 +155,10 @@ describe('mutation side-effect outbox', () => {
 
     await expect(repo.transitionToNoShow(seeded.id, {
       expectedStatusIn: ['confirmed'], updatedAt: '2026-06-14T08:00:00.000Z',
-      mutationSideEffectKinds: ['email:booking.no_show'],
+      mutationSideEffects: [seed({ family: 'email', event: 'booking.no_show' })],
     })).resolves.toMatchObject({ status: 'no_show' });
 
-    expect(repo.sideEffectOperations.get(`${seeded.id}:email:booking.no_show`)).toMatchObject({
+    expect(sideEffectOperation(repo, seeded.id, { family: 'email', event: 'booking.no_show' })).toMatchObject({
       status: 'pending', attemptCount: 0,
     });
   });
@@ -166,15 +177,15 @@ describe('mutation side-effect outbox', () => {
 
     await expect(handleOperatorNoShow(operatorNoShowRequest(seeded.operatorToken), context)).resolves.toMatchObject({ status: 200 });
     expect(sent).toEqual(['booking.no_show']);
-    expect([...repo.sideEffectOperations.values()].filter((row) => row.kind.startsWith('email:'))).toEqual([
-      expect.objectContaining({ kind: 'email:booking.no_show', status: 'succeeded' }),
+    expect([...repo.sideEffectOperations.values()].filter((row) => row.family === 'email')).toEqual([
+      expect.objectContaining({ name: null, event: 'booking.no_show', status: 'succeeded' }),
     ]);
   });
 
   it('leaves an existing recipient row owed when the current provider cannot send to a recipient', async () => {
     const seeded = booking({ id: 'mutation-provider-change' });
     const repo = fakeRepository([seeded]);
-    await repo.recordMutationSideEffectOperations(seeded.id, ['email:booking.no_show:customer'], '2026-06-14T08:00:00.000Z');
+    await repo.recordMutationSideEffectOperations(seeded.id, [seed({ family: 'email', name: 'customer', event: 'booking.no_show' })], '2026-06-14T08:00:00.000Z');
     let sends = 0;
     const context = createBookkitContext({
       config, db: {} as D1Database, repo, clock,
@@ -183,7 +194,7 @@ describe('mutation side-effect outbox', () => {
 
     await runOwedMutationSideEffects(context, seeded);
     expect(sends).toBe(0);
-    expect(repo.sideEffectOperations.get(`${seeded.id}:email:booking.no_show:customer`)).toMatchObject({ status: 'pending', attemptCount: 0 });
+    expect(sideEffectOperation(repo, seeded.id, { family: 'email', name: 'customer', event: 'booking.no_show' })).toMatchObject({ status: 'pending', attemptCount: 0 });
   });
 
   it('preserves a class-based provider method receiver for mutation recipient delivery', async () => {
@@ -205,7 +216,7 @@ describe('mutation side-effect outbox', () => {
 
     await handleOperatorNoShow(operatorNoShowRequest(seeded.operatorToken), context);
     expect(email.recipients).toEqual(['customer']);
-    expect(repo.sideEffectOperations.get(`${seeded.id}:email:booking.no_show:customer`)).toMatchObject({ status: 'succeeded' });
+    expect(sideEffectOperation(repo, seeded.id, { family: 'email', name: 'customer', event: 'booking.no_show' })).toMatchObject({ status: 'succeeded' });
   });
 
   it('retries only a failed owner recipient row', async () => {
@@ -228,26 +239,28 @@ describe('mutation side-effect outbox', () => {
     await handleOperatorNoShow(operatorNoShowRequest(seeded.operatorToken), context);
     await handleOperatorNoShow(operatorNoShowRequest(seeded.operatorToken), context);
     expect(recipients).toEqual(['customer', 'owner', 'owner']);
-    expect(repo.sideEffectOperations.get(`${seeded.id}:email:booking.no_show:customer`)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
-    expect(repo.sideEffectOperations.get(`${seeded.id}:email:booking.no_show:owner`)).toMatchObject({ status: 'succeeded', attemptCount: 2 });
+    expect(sideEffectOperation(repo, seeded.id, { family: 'email', name: 'customer', event: 'booking.no_show' })).toMatchObject({ status: 'succeeded', attemptCount: 1 });
+    expect(sideEffectOperation(repo, seeded.id, { family: 'email', name: 'owner', event: 'booking.no_show' })).toMatchObject({ status: 'succeeded', attemptCount: 2 });
   });
 
-  it('retries a failed Tourflow delivery on a later booking request', async () => {
-    const seeded = booking({ id: 'mutation-tourflow-retry', startsAt: '2026-06-14T07:00:00.000Z', endsAt: '2026-06-14T08:00:00.000Z' });
+  it('retries a failed durable hook delivery on a later booking request', async () => {
+    const seeded = booking({ id: 'mutation-hook-retry', startsAt: '2026-06-14T07:00:00.000Z', endsAt: '2026-06-14T08:00:00.000Z' });
     const repo = fakeRepository([seeded]);
     let calls = 0;
     const context = createBookkitContext({
       config, db: {} as D1Database, repo, clock,
-      providers: providersWithoutEmail({ ops: { push: async () => {
+      providers: providersWithoutEmail(),
+      hooks: [durableHook('ops', async () => {
         calls += 1;
-        if (calls === 1) throw new Error('Tourflow unavailable');
-      } } }),
+        if (calls === 1) throw new Error('subscriber unavailable');
+      })],
     });
 
     await handleOperatorNoShow(operatorNoShowRequest(seeded.operatorToken), context);
     await handleOperatorNoShow(operatorNoShowRequest(seeded.operatorToken), context);
     expect(calls).toBe(2);
-    expect(repo.sideEffectOperations.get(`${seeded.id}:tourflow:booking.no_show`)).toMatchObject({ status: 'succeeded', attemptCount: 2 });
+    expect(sideEffectOperation(repo, seeded.id, { family: 'hook', name: 'ops', event: 'booking.no_show' }))
+      .toMatchObject({ status: 'succeeded', attemptCount: 2 });
   });
 
   it('logs mutation provider failures without their response body', async () => {
@@ -257,15 +270,16 @@ describe('mutation side-effect outbox', () => {
     const context = createBookkitContext({
       config, db: {} as D1Database, repo, clock,
       logger: { warn: (message, data) => { warnings.push({ message, data }); } },
-      providers: providersWithoutEmail({ ops: { push: async () => {
+      providers: providersWithoutEmail(),
+      hooks: [durableHook('ops', async () => {
         throw Object.assign(new Error('provider response: private payload'), { status: 503 });
-      } } }),
+      })],
     });
 
     await handleOperatorNoShow(operatorNoShowRequest(seeded.operatorToken), context);
     expect(warnings).toEqual([expect.objectContaining({
       message: 'bookkit mutation side effect failed',
-      data: expect.objectContaining({ provider: 'tourflow', status: 503 }),
+      data: expect.objectContaining({ provider: 'hook', status: 503 }),
     })]);
     expect(JSON.stringify(warnings)).not.toContain('private payload');
   });

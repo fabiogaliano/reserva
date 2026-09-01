@@ -35,7 +35,7 @@ test('a one-shot provider failure opens an incident, "Try again" resolves it, a 
 
   const since = new Date(Date.now() - 60_000).toISOString();
   const feed = await (await request.get(`/api/booking/feed?since=${since}`, {
-    headers: { Authorization: 'Bearer local-tourflow-secret' },
+    headers: { Authorization: 'Bearer local-operator-secret' },
   })).json();
   const oversellBookingId = feed.bookings.find((b: any) => b.reference === oversellTarget.reference)?.id;
   if (!oversellBookingId) throw new Error('could not resolve the oversell fixture booking id from the feed');

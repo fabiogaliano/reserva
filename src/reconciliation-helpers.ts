@@ -4,12 +4,11 @@
 // here is unit-testable without a fake repository or real workerd.
 import type { OperationalAlert } from './core/events';
 import type {
-  MutationSideEffectOperationKind,
   OperationalIncidentAction,
   OperationalIncidentResolutionKind,
   OperationalIncidentSeverity,
   OperationalIncidentStatus,
-  SideEffectOperationKind,
+  SideEffectOperationIdentity,
 } from './repo';
 
 // Plan 020 (design decision 5): "Cron runs every five minutes, but retryable failures set
@@ -42,24 +41,20 @@ export function isEligibleForAutomaticClaim(nextAttemptAtIso: string | null, now
   return nextAttemptAtIso === null || nextAttemptAtIso <= nowIso;
 }
 
-// Plan 020 (design decision 8): maps a side-effect outbox row's `kind` onto the owner-facing action
-// bucket an incident/alert reports. 'oversell' rows are scanned separately (they're markers, not
-// retryable debt — see src/reconciliation.ts) but still classify here for completeness.
-export function actionForSideEffectKind(kind: SideEffectOperationKind): OperationalIncidentAction {
-  if (kind === 'oversell') return 'oversell';
-  if (kind === 'calendar_create' || kind === 'calendar_delete') return 'calendar';
-  if (kind === 'email_confirmation' || kind === 'email:booking.confirmed:customer' || kind === 'email:booking.confirmed:owner') {
-    return 'confirmation_email';
+// Plan 020 (design decision 8): maps a side-effect outbox row onto the owner-facing action bucket
+// an incident/alert reports. Plan 021: read off the identity COLUMNS, never a parsed kind string.
+// 'oversell' rows are scanned separately (they're markers, not retryable debt — see
+// src/reconciliation.ts) but still classify here for completeness.
+export function actionForSideEffectOperation(operation: SideEffectOperationIdentity): OperationalIncidentAction {
+  switch (operation.family) {
+    case 'oversell': return 'oversell';
+    case 'calendar_create':
+    case 'calendar_delete': return 'calendar';
+    case 'email_confirmation': return 'confirmation_email';
+    case 'hook':
+    case 'webhook': return 'operations_sync';
+    case 'email': return operation.event === 'booking.confirmed' ? 'confirmation_email' : 'customer_notification';
   }
-  if (kind.startsWith('email:')) return 'customer_notification';
-  if (kind.startsWith('tourflow:')) return 'operations_sync';
-  // Exhaustive for every kind this plan's config space can produce; an unrecognized future kind
-  // still needs a bucket rather than silently vanishing from the incident ledger.
-  return 'customer_notification';
-}
-
-export function isMutationEmailOrTourflowKind(kind: SideEffectOperationKind): kind is MutationSideEffectOperationKind {
-  return kind === 'calendar_delete' || kind.startsWith('email:') || kind.startsWith('tourflow:');
 }
 
 // Plan 020 (design decision 12): the owner-facing card title. Never the internal word "abandoned".

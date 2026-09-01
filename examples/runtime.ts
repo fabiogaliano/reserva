@@ -7,7 +7,7 @@ import config from './client-config';
 // that generated `Env` instead of hand-declaring it.
 interface Env {
   BOOKKIT_DB: D1Database;
-  TOURFLOW_SHARED_SECRET: string;
+  BOOKKIT_OPERATOR_SECRET: string;
 }
 
 const providers: BookkitProviders = {
@@ -32,5 +32,5 @@ export default defineCloudflareBookkitRuntime<Env>(config, {
   providers,
   // Secrets are read by name from env only when a handler needs them; they are not part of config or page props.
   // The <Env> type argument constrains this list to keyof Env, catching a typo'd binding name at compile time.
-  secretBindings: ['TOURFLOW_SHARED_SECRET'],
+  secretBindings: ['BOOKKIT_OPERATOR_SECRET'],
 });

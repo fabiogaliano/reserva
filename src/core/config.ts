@@ -1,4 +1,11 @@
 import { z } from 'astro/zod';
+import {
+  BOOKING_EVENT_SUBSCRIBER_NAME_PATTERN,
+  invalidSubscriberNameMessage,
+  isBookingEvent,
+  unknownBookingEventsMessage,
+  type BookingEvent,
+} from './events';
 
 // A plain string because the pickup axis is whatever ids a tour declares in
 // TourConfig.pickupOptions (below), which no static union can enumerate. Kept as a named export
@@ -75,6 +82,15 @@ export interface TourConfig {
   pickupOptions?: PickupOption[];
 }
 
+export interface WebhookEndpointConfig {
+  name: string;
+  url: string;
+  // Must also be listed in the runtime's `secretBindings` for bookkit to be allowed to read it.
+  secretBinding: string;
+  // Defaults to every event in BOOKING_EVENTS.
+  events?: BookingEvent[];
+}
+
 export interface ClientConfig {
   business: {
     name: string;
@@ -129,6 +145,12 @@ export interface ClientConfig {
   legal: {
     termsUrl: string;
   };
+  // Plan 021 (design decision 2): outbound signed webhook endpoints. `url` is ordinary config; the
+  // signing key is a Worker secret referenced by binding name, so it never lives in the config file
+  // a consumer commits. Names follow the same domain as in-process hook names, and a hook and a
+  // webhook may share one: outbox rows tell them apart by their `family` column, not by a
+  // qualified key.
+  webhooks?: WebhookEndpointConfig[];
   ui?: {
     // Per-locale overrides for Bookkit's rendered copy, merged over its bundled catalog and
     // English fallback. Keys are locale tags ('pt-PT', 'fr', …); values are partial message maps.
@@ -261,6 +283,12 @@ export const clientConfigSchema = z.object({
   }),
   payments: z.object({ methods: z.array(z.enum(['card', 'mb_way'])).min(1) }),
   legal: z.object({ termsUrl: z.string().url() }),
+  webhooks: z.array(z.object({
+    name: z.string(),
+    url: z.string().url(),
+    secretBinding: z.string().min(1),
+    events: z.array(z.string()).min(1).optional(),
+  })).optional(),
   ui: z.object({
     messages: z.record(z.string(), z.record(z.string(), z.string())).optional(),
   }).optional(),
@@ -457,6 +485,21 @@ export function validateConfig(input: unknown): ClientConfig {
   }
   for (const [slug, tour] of Object.entries(config.tours)) {
     validateTour(tour, slug, add);
+  }
+  // Plan 021 (design decision 1/2): the same closed-vocabulary check hooks get at startup, applied
+  // to declared webhook endpoints during config validation — a typo'd event name fails the build
+  // with the whole valid set in the message rather than silently never firing.
+  const webhookNames = new Set<string>();
+  for (const [index, endpoint] of (config.webhooks ?? []).entries()) {
+    if (!BOOKING_EVENT_SUBSCRIBER_NAME_PATTERN.test(endpoint.name)) {
+      add(['webhooks', index, 'name'], invalidSubscriberNameMessage(endpoint.name));
+    } else if (webhookNames.has(endpoint.name)) {
+      add(['webhooks', index, 'name'], `duplicate webhook name "${endpoint.name}"; names must be unique`);
+    }
+    webhookNames.add(endpoint.name);
+    for (const [eventIndex, event] of (endpoint.events ?? []).entries()) {
+      if (!isBookingEvent(event)) add(['webhooks', index, 'events', eventIndex], unknownBookingEventsMessage(event));
+    }
   }
 
   if (issues.length > 0) {

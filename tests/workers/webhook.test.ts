@@ -4,8 +4,8 @@ import Stripe from 'stripe';
 import { beforeEach, describe, expect, it } from 'vitest';
 import config from '../../examples/client-config';
 import type { Booking } from '../../src/core/booking';
-import { createBookingRepository, type SideEffectOperationRecord } from '../../src/repo';
-import worker, { WEBHOOK_SECRET, calendarEvents, emailOutbox, opsOutbox, resetWebhookWorkerOutboxes } from './worker';
+import { createBookingRepository, sideEffectOperationKey, type SideEffectOperationRecord } from '../../src/repo';
+import worker, { WEBHOOK_SECRET, calendarEvents, emailOutbox, hookOutbox, resetWebhookWorkerOutboxes } from './worker';
 
 // Plan 015 (audit finding #16): the money path -- a signed checkout.session.completed reaching
 // the webhook route and confirming a booking with durable side effects -- was never proven
@@ -92,8 +92,9 @@ function webhookRequest(payload: string, signature: string | null): Request {
 
 // The documented integration-test pattern for a modules-format worker's ctx.waitUntil() side
 // effects (see tests/workers/worker.ts's fetch signature comment): createExecutionContext() plus
-// waitOnExecutionContext() deterministically settles Plan 011's detached-first-attempt Tourflow
-// delivery before assertions run, rather than relying on incidental promise-scheduling timing.
+// waitOnExecutionContext() deterministically settles the detached first attempt of the durable
+// subscriber delivery before assertions run, rather than relying on incidental promise-scheduling
+// timing.
 async function dispatch(request: Request): Promise<Response> {
   const ctx = createExecutionContext();
   const response = await worker.fetch(request, env, ctx);
@@ -101,8 +102,8 @@ async function dispatch(request: Request): Promise<Response> {
   return response;
 }
 
-function operation(operations: SideEffectOperationRecord[], kind: string): SideEffectOperationRecord | undefined {
-  return operations.find((candidate) => candidate.kind === kind);
+function operation(operations: SideEffectOperationRecord[], key: string): SideEffectOperationRecord | undefined {
+  return operations.find((candidate) => sideEffectOperationKey(candidate) === key);
 }
 
 describe('signed Stripe webhook through the assembled worker + real D1', () => {
@@ -126,17 +127,16 @@ describe('signed Stripe webhook through the assembled worker + real D1', () => {
       stripePaymentIntent: fixture.paymentIntent,
       calendarSynced: true,
       emailSynced: true,
-      tourflowSynced: true,
     });
 
     expect(calendarEvents.get(`cal_${id}`)).toBeDefined();
     expect(emailOutbox).toEqual([{ event: 'booking.confirmed', bookingId: id }]);
-    expect(opsOutbox).toEqual([{ event: 'booking.confirmed', bookingId: id }]);
+    expect(hookOutbox).toEqual([{ event: 'booking.confirmed', bookingId: id }]);
 
     const operations = await repo.listSideEffectOperations(id);
     expect(operation(operations, 'calendar_create')).toMatchObject({ status: 'succeeded', providerResultId: `cal_${id}` });
     expect(operation(operations, 'email_confirmation')).toMatchObject({ status: 'succeeded' });
-    expect(operation(operations, 'tourflow:booking.confirmed')).toMatchObject({ status: 'succeeded' });
+    expect(operation(operations, 'hook:ops:booking.confirmed')).toMatchObject({ status: 'succeeded' });
   });
 
   it('rejects a tampered body and an unsigned body alike, leaving the booking untouched (sanity check: verification is not bypassed)', async () => {
@@ -164,7 +164,7 @@ describe('signed Stripe webhook through the assembled worker + real D1', () => {
     expect(await repo.listSideEffectOperations(id)).toEqual([]);
     expect(calendarEvents.size).toBe(0);
     expect(emailOutbox).toEqual([]);
-    expect(opsOutbox).toEqual([]);
+    expect(hookOutbox).toEqual([]);
   });
 
   it('redelivering the same confirmed event is idempotent: no duplicate transition and no duplicate side-effect rows', async () => {
@@ -188,12 +188,12 @@ describe('signed Stripe webhook through the assembled worker + real D1', () => {
     // Every provider call is attempted exactly once, not once per delivery.
     expect(calendarEvents.size).toBe(1);
     expect(emailOutbox).toEqual([{ event: 'booking.confirmed', bookingId: id }]);
-    expect(opsOutbox).toEqual([{ event: 'booking.confirmed', bookingId: id }]);
+    expect(hookOutbox).toEqual([{ event: 'booking.confirmed', bookingId: id }]);
 
     const operations = await repo.listSideEffectOperations(id);
     expect(operations).toHaveLength(3);
-    for (const kind of ['calendar_create', 'email_confirmation', 'tourflow:booking.confirmed']) {
-      expect(operation(operations, kind)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
+    for (const key of ['calendar_create', 'email_confirmation', 'hook:ops:booking.confirmed']) {
+      expect(operation(operations, key)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
     }
   });
 
@@ -202,7 +202,7 @@ describe('signed Stripe webhook through the assembled worker + real D1', () => {
     await seedHeldBooking(id);
     const now = new Date().toISOString();
     const cancelled = await repo.transitionToCancelled(id, {
-      expectedStatusIn: ['hold'], cancelledAt: now, cancelledBy: 'customer', updatedAt: now, mutationSideEffectKinds: [],
+      expectedStatusIn: ['hold'], cancelledAt: now, cancelledBy: 'customer', updatedAt: now, mutationSideEffects: [],
     });
     expect(cancelled).toMatchObject({ status: 'cancelled' });
 
@@ -224,6 +224,6 @@ describe('signed Stripe webhook through the assembled worker + real D1', () => {
     expect(await repo.listSideEffectOperations(id)).toEqual([]);
     expect(calendarEvents.size).toBe(0);
     expect(emailOutbox).toEqual([]);
-    expect(opsOutbox).toEqual([]);
+    expect(hookOutbox).toEqual([]);
   });
 });

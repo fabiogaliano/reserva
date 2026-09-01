@@ -1,5 +1,5 @@
 import { cancelBooking, type Booking } from './core/booking';
-import { dispatchMutation, mutationSideEffectKinds } from './confirmation';
+import { cancellationSideEffectSeeds, dispatchMutation } from './confirmation';
 import type { BookkitContext } from './context';
 import { nowIso } from './context';
 
@@ -7,13 +7,6 @@ export type ClaimedOperatorCancellationResult =
   | { kind: 'cancelled'; booking: Booking }
   | { kind: 'slot_changed' }
   | { kind: 'invalid_transition' };
-
-function cancellationSideEffectKinds(context: BookkitContext, booking: Booking) {
-  return [
-    ...mutationSideEffectKinds(context, 'booking.cancelled_by_operator'),
-    ...(booking.calendarEventId ? ['calendar_delete' as const] : []),
-  ];
-}
 
 // A durable refund decision is not permission to move money. This shared gate first makes the
 // cancellation durable, and only returns a booking that is safe for the refund executor to use.
@@ -32,7 +25,7 @@ export async function resumeClaimedOperatorCancellation(
     cancelledAt: cancelled.updatedAt,
     cancelledBy: 'operator',
     updatedAt: cancelled.updatedAt,
-    mutationSideEffectKinds: cancellationSideEffectKinds(context, booking),
+    mutationSideEffects: cancellationSideEffectSeeds(context, booking, 'booking.cancelled_by_operator', cancelled.updatedAt),
   });
   if (updated) {
     await dispatchMutation(context, 'booking.cancelled_by_operator', updated);

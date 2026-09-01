@@ -37,7 +37,7 @@ describe('bookkit() astro:env schema contribution', () => {
       'STRIPE_SECRET_KEY',
       'STRIPE_WEBHOOK_SECRET',
       'BREVO_API_KEY',
-      'TOURFLOW_SHARED_SECRET',
+      'BOOKKIT_OPERATOR_SECRET',
       'GOOGLE_SA_EMAIL',
       'GOOGLE_SA_PRIVATE_KEY',
       'GOOGLE_IMPERSONATE_EMAIL',

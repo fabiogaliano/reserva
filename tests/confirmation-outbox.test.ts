@@ -4,7 +4,7 @@ import { ConfirmationInProgressError, confirmBookingFromPayment } from '../src/c
 import { createBookkitContext, type BookkitProviders } from '../src/context';
 import { handleStatus, handleStripeWebhook } from '../src/handlers';
 import { booking, config } from './fixtures';
-import { fakeRepository, providers } from './fakes';
+import { fakeRepository, providers, seedSideEffectOperation, sideEffectOperation } from './fakes';
 
 function paidWebhookProviders(bookingId: string, sessionId: string, overrides: Partial<BookkitProviders> = {}) {
   return providers({
@@ -28,7 +28,7 @@ describe('confirmation side-effect outbox', () => {
     const resolveOperation = repo.resolveSideEffectOperation;
     let failSuccessWrite = true;
     repo.resolveSideEffectOperation = async (input) => {
-      if (input.kind === 'calendar_create' && input.status === 'succeeded' && failSuccessWrite) {
+      if (input.identity.family === 'calendar_create' && input.status === 'succeeded' && failSuccessWrite) {
         failSuccessWrite = false;
         throw new Error('D1 write failed after Calendar accepted the event');
       }
@@ -61,7 +61,7 @@ describe('confirmation side-effect outbox', () => {
 
     expect(calendarCalls).toBe(2);
     expect(eventIds).toEqual(new Set([seeded.id.replaceAll('-', '')]));
-    expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_create`)).toMatchObject({ status: 'succeeded', attemptCount: 2 });
+    expect(sideEffectOperation(repo, seeded.id, { family: 'calendar_create' })).toMatchObject({ status: 'succeeded', attemptCount: 2 });
   });
 
   it('records an email attempt before send and resumes its failed operation on webhook redelivery', async () => {
@@ -70,7 +70,7 @@ describe('confirmation side-effect outbox', () => {
     const resolveOperation = repo.resolveSideEffectOperation;
     let failSuccessWrite = true;
     repo.resolveSideEffectOperation = async (input) => {
-      if (input.kind === 'email_confirmation' && input.status === 'succeeded' && failSuccessWrite) {
+      if (input.identity.family === 'email_confirmation' && input.status === 'succeeded' && failSuccessWrite) {
         failSuccessWrite = false;
         throw new Error('D1 write failed after Brevo accepted the email');
       }
@@ -88,26 +88,20 @@ describe('confirmation side-effect outbox', () => {
     });
 
     await expect(handleStripeWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context)).resolves.toMatchObject({ status: 500 });
-    expect(repo.sideEffectOperations.get(`${seeded.id}:email_confirmation`)).toMatchObject({ status: 'failed', attemptedAt: expect.any(String), attemptCount: 1 });
+    expect(sideEffectOperation(repo, seeded.id, { family: 'email_confirmation' })).toMatchObject({ status: 'failed', attemptedAt: expect.any(String), attemptCount: 1 });
     await expect(handleStripeWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context)).resolves.toMatchObject({ status: 200 });
 
     expect(emailCalls).toBe(2);
-    expect(repo.sideEffectOperations.get(`${seeded.id}:email_confirmation`)).toMatchObject({ status: 'succeeded', attemptCount: 2 });
+    expect(sideEffectOperation(repo, seeded.id, { family: 'email_confirmation' })).toMatchObject({ status: 'succeeded', attemptCount: 2 });
   });
 
   it('lets a status poll resume a confirmed booking with incomplete fulfillment', async () => {
     const seeded = booking({ id: 'b-status-resume', status: 'confirmed', stripeSessionId: 'cs_status_resume', calendarSynced: false, emailSynced: true });
     const repo = fakeRepository([seeded]);
     const createdAt = '2026-06-14T08:00:00.000Z';
-    repo.sideEffectOperations.set(`${seeded.id}:calendar_create`, {
-      bookingId: seeded.id, kind: 'calendar_create', status: 'pending', providerResultId: null,
-      attemptCount: 0, attemptedAt: null, resolvedAt: null, error: null, createdAt, updatedAt: createdAt,
-      failureStartedAt: null, nextAttemptAt: null,
-    });
-    repo.sideEffectOperations.set(`${seeded.id}:email_confirmation`, {
-      bookingId: seeded.id, kind: 'email_confirmation', status: 'succeeded', providerResultId: null,
-      attemptCount: 1, attemptedAt: createdAt, resolvedAt: createdAt, error: null, createdAt, updatedAt: createdAt,
-      failureStartedAt: null, nextAttemptAt: null,
+    seedSideEffectOperation(repo, seeded.id, { family: 'calendar_create' }, { createdAt, updatedAt: createdAt });
+    seedSideEffectOperation(repo, seeded.id, { family: 'email_confirmation' }, {
+      status: 'succeeded', attemptCount: 1, attemptedAt: createdAt, resolvedAt: createdAt, createdAt, updatedAt: createdAt,
     });
     let calendarCalls = 0;
     const context = createBookkitContext({
@@ -130,7 +124,7 @@ describe('confirmation side-effect outbox', () => {
     expect(response.status).toBe(200);
     expect(calendarCalls).toBe(1);
     expect(repo.rows.get(seeded.id)).toMatchObject({ calendarSynced: true, emailSynced: true });
-    expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_create`)).toMatchObject({ status: 'succeeded' });
+    expect(sideEffectOperation(repo, seeded.id, { family: 'calendar_create' })).toMatchObject({ status: 'succeeded' });
   });
 
   it('records an oversell incident when an expired paid hold cannot be capacity-checked', async () => {
@@ -152,8 +146,8 @@ describe('confirmation side-effect outbox', () => {
     });
 
     await expect(confirmBookingFromPayment(context, seeded, 'pi-capacity-outage')).resolves.toMatchObject({ status: 'confirmed' });
-    expect(repo.sideEffectOperations.get(`${seeded.id}:oversell`)).toMatchObject({
-      kind: 'oversell',
+    expect(sideEffectOperation(repo, seeded.id, { family: 'oversell' })).toMatchObject({
+      family: 'oversell',
       status: 'succeeded',
     });
   });
@@ -258,6 +252,6 @@ describe('confirmation side-effect outbox', () => {
 
     await expect(first).rejects.toBeInstanceOf(ConfirmationInProgressError);
     expect(repo.rows.get(seeded.id)).toMatchObject({ calendarEventId: seeded.id.replaceAll('-', ''), calendarSynced: true });
-    expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_create`)).toMatchObject({ status: 'succeeded', attemptCount: 2 });
+    expect(sideEffectOperation(repo, seeded.id, { family: 'calendar_create' })).toMatchObject({ status: 'succeeded', attemptCount: 2 });
   });
 });

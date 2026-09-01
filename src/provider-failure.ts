@@ -28,8 +28,8 @@ export function isRetryableStatus(status: number | undefined): boolean {
 }
 
 // The internal base a classified provider failure extends. The two adapters with an existing
-// EXPORTED error class (BrevoResponseError, TourflowResponseError) extend this directly, so
-// `instanceof BrevoResponseError`/`instanceof TourflowResponseError` and their `.status` property
+// EXPORTED error class (BrevoResponseError, WebhookResponseError) extend this directly, so
+// `instanceof BrevoResponseError`/`instanceof WebhookResponseError` and their `.status` property
 // keep working unchanged for existing consumers (design decision 2: "existing public class names
 // can extend the internal base where compatibility requires them").
 export class ProviderFailure extends Error {

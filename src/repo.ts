@@ -1,6 +1,7 @@
 import type { D1Database, D1Result } from '@cloudflare/workers-types';
 import type { Booking, BookingStatus, CancellationActor } from './core/booking';
 import type { PickupType } from './core/config';
+import type { EmailRecipientRole } from './core/events';
 import { sha256Base64Url } from './http';
 import type { CapacityDefault, DayCapacityOverride } from './core/occupancy';
 
@@ -180,29 +181,54 @@ export interface OperationalIncidentRecord {
   resolutionNote: string | null;
 }
 
-// BK-SIDE-001 (handoff 13): the mutation-path outbox (record/claim/resolveMutationSideEffectOperation
-// below) reuses this same table/type rather than a second mechanism, so `kind` widens beyond the
-// confirmation path's fixed three literals to calendar deletion and the dynamic
-// 'email:...'/'tourflow:...' strings src/confirmation.ts builds (kept as template-literal patterns, not a
-// bare `string`, so the fixed literals below still get meaningful autocomplete/typo protection).
-export type MutationSideEffectOperationKind = 'calendar_delete' | `email:${string}` | `tourflow:${string}`;
-// Plan 012 (design decision 1): the two possible per-recipient booking.confirmed email rows,
-// created only when the current provider implements both recipientsForEvent/sendToRecipient (see
-// src/confirmation.ts confirmationEmailKinds). Shaped like a MutationSideEffectOperationKind
-// (email:${string}) for the same reason CONFIRMATION_TOURFLOW_KIND is below -- confirmation debt,
-// claimed/resolved via the confirmation lease (executeOperation), not the mutation drain -- so
-// isMutationSideEffectKind (src/confirmation.ts) excludes both.
-export const CONFIRMATION_EMAIL_KINDS = ['email:booking.confirmed:customer', 'email:booking.confirmed:owner'] as const satisfies readonly MutationSideEffectOperationKind[];
-export type ConfirmationEmailKind = typeof CONFIRMATION_EMAIL_KINDS[number];
-export type ConfirmationSideEffectKind = 'calendar_create' | 'email_confirmation' | 'oversell' | ConfirmationEmailKind;
-export type SideEffectOperationKind = ConfirmationSideEffectKind | MutationSideEffectOperationKind;
-// Plan 011: the durable booking.confirmed Tourflow row. Shaped like a MutationSideEffectOperationKind
-// (claimed/resolved via the ungated row lease, not the confirmation lease — see src/confirmation.ts)
-// but represents confirmation debt, not mutation debt, so the generic mutation drain explicitly
-// excludes it (src/confirmation.ts isMutationSideEffectKind) and a dedicated resolver
-// (resolveConfirmationTourflowOperation below) is the only thing allowed to flip tourflow_synced.
-export const CONFIRMATION_TOURFLOW_KIND = 'tourflow:booking.confirmed' as const satisfies MutationSideEffectOperationKind;
-export type ConfirmationTourflowKind = typeof CONFIRMATION_TOURFLOW_KIND;
+// Plan 021 (design decision 5): the closed operation-kind set, mirrored by migration 0017's CHECK.
+// The first four are one-shot rows whose whole identity is their family; the last three carry a
+// name/event (and, for a repeatable event, a discriminator) in their own columns.
+export const SIDE_EFFECT_FAMILIES = [
+  'calendar_create', 'calendar_delete', 'email_confirmation', 'oversell',
+  'email', 'hook', 'webhook',
+] as const;
+export type SideEffectFamily = (typeof SIDE_EFFECT_FAMILIES)[number];
+
+// The row key. Every claim, resolve, drain-routing and incident-projection decision reads THESE
+// columns; nothing anywhere reconstructs them from a string. `name`/`event`/`discriminator` are
+// optional so a one-shot family is written as just `{ family: 'calendar_create' }`.
+export interface SideEffectOperationIdentity {
+  family: SideEffectFamily;
+  // Hook/webhook subscriber name, or the email recipient role for a per-recipient send.
+  name?: string | null;
+  event?: string | null;
+  // Per-occurrence uniqueness for an event that can happen more than once per booking. Assigned by
+  // the repository from the booking's reschedule transition version, inside the same atomic write.
+  discriminator?: string | null;
+}
+
+// The one place an operation identity becomes text: log lines, incident source keys, and the
+// webhook envelope id are all *built* from the columns here and never parsed back.
+export function sideEffectOperationKey(identity: SideEffectOperationIdentity): string {
+  return [identity.family, identity.name, identity.event, identity.discriminator]
+    .filter((part): part is string => Boolean(part))
+    .join(':');
+}
+
+export function sameSideEffectOperation(a: SideEffectOperationIdentity, b: SideEffectOperationIdentity): boolean {
+  return a.family === b.family
+    && (a.name ?? null) === (b.name ?? null)
+    && (a.event ?? null) === (b.event ?? null)
+    && (a.discriminator ?? null) === (b.discriminator ?? null);
+}
+
+// A row this transition owes, recorded atomically with the transition itself.
+export interface SideEffectOperationSeed extends SideEffectOperationIdentity {
+  // Plan 021 (design decision 3): the serialized envelope. Required for 'hook'/'webhook' rows (the
+  // historical record of the occurrence, re-sent unchanged on every retry); null for every other
+  // family, which reconstructs its work from the live booking.
+  eventPayloadJson: string | null;
+  // The envelope id WITHOUT a discriminator. A reschedule's version is only known inside the
+  // winning batch, so the repository appends it to both the discriminator column and this id there
+  // — the stored envelope is complete the moment the row exists, never patched afterwards.
+  eventIdPrefix: string | null;
+}
 // Plan 016 (design decision 3/4): 'abandoned' is a terminal status distinct from 'failed' — a
 // permanent provider failure (see src/provider-failure.ts), or a retryable failure on the tenth
 // attempt, resolves here instead of 'failed' so the claim predicates below stop matching it
@@ -220,7 +246,7 @@ export const MUTATION_SIDE_EFFECT_LEASE_MS = 5 * 60_000;
 
 // Plan 016 (design decision 4): "attempt count means executions started, so 'attempt 10' is
 // unambiguous" — both claim predicates below reject a row already at this count (belt-and-braces;
-// resolveSideEffectOperation/resolveMutationSideEffectOperation/resolveConfirmationTourflowOperation
+// resolveSideEffectOperation/resolveMutationSideEffectOperation
 // already always resolve a retryable failure's 10th attempt as 'abandoned', so a claimable row
 // should never actually reach this count, but the claim itself enforces it too rather than relying
 // solely on the resolve side).
@@ -234,7 +260,7 @@ export interface CancellationTransitionInput {
   cancelledBy: CancellationActor;
   updatedAt: string;
   // Recorded atomically only when this transition's CAS wins.
-  mutationSideEffectKinds?: MutationSideEffectOperationKind[];
+  mutationSideEffects?: SideEffectOperationSeed[];
 }
 
 export interface RefundOperationUpsertInput {
@@ -250,9 +276,15 @@ export interface RefundOperationUpsertInput {
   error?: string | null;
 }
 
-export interface SideEffectOperationRecord {
+export interface SideEffectOperationRecord extends SideEffectOperationIdentity {
   bookingId: string;
-  kind: SideEffectOperationKind;
+  name: string | null;
+  event: string | null;
+  discriminator: string | null;
+  // Plan 021 (design decision 3): present only on 'hook'/'webhook' rows, and null on the ones
+  // migration 0017 converted from the retired ops-sync provider — those predate snapshots and keep
+  // v1's reconstruct-from-current-state behavior (documented exception in the migration).
+  eventPayloadJson: string | null;
   status: SideEffectOperationStatus;
   providerResultId: string | null;
   attemptCount: number;
@@ -279,7 +311,6 @@ export interface BookingUpdate {
   calendarEventId?: string | null;
   calendarSynced?: boolean;
   emailSynced?: boolean;
-  tourflowSynced?: boolean;
   cancelledAt?: string | null;
   cancelledBy?: CancellationActor | null;
   rescheduledFrom?: string | null;
@@ -327,7 +358,7 @@ export interface BookingRepository {
     expectedStatusIn: BookingStatus[];
     updatedAt: string;
     // BK-SIDE-001 (handoff 13): see the identical field on transitionToCancelled above.
-    mutationSideEffectKinds?: MutationSideEffectOperationKind[];
+    mutationSideEffects?: SideEffectOperationSeed[];
   }): Promise<Booking | null>;
   transitionToConfirmed(id: string, input: {
     expectedStatusIn: BookingStatus[];
@@ -348,16 +379,16 @@ export interface BookingRepository {
     leaseToken: string;
     oversold: boolean;
     updatedAt: string;
-    // Plan 011: passed only when an ops provider is configured (src/confirmation.ts) — a new
-    // booking's status transition and its Tourflow outbox row share this one D1 batch, so a
-    // provider that's never configured mints no row and a booking never gets stuck polling a
-    // default-false tourflow_synced flag it can never resolve.
-    tourflowKind?: ConfirmationTourflowKind;
+    // Plan 021 (design decision 4): one row per durable hook/webhook subscribed to
+    // booking.confirmed, each carrying the envelope serialized from THIS transition. They share
+    // the transition's D1 batch, so a subscriber's delivery debt can never exist without the
+    // confirmation that owes it, nor the confirmation without the debt.
+    eventSeeds?: SideEffectOperationSeed[];
     // Plan 012 (design decision 1/2): passed only when the current email provider implements both
-    // split methods (src/confirmation.ts confirmationEmailKinds) — a brand-new confirmation then
-    // gets one row per recipient instead of the single combined email_confirmation row, sharing
-    // this same D1 batch so the split shape and the transition it belongs to can never diverge.
-    emailKinds?: ConfirmationEmailKind[];
+    // split methods (src/confirmation.ts) — a brand-new confirmation then gets one row per
+    // recipient instead of the single combined email_confirmation row, sharing this same D1 batch
+    // so the split shape and the transition it belongs to can never diverge.
+    emailRecipients?: EmailRecipientRole[];
   }): Promise<Booking | null>;
   applyConfirmedPaymentDetails(id: string, patch: {
     stripePaymentIntent?: string | null;
@@ -366,29 +397,25 @@ export interface BookingRepository {
     customerPhone?: string | null;
     pickupAddress?: string | null;
   }, leaseToken: string, updatedAt: string): Promise<boolean>;
-  // Plan 011: tourflowKind is the same optional provider-derived kind confirmWithSideEffectOperations
-  // takes — this is the lazy-repair path for a legacy confirmed booking (row missing entirely,
-  // e.g. because ops wasn't configured at original confirmation time), gated on tourflow_synced = 0
-  // so an already-synced booking is never replayed a second row.
-  // Plan 012 (design decision 2/3): emailKinds is the same optional provider-derived split shape
-  // confirmWithSideEffectOperations takes. This is also the legacy-repair path for a pre-split-support
-  // confirmed booking that has no email row yet at all; a split row is only ever inserted when no
-  // legacy combined email_confirmation row already exists (design decision 3) — see the
-  // implementation comment.
-  ensureConfirmationSideEffectOperations(id: string, leaseToken: string, now: string, tourflowKind?: ConfirmationTourflowKind, emailKinds?: ConfirmationEmailKind[]): Promise<void>;
+  // The lazy-repair path for a legacy confirmed booking whose confirmation rows are missing
+  // entirely (e.g. a subscriber or a split-capable email provider configured after it was already
+  // confirmed). Takes the same seeds/recipients confirmWithSideEffectOperations does; a split email
+  // row is only ever inserted when no legacy combined email_confirmation row already exists (plan
+  // 012 design decision 3) — see the implementation comment.
+  ensureConfirmationSideEffectOperations(id: string, leaseToken: string, now: string, eventSeeds?: SideEffectOperationSeed[], emailRecipients?: EmailRecipientRole[]): Promise<void>;
   listSideEffectOperations(bookingId: string): Promise<SideEffectOperationRecord[]>;
   // Returns the authoritative attempt number assigned by the atomic claim, or null when the row
   // was not claimable. Callers must classify failures against this value rather than a prior read.
   // Plan 020 (design decision 5): additionally requires next_attempt_at to be NULL or <= attemptedAt
   // ("now") — a row still inside its backoff window is not claimable by this ordinary path.
-  claimSideEffectOperation(bookingId: string, kind: ConfirmationSideEffectKind, leaseToken: string, attemptedAt: string): Promise<number | null>;
+  claimSideEffectOperation(bookingId: string, identity: SideEffectOperationIdentity, leaseToken: string, attemptedAt: string): Promise<number | null>;
   // Plan 020 (design decision 5): the admin "Try again" bypass — same lease-ownership gate as
   // claimSideEffectOperation, but ignores next_attempt_at AND the attempt-count cap (so a terminal
   // 'abandoned' row can be retried once), while still incrementing the lifetime attempt count.
-  claimSideEffectOperationForRetry(bookingId: string, kind: ConfirmationSideEffectKind, leaseToken: string, attemptedAt: string): Promise<number | null>;
+  claimSideEffectOperationForRetry(bookingId: string, identity: SideEffectOperationIdentity, leaseToken: string, attemptedAt: string): Promise<number | null>;
   resolveSideEffectOperation(input: {
     bookingId: string;
-    kind: ConfirmationSideEffectKind;
+    identity: SideEffectOperationIdentity;
     leaseToken: string;
     // Plan 016 (design decision 4): 'abandoned' for a permanent failure, or a retryable failure's
     // 10th attempt — see src/confirmation.ts's classifyAttemptOutcome, the only caller that ever
@@ -407,7 +434,7 @@ export interface BookingRepository {
   // pair above, these aren't gated by a confirmation lease — cancel/reschedule/no-show already run
   // their own compare-and-set in the transition methods, and the rows themselves are only ever
   // written conditional on that CAS winning (see transitionToCancelled et al) — so this is a plain
-  // claim/resolve over (booking_id, kind), with the row's OWN attempted_at doubling as a lease
+  // claim/resolve over the row's identity columns, with its OWN attempted_at doubling as a lease
   // token (HIGH-2) since there's no separate lease concept here to reuse. listSideEffectOperations
   // (above) is reused as-is to read them back — its SQL was never lease-scoped, just filtered by
   // booking_id.
@@ -418,13 +445,13 @@ export interface BookingRepository {
   // Returns the authoritative attempt number assigned by the atomic claim, or null when the row
   // was not claimable. This closes the list-to-claim race between concurrent drains.
   // Plan 020 (design decision 5): additionally requires next_attempt_at to be NULL or <= attemptedAt.
-  claimMutationSideEffectOperation(bookingId: string, kind: MutationSideEffectOperationKind, attemptedAt: string): Promise<number | null>;
+  claimMutationSideEffectOperation(bookingId: string, identity: SideEffectOperationIdentity, attemptedAt: string): Promise<number | null>;
   // Plan 020 (design decision 5): the admin "Try again" bypass — same staleness/ownership shape as
   // claimMutationSideEffectOperation, but ignores next_attempt_at AND the attempt-count cap.
-  claimMutationSideEffectOperationForRetry(bookingId: string, kind: MutationSideEffectOperationKind, attemptedAt: string): Promise<number | null>;
+  claimMutationSideEffectOperationForRetry(bookingId: string, identity: SideEffectOperationIdentity, attemptedAt: string): Promise<number | null>;
   resolveMutationSideEffectOperation(input: {
     bookingId: string;
-    kind: MutationSideEffectOperationKind;
+    identity: SideEffectOperationIdentity;
     // Plan 016 (design decision 4): see the identical comment on resolveSideEffectOperation above.
     status: 'succeeded' | 'failed' | 'abandoned';
     providerResultId?: string | null;
@@ -438,25 +465,11 @@ export interface BookingRepository {
     // Plan 020 (design decision 5): see the identical field on resolveSideEffectOperation above.
     nextAttemptAt?: string | null;
   }): Promise<boolean>;
-  // Plan 011 (design decision 4): the confirmation-path Tourflow row's dedicated resolver. Uses
-  // the same claimedAt-gated optimistic concurrency as resolveMutationSideEffectOperation above,
-  // but additionally sets bookings.tourflow_synced = 1 in the SAME batch, and only when this call's
-  // own row update actually won (never on a lost race, and never on a 'failed' outcome) — so a
-  // succeeded-row/false-flag split can never cause either a duplicate send or endless polling.
-  resolveConfirmationTourflowOperation(input: {
-    bookingId: string;
-    // Plan 016 (design decision 4/6): 'abandoned' never sets tourflow_synced (only 'succeeded'
-    // does, unchanged) — so a permanently-failed Tourflow push leaves the flag false forever,
-    // exactly like a still-pending row, but the abandoned row's own status is what stops
-    // handleStatus/runOwedMutationSideEffects from ever reattempting it (see src/handlers/
-    // index.ts's needsFulfillment and src/confirmation.ts's claim predicates).
-    status: 'succeeded' | 'failed' | 'abandoned';
-    error?: string | null;
-    resolvedAt: string;
-    claimedAt: string;
-    // Plan 020 (design decision 5): see the identical field on resolveSideEffectOperation above.
-    nextAttemptAt?: string | null;
-  }): Promise<boolean>;
+  // Plan 021: durable rows for an event that is NOT a booking transition — today only
+  // payment.dispute_created, whose occurrence is Stripe's, not this table's. Every other seed is
+  // written inside the transition batch that owes it; this one has no transition to ride, so the
+  // row itself is the record of the occurrence and a plain conflict-free insert is enough.
+  recordBookingEventOperations(bookingId: string, seeds: SideEffectOperationSeed[], now: string): Promise<void>;
   transitionReschedule(id: string, input: {
     expectedStatus: BookingStatus;
     expectedStartsAt: string;
@@ -471,7 +484,7 @@ export interface BookingRepository {
     // existing callers that don't pass one (older tests, mainly) leave tokens_expire_at
     // untouched rather than clobbering it to NULL — see the COALESCE in the implementation.
     tokensExpireAt?: string | null;
-    mutationSideEffectKinds?: MutationSideEffectOperationKind[];
+    mutationSideEffects?: SideEffectOperationSeed[];
   }): Promise<Booking | null>;
   // Atomic reschedule write (BK-CAP-001): extends transitionReschedule's CAS (status +
   // starts_at, guarding against a stale read racing a concurrent transition) with the same
@@ -491,14 +504,13 @@ export interface BookingRepository {
     tokensExpireAt?: string | null;
     // Reschedule rows receive the incremented per-booking transition version in the same batch,
     // so a repeated A→B hop cannot collide with an earlier one.
-    mutationSideEffectKinds?: MutationSideEffectOperationKind[];
+    mutationSideEffects?: SideEffectOperationSeed[];
   } & CapacityGuardInput): Promise<Booking | null>;
   listOccupancyBookings(from: string, to: string): Promise<Booking[]>;
   listUpcoming(now: string): Promise<Booking[]>;
   // Every booking regardless of status from a starts_at lower bound — the admin's search/status
   // filters need cancelled/expired/past rows that listUpcoming (live upcoming only) never returns.
   listAllFrom(startsAtFrom: string): Promise<Booking[]>;
-  listSince(since: string): Promise<Booking[]>;
   getDayOverride(date: string): Promise<DayCapacityOverride | null>;
   listDayOverrides(from: string, to: string): Promise<DayCapacityOverride[]>;
   upsertDayOverride(date: string, capacity: number, reason: string | null): Promise<void>;
@@ -662,7 +674,6 @@ interface BookingRow {
   calendar_event_id: string | null;
   calendar_synced: number;
   email_synced: number;
-  tourflow_synced: number;
   reminded_at: string | null;
   review_requested_at: string | null;
   cancel_token: string;
@@ -701,7 +712,6 @@ function assertValidBookingRow(row: BookingRow): void {
   for (const [column, value] of [
     ['calendar_synced', row.calendar_synced],
     ['email_synced', row.email_synced],
-    ['tourflow_synced', row.tourflow_synced],
   ] as const) {
     if (value !== 0 && value !== 1) throw new InvalidBookingRowError(row.id, `${column} must be 0 or 1, got ${value}`);
   }
@@ -732,7 +742,6 @@ function mapBooking(row: BookingRow): Booking {
     calendarEventId: row.calendar_event_id,
     calendarSynced: Boolean(row.calendar_synced),
     emailSynced: Boolean(row.email_synced),
-    tourflowSynced: Boolean(row.tourflow_synced),
     remindedAt: row.reminded_at,
     reviewRequestedAt: row.review_requested_at,
     cancelToken: row.cancel_token,
@@ -749,7 +758,7 @@ const bookingColumns = `id, reference, tour_slug, people, pickup_type, pickup_ad
   meeting_point_label, starts_at, ends_at,
   customer_name, customer_email, customer_phone, locale, price_cents, status, hold_expires_at,
   stripe_session_id, stripe_payment_intent, calendar_event_id, calendar_synced, email_synced,
-  tourflow_synced, reminded_at, review_requested_at, cancel_token, operator_token,
+  reminded_at, review_requested_at, cancel_token, operator_token,
   cancel_token_hash, operator_token_hash, cancel_token_enc, operator_token_enc, tokens_expire_at,
   cancel_token_revoked_at, cancelled_at, cancelled_by, rescheduled_from, created_at, updated_at`;
 
@@ -860,7 +869,11 @@ function mapOperationalIncident(row: OperationalIncidentRow): OperationalInciden
 
 interface SideEffectOperationRow {
   booking_id: string;
-  kind: SideEffectOperationKind;
+  family: SideEffectFamily;
+  name: string | null;
+  event: string | null;
+  discriminator: string | null;
+  event_payload_json: string | null;
   status: SideEffectOperationStatus;
   provider_result_id: string | null;
   attempt_count: number;
@@ -873,13 +886,37 @@ interface SideEffectOperationRow {
   next_attempt_at: string | null;
 }
 
-const sideEffectOperationColumns = `booking_id, kind, status, provider_result_id, attempt_count,
-  attempted_at, resolved_at, error, created_at, updated_at, failure_started_at, next_attempt_at`;
+const sideEffectOperationColumns = `booking_id, family, name, event, discriminator, event_payload_json,
+  status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at,
+  failure_started_at, next_attempt_at`;
+
+// Ordered so a list read is stable regardless of insert order (the old table ordered by `kind`).
+const sideEffectIdentityOrder = 'family, name, event, discriminator';
+
+// The identity's SQL predicate. `IS` (not `=`) so a NULL name/event/discriminator matches the row
+// that genuinely has none, instead of silently matching nothing.
+const sideEffectIdentityMatch = 'family = ? AND name IS ? AND event IS ? AND discriminator IS ?';
+
+function sideEffectIdentityParams(identity: SideEffectOperationIdentity): unknown[] {
+  return [identity.family, identity.name ?? null, identity.event ?? null, identity.discriminator ?? null];
+}
+
+// The incident ledger's source key for a side-effect row, built (never parsed) from the identity
+// columns — the SQL twin of sideEffectOperationKey above. Migration 0017 re-keys existing rows with
+// the same expression.
+const sideEffectSourceKeySql = `side_effect_operations.booking_id || ':' || side_effect_operations.family
+  || COALESCE(':' || side_effect_operations.name, '')
+  || COALESCE(':' || side_effect_operations.event, '')
+  || COALESCE(':' || side_effect_operations.discriminator, '')`;
 
 function mapSideEffectOperation(row: SideEffectOperationRow): SideEffectOperationRecord {
   return {
     bookingId: row.booking_id,
-    kind: row.kind,
+    family: row.family,
+    name: row.name,
+    event: row.event,
+    discriminator: row.discriminator,
+    eventPayloadJson: row.event_payload_json,
     status: row.status,
     providerResultId: row.provider_result_id,
     attemptCount: Number(row.attempt_count),
@@ -895,7 +932,7 @@ function mapSideEffectOperation(row: SideEffectOperationRow): SideEffectOperatio
 
 // BK-SEC-002: name of the optional Worker secret used to decrypt cancel_token_enc/
 // operator_token_enc back into a usable link (see migrations/0009_token_hashing.sql for the full
-// rationale). Read the same way as BOOKKIT_CSRF_SECRET/TOURFLOW_SHARED_SECRET (src/admin-csrf.ts,
+// rationale). Read the same way as BOOKKIT_CSRF_SECRET/BOOKKIT_OPERATOR_SECRET (src/admin-csrf.ts,
 // src/handlers/index.ts) — via the SecretLookup passed in below, never through ClientConfig — and,
 // like BOOKKIT_CSRF_SECRET, deliberately NOT added to runtime-context.ts's default
 // secretBindings or integration.ts's astro:env schema: a deployment must opt in by adding its name
@@ -1038,35 +1075,45 @@ export function createBookingRepository(
   // AFTER the UPDATE and checking POST-transition state instead — the way
   // confirmWithSideEffectOperations does — doesn't work here: that method disambiguates "my write
   // won" from "someone else already got here first" via a per-attempt confirmation_lease_token,
-  // which these plain CAS transitions have no equivalent of.) All N kinds are inserted by this ONE
+  // which these plain CAS transitions have no equivalent of.) All N seeds are inserted by this ONE
   // statement (a VALUES-derived table), not N separate ones, so nothing about statement count
   // affects the guarantee above.
-  // Task 12's planned bookings-table REBUILD MUST preserve reschedule_transition_version; this
-  // insert reads its next value before the paired CAS update increments it, keeping the row kind
-  // and transition version inseparable without relying on wall-clock uniqueness.
+  // Plan 022's planned bookings-table REBUILD MUST preserve reschedule_transition_version; this
+  // insert reads its next value before the paired CAS update increments it, keeping the row's
+  // discriminator and the transition version inseparable without relying on wall-clock uniqueness.
   const mutationSideEffectInsert = (
     bookingId: string,
-    kinds: MutationSideEffectOperationKind[],
+    seeds: SideEffectOperationSeed[],
     now: string,
     casPredicate: string,
     casParams: unknown[],
     appendRescheduleVersion = false,
   ) => {
-    const kind = appendRescheduleVersion
-      ? `k.column1 || ':' || (SELECT reschedule_transition_version + 1 FROM bookings WHERE ${casPredicate})`
-      : 'k.column1';
+    const version = `(SELECT reschedule_transition_version + 1 FROM bookings WHERE ${casPredicate})`;
+    const discriminator = appendRescheduleVersion ? version : 'NULL';
+    // Plan 021 (design decision 3): the stored envelope must already carry the id a receiver will
+    // deduplicate on, and that id ends in this same discriminator. Completing it here — in the one
+    // atomic write that assigns the version — is what keeps the row and its payload consistent
+    // without a second, racy write afterwards. Seeds without a payload (email, calendar) pass
+    // through untouched.
+    const payload = appendRescheduleVersion
+      ? `CASE WHEN k.column4 IS NULL THEN NULL ELSE json_set(k.column4, '$.id', k.column5 || ':' || ${version}) END`
+      : 'k.column4';
     return db.prepare(
       `INSERT INTO side_effect_operations (
-         booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
+         booking_id, family, name, event, discriminator, event_payload_json,
+         status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
        )
-       SELECT ?, ${kind}, 'pending', NULL, 0, NULL, NULL, NULL, ?, ?
-       FROM (VALUES ${kinds.map(() => '(?)').join(', ')}) AS k
+       SELECT ?, k.column1, k.column2, k.column3, ${discriminator}, ${payload}, 'pending', NULL, 0, NULL, NULL, NULL, ?, ?
+       FROM (VALUES ${seeds.map(() => '(?, ?, ?, ?, ?)').join(', ')}) AS k
        WHERE EXISTS (SELECT 1 FROM bookings WHERE ${casPredicate})
-       ON CONFLICT(booking_id, kind) DO NOTHING`,
+       ON CONFLICT DO NOTHING`,
     ).bind(
       bookingId,
-      ...(appendRescheduleVersion ? casParams : []),
-      now, now, ...kinds, ...casParams,
+      ...(appendRescheduleVersion ? [...casParams, ...casParams] : []),
+      now, now,
+      ...seeds.flatMap((seed) => [seed.family, seed.name ?? null, seed.event ?? null, seed.eventPayloadJson, seed.eventIdPrefix]),
+      ...casParams,
     );
   };
 
@@ -1405,14 +1452,14 @@ export function createBookingRepository(
         customerEmail: 'customer_email', customerPhone: 'customer_phone', startsAt: 'starts_at',
         endsAt: 'ends_at', holdExpiresAt: 'hold_expires_at', stripeSessionId: 'stripe_session_id',
         stripePaymentIntent: 'stripe_payment_intent', calendarEventId: 'calendar_event_id',
-        calendarSynced: 'calendar_synced', emailSynced: 'email_synced', tourflowSynced: 'tourflow_synced',
+        calendarSynced: 'calendar_synced', emailSynced: 'email_synced',
         cancelledAt: 'cancelled_at', cancelledBy: 'cancelled_by', rescheduledFrom: 'rescheduled_from',
         updatedAt: 'updated_at',
       };
       const columns = entries.map(([key]) => columnMap[key]);
       if (columns.some((column) => !column)) throw new Error('Unsupported booking update field');
       const values = entries.map(([key, value]) => {
-        if (key === 'calendarSynced' || key === 'emailSynced' || key === 'tourflowSynced') return value ? 1 : 0;
+        if (key === 'calendarSynced' || key === 'emailSynced') return value ? 1 : 0;
         return value;
       });
       await guardDuplicatePaymentIntent(patch.stripePaymentIntent, () =>
@@ -1424,21 +1471,21 @@ export function createBookingRepository(
     },
     async transitionToCancelled(id, input) {
       const { casPredicate, casParams, updateStmt } = cancellationUpdate(id, input);
-      const kinds = input.mutationSideEffectKinds ?? [];
-      if (kinds.length === 0) {
+      const seeds = input.mutationSideEffects ?? [];
+      if (seeds.length === 0) {
         const result = await updateStmt.run();
         if (result.meta.changes === 0) return null;
         return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
       }
-      const results = await db.batch([mutationSideEffectInsert(id, kinds, input.updatedAt, casPredicate, casParams), updateStmt]);
+      const results = await db.batch([mutationSideEffectInsert(id, seeds, input.updatedAt, casPredicate, casParams), updateStmt]);
       if ((results[1]?.meta.changes ?? 0) === 0) return null;
       return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
     },
     async upsertRefundOperationAndTransitionToCancelled(refund, id, input) {
       const { casPredicate, casParams, updateStmt } = cancellationUpdate(id, input);
-      const kinds = input.mutationSideEffectKinds ?? [];
+      const seeds = input.mutationSideEffects ?? [];
       const statements = [stripeRefundReconciliationStmt(refund)];
-      if (kinds.length > 0) statements.push(mutationSideEffectInsert(id, kinds, input.updatedAt, casPredicate, casParams));
+      if (seeds.length > 0) statements.push(mutationSideEffectInsert(id, seeds, input.updatedAt, casPredicate, casParams));
       statements.push(updateStmt);
       const results = await db.batch(statements);
       if ((results[results.length - 1]?.meta.changes ?? 0) === 0) return null;
@@ -1453,13 +1500,13 @@ export function createBookingRepository(
            cancel_token_revoked_at = COALESCE(cancel_token_revoked_at, ?)
          WHERE ${casPredicate}`,
       ).bind(input.updatedAt, input.updatedAt, ...casParams);
-      const kinds = input.mutationSideEffectKinds ?? [];
-      if (kinds.length === 0) {
+      const seeds = input.mutationSideEffects ?? [];
+      if (seeds.length === 0) {
         const result = await updateStmt.run();
         if (result.meta.changes === 0) return null;
         return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
       }
-      const results = await db.batch([mutationSideEffectInsert(id, kinds, input.updatedAt, casPredicate, casParams), updateStmt]);
+      const results = await db.batch([mutationSideEffectInsert(id, seeds, input.updatedAt, casPredicate, casParams), updateStmt]);
       if ((results[1]?.meta.changes ?? 0) === 0) return null;
       return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
     },
@@ -1482,7 +1529,7 @@ export function createBookingRepository(
       return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
     },
     async confirmWithSideEffectOperations(id, input) {
-      const { expectedStatusIn, updatedAt, leaseToken, oversold, tourflowKind, emailKinds, ...patch } = input;
+      const { expectedStatusIn, updatedAt, leaseToken, oversold, eventSeeds, emailRecipients, ...patch } = input;
       const columnMap: Record<string, string> = {
         stripePaymentIntent: 'stripe_payment_intent', customerName: 'customer_name',
         customerEmail: 'customer_email', customerPhone: 'customer_phone', pickupAddress: 'pickup_address',
@@ -1492,23 +1539,27 @@ export function createBookingRepository(
       if (columns.some((column) => !column)) throw new Error('Unsupported confirmation field');
       const placeholders = expectedStatusIn.map(() => '?').join(', ');
       const setClauses = [`status = 'confirmed'`, 'hold_expires_at = NULL', ...columns.map((column) => `${column} = ?`), 'updated_at = ?'];
-      // kind is typed as the wider SideEffectOperationKind (not just ConfirmationSideEffectKind)
-      // solely so this one helper can also insert the optional Tourflow row below — the SQL itself
-      // is kind-agnostic.
-      const operation = (kind: SideEffectOperationKind, status: SideEffectOperationStatus, providerResultId: string | null, resolvedAt: string | null) => db.prepare(
+      const operation = (
+        identity: SideEffectOperationIdentity,
+        eventPayloadJson: string | null,
+        status: SideEffectOperationStatus,
+        providerResultId: string | null,
+        resolvedAt: string | null,
+      ) => db.prepare(
         `INSERT INTO side_effect_operations (
-           booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
+           booking_id, family, name, event, discriminator, event_payload_json,
+           status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
          )
-         SELECT ?, ?, ?, ?, 0, NULL, ?, NULL, ?, ?
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, NULL, ?, ?
          WHERE EXISTS (
            SELECT 1 FROM bookings
            WHERE id = ? AND status = 'confirmed' AND confirmation_lease_token = ?
          )
-         ON CONFLICT(booking_id, kind) DO NOTHING`,
-      ).bind(id, kind, status, providerResultId, resolvedAt, updatedAt, updatedAt, id, leaseToken);
-      // Plan 011 (design decision 2): the Tourflow row shares this exact batch, so it can never
-      // exist without the transition it's owed by, nor vice versa.
-      const tourflowOperation = tourflowKind ? operation(tourflowKind, 'pending', null, null) : null;
+         ON CONFLICT DO NOTHING`,
+      ).bind(id, ...sideEffectIdentityParams(identity), eventPayloadJson, status, providerResultId, resolvedAt, updatedAt, updatedAt, id, leaseToken);
+      // Plan 021 (design decision 4): each subscriber's row shares this exact batch, so it can
+      // never exist without the confirmation it's owed by, nor vice versa.
+      const eventOperations = (eventSeeds ?? []).map((seed) => operation(seed, seed.eventPayloadJson, 'pending', null, null));
       // Plan 012 (design decision 1/2): split rows (one per recipient, in recipientsForEvent
       // order) when the caller resolved a split-capable provider; otherwise the single legacy
       // combined row, unchanged from before this plan. This is a brand-new confirmation (the CAS
@@ -1516,19 +1567,19 @@ export function createBookingRepository(
       // "legacy combined row wins" guard (design decision 3) only applies to the repair path
       // below (ensureConfirmationSideEffectOperations), which is where a pre-existing row is
       // actually possible.
-      const emailOperations = emailKinds && emailKinds.length > 0
-        ? emailKinds.map((kind) => operation(kind, 'pending', null, null))
-        : [operation('email_confirmation', 'pending', null, null)];
+      const emailOperations = emailRecipients && emailRecipients.length > 0
+        ? emailRecipients.map((recipient) => operation({ family: 'email', name: recipient, event: 'booking.confirmed' }, null, 'pending', null, null))
+        : [operation({ family: 'email_confirmation' }, null, 'pending', null, null)];
       const results = await guardDuplicatePaymentIntent(patch.stripePaymentIntent, () =>
         db.batch([
           db.prepare(
             `UPDATE bookings SET ${setClauses.join(', ')}
              WHERE id = ? AND status IN (${placeholders}) AND confirmation_lease_token = ?`,
           ).bind(...entries.map(([, value]) => value), updatedAt, id, ...expectedStatusIn, leaseToken),
-          operation('calendar_create', 'pending', null, null),
+          operation({ family: 'calendar_create' }, null, 'pending', null, null),
           ...emailOperations,
-          ...(oversold ? [operation('oversell', 'succeeded', 'capacity_exceeded', updatedAt)] : []),
-          ...(tourflowOperation ? [tourflowOperation] : []),
+          ...(oversold ? [operation({ family: 'oversell' }, null, 'succeeded', 'capacity_exceeded', updatedAt)] : []),
+          ...eventOperations,
         ]));
       if ((results[0]?.meta.changes ?? 0) === 0) return null;
       return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
@@ -1549,18 +1600,19 @@ export function createBookingRepository(
         ).bind(...entries.map(([, value]) => value), updatedAt, id, leaseToken).run());
       return result.meta.changes > 0;
     },
-    async ensureConfirmationSideEffectOperations(id, leaseToken, now, tourflowKind, emailKinds) {
+    async ensureConfirmationSideEffectOperations(id, leaseToken, now, eventSeeds, emailRecipients) {
       const calendarOperation = db.prepare(
         `INSERT INTO side_effect_operations (
-           booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
+           booking_id, family, name, event, discriminator, event_payload_json,
+           status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
          )
-         SELECT ?, 'calendar_create',
+         SELECT ?, 'calendar_create', NULL, NULL, NULL, NULL,
            CASE WHEN calendar_synced = 1 THEN 'succeeded' ELSE 'pending' END,
            CASE WHEN calendar_synced = 1 THEN calendar_event_id ELSE NULL END,
            0, NULL, CASE WHEN calendar_synced = 1 THEN ? ELSE NULL END, NULL, ?, ?
          FROM bookings
          WHERE id = ? AND status = 'confirmed' AND confirmation_lease_token = ?
-         ON CONFLICT(booking_id, kind) DO NOTHING`,
+         ON CONFLICT DO NOTHING`,
       ).bind(id, now, now, now, id, leaseToken);
       // Plan 012 (design decision 1/2/3): same split-vs-combined choice confirmWithSideEffectOperations
       // makes for a brand-new confirmation, applied here for legacy repair. A split row is only
@@ -1571,59 +1623,75 @@ export function createBookingRepository(
       // combined row itself carries no such guard: it is the pre-plan-012 shape, and this repair
       // path is the only place a split-capable provider can ever fall back to it (a brand-new
       // confirmation always takes the branch above).
-      const emailKindList: readonly SideEffectOperationKind[] = emailKinds && emailKinds.length > 0 ? emailKinds : ['email_confirmation'];
-      const emailGuard = emailKinds && emailKinds.length > 0
-        ? `AND NOT EXISTS (SELECT 1 FROM side_effect_operations WHERE booking_id = ? AND kind = 'email_confirmation')`
+      const emailIdentities: SideEffectOperationIdentity[] = emailRecipients && emailRecipients.length > 0
+        ? emailRecipients.map((recipient) => ({ family: 'email', name: recipient, event: 'booking.confirmed' }))
+        : [{ family: 'email_confirmation' }];
+      const emailGuard = emailRecipients && emailRecipients.length > 0
+        ? `AND NOT EXISTS (SELECT 1 FROM side_effect_operations WHERE booking_id = ? AND family = 'email_confirmation')`
         : '';
-      const emailOperations = emailKindList.map((kind) => db.prepare(
+      const emailOperations = emailIdentities.map((identity) => db.prepare(
         `INSERT INTO side_effect_operations (
-           booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
+           booking_id, family, name, event, discriminator, event_payload_json,
+           status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
          )
-         SELECT ?, ?,
+         SELECT ?, ?, ?, ?, ?, NULL,
            CASE WHEN email_synced = 1 THEN 'succeeded' ELSE 'pending' END,
            NULL, 0, NULL, CASE WHEN email_synced = 1 THEN ? ELSE NULL END, NULL, ?, ?
          FROM bookings
          WHERE id = ? AND status = 'confirmed' AND confirmation_lease_token = ? ${emailGuard}
-         ON CONFLICT(booking_id, kind) DO NOTHING`,
-      ).bind(id, kind, now, now, now, id, leaseToken, ...(emailGuard ? [id] : [])));
-      // Plan 011 (design decision 2): a legacy confirmed booking's row, created lazily only when
-      // tourflow_synced is still 0 — an already-synced legacy booking is never replayed a row (no
-      // WHEN branch needed here: the row is always inserted 'pending', unlike calendar/email above,
-      // which can already be synced when this repair path first runs for them).
-      const tourflowOperation = tourflowKind ? db.prepare(
+         ON CONFLICT DO NOTHING`,
+      ).bind(id, ...sideEffectIdentityParams(identity), now, now, now, id, leaseToken, ...(emailGuard ? [id] : [])));
+      // Plan 021 (design decision 4): a legacy confirmed booking's subscriber rows, created lazily
+      // when a hook/webhook was registered after it was already confirmed. Always inserted
+      // 'pending' (unlike calendar/email above, which can already be synced when this repair path
+      // first runs), and always no-ops once the row exists — the row's own status is the only
+      // record of whether the subscriber has been told.
+      const eventOperations = (eventSeeds ?? []).map((seed) => db.prepare(
         `INSERT INTO side_effect_operations (
-           booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
+           booking_id, family, name, event, discriminator, event_payload_json,
+           status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
          )
-         SELECT ?, ?, 'pending', NULL, 0, NULL, NULL, NULL, ?, ?
+         SELECT ?, ?, ?, ?, ?, ?, 'pending', NULL, 0, NULL, NULL, NULL, ?, ?
          FROM bookings
-         WHERE id = ? AND status = 'confirmed' AND confirmation_lease_token = ? AND tourflow_synced = 0
-         ON CONFLICT(booking_id, kind) DO NOTHING`,
-      ).bind(id, tourflowKind, now, now, id, leaseToken) : null;
+         WHERE id = ? AND status = 'confirmed' AND confirmation_lease_token = ?
+         ON CONFLICT DO NOTHING`,
+      ).bind(id, ...sideEffectIdentityParams(seed), seed.eventPayloadJson, now, now, id, leaseToken));
       await db.batch([
         calendarOperation,
         ...emailOperations,
-        ...(tourflowOperation ? [tourflowOperation] : []),
+        ...eventOperations,
       ]);
+    },
+    async recordBookingEventOperations(bookingId, seeds, now) {
+      if (seeds.length === 0) return;
+      await db.batch(seeds.map((seed) => db.prepare(
+        `INSERT INTO side_effect_operations (
+           booking_id, family, name, event, discriminator, event_payload_json,
+           status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
+         )
+         VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, 0, NULL, NULL, NULL, ?, ?)
+         ON CONFLICT DO NOTHING`,
+      ).bind(bookingId, ...sideEffectIdentityParams(seed), seed.eventPayloadJson, now, now)));
     },
     async listSideEffectOperations(bookingId) {
       const result = await db.prepare(
-        `SELECT ${sideEffectOperationColumns} FROM side_effect_operations WHERE booking_id = ? ORDER BY kind`,
+        `SELECT ${sideEffectOperationColumns} FROM side_effect_operations WHERE booking_id = ? ORDER BY ${sideEffectIdentityOrder}`,
       ).bind(bookingId).all<SideEffectOperationRow>();
       return result.results.map(mapSideEffectOperation);
     },
     // Returning attempt_count from the UPDATE keeps failure classification tied to the claim that
     // actually won, even if another drain changed the row after the caller's earlier list read.
-    async claimSideEffectOperation(bookingId, kind, leaseToken, attemptedAt) {
+    async claimSideEffectOperation(bookingId, identity, leaseToken, attemptedAt) {
       const result = await db.prepare(
         `UPDATE side_effect_operations
          SET status = 'in_flight', attempt_count = attempt_count + 1, attempted_at = ?, error = NULL, updated_at = ?
-         WHERE booking_id = ? AND kind = ? AND status NOT IN ('succeeded', 'abandoned') AND attempt_count < ?
+         WHERE booking_id = ? AND ${sideEffectIdentityMatch} AND status NOT IN ('succeeded', 'abandoned') AND attempt_count < ?
            AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
            AND EXISTS (
              SELECT 1 FROM bookings WHERE id = ? AND confirmation_lease_token = ?
            )
          RETURNING attempt_count`,
-      ).bind(attemptedAt, attemptedAt, bookingId, kind, SIDE_EFFECT_MAX_ATTEMPTS, attemptedAt, bookingId, leaseToken)
+      ).bind(attemptedAt, attemptedAt, bookingId, ...sideEffectIdentityParams(identity), SIDE_EFFECT_MAX_ATTEMPTS, attemptedAt, bookingId, leaseToken)
         .all<{ attempt_count: number }>();
       return result.results[0]?.attempt_count ?? null;
     },
@@ -1633,16 +1701,16 @@ export function createBookingRepository(
     // not for the fact this is a single-claimant confirmation-lease-gated table -- see
     // renewConfirmationLease/acquireConfirmationLease: only the current lease holder can ever reach
     // this call at all, so an in_flight row here can only be this same request's own earlier claim).
-    async claimSideEffectOperationForRetry(bookingId, kind, leaseToken, attemptedAt) {
+    async claimSideEffectOperationForRetry(bookingId, identity, leaseToken, attemptedAt) {
       const result = await db.prepare(
         `UPDATE side_effect_operations
          SET status = 'in_flight', attempt_count = attempt_count + 1, attempted_at = ?, error = NULL, updated_at = ?
-         WHERE booking_id = ? AND kind = ? AND status != 'succeeded'
+         WHERE booking_id = ? AND ${sideEffectIdentityMatch} AND status != 'succeeded'
            AND EXISTS (
              SELECT 1 FROM bookings WHERE id = ? AND confirmation_lease_token = ?
            )
          RETURNING attempt_count`,
-      ).bind(attemptedAt, attemptedAt, bookingId, kind, bookingId, leaseToken)
+      ).bind(attemptedAt, attemptedAt, bookingId, ...sideEffectIdentityParams(identity), bookingId, leaseToken)
         .all<{ attempt_count: number }>();
       return result.results[0]?.attempt_count ?? null;
     },
@@ -1653,7 +1721,7 @@ export function createBookingRepository(
     // sequences statements in one transaction). It becomes 1 only when every row in the applicable
     // set is 'succeeded': the legacy combined row when one exists for this booking, otherwise
     // every split row. The row rowUpdate just wrote is always itself a member of whichever set
-    // applies to it (it's either 'email_confirmation' or an 'email:booking.confirmed:%' kind), so
+    // applies to it (it's either the email_confirmation family or an email/booking.confirmed row), so
     // the EXISTS/NOT EXISTS pair below can never evaluate against zero candidate rows.
     async resolveSideEffectOperation(input) {
       const rowUpdate = db.prepare(
@@ -1661,7 +1729,7 @@ export function createBookingRepository(
          SET status = ?, provider_result_id = ?, error = ?, resolved_at = ?, updated_at = ?,
              failure_started_at = CASE WHEN ? = 'failed' THEN COALESCE(failure_started_at, ?) ELSE NULL END,
              next_attempt_at = CASE WHEN ? = 'failed' THEN ? ELSE NULL END
-         WHERE booking_id = ? AND kind = ? AND status NOT IN ('succeeded', 'abandoned')
+         WHERE booking_id = ? AND ${sideEffectIdentityMatch} AND status NOT IN ('succeeded', 'abandoned')
            AND EXISTS (
              SELECT 1 FROM bookings WHERE id = ? AND confirmation_lease_token = ?
            )`,
@@ -1669,7 +1737,7 @@ export function createBookingRepository(
         input.status, input.providerResultId ?? null, input.error ?? null, input.resolvedAt, input.resolvedAt,
         input.status, input.resolvedAt,
         input.status, input.nextAttemptAt ?? null,
-        input.bookingId, input.kind, input.bookingId, input.leaseToken,
+        input.bookingId, ...sideEffectIdentityParams(input.identity), input.bookingId, input.leaseToken,
       );
       const bookingUpdate = db.prepare(
         `UPDATE bookings SET
@@ -1677,17 +1745,17 @@ export function createBookingRepository(
            calendar_synced = CASE WHEN ? = 'calendar_create' THEN ? ELSE calendar_synced END,
            email_synced = CASE WHEN ? = 'calendar_create' THEN email_synced ELSE (
              CASE
-               WHEN EXISTS (SELECT 1 FROM side_effect_operations WHERE booking_id = ? AND kind = 'email_confirmation')
-                 THEN NOT EXISTS (SELECT 1 FROM side_effect_operations WHERE booking_id = ? AND kind = 'email_confirmation' AND status != 'succeeded')
-               ELSE NOT EXISTS (SELECT 1 FROM side_effect_operations WHERE booking_id = ? AND kind LIKE 'email:booking.confirmed:%' AND status != 'succeeded')
+               WHEN EXISTS (SELECT 1 FROM side_effect_operations WHERE booking_id = ? AND family = 'email_confirmation')
+                 THEN NOT EXISTS (SELECT 1 FROM side_effect_operations WHERE booking_id = ? AND family = 'email_confirmation' AND status != 'succeeded')
+               ELSE NOT EXISTS (SELECT 1 FROM side_effect_operations WHERE booking_id = ? AND family = 'email' AND event = 'booking.confirmed' AND status != 'succeeded')
              END
            ) END,
            updated_at = ?
          WHERE id = ? AND confirmation_lease_token = ?`,
       ).bind(
-        input.kind, input.kind === 'calendar_create' ? (input.providerResultId ?? null) : null,
-        input.kind, input.status === 'succeeded' ? 1 : 0,
-        input.kind, input.bookingId, input.bookingId, input.bookingId,
+        input.identity.family, input.identity.family === 'calendar_create' ? (input.providerResultId ?? null) : null,
+        input.identity.family, input.status === 'succeeded' ? 1 : 0,
+        input.identity.family, input.bookingId, input.bookingId, input.bookingId,
         input.resolvedAt,
         input.bookingId, input.leaseToken,
       );
@@ -1701,31 +1769,31 @@ export function createBookingRepository(
     //
     // The returned count comes from the winning UPDATE, not the drain's potentially stale list
     // snapshot, so the tenth execution can never be resolved as an earlier failed attempt.
-    async claimMutationSideEffectOperation(bookingId, kind, attemptedAt) {
+    async claimMutationSideEffectOperation(bookingId, identity, attemptedAt) {
       const staleBefore = new Date(Date.parse(attemptedAt) - MUTATION_SIDE_EFFECT_LEASE_MS).toISOString();
       const result = await db.prepare(
         `UPDATE side_effect_operations
          SET status = 'in_flight', attempt_count = attempt_count + 1, attempted_at = ?, error = NULL, updated_at = ?
-         WHERE booking_id = ? AND kind = ? AND attempt_count < ?
+         WHERE booking_id = ? AND ${sideEffectIdentityMatch} AND attempt_count < ?
            AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
            AND (status IN ('pending', 'failed') OR (status = 'in_flight' AND attempted_at < ?))
          RETURNING attempt_count`,
-      ).bind(attemptedAt, attemptedAt, bookingId, kind, SIDE_EFFECT_MAX_ATTEMPTS, attemptedAt, staleBefore)
+      ).bind(attemptedAt, attemptedAt, bookingId, ...sideEffectIdentityParams(identity), SIDE_EFFECT_MAX_ATTEMPTS, attemptedAt, staleBefore)
         .all<{ attempt_count: number }>();
       return result.results[0]?.attempt_count ?? null;
     },
     // Plan 020 (design decision 5): the admin retry bypass — no next_attempt_at gate, no
     // attempt-count cap (an 'abandoned' row is claimable), but a LIVE in_flight lease (attempted_at
     // not yet stale) is still refused, matching every other retry-bypass claim in this file.
-    async claimMutationSideEffectOperationForRetry(bookingId, kind, attemptedAt) {
+    async claimMutationSideEffectOperationForRetry(bookingId, identity, attemptedAt) {
       const staleBefore = new Date(Date.parse(attemptedAt) - MUTATION_SIDE_EFFECT_LEASE_MS).toISOString();
       const result = await db.prepare(
         `UPDATE side_effect_operations
          SET status = 'in_flight', attempt_count = attempt_count + 1, attempted_at = ?, error = NULL, updated_at = ?
-         WHERE booking_id = ? AND kind = ?
+         WHERE booking_id = ? AND ${sideEffectIdentityMatch}
            AND (status IN ('pending', 'failed', 'abandoned') OR (status = 'in_flight' AND attempted_at < ?))
          RETURNING attempt_count`,
-      ).bind(attemptedAt, attemptedAt, bookingId, kind, staleBefore)
+      ).bind(attemptedAt, attemptedAt, bookingId, ...sideEffectIdentityParams(identity), staleBefore)
         .all<{ attempt_count: number }>();
       return result.results[0]?.attempt_count ?? null;
     },
@@ -1735,45 +1803,14 @@ export function createBookingRepository(
          SET status = ?, provider_result_id = ?, error = ?, resolved_at = ?, updated_at = ?,
              failure_started_at = CASE WHEN ? = 'failed' THEN COALESCE(failure_started_at, ?) ELSE NULL END,
              next_attempt_at = CASE WHEN ? = 'failed' THEN ? ELSE NULL END
-         WHERE booking_id = ? AND kind = ? AND status = 'in_flight' AND attempted_at = ?`,
+         WHERE booking_id = ? AND ${sideEffectIdentityMatch} AND status = 'in_flight' AND attempted_at = ?`,
       ).bind(
         input.status, input.providerResultId ?? null, input.error ?? null, input.resolvedAt, input.resolvedAt,
         input.status, input.resolvedAt,
         input.status, input.nextAttemptAt ?? null,
-        input.bookingId, input.kind, input.claimedAt,
+        input.bookingId, ...sideEffectIdentityParams(input.identity), input.claimedAt,
       ).run();
       return result.meta.changes > 0;
-    },
-    // Plan 011 (design decision 4): mirrors resolveMutationSideEffectOperation's claimedAt-gated
-    // row update, then atomically flips tourflow_synced in the same batch — but only when THIS
-    // call's own row update just landed. The second statement checks post-first-statement state
-    // (status = 'succeeded' AND resolved_at = this call's resolvedAt, both only true if the first
-    // UPDATE's WHERE matched) rather than re-deriving success from input.status directly, so a
-    // stale/reclaimed loser's resolve (whose own UPDATE affects 0 rows because a reclaimer's already
-    // moved attempted_at) can never flip the flag on someone else's outcome.
-    async resolveConfirmationTourflowOperation(input) {
-      const result = await db.batch([
-        db.prepare(
-          `UPDATE side_effect_operations
-           SET status = ?, error = ?, resolved_at = ?, updated_at = ?,
-               failure_started_at = CASE WHEN ? = 'failed' THEN COALESCE(failure_started_at, ?) ELSE NULL END,
-               next_attempt_at = CASE WHEN ? = 'failed' THEN ? ELSE NULL END
-           WHERE booking_id = ? AND kind = ? AND status = 'in_flight' AND attempted_at = ?`,
-        ).bind(
-          input.status, input.error ?? null, input.resolvedAt, input.resolvedAt,
-          input.status, input.resolvedAt,
-          input.status, input.nextAttemptAt ?? null,
-          input.bookingId, CONFIRMATION_TOURFLOW_KIND, input.claimedAt,
-        ),
-        db.prepare(
-          `UPDATE bookings SET tourflow_synced = 1, updated_at = ?
-           WHERE id = ? AND EXISTS (
-             SELECT 1 FROM side_effect_operations
-             WHERE booking_id = ? AND kind = ? AND status = 'succeeded' AND resolved_at = ?
-           )`,
-        ).bind(input.resolvedAt, input.bookingId, input.bookingId, CONFIRMATION_TOURFLOW_KIND, input.resolvedAt),
-      ]);
-      return (result[0]?.meta.changes ?? 0) > 0;
     },
     async transitionReschedule(id, input) {
       const casPredicate = 'id = ? AND status = ? AND starts_at = ?';
@@ -1789,14 +1826,14 @@ export function createBookingRepository(
         input.startsAt, input.endsAt, input.rescheduledFrom, input.updatedAt, input.tokensExpireAt ?? null,
         ...casParams,
       );
-      const kinds = input.mutationSideEffectKinds ?? [];
-      if (kinds.length === 0) {
+      const seeds = input.mutationSideEffects ?? [];
+      if (seeds.length === 0) {
         const result = await updateStmt.run();
         if (result.meta.changes === 0) return null;
         return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
       }
       const results = await db.batch([
-        mutationSideEffectInsert(id, kinds, input.updatedAt, casPredicate, casParams, true),
+        mutationSideEffectInsert(id, seeds, input.updatedAt, casPredicate, casParams, true),
         updateStmt,
       ]);
       if ((results[1]?.meta.changes ?? 0) === 0) return null;
@@ -1869,13 +1906,13 @@ export function createBookingRepository(
         input.tokensExpireAt ?? null,
         ...casParams,
       );
-      const kinds = input.mutationSideEffectKinds ?? [];
-      if (kinds.length === 0) {
+      const seeds = input.mutationSideEffects ?? [];
+      if (seeds.length === 0) {
         const result = await updateStmt.run();
         if (result.meta.changes === 0) return null;
         return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
       }
-      const results = await db.batch([mutationSideEffectInsert(id, kinds, input.updatedAt, casPredicate, casParams, true), updateStmt]);
+      const results = await db.batch([mutationSideEffectInsert(id, seeds, input.updatedAt, casPredicate, casParams, true), updateStmt]);
       if ((results[1]?.meta.changes ?? 0) === 0) return null;
       return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
     },
@@ -1902,16 +1939,9 @@ export function createBookingRepository(
       const key = await resolveTokenKey();
       return Promise.all(result.results.map((row) => hydrateBooking(row, key)));
     },
-    // Hydrated: a custom OpsSink.mapBooking (src/handlers/index.ts handleFeed) may read a
-    // booking's tokens, and the default feed mapping doesn't, so hydrating here is the only way
-    // to keep that consumer contract honest without knowing which mapper is plugged in.
+    // Hydrated: the admin dashboard renders each row's operatorToken as a manage-link href.
     async listAllFrom(startsAtFrom) {
       const result = await db.prepare(`SELECT ${bookingColumns} FROM bookings WHERE starts_at >= ? ORDER BY starts_at`).bind(startsAtFrom).all<BookingRow>();
-      const key = await resolveTokenKey();
-      return Promise.all(result.results.map((row) => hydrateBooking(row, key)));
-    },
-    async listSince(since) {
-      const result = await db.prepare(`SELECT ${bookingColumns} FROM bookings WHERE updated_at > ? ORDER BY updated_at`).bind(since).all<BookingRow>();
       const key = await resolveTokenKey();
       return Promise.all(result.results.map((row) => hydrateBooking(row, key)));
     },
@@ -2058,7 +2088,7 @@ export function createBookingRepository(
     async listSideEffectExecutionCandidates(now, staleBefore, limit) {
       const result = await db.prepare(
         `SELECT ${sideEffectOperationColumns} FROM side_effect_operations
-         WHERE kind != 'oversell' AND attempt_count < ?
+         WHERE family != 'oversell' AND attempt_count < ?
            AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
            AND (
              status = 'pending'
@@ -2073,7 +2103,7 @@ export function createBookingRepository(
                  ELSE 60 END || ' minutes') <= datetime(?)
              ))
            )
-         ORDER BY COALESCE(next_attempt_at, attempted_at, created_at), booking_id, kind
+         ORDER BY COALESCE(next_attempt_at, attempted_at, created_at), booking_id, ${sideEffectIdentityOrder}
          LIMIT ?`,
       ).bind(SIDE_EFFECT_MAX_ATTEMPTS, now, staleBefore, now, limit).all<SideEffectOperationRow>();
       return result.results.map(mapSideEffectOperation);
@@ -2096,7 +2126,7 @@ export function createBookingRepository(
            AND NOT EXISTS (
              SELECT 1 FROM operational_incidents
              WHERE source_type = 'side_effect'
-               AND source_key = side_effect_operations.booking_id || ':' || side_effect_operations.kind
+               AND source_key = ${sideEffectSourceKeySql}
            )
          GROUP BY booking_id
          ORDER BY MIN(updated_at), booking_id
@@ -2126,7 +2156,7 @@ export function createBookingRepository(
            AND (
              (source_type = 'side_effect' AND EXISTS (
                SELECT 1 FROM side_effect_operations
-               WHERE source_key = side_effect_operations.booking_id || ':' || side_effect_operations.kind
+               WHERE source_key = ${sideEffectSourceKeySql}
                  AND side_effect_operations.updated_at != operational_incidents.source_updated_at
              ))
              OR (source_type = 'refund' AND (
@@ -2146,7 +2176,7 @@ export function createBookingRepository(
     async listUnreportedOversellMarkers(limit) {
       const result = await db.prepare(
         `SELECT ${sideEffectOperationColumns} FROM side_effect_operations
-         WHERE kind = 'oversell' AND status = 'succeeded'
+         WHERE family = 'oversell' AND status = 'succeeded'
            AND NOT EXISTS (
              SELECT 1 FROM operational_incidents
              WHERE source_type = 'oversell' AND source_key = side_effect_operations.booking_id
