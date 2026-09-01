@@ -8,12 +8,19 @@ const demoTour: ServiceConfig = {
   durationMin: 60,
   turnaroundMin: 15,
   schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], firstStart: '09:00', lastStart: '17:00', intervalMin: 60 }],
-  // Config validation requires a rule for every pickup type at every quantity-count up to maxQuantity.
+  // Config validation requires a rule for every declared pickup option at every quantity-count up
+  // to maxQuantity.
   pricing: [
     { maxQuantity: 4, pickup: 'default', priceMinor: 5000 },
     { maxQuantity: 4, pickup: 'custom', priceMinor: 6000 },
   ],
-  meetingPoint: { label: 'Fixture meeting point', mapsUrl: 'https://example.test/map' },
+  location: {
+    meetingPoints: [{ id: 'default', label: 'Fixture meeting point', mapsUrl: 'https://example.test/map' }],
+    pickupOptions: [
+      { id: 'default', requiresAddress: false, usesMeetingPoint: true },
+      { id: 'custom', requiresAddress: true, usesMeetingPoint: false },
+    ],
+  },
 };
 
 export default {

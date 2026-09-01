@@ -9,10 +9,13 @@ export interface BookingOpts {
   // books that first point unchanged). No-op when the service has 0-1 points, since the widget then
   // renders no such group to select from.
   meetingPointId?: string;
+  // Plan 023 (design decision 1): the page hosting `opts.service`'s widget — defaults to the
+  // homepage (oldTown). A location-less service is demoed from its own page (see river-cruise.astro).
+  path?: string;
 }
 
 export async function createBooking(page: Page, opts: BookingOpts) {
-  await page.goto('/');
+  await page.goto(opts.path ?? '/');
 
   // 1. Select party size (accessible name, not the widget's internal CSS class — the class is a
   // styling hook the enhancer never renames, but a label survives markup/theming changes too).
@@ -42,8 +45,10 @@ export async function createBooking(page: Page, opts: BookingOpts) {
   // accidentally grabs the pickup-type radios rendered further down the same form).
   await page.getByRole('radiogroup').getByRole('radio').first().check();
 
-  // 5. Pick pickup
-  await page.locator('input[name="pickupType"][value="default"]').check();
+  // 5. Pick pickup — omitted entirely for a location-less service (plan 023), whose widget renders
+  // no pickupType radios at all.
+  const pickupRadio = page.locator('input[name="pickupType"][value="default"]');
+  if (await pickupRadio.count() > 0) await pickupRadio.check();
 
   // 5b. Pick a non-default meeting point when asked (see BookingOpts.meetingPointId) — the widget
   // pre-checks the first declared point, so this is skipped for the common case.

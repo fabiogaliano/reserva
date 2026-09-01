@@ -1,13 +1,6 @@
 import baseConfig from '../../client-config';
 import type { ClientConfig } from '../../../src/core/config';
 
-// Plan 017 (design decision 5): the base service declares the meetingPoint shorthand; destructuring
-// it out here (rather than spreading it and then setting `meetingPoint: undefined`, which
-// `exactOptionalPropertyTypes` rejects — undefined isn't assignable to the shorthand's required
-// `{ label, mapsUrl }`) is how oldTownBase below swaps it for the meetingPoints array without
-// declaring both (exactly-one-of, see core/config.ts validateService).
-const { meetingPoint: _oldTownMeetingPoint, ...oldTownBase } = baseConfig.services.oldTown;
-
 export default {
   ...baseConfig,
   business: {
@@ -17,13 +10,16 @@ export default {
   },
   services: {
     oldTown: {
-      ...oldTownBase,
+      ...baseConfig.services.oldTown,
       // Two free meeting points, so the e2e suite has a real multi-point service to book the second
       // point through.
-      meetingPoints: [
-        { id: 'fountain', label: 'Main square fountain', mapsUrl: 'https://maps.google.com/?q=Main+square' },
-        { id: 'station', label: 'Riverside dock', mapsUrl: 'https://maps.google.com/?q=Riverside+dock' },
-      ],
+      location: {
+        meetingPoints: [
+          { id: 'fountain', label: 'Main square fountain', mapsUrl: 'https://maps.google.com/?q=Main+square' },
+          { id: 'station', label: 'Riverside dock', mapsUrl: 'https://maps.google.com/?q=Riverside+dock' },
+        ],
+        pickupOptions: baseConfig.services.oldTown.location.pickupOptions,
+      },
       schedule: [{
         days: [0, 1, 2, 3, 4, 5, 6],
         firstStart: '09:00',
@@ -48,22 +44,38 @@ export default {
         lastStart: '17:00',
         intervalMin: 60,
       }],
-      meetingPoints: [
-        { id: 'dock', label: 'Riverside dock', mapsUrl: 'https://maps.google.com/?q=Riverside+dock' },
-        { id: 'gate', label: 'Maze north gate', mapsUrl: 'https://maps.google.com/?q=Maze+north+gate' },
-      ],
-      pickupOptions: [
-        { id: 'meeting_point', label: 'Meeting point', requiresAddress: false, usesMeetingPoint: true },
-        { id: 'custom_dropoff', label: 'Custom drop-off', requiresAddress: true, usesMeetingPoint: true },
-        { id: 'custom_pickup', label: 'Custom pick-up', requiresAddress: true, usesMeetingPoint: false },
-        { id: 'custom_both', label: 'Custom pick-up & drop-off', requiresAddress: true, usesMeetingPoint: false },
-      ],
+      location: {
+        meetingPoints: [
+          { id: 'dock', label: 'Riverside dock', mapsUrl: 'https://maps.google.com/?q=Riverside+dock' },
+          { id: 'gate', label: 'Maze north gate', mapsUrl: 'https://maps.google.com/?q=Maze+north+gate' },
+        ],
+        pickupOptions: [
+          { id: 'meeting_point', label: 'Meeting point', requiresAddress: false, usesMeetingPoint: true },
+          { id: 'custom_dropoff', label: 'Custom drop-off', requiresAddress: true, usesMeetingPoint: true },
+          { id: 'custom_pickup', label: 'Custom pick-up', requiresAddress: true, usesMeetingPoint: false },
+          { id: 'custom_both', label: 'Custom pick-up & drop-off', requiresAddress: true, usesMeetingPoint: false },
+        ],
+      },
       pricing: [
         { maxQuantity: 4, pickup: 'meeting_point', priceMinor: 18000 },
         { maxQuantity: 4, pickup: 'custom_dropoff', priceMinor: 20000 },
         { maxQuantity: 4, pickup: 'custom_pickup', priceMinor: 20000 },
         { maxQuantity: 4, pickup: 'custom_both', priceMinor: 21000 },
       ],
+    },
+    // Plan 023 (design decision 1): the location module is optional per service — this one has
+    // no pickup/meeting-point axis at all, so the e2e suite has a real location-less service to
+    // book through (quantity-tier pricing only, no `pickup` on any rule).
+    riverCruise: {
+      durationMin: 90,
+      turnaroundMin: 15,
+      schedule: [{
+        days: [0, 1, 2, 3, 4, 5, 6],
+        firstStart: '10:00',
+        lastStart: '16:00',
+        intervalMin: 60,
+      }],
+      pricing: [{ maxQuantity: 6, priceMinor: 4200 }],
     },
   },
   booking: {
