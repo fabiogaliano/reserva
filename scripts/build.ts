@@ -13,7 +13,6 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 // Every non-TypeScript file a published entrypoint reaches, as `src/` path -> `dist/` path.
 const RAW_ASSETS = [
-  'components/BookingWidget.astro',
   'components/ManageBooking.astro',
   'components/AdminDashboard.astro',
   'ui/components.css',

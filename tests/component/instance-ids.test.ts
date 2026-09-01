@@ -6,7 +6,7 @@
 import { experimental_AstroContainer as AstroContainer } from 'astro/container';
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error -- resolved by vitest.component.config.ts's Astro Vite pipeline, not by tsc.
-import BookingWidget from '../../src/components/BookingWidget.astro';
+import BookingWidget from '../../examples/smoke-site/src/components/BookingWidget.astro';
 // @ts-expect-error -- resolved by vitest.component.config.ts's Astro Vite pipeline, not by tsc.
 import ManageBooking from '../../src/components/ManageBooking.astro';
 // @ts-expect-error -- resolved by vitest.component.config.ts's Astro Vite pipeline, not by tsc.

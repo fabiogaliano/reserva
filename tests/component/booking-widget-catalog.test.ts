@@ -13,7 +13,7 @@
 import { experimental_AstroContainer as AstroContainer } from 'astro/container';
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error -- resolved by vitest.component.config.ts's Astro Vite pipeline, not by tsc.
-import BookingWidget from '../../src/components/BookingWidget.astro';
+import BookingWidget from '../../examples/smoke-site/src/components/BookingWidget.astro';
 
 const baseProps = { serviceSlug: 'oldTown', availabilityFrom: '2026-01-01', availabilityTo: '2026-01-02', locale: 'en' };
 

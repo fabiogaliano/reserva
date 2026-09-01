@@ -1,4 +1,5 @@
-// BookingWidget.astro is an Astro SFC. Its rendered markup is asserted against the real compiler
+// BookingWidget.astro is the example site's own Astro SFC (plan 028: no booking funnel ships in the
+// library). Its rendered markup is asserted against the real compiler
 // in tests/component/booking-widget-catalog.test.ts, and its browser behavior end-to-end in
 // tests/e2e; what's left here are the source-level properties neither harness can observe — that
 // the client bundle contains no pricing or scarcity rule of its own — plus the message-catalog and
@@ -8,10 +9,10 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { defaultMessages } from '../src/ui/messages';
 
-const widgetPath = resolve(import.meta.dirname, '..', 'src/components/BookingWidget.astro');
+const widgetPath = resolve(import.meta.dirname, '..', 'examples/smoke-site/src/components/BookingWidget.astro');
 const widgetSource = readFileSync(widgetPath, 'utf8');
-const componentsCssPath = resolve(import.meta.dirname, '..', 'src/ui/components.css');
-const componentsCssSource = readFileSync(componentsCssPath, 'utf8');
+const widgetCssPath = resolve(import.meta.dirname, '..', 'examples/smoke-site/src/components/booking-widget.css');
+const widgetCssSource = readFileSync(widgetCssPath, 'utf8');
 
 describe('BookingWidget.astro carries no server-owned rule of its own (plan 027)', () => {
   // Plan 027 (design decision 1): the drift this deletes is the one that makes a customer pay a
@@ -51,7 +52,7 @@ describe('BookingWidget.astro carries no server-owned rule of its own (plan 027)
   // the exported wire types rather than re-declaring response shapes locally — the exact
   // duplication the first consumer had to do.
   it('types every response against the exported wire types', () => {
-    expect(widgetSource).toMatch(/import type \{[\s\S]*?\} from '\.\.\/core\/api';/);
+    expect(widgetSource).toMatch(/import type \{[\s\S]*?\} from '(\.\.\/)+src\/core\/index';/);
     expect(widgetSource).not.toMatch(/interface Availability(Slot|Day|Response) \{/);
     expect(widgetSource).not.toMatch(/\{ checkoutUrl\?: string/);
   });
@@ -112,7 +113,7 @@ describe('BookingWidget.astro (Plan 017 design decision 5: meeting-point radio g
   });
 
   it('a disabled meeting-point group actually renders display:none — the .bkw-field display:block rule does not silently win the cascade over [hidden] the way it did for .bk-widget in plan 014', () => {
-    expect(componentsCssSource).toMatch(/\.bk-widget \.bkw-field\[hidden\] \{ display: none; \}/);
+    expect(widgetCssSource).toMatch(/\.bk-widget \.bkw-field\[hidden\] \{ display: none; \}/);
   });
 
   it('submit payload includes meetingPointId only when FormData actually carries it, never an empty string', () => {

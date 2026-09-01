@@ -18,10 +18,9 @@ export type {
 export { cloudflareAccessAdminAuth } from './access.js';
 export type { AdminIdentity } from './access.js';
 export type { ClientConfig } from './core/config.js';
-// The UI copy seam: consumers type their `config.ui.messages` catalogs (and widget `messages`
-// props) against these, and can read the English fallback as the reference key set.
-export { defaultLocale, defaultMessages, formatMessage, resolveMessages, SLOT_STATUS_MESSAGE_KEYS } from './ui/messages.js';
-export type { ReservaMessageKey, ReservaMessages, SlotStatusMessageKey } from './ui/messages.js';
+// The UI copy seam lives at its own '@reservajs/astro/ui' subpath, not here: a page or component
+// that only needs message helpers must not pull this barrel's build-time integration (and Astro's
+// config machinery with it) into a browser/Worker bundle.
 // Plan 026 (design decision 2): the email copy-key union, so a `config.emails.messages` override
 // map typed against it (`Partial<Record<EmailCopyKey, string>>`) catches an unknown key at compile
 // time instead of it being silently ignored at render time — mirrors ReservaMessageKey above for

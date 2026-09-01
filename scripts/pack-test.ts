@@ -106,7 +106,7 @@ const EXPECTED_EXPORT_SUBPATHS = [
   './providers/email-brevo',
   './providers/email-none',
   './runtime',
-  './components/BookingWidget.astro',
+  './ui',
   './components/ManageBooking.astro',
   './components/AdminDashboard.astro',
 ] as const;

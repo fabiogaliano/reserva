@@ -1,7 +1,10 @@
 ---
 import routeConfig from 'virtual:reserva/config';
-import { defaultLocale, formatMessage, resolveMessages, type ReservaMessages } from '../ui/messages';
-import '../ui/components.css';
+// This example lives inside the Reserva repository, so it reads the library from source; a real
+// consumer imports the same names from '@reservajs/astro/ui' and '@reservajs/astro/core'. The
+// widget itself is example code — Reserva ships no customer booking funnel.
+import { defaultLocale, formatMessage, resolveMessages, type ReservaMessages } from '../../../../src/ui/messages';
+import './booking-widget.css';
 
 interface StartOption {
   value: string;
@@ -209,8 +212,8 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
 
 <script>
   import 'cally';
-  import { toMajorUnits } from '../core/currency';
-  // Plan 027 (design decision 2): the shipped widget reads the same exported wire types a consumer
+  import { toMajorUnits } from '../../../../src/core/index';
+  // Plan 027 (design decision 2): this example reads the same exported wire types every consumer
   // does — if a response shape changes without this component following, it fails to compile here
   // rather than at a customer's browser.
   import type {
@@ -221,7 +224,7 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     CatalogService,
     CheckoutResponse,
     QuoteResponse,
-  } from '../core/api';
+  } from '../../../../src/core/index';
 
   interface CalendarDateElement extends HTMLElement {
     value: string;

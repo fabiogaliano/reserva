@@ -39,7 +39,7 @@
     "./providers/email-brevo": { "types": "./dist/providers/email-brevo/index.d.ts", "default": "./dist/providers/email-brevo/index.js" },
     "./providers/email-none": { "types": "./dist/providers/email-none/index.d.ts", "default": "./dist/providers/email-none/index.js" },
     "./runtime": { "types": "./dist/runtime.d.ts", "default": "./dist/runtime.js" },
-    "./components/BookingWidget.astro": "./dist/components/BookingWidget.astro",
+    "./ui": { "types": "./dist/ui/messages.d.ts", "default": "./dist/ui/messages.js" },
     "./components/ManageBooking.astro": "./dist/components/ManageBooking.astro",
     "./components/AdminDashboard.astro": "./dist/components/AdminDashboard.astro"
   },

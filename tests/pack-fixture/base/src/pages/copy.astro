@@ -1,0 +1,8 @@
+---
+// The copy seam has to be reachable from a page, not just from a typecheck: importing it must not
+// drag the build-time integration (and Astro's config machinery) into the Worker bundle.
+import { defaultLocale, resolveMessages } from '@reservajs/astro/ui';
+
+const messages = resolveMessages(undefined, defaultLocale);
+---
+<p>{messages['manage.title']}</p>
