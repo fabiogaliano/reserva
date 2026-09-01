@@ -9,9 +9,9 @@ import {
 } from './events';
 
 // A plain string because the pickup axis is whatever ids a service declares in
-// ServiceConfig.pickupOptions (below), which no static union can enumerate. Kept as a named export
-// (rather than inlining `string` everywhere) so call sites read as "the pickup axis" and so a
-// future narrowing wouldn't need to touch every signature again.
+// ServiceConfig.location.pickupOptions (below), which no static union can enumerate. Kept as a
+// named export (rather than inlining `string` everywhere) so call sites read as "the pickup axis"
+// and so a future narrowing wouldn't need to touch every signature again.
 export type PickupType = string;
 
 export interface ScheduleRule {
@@ -25,7 +25,10 @@ export interface ScheduleRule {
 
 export interface PricingRule {
   maxQuantity: number;
-  pickup: PickupType;
+  // Plan 023 (design decision 2): optional — a service with no `location` module has no pickup
+  // axis at all, so its rules select by quantity tier alone. A service that declares `location`
+  // still requires every rule to name a declared pickup option id (validateService).
+  pickup?: PickupType;
   priceMinor: number;
 }
 
@@ -37,11 +40,10 @@ export interface MeetingPoint {
 
 // Plan 018 (design decision 1): a service-declared pickup option — the unit the pricing axis's
 // `pickup` column now points at. `requiresAddress` is what gates Stripe's custom_fields address
-// collection (stripe.ts); `usesMeetingPoint` is what plan 017's meeting-point requirement now
-// re-keys off instead of `pickupType === 'default'`, so an option like Maze's "custom drop-off"
-// can still start at a meeting point. `label`/`hint` are config-provided plain strings, like
-// `meetingPoint.label` — absent on the `default`/`custom` ids falls back to the existing
-// message-catalog keys so current widgets keep their translated copy (handlers/widget lane).
+// collection (stripe.ts); `usesMeetingPoint` is what plan 017's meeting-point requirement re-keys
+// off instead of `pickupType === 'default'`, so an option like Maze's "custom drop-off" can still
+// start at a meeting point. `label`/`hint` are config-provided plain strings — absent falls back to
+// the message-catalog keys for the `default`/`custom` ids so pre-existing widgets keep their copy.
 export interface PickupOption {
   id: string;
   label?: string;
@@ -49,14 +51,6 @@ export interface PickupOption {
   requiresAddress: boolean;
   usesMeetingPoint: boolean;
 }
-
-// Plan 018 (design decision 1): the pair every service behaved as before this plan — injected by
-// validateConfig when a service declares no pickupOptions, and by pickupOptionFor for raw
-// (never-validated) services, so both paths agree without either hard-coding the pair twice.
-export const DEFAULT_PICKUP_OPTIONS: PickupOption[] = [
-  { id: 'default', requiresAddress: false, usesMeetingPoint: true },
-  { id: 'custom', requiresAddress: true, usesMeetingPoint: false },
-];
 
 export interface ServiceConfig {
   // Customer-facing display name used in emails ("Your Alfama Discovery is confirmed");
@@ -67,19 +61,16 @@ export interface ServiceConfig {
   schedule: ScheduleRule[];
   pricing: PricingRule[];
   occupancyFor?: (quantity: number) => number;
-  // Plan 017 (design decision 1): exactly one of meetingPoint (single-point shorthand) or
-  // meetingPoints (multi-point) may be declared — validateConfig rejects both/neither and
-  // normalizes whichever is given into the canonical meetingPoints array below (clearing the
-  // shorthand, so it never survives validation), and every internal reader goes through
-  // resolveMeetingPoint instead of branching on which shape a service used.
-  meetingPoint?: {
-    label: string;
-    mapsUrl: string;
+  // Plan 023 (design decision 1): the whole pickup/meeting-point axis, opt-in per service. Absent
+  // means the service has no location dimension anywhere — no pickup field in pricing, checkout,
+  // emails, admin, or the calendar description. Declaring it requires at least one pickup option;
+  // meetingPoints is optional within it (a service can collect only a custom address, with no
+  // meeting-point choice at all). The v1 top-level `meetingPoint`/`meetingPoints`/`pickupOptions`
+  // keys are gone — validateConfig rejects them with a message pointing here.
+  location?: {
+    meetingPoints?: MeetingPoint[];
+    pickupOptions: PickupOption[];
   };
-  meetingPoints?: MeetingPoint[];
-  // Plan 018 (design decision 1): absent ⇒ validateConfig injects DEFAULT_PICKUP_OPTIONS, so an
-  // existing config without this field validates and behaves identically.
-  pickupOptions?: PickupOption[];
 }
 
 export interface WebhookEndpointConfig {
@@ -210,6 +201,21 @@ const pickupOptionSchema = z.object({
   usesMeetingPoint: z.boolean(),
 });
 
+const meetingPointSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  mapsUrl: z.string().url(),
+});
+
+// Plan 023 (design decision 1): pickupOptions is required within a declared location (at least one
+// entry) — a location with no pickup options is not expressible, matching "declaring it requires
+// pickupOptions" in the plan's design decision. meetingPoints stays optional: a service can collect
+// only a custom address, with no meeting-point choice at all.
+const locationSchema = z.object({
+  meetingPoints: z.array(meetingPointSchema).min(1).optional(),
+  pickupOptions: z.array(pickupOptionSchema).min(1),
+});
+
 const serviceSchema = z.object({
   title: z.string().min(1).optional(),
   durationMin: z.number().int().positive(),
@@ -217,19 +223,20 @@ const serviceSchema = z.object({
   schedule: z.array(scheduleSchema).min(1),
   pricing: z.array(z.object({
     maxQuantity: z.number().int().positive(),
-    // A plain zod enum can't express a per-service id set, so validateService checks each row's pickup
-    // against the service's own declared option ids (default/custom when none are declared).
-    pickup: z.string().min(1),
+    // A plain zod enum can't express a per-service id set, so validateService checks each row's
+    // pickup against the service's own declared location.pickupOptions ids (or rejects it outright
+    // when the service declares no location at all).
+    pickup: z.string().min(1).optional(),
     priceMinor: z.number().int().nonnegative(),
   })).min(1),
   occupancyFor: z.custom<(quantity: number) => number>((value) => typeof value === 'function').optional(),
-  meetingPoint: z.object({ label: z.string().min(1), mapsUrl: z.string().url() }).optional(),
-  meetingPoints: z.array(z.object({
-    id: z.string().min(1),
-    label: z.string().min(1),
-    mapsUrl: z.string().url(),
-  })).min(1).optional(),
-  pickupOptions: z.array(pickupOptionSchema).min(1).optional(),
+  location: locationSchema.optional(),
+  // Plan 023 (design decision 1): the v1 top-level keys. Kept in the schema as z.unknown() (rather
+  // than omitted, which zod would just strip silently) purely so validateService below can detect
+  // their presence and reject the config with a message pointing at the new `location` path.
+  meetingPoint: z.unknown().optional(),
+  meetingPoints: z.unknown().optional(),
+  pickupOptions: z.unknown().optional(),
 });
 
 export const clientConfigSchema = z.object({
@@ -336,43 +343,87 @@ function isValidMonthDay(value: string): boolean {
   return probe.getUTCMonth() === month - 1 && probe.getUTCDate() === day;
 }
 
+// Plan 023 (design decision 1): the v1 top-level keys a service might still carry (present in the
+// zod schema as z.unknown() precisely so this can see them) — each maps onto where it now lives
+// under `location`, so the message tells the operator exactly what to move, not just that
+// something is wrong.
+const legacyLocationKeys: Array<{ key: 'meetingPoint' | 'meetingPoints' | 'pickupOptions'; movesTo: string }> = [
+  { key: 'meetingPoint', movesTo: 'location.meetingPoints' },
+  { key: 'meetingPoints', movesTo: 'location.meetingPoints' },
+  { key: 'pickupOptions', movesTo: 'location.pickupOptions' },
+];
+
 function validateService(service: ServiceConfig, serviceSlug: string, add: (path: (string | number)[], message: string) => void): void {
-  // Plan 018 (design decision 1): declared pickup option ids are the domain the pricing axis
-  // below validates against — absent pickupOptions behaves exactly like the old fixed pair.
-  const pickupOptions = service.pickupOptions ?? DEFAULT_PICKUP_OPTIONS;
-  const pickupOptionIds = pickupOptions.map((option) => option.id);
-  const pickupOptionIdSet = new Set(pickupOptionIds);
-  if (service.pickupOptions) {
-    const seenIds = new Set<string>();
-    for (const [index, option] of service.pickupOptions.entries()) {
-      if (seenIds.has(option.id)) {
-        add(['services', serviceSlug, 'pickupOptions', index, 'id'], `duplicate pickup option id (${option.id}); ids must be unique within a service`);
-      }
-      seenIds.add(option.id);
+  const raw = service as unknown as Record<string, unknown>;
+  for (const { key, movesTo } of legacyLocationKeys) {
+    if (raw[key] !== undefined) {
+      add(['services', serviceSlug, key], `'${key}' is a v1 top-level key removed in v2; declare services.${serviceSlug}.${movesTo} instead (see the location-module migration guide)`);
     }
   }
 
-  // Plan 018 (design decision 2): the duplicate-breakpoint map is keyed by declared option id
-  // instead of the old two-literal Record, so it scales to however many options a service declares.
+  const location = service.location;
+  const pickupOptions = location?.pickupOptions ?? [];
+  const pickupOptionIds = pickupOptions.map((option) => option.id);
+  const pickupOptionIdSet = new Set(pickupOptionIds);
+  if (location) {
+    const seenOptionIds = new Set<string>();
+    for (const [index, option] of pickupOptions.entries()) {
+      if (seenOptionIds.has(option.id)) {
+        add(['services', serviceSlug, 'location', 'pickupOptions', index, 'id'], `duplicate pickup option id (${option.id}); ids must be unique within a service`);
+      }
+      seenOptionIds.add(option.id);
+    }
+    // Plan 023 (design decision 1): "a pickup option with usesMeetingPoint requires meeting
+    // points" — previously guaranteed for free (every service had to declare a meeting point);
+    // now that meetingPoints is optional within location, it needs an explicit check.
+    const meetingPoints = location.meetingPoints ?? [];
+    if (pickupOptions.some((option) => option.usesMeetingPoint) && meetingPoints.length === 0) {
+      add(['services', serviceSlug, 'location', 'meetingPoints'], 'at least one pickup option has usesMeetingPoint: true, so location.meetingPoints must declare at least one point');
+    }
+    const seenPointIds = new Set<string>();
+    for (const [index, point] of meetingPoints.entries()) {
+      if (seenPointIds.has(point.id)) {
+        add(['services', serviceSlug, 'location', 'meetingPoints', index, 'id'], `duplicate meeting point id (${point.id}); ids must be unique within a service`);
+      }
+      seenPointIds.add(point.id);
+    }
+  }
+
+  // Plan 023 (design decision 2): the duplicate-breakpoint map is keyed by declared pickup id when
+  // the service is location-ful, or a single '' key (tiers only) when it's location-less — the same
+  // key convention resolvedPriceTableFor/pricingCombinations (core/pricing.ts) use.
   const pricingBreakpoints = new Map<string, Map<number, number>>();
   for (const [index, rule] of service.pricing.entries()) {
-    if (!pickupOptionIdSet.has(rule.pickup)) {
+    if (location) {
+      if (rule.pickup === undefined) {
+        add(['services', serviceSlug, 'pricing', index, 'pickup'], `service ${serviceSlug} declares a location module, so pricing rule ${index} must declare 'pickup'; valid pickup option ids: ${pickupOptionIds.join(', ')}`);
+        continue;
+      }
+      if (!pickupOptionIdSet.has(rule.pickup)) {
+        add(
+          ['services', serviceSlug, 'pricing', index, 'pickup'],
+          `service ${serviceSlug} pricing rule ${index} references undeclared pickup option ${rule.pickup}; valid pickup option ids: ${pickupOptionIds.join(', ')}`,
+        );
+        continue;
+      }
+    } else if (rule.pickup !== undefined) {
       add(
         ['services', serviceSlug, 'pricing', index, 'pickup'],
-        `service ${serviceSlug} pricing rule ${index} references undeclared pickup option ${rule.pickup}; valid pickup option ids: ${pickupOptionIds.join(', ')}`,
+        `service ${serviceSlug} has no location module (no services.${serviceSlug}.location), so pricing rule ${index} must not declare 'pickup'; remove it or add services.${serviceSlug}.location.pickupOptions`,
       );
       continue;
     }
-    let breakpoints = pricingBreakpoints.get(rule.pickup);
+    const breakpointKey = rule.pickup ?? '';
+    let breakpoints = pricingBreakpoints.get(breakpointKey);
     if (!breakpoints) {
       breakpoints = new Map();
-      pricingBreakpoints.set(rule.pickup, breakpoints);
+      pricingBreakpoints.set(breakpointKey, breakpoints);
     }
     const previousIndex = breakpoints.get(rule.maxQuantity);
     if (previousIndex !== undefined) {
       add(
         ['services', serviceSlug, 'pricing', index],
-        `service ${serviceSlug} pricing rule ${index} (pickup=${rule.pickup}, maxQuantity=${rule.maxQuantity}) duplicates and shadows rule ${previousIndex}; remove or change one breakpoint`,
+        `service ${serviceSlug} pricing rule ${index} (pickup=${rule.pickup ?? 'none'}, maxQuantity=${rule.maxQuantity}) duplicates and shadows rule ${previousIndex}; remove or change one breakpoint`,
       );
     } else {
       breakpoints.set(rule.maxQuantity, index);
@@ -394,16 +445,18 @@ function validateService(service: ServiceConfig, serviceSlug: string, add: (path
     }
   }
 
-  const highest = Math.max(...service.pricing.map((row) => row.maxQuantity));
+  const highest = Math.max(...service.pricing.map((row) => row.maxQuantity), 0);
   const quantityValues = Array.from({ length: highest }, (_, index) => index + 1);
-  // Plan 018 (design decision 2): iterates the service's declared option ids instead of the old
-  // literal ['default', 'custom'] pair, so a per-id coverage hole is reported for every option a
-  // service actually declares (Maze's four-option table gets a full coverage set per option, not
-  // just two).
+  // Plan 023 (design decision 2): coverage is checked per declared pickup id when location-ful, or
+  // once (the '' key) when location-less — mirrors the breakpoint map above.
+  const coverageKeys = location ? pickupOptionIds : [''];
   for (const quantity of quantityValues) {
-    for (const pickup of pickupOptionIds) {
-      if (!service.pricing.some((row) => row.pickup === pickup && quantity <= row.maxQuantity)) {
-        add(['services', serviceSlug, 'pricing'], `missing ${pickup} pricing for quantity=${quantity}`);
+    for (const key of coverageKeys) {
+      if (!service.pricing.some((row) => (row.pickup ?? '') === key && quantity <= row.maxQuantity)) {
+        add(
+          ['services', serviceSlug, 'pricing'],
+          location ? `missing ${key} pricing for quantity=${quantity}` : `missing pricing for quantity=${quantity}`,
+        );
       }
     }
   }
@@ -418,22 +471,6 @@ function validateService(service: ServiceConfig, serviceSlug: string, add: (path
         const message = error instanceof Error ? error.message : String(error);
         add(['services', serviceSlug, 'occupancyFor'], `occupancyFor(${quantity}) threw: ${message}`);
       }
-    }
-  }
-
-  // Plan 017 (design decision 1): exactly one of meetingPoint/meetingPoints — two sources of
-  // truth for where a service departs from would let them silently disagree.
-  if (service.meetingPoint && service.meetingPoints) {
-    add(['services', serviceSlug], 'declare either meetingPoint or meetingPoints, not both');
-  } else if (!service.meetingPoint && !service.meetingPoints) {
-    add(['services', serviceSlug], 'must declare either meetingPoint or meetingPoints');
-  } else if (service.meetingPoints) {
-    const seenIds = new Set<string>();
-    for (const [index, point] of service.meetingPoints.entries()) {
-      if (seenIds.has(point.id)) {
-        add(['services', serviceSlug, 'meetingPoints', index, 'id'], `duplicate meeting point id (${point.id}); ids must be unique within a service`);
-      }
-      seenIds.add(point.id);
     }
   }
 }
@@ -494,30 +531,6 @@ export function validateConfig(input: unknown): ClientConfig {
   }
   for (const service of Object.values(config.services)) {
     service.pricing.sort((a, b) => a.maxQuantity - b.maxQuantity);
-    // Plan 017 (design decision 1): canonicalize the meetingPoint shorthand into meetingPoints —
-    // the same canonicalize-on-validate move used above for pricing order — so every internal
-    // reader only has to handle one shape (via resolveMeetingPoint below). The exactly-one-of
-    // check above already guarantees meetingPoint is set whenever meetingPoints is absent here.
-    // Clearing the shorthand afterwards keeps validateConfig idempotent on its own output: both
-    // defineBookkitRuntime and defineCloudflareBookkitRuntime (runtime-context.ts) validate the
-    // config once at definition time and pass that already-validated config back through
-    // createBookkitContext (context.ts) on every request, which validates it again — without
-    // clearing meetingPoint here, that second pass would see both fields and reject an
-    // already-valid config as declaring both.
-    if (!service.meetingPoints) {
-      service.meetingPoints = [{ id: 'default', ...service.meetingPoint! }];
-      delete service.meetingPoint;
-    }
-    // Plan 018 (design decision 1): inject the default option pair the same way meetingPoints'
-    // shorthand is canonicalized above — a fresh copy (not the shared DEFAULT_PICKUP_OPTIONS
-    // array) so nothing downstream can mutate the module-level default. Idempotent by
-    // construction: once pickupOptions is set (either declared or injected here), re-validating
-    // the already-validated config leaves it untouched — the same idempotency constraint plan 017
-    // discovered for meetingPoints (defineBookkitRuntime validates once at definition,
-    // createBookkitContext validates again per request).
-    if (!service.pickupOptions) {
-      service.pickupOptions = DEFAULT_PICKUP_OPTIONS.map((option) => ({ ...option }));
-    }
   }
   return config;
 }
@@ -534,11 +547,10 @@ export function resolveService(config: ClientConfig, serviceSlug: string): Servi
 }
 
 // Plan 017 (design decision 1): id match wins; no id or an unknown id falls back to the first
-// declared point. Tolerant of a raw (never-validated) service — examples/smoke-site imports config
-// directly for the widget (plan 017 STOP condition 2) — by deriving the single point from the
-// meetingPoint shorthand when meetingPoints hasn't been normalized in yet.
+// declared point. Throws for a service that declares no meeting points at all — checkout only ever
+// calls this after confirming the chosen pickup option actually uses one (checkSlot/checkout.ts).
 export function resolveMeetingPoint(service: ServiceConfig, meetingPointId?: string): MeetingPoint {
-  const points = service.meetingPoints ?? (service.meetingPoint ? [{ id: 'default', ...service.meetingPoint }] : []);
+  const points = service.location?.meetingPoints ?? [];
   if (points.length === 0) {
     throw new Error('service declares no meeting points');
   }
@@ -549,40 +561,53 @@ export function resolveMeetingPoint(service: ServiceConfig, meetingPointId?: str
   return points[0]!;
 }
 
-// Plan 018 (design decision 1): tolerant of a raw (never-validated) service, the same precedent as
-// resolveMeetingPoint/meetingPointForBooking above (plan 017) — examples/smoke-site imports config
-// directly for the widget, never through validateConfig, and the runtime path validates twice
-// (defineBookkitRuntime at definition, createBookkitContext per request), so this must agree with
-// validateConfig's injected default on an un-normalized service too. Returns undefined for an id the
-// service hasn't declared (rather than falling back the way resolveMeetingPoint does) — callers
-// each have a different reaction to an undeclared id: stripe's requiresAddress gate, handlers'
-// checkout id validation (400 on undefined), and the admin/widget label fallback all need to know
-// "not declared" is a real, distinct outcome, not silently redirected to the first option.
+// Plan 023 (design decision 1): no fixed default/custom pickup-options fallback anymore — a
+// service with no `location` has no pickup options to match, and a null id (the location-less
+// booking's stored value) is never a real option either way.
 export function pickupOptionFor(service: ServiceConfig, id: string | null): PickupOption | undefined {
   if (id === null) return undefined;
-  const options = service.pickupOptions ?? DEFAULT_PICKUP_OPTIONS;
-  return options.find((option) => option.id === id);
+  return service.location?.pickupOptions.find((option) => option.id === id);
+}
+
+// Plan 023 (design decision 4): the read-surface gate every email/manage/admin/calendar render
+// site now shares. A booking has location data iff its pickupType is non-null — checkout writes
+// NULL for a location-less service, and NULL is also what any pre-023 row already carries if
+// nothing was ever collected. Once there IS a pickupType, presentation prefers the currently
+// declared option; a stale/removed id (the service was reconfigured since the booking was made)
+// falls back to what the row itself proves was collected, rather than guessing from the retired
+// fixed 'default'/'custom' pickup-options pair.
+export function pickupPresentationFor(
+  service: ServiceConfig,
+  booking: { pickupType: PickupType | null; pickupAddress: string | null; meetingPointId: string | null },
+): { requiresAddress: boolean; usesMeetingPoint: boolean } | null {
+  if (booking.pickupType === null) return null;
+  const option = pickupOptionFor(service, booking.pickupType);
+  return {
+    requiresAddress: option ? option.requiresAddress : booking.pickupAddress !== null,
+    usesMeetingPoint: option ? option.usesMeetingPoint : booking.meetingPointId !== null,
+  };
 }
 
 // Plan 017 (design decision 3): per-booking rendering resolution, shared by the manage/
 // confirmation payloads, brevo, calendar, and the admin table. Unlike resolveMeetingPoint's
 // first-point fallback (checkout-time resolution against currently-declared points), a stored id
-// that is NO LONGER declared falls back to the booking's stored label snapshot with no maps link
-// — validateConfig cannot cross-check the DB, and an operator may remove a point that existing
-// bookings still reference; sending those customers to the first (wrong) point would be worse
-// than a label without a map. A NULL id is a pre-0014 row and keeps today's behavior (first/only
-// declared point).
+// that is NO LONGER declared falls back to the booking's stored label snapshot with no maps link —
+// validateConfig cannot cross-check the DB, and an operator may remove a point (or the whole
+// location module) that existing bookings still reference. Never throws: callers gate on
+// pickupPresentationFor first, but a service that has since dropped location entirely (design
+// decision 4 — pre-v2 rows must still render) must still degrade gracefully here too.
 export function meetingPointForBooking(
   service: ServiceConfig,
   meetingPointId: string | null,
   meetingPointLabel: string | null,
 ): { label: string; mapsUrl: string | null } {
+  const points = service.location?.meetingPoints ?? [];
   if (meetingPointId) {
-    const points = service.meetingPoints ?? (service.meetingPoint ? [{ id: 'default', ...service.meetingPoint }] : []);
     const match = points.find((point) => point.id === meetingPointId);
     if (match) return { label: match.label, mapsUrl: match.mapsUrl };
     return { label: meetingPointLabel ?? meetingPointId, mapsUrl: null };
   }
-  const first = resolveMeetingPoint(service);
-  return { label: first.label, mapsUrl: first.mapsUrl };
+  const first = points[0];
+  if (first) return { label: first.label, mapsUrl: first.mapsUrl };
+  return { label: meetingPointLabel ?? '', mapsUrl: null };
 }

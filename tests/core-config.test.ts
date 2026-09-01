@@ -1,87 +1,150 @@
 import { describe, expect, it } from 'vitest';
 import type { ServiceConfig } from '../src/core/config';
-import { DEFAULT_PICKUP_OPTIONS, meetingPointForBooking, quantityValuesForService, pickupOptionFor, resolveMeetingPoint, validateConfig } from '../src/core/config';
+import { meetingPointForBooking, quantityValuesForService, pickupOptionFor, pickupPresentationFor, resolveMeetingPoint, validateConfig } from '../src/core/config';
 import { priceFor } from '../src/core/pricing';
 import { config, service } from './fixtures';
 
 describe('core config and pricing validation', () => {
-  it('accepts a valid config and infers quantity ranges from pricing breakpoints', () => {
-    // Plan 017 (design decision 1): validateConfig normalizes the meetingPoint shorthand into a
-    // canonical meetingPoints array (and clears the shorthand — see the idempotency test below),
-    // so the validated config is no longer a byte-for-byte copy of the input fixture — the
-    // fixture's shorthand is still what the config declares, though.
-    // Plan 018 (design decision 1): validateConfig also injects the default pickupOptions pair
-    // when a service declares none, same canonicalize-on-validate move.
-    const { meetingPoint: _meetingPoint, ...vintageWithoutShorthand } = service;
-    expect(validateConfig(config)).toEqual({
-      ...config,
-      services: {
-        ...config.services,
-        vintage: {
-          ...vintageWithoutShorthand,
-          meetingPoints: [{ id: 'default', ...service.meetingPoint }],
-          pickupOptions: DEFAULT_PICKUP_OPTIONS,
-        },
-      },
-    });
+  it('accepts a valid config unchanged (location already canonical: pickupOptions + meetingPoints under `location`)', () => {
+    expect(validateConfig(config)).toEqual(config);
     expect(quantityValuesForService(service)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     expect(priceFor(service, 5, 'custom')).toBe(20000);
-  });
-
-  it('normalizes the meetingPoint shorthand to a canonical meetingPoints array and clears the shorthand', () => {
-    const validated = validateConfig(config);
-    expect(validated.services.vintage?.meetingPoints).toEqual([
-      { id: 'default', label: service.meetingPoint!.label, mapsUrl: service.meetingPoint!.mapsUrl },
-    ]);
-    expect(validated.services.vintage?.meetingPoint).toBeUndefined();
   });
 
   it('stays idempotent when re-validated (defineBookkitRuntime/defineCloudflareBookkitRuntime validate once at definition and createBookkitContext validates again on every request)', () => {
     const validated = validateConfig(config);
     expect(() => validateConfig(validated)).not.toThrow();
     expect(validateConfig(validated)).toEqual(validated);
-    // Plan 018 (design decision 1): pickupOptions injection must be idempotent too — a second
-    // validateConfig pass over the already-normalized config (the same double-validate path
-    // defineBookkitRuntime/createBookkitContext exercise) neither re-injects nor drops it.
-    expect(validated.services.vintage?.pickupOptions).toEqual(DEFAULT_PICKUP_OPTIONS);
-    expect(validateConfig(validated).services.vintage?.pickupOptions).toEqual(DEFAULT_PICKUP_OPTIONS);
   });
 
-  it('rejects a service that declares both meetingPoint and meetingPoints', () => {
+  // Plan 023 (design decision 1): the v1 top-level keys are rejected with a message pointing at
+  // their new home under `location`, not silently ignored or misinterpreted.
+  it('rejects the v1 top-level meetingPoint key with a migration-pointing message', () => {
+    const invalid = {
+      ...config,
+      services: { ...config.services, vintage: { ...service, meetingPoint: { label: 'X', mapsUrl: 'https://maps.google.com/?q=x' } } },
+    };
+    expect(() => validateConfig(invalid)).toThrow(/'meetingPoint' is a v1 top-level key.*declare services\.vintage\.location\.meetingPoints/);
+  });
+
+  it('rejects the v1 top-level meetingPoints key with a migration-pointing message', () => {
+    const invalid = {
+      ...config,
+      services: { ...config.services, vintage: { ...service, meetingPoints: [{ id: 'x', label: 'X', mapsUrl: 'https://maps.google.com/?q=x' }] } },
+    };
+    expect(() => validateConfig(invalid)).toThrow(/'meetingPoints' is a v1 top-level key.*declare services\.vintage\.location\.meetingPoints/);
+  });
+
+  it('rejects the v1 top-level pickupOptions key with a migration-pointing message', () => {
+    const invalid = {
+      ...config,
+      services: { ...config.services, vintage: { ...service, pickupOptions: [{ id: 'x', requiresAddress: false, usesMeetingPoint: false }] } },
+    };
+    expect(() => validateConfig(invalid)).toThrow(/'pickupOptions' is a v1 top-level key.*declare services\.vintage\.location\.pickupOptions/);
+  });
+
+  // Plan 023 (design decision 1): absent `location` is now a fully valid, ordinary service — no
+  // pickup dimension anywhere. This is the tiers-only case core-pricing.test.ts prices.
+  it('accepts a service with no location module at all', () => {
+    const noLocation = {
+      ...config,
+      services: {
+        vintage: {
+          durationMin: service.durationMin,
+          turnaroundMin: service.turnaroundMin,
+          schedule: service.schedule,
+          pricing: [
+            { maxQuantity: 4, priceMinor: 10000 },
+            { maxQuantity: 8, priceMinor: 18000 },
+          ],
+        },
+      },
+    };
+    const validated = validateConfig(noLocation);
+    expect(validated.services.vintage?.location).toBeUndefined();
+    expect(priceFor(validated.services.vintage!, 2, null)).toBe(10000);
+  });
+
+  it('rejects a location-less service pricing rule that declares pickup (mixed config)', () => {
+    const invalid = {
+      ...config,
+      services: {
+        vintage: {
+          durationMin: service.durationMin,
+          turnaroundMin: service.turnaroundMin,
+          schedule: service.schedule,
+          pricing: [{ maxQuantity: 4, pickup: 'default', priceMinor: 10000 }],
+        },
+      },
+    };
+    expect(() => validateConfig(invalid)).toThrow(/has no location module.*pricing rule 0 must not declare 'pickup'/);
+  });
+
+  it('rejects a location-ful service pricing rule that omits pickup (mixed config)', () => {
+    const invalid = {
+      ...config,
+      services: {
+        ...config.services,
+        vintage: { ...service, pricing: [...service.pricing, { maxQuantity: 8, priceMinor: 15000 }] },
+      },
+    };
+    expect(() => validateConfig(invalid)).toThrow(/declares a location module.*pricing rule 4 must declare 'pickup'/);
+  });
+
+  it('rejects a pickup option with usesMeetingPoint: true when location declares no meeting points', () => {
     const invalid = {
       ...config,
       services: {
         ...config.services,
         vintage: {
           ...service,
-          meetingPoints: [{ id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' }],
+          location: {
+            pickupOptions: [{ id: 'meet_here', requiresAddress: false, usesMeetingPoint: true }],
+          },
+          pricing: [
+            { maxQuantity: 4, pickup: 'meet_here', priceMinor: 10000 },
+            { maxQuantity: 8, pickup: 'meet_here', priceMinor: 18000 },
+          ],
         },
       },
     };
-    expect(() => validateConfig(invalid)).toThrow(/declare either meetingPoint or meetingPoints, not both/);
+    expect(() => validateConfig(invalid)).toThrow(/usesMeetingPoint: true, so location\.meetingPoints must declare at least one point/);
   });
 
-  it('rejects a service that declares neither meetingPoint nor meetingPoints', () => {
-    const { meetingPoint: _meetingPoint, ...tourWithoutMeetingPoint } = service;
-    const invalid = {
+  it('accepts a location-ful service with pickup options but no meeting points at all (every option usesMeetingPoint: false)', () => {
+    const valid = {
       ...config,
-      services: { ...config.services, vintage: tourWithoutMeetingPoint },
+      services: {
+        ...config.services,
+        vintage: {
+          ...service,
+          location: {
+            pickupOptions: [{ id: 'hotel_pickup', requiresAddress: true, usesMeetingPoint: false }],
+          },
+          pricing: [
+            { maxQuantity: 4, pickup: 'hotel_pickup', priceMinor: 10000 },
+            { maxQuantity: 8, pickup: 'hotel_pickup', priceMinor: 18000 },
+          ],
+        },
+      },
     };
-    expect(() => validateConfig(invalid)).toThrow(/must declare either meetingPoint or meetingPoints/);
+    expect(() => validateConfig(valid)).not.toThrow();
   });
 
   it('rejects duplicate meeting point ids within a service', () => {
-    const { meetingPoint: _meetingPoint, ...tourWithoutMeetingPoint } = service;
     const invalid = {
       ...config,
       services: {
         ...config.services,
         vintage: {
-          ...tourWithoutMeetingPoint,
-          meetingPoints: [
-            { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
-            { id: 'square', label: 'The Other Square', mapsUrl: 'https://maps.google.com/?q=other' },
-          ],
+          ...service,
+          location: {
+            ...service.location,
+            meetingPoints: [
+              { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
+              { id: 'square', label: 'The Other Square', mapsUrl: 'https://maps.google.com/?q=other' },
+            ],
+          },
         },
       },
     };
@@ -89,14 +152,16 @@ describe('core config and pricing validation', () => {
   });
 
   it('rejects an empty meeting point id', () => {
-    const { meetingPoint: _meetingPoint, ...tourWithoutMeetingPoint } = service;
     const invalid = {
       ...config,
       services: {
         ...config.services,
         vintage: {
-          ...tourWithoutMeetingPoint,
-          meetingPoints: [{ id: '', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' }],
+          ...service,
+          location: {
+            ...service.location,
+            meetingPoints: [{ id: '', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' }],
+          },
         },
       },
     };
@@ -169,7 +234,7 @@ describe('core config and pricing validation', () => {
         ...config.services,
         vintage: {
           ...service,
-          pickupOptions: [{ id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true }],
+          location: { pickupOptions: [{ id: 'meeting_point', requiresAddress: false, usesMeetingPoint: false }] },
           pricing: [
             { maxQuantity: 4, pickup: 'meeting_point', priceMinor: 18000 },
             { maxQuantity: 8, pickup: 'meeting_point', priceMinor: 20000 },
@@ -190,10 +255,12 @@ describe('core config and pricing validation', () => {
         ...config.services,
         vintage: {
           ...service,
-          pickupOptions: [
-            { id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true },
-            { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
-          ],
+          location: {
+            pickupOptions: [
+              { id: 'meeting_point', requiresAddress: false, usesMeetingPoint: false },
+              { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: false },
+            ],
+          },
           pricing: [
             { maxQuantity: 4, pickup: 'meeting_point', priceMinor: 18000 },
             { maxQuantity: 8, pickup: 'meeting_point', priceMinor: 20000 },
@@ -212,10 +279,12 @@ describe('core config and pricing validation', () => {
         ...config.services,
         vintage: {
           ...service,
-          pickupOptions: [
-            { id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true },
-            { id: 'meeting_point', requiresAddress: true, usesMeetingPoint: false },
-          ],
+          location: {
+            pickupOptions: [
+              { id: 'meeting_point', requiresAddress: false, usesMeetingPoint: false },
+              { id: 'meeting_point', requiresAddress: true, usesMeetingPoint: false },
+            ],
+          },
           pricing: [
             { maxQuantity: 4, pickup: 'meeting_point', priceMinor: 10000 },
             { maxQuantity: 8, pickup: 'meeting_point', priceMinor: 18000 },
@@ -234,7 +303,7 @@ describe('core config and pricing validation', () => {
           ...config.services,
           vintage: {
             ...service,
-            pickupOptions: [{ id, requiresAddress: false, usesMeetingPoint: true }],
+            location: { pickupOptions: [{ id, requiresAddress: false, usesMeetingPoint: false }] },
             pricing: [
               { maxQuantity: 4, pickup: id, priceMinor: 10000 },
               { maxQuantity: 8, pickup: id, priceMinor: 18000 },
@@ -346,8 +415,7 @@ describe('resolveMeetingPoint', () => {
     { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
     { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
   ];
-  const { meetingPoint: _meetingPoint, ...tourBase } = service;
-  const multiPointTour: ServiceConfig = { ...tourBase, meetingPoints: points };
+  const multiPointTour: ServiceConfig = { ...service, location: { ...service.location!, meetingPoints: points } };
 
   it('returns the point matching the given id', () => {
     expect(resolveMeetingPoint(multiPointTour, 'station')).toEqual(points[1]);
@@ -361,12 +429,9 @@ describe('resolveMeetingPoint', () => {
     expect(resolveMeetingPoint(multiPointTour)).toEqual(points[0]);
   });
 
-  // Plan 017 STOP condition 2: examples/smoke-site imports config directly for the widget,
-  // never through validateConfig — resolveMeetingPoint must still work off the raw shorthand.
-  it('derives the single point from the meetingPoint shorthand on a raw, un-normalized service', () => {
-    const expected = { id: 'default', ...service.meetingPoint };
-    expect(resolveMeetingPoint(service)).toEqual(expected);
-    expect(resolveMeetingPoint(service, 'anything')).toEqual(expected);
+  it('throws for a service that declares no meeting points at all', () => {
+    const noPoints: ServiceConfig = { ...service, location: { pickupOptions: [{ id: 'hotel', requiresAddress: true, usesMeetingPoint: false }] } };
+    expect(() => resolveMeetingPoint(noPoints)).toThrow(/declares no meeting points/);
   });
 });
 
@@ -375,8 +440,7 @@ describe('meetingPointForBooking', () => {
     { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
     { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
   ];
-  const { meetingPoint: _meetingPoint, ...tourBase } = service;
-  const multiPointTour: ServiceConfig = { ...tourBase, meetingPoints: points };
+  const multiPointTour: ServiceConfig = { ...service, location: { ...service.location!, meetingPoints: points } };
 
   it('resolves a declared id to its live label and maps link', () => {
     expect(meetingPointForBooking(multiPointTour, 'station', 'stale stored label')).toEqual({
@@ -410,6 +474,14 @@ describe('meetingPointForBooking', () => {
       mapsUrl: 'https://maps.google.com/?q=square',
     });
   });
+
+  // Plan 023 (design decision 4): a service that has since dropped its location module entirely
+  // must still degrade gracefully (never throw) for a pre-v2 row that still references one.
+  it('degrades gracefully, never throwing, for a service that no longer declares any location at all', () => {
+    const { location: _location, ...noLocation }: ServiceConfig = service;
+    expect(meetingPointForBooking(noLocation, null, null)).toEqual({ label: '', mapsUrl: null });
+    expect(meetingPointForBooking(noLocation, 'square', 'Stored Label')).toEqual({ label: 'Stored Label', mapsUrl: null });
+  });
 });
 
 describe('pickupOptionFor', () => {
@@ -426,12 +498,32 @@ describe('pickupOptionFor', () => {
     expect(pickupOptionFor(vintage, 'unknown')).toBeUndefined();
   });
 
-  // Plan 018 (design decision 1): tolerant of a raw (never-validated) service, same precedent as
-  // resolveMeetingPoint (plan 017 STOP condition 2) — examples/smoke-site imports config directly
-  // for the widget, never through validateConfig.
-  it('derives the default pair on a raw service without pickupOptions', () => {
-    expect(pickupOptionFor(service, 'default')).toEqual({ id: 'default', requiresAddress: false, usesMeetingPoint: true });
-    expect(pickupOptionFor(service, 'custom')).toEqual({ id: 'custom', requiresAddress: true, usesMeetingPoint: false });
-    expect(pickupOptionFor(service, 'unknown')).toBeUndefined();
+  it('returns undefined for a null id (the location-less booking) even on a location-ful service', () => {
+    expect(pickupOptionFor(service, null)).toBeUndefined();
+  });
+
+  it('returns undefined for any id on a service with no location module', () => {
+    const { location: _location, ...noLocation }: ServiceConfig = service;
+    expect(pickupOptionFor(noLocation, 'default')).toBeUndefined();
+  });
+});
+
+describe('pickupPresentationFor', () => {
+  it('returns null for a location-less booking (pickupType null)', () => {
+    expect(pickupPresentationFor(service, { pickupType: null, pickupAddress: null, meetingPointId: null })).toBeNull();
+  });
+
+  it('resolves a declared option\'s own flags', () => {
+    expect(pickupPresentationFor(service, { pickupType: 'custom', pickupAddress: 'Hotel Mundial', meetingPointId: null }))
+      .toEqual({ requiresAddress: true, usesMeetingPoint: false });
+  });
+
+  // Plan 023 (design decision 4): a stale/removed id falls back to what the row itself proves was
+  // collected, not a guess pinned to the retired default/custom pair.
+  it('falls back to the row\'s own evidence for a since-removed pickup option id', () => {
+    expect(pickupPresentationFor(service, { pickupType: 'no-longer-declared', pickupAddress: 'Hotel Mundial', meetingPointId: null }))
+      .toEqual({ requiresAddress: true, usesMeetingPoint: false });
+    expect(pickupPresentationFor(service, { pickupType: 'no-longer-declared', pickupAddress: null, meetingPointId: 'square' }))
+      .toEqual({ requiresAddress: false, usesMeetingPoint: true });
   });
 });

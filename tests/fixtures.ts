@@ -12,7 +12,16 @@ export const service: ServiceConfig = {
     { maxQuantity: 8, pickup: 'custom', priceMinor: 20000 },
   ],
   occupancyFor: (quantity) => quantity > 4 ? 2 : 1,
-  meetingPoint: { label: 'Praça do Comércio', mapsUrl: 'https://maps.google.com/?q=Praca+do+Comercio' },
+  // Plan 023 (design decision 1): the v1 top-level meetingPoint shorthand and injected
+  // DEFAULT_PICKUP_OPTIONS pair, inlined explicitly under `location` — every existing test that
+  // books 'default'/'custom' keeps working unchanged.
+  location: {
+    meetingPoints: [{ id: 'default', label: 'Praça do Comércio', mapsUrl: 'https://maps.google.com/?q=Praca+do+Comercio' }],
+    pickupOptions: [
+      { id: 'default', requiresAddress: false, usesMeetingPoint: true },
+      { id: 'custom', requiresAddress: true, usesMeetingPoint: false },
+    ],
+  },
 };
 
 export const config: ClientConfig = {
