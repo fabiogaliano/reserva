@@ -4,15 +4,11 @@
 your own Cloudflare account on Workers + D1.**
 
 Reserva plugs into an Astro 7 site: it injects a complete booking API and the operator pages
-behind it, and stores everything in your own D1 database. No Postgres to provision, no SaaS in
-the request path, no commission per booking.
+behind it, and stores everything in your own D1 database.
 
 The library owns availability, holds, payment-session correctness, cancellation and reschedule
 rules, refunds, calendar and email side effects, retries, reconciliation, and the admin
 dashboard. It does not own your customer-facing funnel: you build that on the public API.
-
-**Agents:** [`AGENTS.md`](./AGENTS.md) is the compact integration contract. It ships inside the
-package.
 
 ## What it books
 
@@ -22,7 +18,7 @@ reservations, court/room/venue hire, general-admission events, and appointments 
 interchangeable staff. [`examples/configs/`](./examples/configs) has complete configs for
 several of these shapes.
 
-Out of scope, because each would change the core model:
+Out of scope:
 
 - **Multi-day or date-range rentals.** Interval math, not slots.
 - **Per-seat assigned ticketing.** Individually addressable units, not a capacity counter.
