@@ -168,51 +168,59 @@ function migrationsErrorMessage(missing: readonly string[]): string {
 // happens to reuse one of bookkit's filenames without ever running bookkit's SQL — d1_migrations
 // only records names, never checksums or content. This is cheap, read-only detection (not a fix:
 // a fully namespaced ledger is deferred, see docs/plans/008), spanning the migrations that
-// introduced bookkit's current shape (0008-0015): required `bookings` columns, migration 0011's
-// domain CHECKs and partial unique payment-intent index (minus the pickup_type CHECK, removed by
-// 0015 — see bookingsSchemaPresent below), plus the `side_effect_operations` table/index and its
-// current `kind`/`status` CHECKs. The 0011 artifacts matter independently: later side-effect table
-// rebuilds can make 0012/0013 look current even when 0011 was skipped.
+// introduced bookkit's current shape: required `bookings` columns, migration 0018's v2 domain
+// CHECKs and partial unique payment-ref index, plus the `side_effect_operations` table/index and
+// its current identity/`status` CHECKs.
 const REQUIRED_BOOKINGS_COLUMNS = [
   'occupancy_units', // 0008
   'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at', // 0009
   'reschedule_transition_version', // 0010
   'meeting_point_id', // 0014
+  'currency', 'metadata', // 0018
+] as const;
+
+// Plan 022 (design decision 1): the v2 rebuild renamed or dropped these. A consumer migration that
+// collides with '0018_v2_domain_rename.sql' without running its SQL keeps them, and every repo
+// query would then fail against a schema the ledger reports as current.
+// Pre-v2 column names on purpose: this list is the "the old shape is still here" probe, so it must
+// not follow the rename.
+const REMOVED_BOOKINGS_COLUMNS = [
+  'tour_slug', 'people', 'price_cents', 'stripe_session_id', 'stripe_payment_intent',
+  'calendar_synced', 'email_synced', 'tourflow_synced', 'reminded_at', 'review_requested_at',
 ] as const;
 
 async function bookingsSchemaPresent(db: MigrationsQueryable): Promise<boolean> {
   const [columnsResult, schemaResult] = await Promise.all([
     db.prepare('PRAGMA table_info(bookings)').all<{ name: string }>(),
-    db.prepare(`SELECT type, name, sql FROM sqlite_master WHERE name IN ('bookings', 'idx_bookings_payment_intent')`)
+    db.prepare(`SELECT type, name, sql FROM sqlite_master WHERE name IN ('bookings', 'idx_bookings_payment_ref')`)
       .all<{ type: string; name: string; sql: string | null }>(),
   ]);
   const columns = new Set(columnsResult.results.map((row) => row.name));
   if (!REQUIRED_BOOKINGS_COLUMNS.every((column) => columns.has(column))) return false;
+  if (REMOVED_BOOKINGS_COLUMNS.some((column) => columns.has(column))) return false;
 
   const table = schemaResult.results.find((row) => row.type === 'table' && row.name === 'bookings');
-  const paymentIndex = schemaResult.results.find((row) => row.type === 'index' && row.name === 'idx_bookings_payment_intent');
+  const paymentIndex = schemaResult.results.find((row) => row.type === 'index' && row.name === 'idx_bookings_payment_ref');
   const tableSql = table?.sql?.toLowerCase().replace(/\s+/g, '') ?? '';
   const indexSql = paymentIndex?.sql?.toLowerCase().replace(/\s+/g, '') ?? '';
   const requiredChecks = [
-    'check(people>0)',
+    'check(quantity>0)',
     'check(ends_at>starts_at)',
-    'check(price_cents>=0)',
+    'check(price_minor>=0)',
     "check(statusin('hold','confirmed','cancelled','expired','no_show'))",
-    'check(calendar_syncedin(0,1))',
-    'check(email_syncedin(0,1))',
     "check(cancelled_byin('customer','operator')orcancelled_byisnull)",
   ];
-  const paymentIndexSql = 'createuniqueindexidx_bookings_payment_intentonbookings(stripe_payment_intent)wherestripe_payment_intentisnotnull';
+  const paymentIndexSql = 'createuniqueindexidx_bookings_payment_refonbookings(payment_ref)wherepayment_refisnotnull';
   // Plan 018 (design decision 5): pickup_type's domain moved from a fixed SQL CHECK to
-  // config-declared option ids (TourConfig.pickupOptions), which the DB can't enumerate — migration
-  // 0015 rebuilds `bookings` with that CHECK removed. So instead of a positive requiredChecks entry,
-  // this is a NEGATIVE assertion: the schema must NOT still carry the old CHECK. A consumer whose
-  // own migration collides with bookkit's '0015_pickup_options.sql' filename (without ever running
-  // its SQL) keeps the pre-0015 CHECK, which then rejects any non-default/custom pickup id a tour
-  // declares — exactly the collision this fingerprint exists to catch, same reasoning as plan 016
-  // needing to detect an un-rebuilt side_effect_operations 'abandoned' status.
+  // config-declared option ids (ServiceConfig.pickupOptions), which the DB can't enumerate.
+  // Plan 022: it also stopped being NOT NULL, so a service with no location module can store NULL
+  // instead of a sentinel id. Both are NEGATIVE assertions — a colliding consumer migration leaves
+  // the old CHECK (rejecting every declared id) or the old NOT NULL (rejecting the location-less
+  // row), and neither shows up as a missing column.
   const hasPickupTypeCheck = tableSql.includes("check(pickup_typein(");
-  return requiredChecks.every((check) => tableSql.includes(check)) && !hasPickupTypeCheck && indexSql.includes(paymentIndexSql);
+  const hasPickupTypeNotNull = tableSql.includes('pickup_typetextnotnull');
+  return requiredChecks.every((check) => tableSql.includes(check))
+    && !hasPickupTypeCheck && !hasPickupTypeNotNull && indexSql.includes(paymentIndexSql);
 }
 
 async function sideEffectOperationsSchemaPresent(db: MigrationsQueryable): Promise<boolean> {
@@ -305,12 +313,28 @@ export async function checkBookkitMigrationsApplied(
   if (!(await bookkitSchemaFingerprintPresent(db))) throw new Error(migrationCollisionErrorMessage());
 }
 
+// Plan 022 (design decision 7): a payment provider's own limits (its supported currencies and
+// locales, how long it lets a checkout session stay open) are checked ONCE, before the deployment
+// serves anything — not per request, and never as a surprise on the first real checkout. When
+// `providers` is a plain object the check runs while the runtime definition is being built; when it
+// is a factory (it needs the Worker's env), the first context creation is the earliest the provider
+// exists, so it runs there and is remembered.
+function validatePaymentProvider(providers: BookkitProviders, config: ClientConfig): void {
+  providers.payments.validateConfig?.(config);
+}
+
 export function defineBookkitRuntime(options: BookkitRuntimeFactoryOptions): BookkitRuntimeDefinition {
   const config = validateConfig(options.config);
+  let providerValidated = false;
   return {
     config,
     async createContext(input) {
-      return createBookkitContext(await options.createContext({ ...input, config }));
+      const contextInput = await options.createContext({ ...input, config });
+      if (!providerValidated) {
+        validatePaymentProvider(contextInput.providers, config);
+        providerValidated = true;
+      }
+      return createBookkitContext(contextInput);
     },
   };
 }
@@ -336,6 +360,8 @@ export function defineCloudflareBookkitRuntime<TEnv extends object>(
   const config = validateConfig(configInput);
   validateBookingEventHooks(options.hooks ?? []);
   const migrationsTable = requireMigrationsTableName(options.migrationsTable ?? D1_MIGRATIONS_TABLE);
+  if (typeof options.providers !== 'function') validatePaymentProvider(options.providers, config);
+  let providerValidated = typeof options.providers !== 'function';
   const secretBindings = new Set<string>(options.secretBindings ?? [OPERATOR_SECRET_NAME]);
   const confirmationLocks = new Map<string, Promise<void>>();
   // Memoized across every request this isolate handles: the schema check must run once at
@@ -357,6 +383,10 @@ export function defineCloudflareBookkitRuntime<TEnv extends object>(
       });
       await migrationsChecked;
       const providers = typeof options.providers === 'function' ? await options.providers(bindings) : options.providers;
+      if (!providerValidated) {
+        validatePaymentProvider(providers, config);
+        providerValidated = true;
+      }
       const cache = options.cache === null ? undefined : options.cache
         ? resolveBinding(options.cache, bindings, 'BOOKKIT_CACHE')
         : getCache(locals);

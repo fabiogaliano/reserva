@@ -20,4 +20,5 @@ export const BOOKKIT_MIGRATIONS = [
   '0015_pickup_options.sql',
   '0016_operational_reconciliation.sql',
   '0017_side_effect_operation_identity.sql',
+  '0018_v2_domain_rename.sql',
 ] as const;
