@@ -1,6 +1,6 @@
 # Reserva — integration contract
 
-The edge-native booking engine for fixed-capacity time slots — self-hosted on Cloudflare Workers + D1, no per-booking fees.
+A booking engine for fixed-capacity time slots, built as an Astro integration — runs in your own Cloudflare account on Workers + D1, no per-booking fees.
 
 This file ships inside the `@reservajs/astro` package. It is the contract a coding
 agent needs to wire Reserva into a site without reading the library's source: what to

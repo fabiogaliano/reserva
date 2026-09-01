@@ -1,7 +1,7 @@
 {
   "name": "@reservajs/stripe",
   "version": "0.2.0",
-  "description": "The edge-native booking engine for fixed-capacity time slots — self-hosted on Cloudflare Workers + D1, no per-booking fees.",
+  "description": "Stripe Checkout adapter for Reserva, the Astro booking engine for Cloudflare Workers + D1.",
   "publishConfig": {
     "access": "public",
     "provenance": true

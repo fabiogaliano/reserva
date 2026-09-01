@@ -1,40 +1,35 @@
 # Reserva
 
-**The edge-native booking engine for fixed-capacity time slots — self-hosted on Cloudflare Workers + D1, no per-booking fees.**
+**A booking engine for fixed-capacity time slots, built as an Astro integration — runs in
+your own Cloudflare account on Workers + D1.**
 
-Reserva is an Astro 7 integration that turns a site into a booking system: it injects a
-complete booking API and the operator surfaces behind it, and stores everything in your own
-D1 database. There is no Postgres to provision, no SaaS in the request path, and no
-commission on a booking. You own the data and you own the customer-facing UI.
+Reserva plugs into an Astro 7 site: it injects a complete booking API and the operator pages
+behind it, and stores everything in your own D1 database. No Postgres to provision, no SaaS in
+the request path, no commission per booking.
 
-It is headless by design. The library owns availability, holds, payment-session
-correctness, cancellation and reschedule rules, refunds, calendar and email side effects,
-retries, reconciliation, and the operator dashboard. It does not own your funnel.
+The library owns availability, holds, payment-session correctness, cancellation and reschedule
+rules, refunds, calendar and email side effects, retries, reconciliation, and the admin
+dashboard. It does not own your customer-facing funnel: you build that on the public API.
 
-**Agents:** [`AGENTS.md`](./AGENTS.md) is the compact integration contract, and it ships
-inside the package.
+**Agents:** [`AGENTS.md`](./AGENTS.md) is the compact integration contract. It ships inside the
+package.
 
 ## What it books
 
 One service, a fixed-duration slot, a headcount against a capacity counter, hold → pay →
-confirm, cancel/reschedule with cutoffs. That aggregate covers, without redesign:
-tours and activities, classes, workshops and group fitness, restaurant reservations,
-court/room/venue hire, general-admission events, and appointments with interchangeable
-staff.
+confirm, cancel/reschedule with cutoffs. That covers tours, classes, workshops, restaurant
+reservations, court/room/venue hire, general-admission events, and appointments with
+interchangeable staff. [`examples/configs/`](./examples/configs) has complete configs for
+several of these shapes.
 
-The running example throughout this README is a tuk-tuk tour operator in Lisbon: a small
-fleet, hourly departures from a meeting point, three seats per vehicle, paid up front.
-
-### Non-goals
-
-Reserva deliberately does not do these, and adding them would change the core model:
+Out of scope, because each would change the core model:
 
 - **Multi-day or date-range rentals.** Interval math, not slots.
 - **Per-seat assigned ticketing.** Individually addressable units, not a capacity counter.
 - **Per-staff-member scheduling.** A per-staff overlap model, not one shared capacity.
-- **A customer-facing booking funnel.** The package ships no widget. Build the funnel you
-  want on the public API — [`examples/smoke-site`](./examples/smoke-site) is a complete
-  reference consumer, widget included, that you can copy.
+- **A booking widget.** Build the funnel you want on the public API;
+  [`examples/smoke-site`](./examples/smoke-site) is a complete reference consumer, widget
+  included.
 
 ## Quickstart
 
@@ -123,65 +118,52 @@ bunx reserva-migrate --local   # local dev database
 bunx reserva-migrate           # remote
 ```
 
-That is a working deployment: the booking API, the confirmation page, the manage page, and
-the admin dashboard are mounted. Both `output: 'server'` and `output: 'static'` work — the
-injected routes declare `prerender: false`, so with the Cloudflare adapter present a static
-site renders them on demand without changing its own pages.
+That is a working deployment: the booking API, the confirmation page, the manage page, and the
+admin dashboard are mounted. Both `output: 'server'` and `output: 'static'` work — the injected
+routes declare `prerender: false`, so a static site renders them on demand.
 
-`runtimeEntrypoint` is required because Astro serializes integration configuration during
-its build pipeline, and provider instances contain functions, sockets, and secret-backed
-clients that cannot be serialized safely into a deployed Worker. Reserva validates the
-public config during `astro:config:setup` and resolves the user-owned runtime module through
-`virtual:reserva/runtime` to construct providers at request time.
+`runtimeEntrypoint` is a separate module because Astro serializes integration configuration
+during its build, and provider instances (functions, sockets, secret-backed clients) cannot be
+serialized into a deployed Worker. Reserva validates the public config at build time and loads
+your runtime module at request time through `virtual:reserva/runtime`.
 
 ## Runtime module
 
 `defineCloudflareReservaRuntime()` reads production bindings from `cloudflare:workers`
-(`import { env } from 'cloudflare:workers'`). This is the current `@astrojs/cloudflare` v14
-runtime API. `locals.env` is accepted only as an explicit test-harness seam. The environment
-stays inside the context factory and is never returned as page data.
+(`import { env } from 'cloudflare:workers'`), the current `@astrojs/cloudflare` v14 API. Older
+tutorials use `locals.runtime.env`; on v14 that throws. `locals.env` is accepted only as a
+test-harness seam.
 
-Older tutorials point to `locals.runtime.env`. On `@astrojs/cloudflare` v14, `locals.runtime`
-still exists, but access to `.env` (or `.cf`, `.caches`, `.ctx`) throws:
-`Astro.locals.runtime.env has been removed in Astro v6. Use 'import { env } from "cloudflare:workers"' instead.`
-Do not use it.
+The default D1 binding is `RESERVA_DB` and the default Cache binding is `RESERVA_CACHE`, with
+a fallback to `caches.default`; set `cache: null` to disable caching. Provider factories run
+once per request.
 
-The default D1 binding name is `RESERVA_DB`. The default Cache binding is `RESERVA_CACHE`,
-with a fallback to `caches.default` when the Worker provides it. Set `cache: null` to disable
-caching. Provider factories run once per request: construct payment, calendar, email, and ops
-clients there, or in a user-owned module that receives the current bindings.
-
-Do not put payment keys, service-account material, Access secrets, webhook signing keys, or
-the operator shared secret in `ClientConfig`, in checked-in examples, or in component props.
-Store them in Worker secrets and expose only their names through `secretBindings`.
+Keep payment keys, service-account material, webhook signing keys, and the operator secret out
+of `ClientConfig`, checked-in examples, and component props. Store them as Worker secrets and
+expose only their names through `secretBindings`.
 
 ### Typed environment bindings
 
-Run `wrangler types` to generate `worker-configuration.d.ts` from your `wrangler.jsonc`
-bindings, wired as a `pretypes`/`predev` script so it stays current:
+Run `wrangler types` to generate `worker-configuration.d.ts` from your `wrangler.jsonc`,
+wired as a `pretypes`/`predev` script so it stays current:
 
 ```json
 { "scripts": { "pretypes": "wrangler types", "predev": "wrangler types" } }
 ```
 
-Pass the generated `Env` as the type argument, as in the quickstart. This types the whole
-runtime factory: the `providers` and `logger` factories receive a typed `env` instead of
-`Record<string, unknown>`, and the `db`, `cache`, and `secretBindings` binding-name options
-are constrained to `keyof Env`, so a misspelled binding is a compile error instead of a
-runtime "is not configured" error. The type argument is optional and everything behaves
-identically without it, minus those checks.
+Pass the generated `Env` as the type argument, as in the quickstart. The `providers` and
+`logger` factories then receive a typed `env`, and the `db`, `cache`, and `secretBindings`
+options are constrained to `keyof Env`, so a misspelled binding is a compile error. The type
+argument is optional.
 
-`reserva()` also calls `injectTypes()` during `astro:config:done`. After `astro sync` (which
-`astro dev`/`astro build` run implicitly), `virtual:reserva/runtime` — the module the
-injected routes import — is typed as `ReservaRuntime`, exported from
-`@reservajs/astro/runtime`.
+`reserva()` also calls `injectTypes()`, so after `astro sync` (run implicitly by `astro dev`
+and `astro build`) the `virtual:reserva/runtime` module is typed as `ReservaRuntime`.
 
 ### Secrets and `astro:env`
 
 `reserva()` declares its providers' secret names in Astro's
 [`env.schema`](https://docs.astro.build/en/guides/environment-variables/#type-safe-environment-variables)
-during `astro:config:setup`. Each entry is
-`envField.string({ context: 'server', access: 'secret', optional: true })`:
+as `envField.string({ context: 'server', access: 'secret', optional: true })`:
 
 | Declared name | Provider | Set with |
 | --- | --- | --- |
@@ -193,23 +175,19 @@ during `astro:config:setup`. Each entry is
 | `GOOGLE_SA_PRIVATE_KEY` | `providers/calendar-google` | `wrangler secret put GOOGLE_SA_PRIVATE_KEY` |
 | `GOOGLE_IMPERSONATE_EMAIL` | `providers/calendar-google` | `wrangler secret put GOOGLE_IMPERSONATE_EMAIL` |
 
-Every entry is `optional` because providers are opt-in: a payments-only integration must not
-fail env validation over a missing Brevo key. The declaration gives typed access and
-build-time visibility through `astro:env/server`; it does not change how Reserva reads
-secrets at runtime. Providers still receive credentials as constructor options from your
-runtime module, and the runtime's `secrets()` accessor still exposes only the names listed in
-`secretBindings`. If a custom provider reads a secret through `secrets()`, add its name to
-`secretBindings` even when it also appears above.
-
-Pass `reserva({ ..., envSchema: false })` to skip this contribution, for example when your
-project already declares its own `env.schema` for these names.
+Every entry is optional because providers are opt-in: a payments-only setup must not fail env
+validation over a missing Brevo key. The declaration gives typed access through
+`astro:env/server`; providers still receive credentials as constructor options from your
+runtime module, and `secrets()` still exposes only the names in `secretBindings`. Pass
+`envSchema: false` to skip the contribution if your project declares its own schema for these
+names.
 
 ## Payments
 
 The payment port is a documented interface (`PaymentProvider`, exported from
-`@reservajs/astro/core`), not a Stripe binding. `@reservajs/astro` has no `stripe`
-dependency at all: install [`@reservajs/stripe`](./packages/stripe) for Stripe Checkout, or
-implement the port against another processor.
+`@reservajs/astro/core`), not a Stripe binding. `@reservajs/astro` has no `stripe` dependency:
+install [`@reservajs/stripe`](./packages/stripe) for Stripe Checkout, or implement the port
+against another processor.
 
 ```ts
 import { stripe } from '@reservajs/stripe';
@@ -221,10 +199,9 @@ payments: stripe({
 });
 ```
 
-Stripe is the only officially tested adapter, and its own limits (checkout locales, the
-24-hour session cap against `booking.holdMinutes`, presentable currencies) are validated by
-the adapter when the runtime definition initializes, not by Reserva's core config. Point a
-Stripe webhook endpoint at `/api/booking/webhooks/payment` and subscribe to
+Stripe is the only officially tested adapter. Its own limits (checkout locales, the 24-hour
+session cap against `booking.holdMinutes`, presentable currencies) are validated by the
+adapter at startup. Point a Stripe webhook at `/api/booking/webhooks/payment` and subscribe to
 `checkout.session.completed`, `checkout.session.expired`, `charge.refunded`, and
 `charge.dispute.created`.
 
@@ -232,23 +209,17 @@ Prices always come from Reserva's pricing module. An adapter never computes one.
 
 ## Other providers
 
-Import each provider from its own narrow subpath:
-`@reservajs/astro/providers/email-brevo`, `@reservajs/astro/providers/email-none`,
-`@reservajs/astro/providers/calendar-google`. Avoid the bare `@reservajs/astro/providers`
-barrel: it re-exports every provider from one module, so importing it pulls every bundled
-provider's SDK into the module graph together. The narrow subpaths import only the one
-provider you construct. The package's `sideEffects` field marks only `**/*.css` as
-side-effectful, so a bundler can still tree-shake the barrel — the subpaths just make that
-guarantee structural instead of dependent on dead-code elimination.
+Import each provider from its own subpath: `@reservajs/astro/providers/email-brevo`,
+`@reservajs/astro/providers/email-none`, `@reservajs/astro/providers/calendar-google`. Avoid
+the bare `@reservajs/astro/providers` barrel — it re-exports every provider, so importing it
+pulls every bundled provider's SDK into the module graph. The narrow subpaths import only the
+provider you construct.
 
 ## Email templates
 
-The email template renderer is provider-agnostic: `@reservajs/astro/email` exports exactly
-`renderDefaultEmail`, `EmailRenderer`, `EmailTemplateContext`, and `RenderedEmail`
-(`{ subject, html, text? }`). Copy catalogs, the HTML model builder, and branding defaults
-stay internal — the subpath exists so a non-Brevo transport can reuse the maintained template
-without depending on Brevo at all. There is no separate opt-in: configuring an email provider
-is the only switch. Three levels, each layering on the previous:
+`@reservajs/astro/email` exports the provider-agnostic renderer: `renderDefaultEmail`,
+`EmailRenderer`, `EmailTemplateContext`, and `RenderedEmail` (`{ subject, html, text? }`).
+Configuring an email provider is the only switch; three levels, each layering on the previous:
 
 1. **Choose a provider, get the default template.** `brevoEmail({ apiKey })` renders every
    booking event with `renderDefaultEmail` automatically.
@@ -258,12 +229,10 @@ is the only switch. Three levels, each layering on the previous:
    const email = brevoEmail({ apiKey: env.BREVO_API_KEY });
    ```
 
-2. **Branding and copy overrides.** `config.emails.branding` restyles the HTML shell (logo,
-   colors); `config.emails.messages` overrides any copy key per locale, merged over the
-   bundled English/European Portuguese catalogs the same way `config.ui.messages` overrides
-   rendered copy. `EmailCopyKey` (exported from the package root) types an override map at
-   compile time. For example, the library's neutral `refund.timing` default ("Refunds are
-   returned to your original payment method.") becomes a concrete promise:
+2. **Branding and copy overrides.** `config.emails.branding` restyles the HTML shell;
+   `config.emails.messages` overrides any copy key per locale, merged over the bundled
+   English/European Portuguese catalogs. `EmailCopyKey` (from the package root) types the
+   override map.
 
    ```ts
    emails: {
@@ -277,7 +246,7 @@ is the only switch. Three levels, each layering on the previous:
 
 3. **Full custom renderer.** `renderEmail: EmailRenderer` on a provider replaces the whole
    template. Because `renderDefaultEmail` is public, a custom renderer can override one event
-   and delegate the rest to the shipped default instead of copying it:
+   and delegate the rest:
 
    ```ts
    import { renderDefaultEmail } from '@reservajs/astro/email';
@@ -295,87 +264,54 @@ is the only switch. Three levels, each layering on the previous:
    ```
 
    A non-Brevo transport (Resend, Postmark, SES, …) implements `EmailProvider`
-   (`send`/`sendToRecipient`) and imports `renderDefaultEmail` the same way — the renderer has
-   no Brevo dependency. Both methods receive the deployment's resolved route config
-   (`ReservaResolvedRouteConfig`) as their last argument: use `paths.managePage` to build
-   manage links, and skip them entirely when `groups.manage` is false.
+   (`send`/`sendToRecipient`) and imports `renderDefaultEmail` the same way. Both methods
+   receive the resolved route config (`ReservaResolvedRouteConfig`) as their last argument:
+   use `paths.managePage` to build manage links, and skip them when `groups.manage` is false.
 
 ## Configuration
 
 `reserva()` runs `validateConfig()` during `astro:config:setup`. Build-time failures include
-malformed schedules, invalid IANA timezones, `holdMinutes < 35`, and pricing gaps for any
-bookable quantity and pickup combination. Every error names the key path, the violated rule,
-and the fix; the thrown Zod error surfaces those paths through Astro.
+malformed schedules, invalid timezones, `holdMinutes < 35`, and pricing gaps for any bookable
+quantity and pickup combination. Every error names the key path, the violated rule, and the
+fix.
 
-`AGENTS.md` carries the full key-by-key outline. `examples/client-config.ts` is a complete
-config, and `examples/smoke-site/src/config.ts` exercises every optional module.
+`AGENTS.md` has the full key-by-key outline. [`examples/configs/`](./examples/configs) has
+complete configs per business shape, and `examples/smoke-site/src/config.ts` exercises every
+optional module.
 
 ### Services and pricing
 
 A service declares its slot geometry (`durationMin`, `turnaroundMin`, `schedule`) and a
 `pricing` array of `{ maxQuantity, pickup?, priceMinor }` rows. `priceMinor` is in the minor
 unit of `business.currency` (4500 = €45.00). The first row whose `maxQuantity` covers the
-requested quantity wins, so tiers are expressed as breakpoints, not per-person maths.
+requested quantity wins, so tiers are breakpoints, not per-person maths.
 
-`occupancyFor(quantity)` maps a booking's headcount onto capacity units when they are not
-1:1 — a tuk-tuk operator whose vehicles seat three but who sends two vehicles for a party of
-five needs it; most deployments do not.
+`occupancyFor(quantity)` maps a headcount onto capacity units when they are not 1:1; most
+deployments do not need it.
 
 ### The location module
 
-`location` is optional per service. Omitting it means the service has no pickup or
-meeting-point axis anywhere — not in pricing, checkout, emails, the admin dashboard, or the
-calendar description. Declaring it requires at least one `pickupOptions` entry;
-`meetingPoints` within it is optional (a service can collect only a custom address).
+`location` is optional per service. Omit it and the service has no pickup or meeting-point
+axis anywhere — not in pricing, checkout, emails, the admin dashboard, or the calendar
+description. Declaring it requires at least one `pickupOptions` entry; `meetingPoints` is
+optional within it.
 
 `pickupOptions` is the axis `pricing[].pickup` prices against. Each entry declares
-`requiresAddress` (gates the payment adapter's custom address field) and `usesMeetingPoint`
-(whether the customer also picks a declared point).
+`requiresAddress` (whether the payment adapter collects an address) and `usesMeetingPoint`
+(whether the customer also picks a declared point). Declare one row per combination when
+pricing is not additive — [`examples/configs/tour-operator.ts`](./examples/configs/tour-operator.ts)
+prices four pickup combinations outright because "+20 € per custom leg" cannot express the
++30 € charged for both.
 
-Declare more than two options when pricing genuinely is not additive. The tuk-tuk operator's
-two-hour riverside route prices four combinations outright, because a flat "+20 € custom
-drop-off, +20 € custom pick-up" surcharge model cannot express choosing both: +20 and +20 sum
-to +40, not the +30 actually charged.
-
-| `pickupOptions` entry | `requiresAddress` | `usesMeetingPoint` | Price (up to 4 people) |
-| --- | --- | --- | --- |
-| `meeting_point` — "Meeting point" | `false` | `true` | 180 € |
-| `custom_dropoff` — "Custom drop-off" | `true` | `true` | 200 € |
-| `custom_pickup` — "Custom pick-up" | `true` | `false` | 200 € |
-| `custom_both` — "Custom pick-up & drop-off" | `true` | `false` | 210 € |
-
-```ts
-location: {
-  meetingPoints: [
-    { id: 'dock', label: 'Riverside dock', mapsUrl: 'https://maps.google.com/?q=Riverside+dock' },
-    { id: 'gate', label: 'North gate', mapsUrl: 'https://maps.google.com/?q=North+gate' },
-  ],
-  pickupOptions: [
-    { id: 'meeting_point', label: 'Meeting point', requiresAddress: false, usesMeetingPoint: true },
-    { id: 'custom_dropoff', label: 'Custom drop-off', requiresAddress: true, usesMeetingPoint: true },
-    { id: 'custom_pickup', label: 'Custom pick-up', requiresAddress: true, usesMeetingPoint: false },
-    { id: 'custom_both', label: 'Custom pick-up & drop-off', requiresAddress: true, usesMeetingPoint: false },
-  ],
-},
-pricing: [
-  { maxQuantity: 4, pickup: 'meeting_point', priceMinor: 18000 },
-  { maxQuantity: 4, pickup: 'custom_dropoff', priceMinor: 20000 },
-  { maxQuantity: 4, pickup: 'custom_pickup', priceMinor: 20000 },
-  { maxQuantity: 4, pickup: 'custom_both', priceMinor: 21000 },
-],
-```
-
-Validation requires every `pricing` row's `pickup` to reference a declared id, and reports a
-coverage hole for every declared id missing a breakpoint at any quantity up to the service's
-highest `maxQuantity`. At checkout, the submitted `pickupType` is validated against the same
-declared ids (400 `validation_failed` naming the valid ones), and must be omitted entirely
-for a service with no location module. `PickupType` is `string`, not a fixed union: ids are
-per-service configuration.
+Validation requires every `pricing` row's `pickup` to reference a declared id and reports
+coverage holes. At checkout, `pickupType` is validated against the declared ids and must be
+omitted for a service with no location module. `PickupType` is `string`, not a fixed union:
+ids are per-service configuration.
 
 ### Declared metadata
 
-`metadataFields` is the extension point for anything business-specific that is neither core
-nor location — dietary notes, skill level, a table preference:
+`metadataFields` carries anything business-specific that is neither core nor location —
+dietary notes, skill level, a table preference:
 
 ```ts
 metadataFields: [
@@ -385,19 +321,18 @@ metadataFields: [
 ],
 ```
 
-Four types (`text`, `number`, `boolean`, `select`) and three modifiers (`options`,
-`required`, `maxLength`) are the entire language. There are deliberately no conditional
-fields, cross-field rules, or custom validators. Declared fields are published by the catalog
-endpoint with locale-resolved labels, validated at checkout, stored on the booking, and
-rendered on the manage page and the admin dashboard. A service that declares none rejects a
-non-empty `metadata` body.
+Four types (`text`, `number`, `boolean`, `select`) and three modifiers (`options`, `required`,
+`maxLength`) are the entire language; there are no conditional fields, cross-field rules, or
+custom validators. Declared fields are published by the catalog endpoint, validated at
+checkout, stored on the booking, and rendered on the manage page and admin dashboard. A
+service that declares none rejects a non-empty `metadata` body.
 
 ## Booking events
 
 Every booking occurrence leaves the library through one of two subscribers, both delivered
-from the same durable outbox. The emittable set is exported as a runtime value,
-`BOOKING_EVENTS` from `@reservajs/astro/core`, and every subscriber's `events` filter is
-validated against it at startup (an unknown name fails the build with the whole valid list):
+from the same durable outbox. The emittable set is exported as `BOOKING_EVENTS` from
+`@reservajs/astro/core`, and every subscriber's `events` filter is validated against it at
+startup:
 
 <!-- generated:booking-events -->
 `booking.confirmed`, `booking.cancelled_by_customer`, `booking.cancelled_by_operator`, `booking.rescheduled`, `booking.no_show`, `payment.dispute_created`
@@ -421,7 +356,7 @@ export default defineCloudflareReservaRuntime<Env>(config, {
 event. `handler(event, booking, { id, occurredAt, config })` receives the wire booking
 projection and the envelope id below.
 
-**Outbound webhooks** are declared in config, because their URL is ordinary configuration and
+**Outbound webhooks** are declared in config, because the URL is ordinary configuration and
 only the signing key is secret:
 
 ```ts
@@ -429,8 +364,7 @@ webhooks: [{ name: 'partner', url: 'https://partner.example/reserva', secretBind
 ```
 
 `secretBinding` names a Worker secret that must also be listed in the runtime's
-`secretBindings`. A webhook is always durable. A hook and a webhook may share a bare name;
-outbox rows tell them apart by their family.
+`secretBindings`. A webhook is always durable.
 
 ### Envelope and signature
 
@@ -450,32 +384,30 @@ Each delivery POSTs this JSON body:
 }
 ```
 
-The envelope is serialized once, in the same atomic write as the booking mutation that
-produced it, and **every retry sends those exact bytes** — same `id`, same `occurredAt`, same
-booking snapshot. It is the historical record of what occurred, not a cache of the booking's
-current state. Delivery order is not guaranteed: deduplicate on `id`, and compare
-`occurredAt`/`booking.updatedAt` before replacing newer local state.
+The envelope is serialized once, in the same atomic write as the booking mutation, and every
+retry sends those exact bytes. It is the historical record of what occurred, not a cache of
+the booking's current state. Delivery order is not guaranteed: deduplicate on `id`, and
+compare `occurredAt`/`booking.updatedAt` before replacing newer local state.
 
 Requests are signed per the [Standard Webhooks](https://www.standardwebhooks.com/)
-specification, so any spec-compliant verifier works unchanged:
+specification, so any spec-compliant verifier works:
 
 | Header | Value |
 | --- | --- |
 | `webhook-id` | the envelope's `id` |
-| `webhook-timestamp` | Unix seconds, **fresh for each attempt** (receivers enforce a 300-second tolerance) |
+| `webhook-timestamp` | Unix seconds, fresh for each attempt (receivers enforce a 300-second tolerance) |
 | `webhook-signature` | `v1,<base64 HMAC-SHA256>` over `<webhook-id>.<webhook-timestamp>.<body>` |
 
-The signing key is the secret named by `secretBinding`, in the spec's `whsec_<base64>` form.
-Generate one with `openssl rand -base64 32` and store it as `whsec_<that value>`. A non-2xx
-response, or a network failure, is a failed attempt: the row is retried with the usual backoff
-and abandoned after the attempt cap or a permanent (4xx) response, surfacing as an operational
-incident in the admin dashboard. `AGENTS.md` carries a verification snippet using the
-`standardwebhooks` package.
+The signing key is the secret named by `secretBinding`, in the spec's `whsec_<base64>` form
+(`openssl rand -base64 32`, stored as `whsec_<that value>`). A non-2xx response or network
+failure is retried with backoff and abandoned after the attempt cap or a permanent (4xx)
+response, surfacing as an incident in the admin dashboard. `AGENTS.md` has a verification
+snippet using the `standardwebhooks` package.
 
 ## Injected routes
 
 Every route is server-only with `prerender: false`. The canonical list is generated from the
-package's own route manifest:
+package's route manifest:
 
 <!-- generated:routes -->
 | Route id | Path | Group |
@@ -500,109 +432,72 @@ package's own route manifest:
 | `confirmationPage` | `/booking-confirmation` | customer |
 <!-- /generated:routes -->
 
-What the non-obvious ones answer:
+The non-obvious ones:
 
 - `GET /api/booking/availability?service=&quantity=&from=&to=` — bookable slots per day. Each
-  slot carries `remaining: number | null`: the number of further bookings of the requested
-  quantity that still fit, published only while it is at or below
-  `config.booking.limitedThreshold` and `null` above it (exact capacity is
-  deployment-private). The range may span up to `config.booking.maxHorizonDays`; there is no
-  separate request-size cap, so a consumer never chunks.
-- `POST /api/booking/quote` — body `{ serviceSlug, quantity, pickup?, locale? }` →
-  `{ priceMinor, currency }`. The same validation and pricing path checkout charges on, with
-  nothing stored: a consumer that shows a price never computes one. `pickup` is required
-  exactly where checkout requires `pickupType`, and rejected for a service with no location
-  module.
-- `GET /api/booking/catalog?locale=` — the rendering contract: everything needed to build a
-  booking flow before a date is chosen. Per service: `slug`, locale-resolved `title`,
-  `durationMin`, `location` (declared meeting points and pickup options, or `null`), and
-  `metadataFields` (locale-resolved labels, `[]` for none). Top level: `locales`, `currency`,
-  `maxHorizonDays`. Never exposes turnaround, raw schedules, pricing rules, capacity, or
-  occupancy — money is the quote endpoint's answer, and times and scarcity are availability's.
-  Projected from the merged config, so an admin settings change shows up on the next read;
-  `Cache-Control: public, max-age=60` and nothing cached library-side.
-- `POST /api/booking/checkout` — body
+  slot's `remaining: number | null` is published only at or below
+  `config.booking.limitedThreshold` and `null` above it (exact capacity is deployment-private).
+  The range may span up to `maxHorizonDays`; a consumer never chunks requests.
+- `POST /api/booking/quote` — `{ serviceSlug, quantity, pickup?, locale? }` →
+  `{ priceMinor, currency }`. The same validation and pricing path checkout charges on: a
+  consumer that shows a price never computes one.
+- `GET /api/booking/catalog?locale=` — everything needed to build a booking flow before a date
+  is chosen: per service `slug`, locale-resolved `title`, `durationMin`, `location` (or
+  `null`), `metadataFields` (`[]` for none); top-level `locales`, `currency`,
+  `maxHorizonDays`. Never exposes schedules, pricing rules, capacity, or occupancy.
+  `Cache-Control: public, max-age=60`.
+- `POST /api/booking/checkout` —
   `{ serviceSlug, start, quantity, pickupType?, locale, meetingPointId?, metadata? }`.
-  `meetingPointId` is optional on the wire, but the *resolved* id is always what gets stored.
-  It is required (400 `validation_failed`) when the service declares more than one meeting
-  point and the selected pickup option uses one; when supplied it must match a declared id. A
-  single-point service, or a request that omits it where it isn't required, resolves to the
-  service's first declared point.
-- `GET /api/booking/ops/health` — one read-only answer to "is this deployment healthy and
-  current?", behind the same admin auth as every operator route (403 otherwise): `schema`
-  (migrations applied and fingerprint match), `outbox` (pending/abandoned side-effect counts
-  grouped by family, plus the oldest pending age in seconds), `incidents` (open count). It
-  takes no parameters, returns no booking data, and mutates nothing.
-- `GET /booking/manage?token=` — the only route in the `manage` group; see `config.routes`.
+  `meetingPointId` is required when the service declares more than one meeting point and the
+  selected pickup option uses one; a single-point service resolves to its first declared
+  point.
+- `GET /api/booking/ops/health` — read-only deployment health behind admin auth: `schema`
+  (migrations and fingerprint), `outbox` (pending/abandoned counts by family, oldest pending
+  age), `incidents` (open count).
 - `GET /booking/assets/reserva.css` and `/booking/assets/reserva.js` — static first-party
   assets for the server-rendered pages; see "Components, theming, and UI copy".
 
 ### Wire types and error codes
 
-Every request and response shape above is exported as a type from `@reservajs/astro/core` —
-`AvailabilityResponse`, `QuoteRequest`/`QuoteResponse`, `CheckoutRequest`/`CheckoutResponse`,
+Every request and response shape is exported as a type from `@reservajs/astro/core`
+(`AvailabilityResponse`, `QuoteRequest`/`QuoteResponse`, `CheckoutRequest`/`CheckoutResponse`,
 `CatalogResponse`, `StatusResponse`, `ManageResponse`, `ManageActionResponses`,
-`OpsHealthResponse`, and `ApiErrorEnvelope`. The handlers are typed against these same
-declarations, so a consumer importing them cannot drift from what the deployment actually
-sends. Collections are always present and empty (`[]`, `{}`) and optional modules are always
-present and `null`, so nothing needs to branch on key presence.
+`OpsHealthResponse`, `ApiErrorEnvelope`); the handlers are typed against the same
+declarations. Collections are always present and empty (`[]`, `{}`) and optional modules are
+always present and `null`, so nothing branches on key presence.
 
-Every failure, at every status code, is `{ error: { code, message } }`. The `code` is one of a
-closed set exported as a runtime value — `API_ERROR_CODES`, with the derived `ApiErrorCode`
-union and an `isApiErrorCode` guard — so a consumer can switch exhaustively over failure
-causes and enumerate them without scraping this document:
+Every failure is `{ error: { code, message } }`. The `code` is one of a closed set exported as
+`API_ERROR_CODES` (with the `ApiErrorCode` union and `isApiErrorCode` guard):
 
 <!-- generated:error-codes -->
 `validation_failed`, `method_not_allowed`, `payload_too_large`, `forbidden`, `not_found`, `past_cutoff`, `invalid_transition`, `slot_unavailable`, `too_many_holds`, `payment_session_mismatch`, `payment_amount_mismatch`, `invalid_payment_signature`, `duplicate_payment_ref`, `confirmation_in_progress`, `refund_conflict`, `refund_payment_ref_missing`, `refund_failed`, `calendar_unavailable`, `internal_error`
 <!-- /generated:error-codes -->
 
-`validation_failed` messages always name the offending field and the rule that rejected it.
+`validation_failed` messages name the offending field and the rule that rejected it.
 
-Locale-bearing endpoints (availability, quote, checkout, catalog, manage) negotiate the
-requested tag against `config.locales.supported` by longest prefix match, so a client sending
-`pt` gets `pt-BR` where that is what the deployment supports, and an unsupported tag falls
-back to `locales.default`.
+Locale-bearing endpoints negotiate the requested tag against `config.locales.supported` by
+longest prefix match; an unsupported tag falls back to `locales.default`.
 
-The endpoint files are intentionally thin: they import `virtual:reserva/runtime`, create a
-request-scoped context, and delegate to the handler exports. Admin and operator authorization
-runs through the `adminAuth` port in the runtime context — Cloudflare Access is the default
-implementation; see "Admin access and booking tokens".
+Rate limiting for the public routes belongs at the Cloudflare edge (WAF or rate-limiting
+rules), not inside this library.
 
-Configure IP rate limiting for the public routes at the Cloudflare edge (WAF or rate-limiting
-rules), not inside this library. Reserva normalizes calendar occupancy caching, but edge
-enforcement is where client IP policy belongs.
-
-Reserva mounts its routes with `injectRoute()`, never through a project-level `src/fetch.ts`,
-so nothing here needs that file. Note that Astro 7's `fetchFile` config option defaults to
-`'fetch'`: Astro treats `src/fetch.ts` (or `.js`/`.mjs`/`.mts`) in your project as a custom
-fetch-handler entrypoint. Do not use that filename for unrelated code in a project that also
-uses Reserva.
+One Astro 7 footgun: `src/fetch.ts` in your project is treated as a custom fetch-handler
+entrypoint (the `fetchFile` option defaults to `'fetch'`). Reserva does not need that file;
+do not use the name for unrelated code.
 
 ### Moving and disabling routes
 
-One `reserva()` option changes where routes are mounted, and one `config` field turns route
-groups off. Neither renames an individual route:
-
-- `routePrefix?: string` (a `reserva()` option — a mounting detail, not shared with the
-  runtime) — prepended to every injected route pattern, and to every URL Reserva's components
-  and server-rendered pages produce: `ManageBooking`/`AdminDashboard` form actions, and the
-  manage/admin pages' own links and redirects. The value is normalized (a leading slash is
-  added, a trailing slash stripped, `''` and `'/'` mean no prefix) and validated with Zod the
-  same way `config` is: whitespace, `..` traversal, URL syntax characters (`:`, `?`, `#`,
-  `\`), and repeated slashes throw at `astro:config:setup` instead of building a broken route.
+- `routePrefix?: string` (a `reserva()` option) — prepended to every injected route pattern
+  and to every URL Reserva's components and pages produce. Normalized and validated at
+  `astro:config:setup` (whitespace, `..`, URL syntax characters, and repeated slashes throw).
+  With a prefix set, the payment webhook URL is `<site><prefix>/api/booking/webhooks/payment`.
 - `config.routes?: { admin?: boolean; ops?: boolean; manage?: boolean }` — turns off the admin
-  dashboard route, the operator routes, and/or Reserva's own server-rendered
-  `/booking/manage` page. All three default to `true`. `manage` controls that one page and
-  nothing else: `GET /api/booking/manage`, `POST /api/booking/cancel` and
-  `POST /api/booking/reschedule` stay mounted, which is what lets a consumer replace the page
-  with its own UI on the same endpoints. The public booking API is load-bearing and cannot be
-  disabled. A disabled group is never injected, and no library-generated link points at it:
-  with `manage: false` the built-in emails omit their manage buttons, the admin dashboard
-  renders its existing "unavailable" state instead of a dead link, and `<ManageBooking />`
-  throws unless given an explicit `endpoint` — the same remediating error `<AdminDashboard />`
-  throws with `admin: false`. It lives on the shared `config` object because both `reserva()`
-  and `defineCloudflareReservaRuntime` read it: the integration decides which routes to
-  inject, and the runtime factory decides whether an `adminAuth` strategy is required.
+  dashboard, the operator routes, and/or the built-in `/booking/manage` page. All default to
+  `true`. `manage` controls only that page: the manage/cancel/reschedule API endpoints stay
+  mounted, so a consumer can replace the page with its own UI. The public booking API cannot
+  be disabled. A disabled group is never injected and no generated link points at it: with
+  `manage: false` emails omit their manage buttons and `<ManageBooking />` throws unless given
+  an explicit `endpoint`.
 
 ```ts
 // reserva.config.ts (shared by reserva() and the runtime entrypoint)
@@ -619,322 +514,223 @@ reserva({
 })
 ```
 
-With `routePrefix` set, the payment provider's dashboard webhook URL is
-`<site><prefix>/api/booking/webhooks/payment`, not the unprefixed path above.
-
 ## Components, theming, and UI copy
 
-The package includes two embeddable components — `ManageBooking.astro` (token entry form for
-the manage page) and `AdminDashboard.astro` (quick day-override form linking to the full
-admin page) — plus the full pages (confirmation, `/booking/manage`, `/booking/admin`) that the
-injected routes server-render.
+The package includes two embeddable components — `ManageBooking.astro` (token entry form) and
+`AdminDashboard.astro` (quick day-override form) — plus the full pages (confirmation,
+`/booking/manage`, `/booking/admin`) the injected routes server-render.
 
-There is no customer-facing booking widget in the package: the funnel is yours. The
-reference implementation lives at
-`examples/smoke-site/src/components/BookingWidget.astro` — a real consumer of the public API,
-exercised by this repository's end-to-end suite. It takes no copies of facts the deployment
-already owns: it reads pickup options and meeting points from `GET /api/booking/catalog`, and
-every price it shows comes from `POST /api/booking/quote`, the endpoint checkout charges on,
-so the amount displayed can never disagree with the amount charged. Copy it and change it
-freely.
+The reference booking widget lives at `examples/smoke-site/src/components/BookingWidget.astro`,
+a real consumer of the public API exercised by this repository's e2e suite: it reads pickup
+options from `/api/booking/catalog` and every price from `/api/booking/quote`, so the amount
+displayed can never disagree with the amount charged. Copy it and change it freely.
 
 `AdminDashboard.astro` reads the request at render time (it runs the same `adminAuth` check as
-the built-in admin page and mints its own CSRF token from the resulting identity, so its form
-works once `RESERVA_CSRF_SECRET` is configured): render it only on a server-rendered page
-(`export const prerender = false`, or `output: 'server'`) behind whichever admin auth strategy
-this deployment configures. When the auth check denies the request it renders a short notice
-instead of a form whose POST could only 403.
+the admin page and mints its own CSRF token), so render it only on a server-rendered page
+behind your admin auth. When the check denies the request it renders a notice instead of a
+form whose POST could only 403.
 
 **Theming.** All styling flows through `--bk-*` custom properties (light defaults plus
-`prefers-color-scheme: dark` overrides). Rebrand by overriding the tokens in site CSS — for
-example `.bk-embed, :root { --bk-accent: #d9a406; }` — without touching Reserva. The
-components' styles ship as `dist/ui/components.css`, imported from their frontmatter so the
-consumer's Astro build bundles them once per page. The server-rendered pages never pass
-through a consumer build, so their stylesheet is served from `/booking/assets/reserva.css`
-instead; `/booking/assets/reserva.js` serves the calendar web component (a vendored
-self-contained [cally](https://wicky.nillia.ms/cally/) bundle) plus the manage page's
-progressive reschedule enhancer. Pages reference both assets through content-hashed URLs
-(`?v=…`), so the routes send immutable year-long cache headers and any Reserva change busts
-browser caches automatically.
+`prefers-color-scheme: dark`). Rebrand by overriding tokens in site CSS, for example
+`.bk-embed, :root { --bk-accent: #d9a406; }`. Component styles ship as
+`dist/ui/components.css`, bundled by the consumer's build; the server-rendered pages load
+their stylesheet from `/booking/assets/reserva.css` and their calendar/enhancer script from
+`/booking/assets/reserva.js`, both referenced through content-hashed URLs with year-long
+cache headers.
 
-**CSP.** Nothing Reserva renders is inline: the pages use only external same-origin assets
-(`style-src 'self'`/`script-src 'self'` suffice), forms are plain POSTs, and the
-pending-payment confirmation state polls via meta refresh, not script. The manage page's
-reschedule keeps a native `datetime-local` input as the no-JS fallback; the served enhancer
-upgrades it to a calendar plus availability-backed slot picker.
+**CSP.** Nothing Reserva renders is inline: external same-origin assets only
+(`style-src 'self'`/`script-src 'self'` suffice), plain POST forms, and meta-refresh polling
+on the pending-payment state. The manage page's reschedule keeps a native `datetime-local`
+input as the no-JS fallback.
 
-**UI copy and locales.** English and European Portuguese (`pt-PT`) are bundled, with English
-used when no locale is supplied (a generic library must not default to Portuguese). Every
-rendered string uses the typed key set exported from `@reservajs/astro/ui`
-(`defaultMessages`, `resolveMessages`, `formatMessage`, `ReservaMessageKey`). Add partial
-per-locale overrides under `config.ui.messages` and/or pass a `messages` prop to the
-components; resolution layers region-specific copy over its base language, deployment
-overrides over bundled copy, and English as the final fallback. Customer pages pick their
-locale from the booking (`booking.locale`), a `?locale=` query parameter, or
-`config.locales.default`. The admin dashboard and settings use `config.admin.locale` when set
-and otherwise `config.locales.default`; an explicit `locale` prop still takes precedence for
-`AdminDashboard.astro`. This keeps an operator UI such as `pt-PT` separate from English
-customer pages and emails. Dates and prices are formatted with `Intl` in the business
-timezone.
+**UI copy and locales.** English and European Portuguese are bundled; English is the default.
+Every rendered string uses the typed key set from `@reservajs/astro/ui` (`defaultMessages`,
+`resolveMessages`, `formatMessage`, `ReservaMessageKey`). Override per locale under
+`config.ui.messages` or via a `messages` prop; resolution layers region-specific copy over its
+base language, deployment overrides over bundled copy, and English as the final fallback.
+Customer pages pick their locale from the booking, a `?locale=` parameter, or
+`locales.default`; the admin surfaces use `config.admin.locale` when set. Dates and prices are
+formatted with `Intl` in the business timezone.
 
 ## Local interactive demo
 
-The fixture in `examples/smoke-site` runs the complete booking flow locally through Astro dev,
-Cloudflare workerd, and persistent local D1. Its payment, calendar, email, booking-event hook,
-refund, and admin-auth providers are simulations. It never contacts an external service.
+`examples/smoke-site` runs the complete booking flow locally through Astro dev, Cloudflare
+workerd, and persistent local D1, with simulated payment/calendar/email/admin-auth providers.
+It never contacts an external service.
 
 ```bash
 cd examples/smoke-site
 bun run demo
 ```
 
-Open <http://localhost:4321>. Create a booking, follow the simulated checkout confirmation,
-inspect `/booking/admin`, and use its manage links for operator actions. The dev-server logs
-also print customer and operator management URLs. See `examples/smoke-site/README.md` for the
-route list and reset instructions.
+Open <http://localhost:4321>. Create a booking, follow the simulated checkout, inspect
+`/booking/admin`. The dev-server logs print customer and operator management URLs. See
+`examples/smoke-site/README.md` for the route list and reset instructions.
 
 ## Admin access and booking tokens
 
-Two unrelated mechanisms control who can do what, and they are easy to conflate.
+Two unrelated mechanisms control who can do what.
 
 **The admin dashboard and operator routes are gated by the `adminAuth` port.**
-`defineCloudflareReservaRuntime` takes an
-`adminAuth?: (request, context) => Promise<{ subject: string; email?: string } | null>`
-option: `null` means unauthorized (the built-in 403), any other value is the caller's
-identity, used as-is (no re-derivation, no implicit trust upgrade). Every admin/ops handler
-reaches it through one shared gate, so it is fail-closed by construction: an absent
-`adminAuth`, one that resolves `null`, and one that throws all deny the same way. When either
-`config.routes.admin` or `config.routes.ops` is enabled (both default `true`),
-`defineCloudflareReservaRuntime` validates synchronously — before returning a usable runtime —
-that exactly one admin-auth path is configured; it throws describing the fix if neither or
-both `config.admin.access` and `adminAuth` are set.
+`defineCloudflareReservaRuntime` takes
+`adminAuth?: (request, context) => Promise<{ subject: string; email?: string } | null>`:
+`null` means 403, any other value is the caller's identity, used as-is. Every admin/ops
+handler goes through one shared gate, so it is fail-closed by construction: an absent
+`adminAuth`, one that resolves `null`, and one that throws all deny the same way. While the
+admin or ops routes are enabled, the runtime validates at startup that exactly one admin-auth
+path is configured — either `config.admin.access` or a custom `adminAuth`, not neither, not
+both.
 
 Cloudflare Access is the default implementation, wired automatically when
-`config.admin.access = { teamDomain, aud }` is set and no custom `adminAuth` is passed — you
-never call `cloudflareAccessAdminAuth` yourself. Access is Cloudflare's edge login wall (part
-of Zero Trust; the free tier covers up to 50 users). It is *not* configured by deploying — it
-is a one-time manual setup: in the Cloudflare dashboard, create a Zero Trust team (its name
-becomes `https://<team>.cloudflareaccess.com`, your `config.admin.access.teamDomain`), add a
-self-hosted Access application covering your production hostname's `booking/admin` path,
-attach a policy (an email allowlist with one-time-PIN or Google login), and copy the
-application's Audience (AUD) tag into `config.admin.access.aud`. After login, Cloudflare
-forwards requests with a signed `Cf-Access-Jwt-Assertion` header; Reserva independently
-verifies its signature (against the team's JWKS), issuer, and audience, so a request that
-reaches the Worker without passing Access — a raw `workers.dev` URL, a misconfigured route —
-still gets 403. The check is fail-closed: no verifier, or a verifier error, means 403.
+`config.admin.access = { teamDomain, aud }` is set. Access is a one-time manual setup in the
+Cloudflare dashboard: create a Zero Trust team (its name becomes
+`https://<team>.cloudflareaccess.com`, your `teamDomain`), add a self-hosted Access
+application covering your production hostname's `booking/admin` path, attach a policy, and
+copy the application's Audience tag into `aud`. Reserva independently verifies the forwarded
+`Cf-Access-Jwt-Assertion` header (signature against the team's JWKS, issuer, audience), so a
+request that reaches the Worker without passing Access — a raw `workers.dev` URL, a
+misconfigured route — still gets 403.
 
-Access can only protect hostnames proxied through Cloudflare, and it cannot protect
-`localhost`. For local development, either omit `config.admin.access` and pass a custom
-`adminAuth` (the smoke site does this: `adminAuth: async () => ({ subject: '' })`,
-unconditionally — real deployments must gate an equivalent bypass behind a `.dev.vars`-only
-variable, since an unconditional bypass in shipped code is a fail-open hole), or keep Access
-configured and accept that the admin page is unreachable from `localhost`.
+Access cannot protect `localhost`. For local development, omit `config.admin.access` and pass
+a custom `adminAuth` (the smoke site does this). A real deployment must gate any such bypass
+behind a `.dev.vars`-only variable; an unconditional bypass in shipped code is a fail-open
+hole.
 
-**Admin mutations also carry same-origin CSRF protection, independent of `adminAuth`.**
-`adminAuth` answers WHO is calling; it says nothing about WHERE the request came from, so a
-cross-origin page could auto-submit a mutating form and ride an authenticated operator's live
-session unless something else checks origin. Reserva enforces two independent layers before
-any admin action runs: a Fetch-Metadata/Origin check (`Sec-Fetch-Site` must be `same-origin`
-when present — `same-site` is deliberately rejected too, not just `cross-site`, since an
-Access cookie is commonly scoped to the whole apex domain; otherwise `Origin` must match the
-request's own origin; a POST with neither header is rejected), and a signed, expiring CSRF
-token embedded as a hidden field in every rendered admin form and required on every admin
-POST.
+**Admin mutations also carry same-origin CSRF protection.** `adminAuth` answers who is
+calling, not where the request came from, so Reserva enforces two independent layers before
+any admin action: a Fetch-Metadata/Origin check (`Sec-Fetch-Site` must be `same-origin` —
+`same-site` is rejected too, since an Access cookie is commonly scoped to the whole apex —
+otherwise `Origin` must match; a POST with neither header is rejected), and a signed, expiring
+CSRF token in every rendered admin form.
 
-**The token layer requires a `RESERVA_CSRF_SECRET` Worker secret to be active.** The token is
-HMAC'd from that secret, mixed with a domain separator derived from `config.admin`: the Access
-application's Audience tag when Access is configured, else the literal string `'custom'` —
-purely for cheap extra separation between deployments sharing one secret, never used as key
-material on its own (an Access `aud` travels inside every Access-issued JWT and is not
-secret). If `RESERVA_CSRF_SECRET` is not configured, there is no other secret fit to sign
-with, so the token layer goes offline instead of emitting a token that only looks signed:
-minting returns no token, verification stops checking, and admin POSTs are protected by the
-Fetch-Metadata/Origin layer alone. Set it (`wrangler secret put RESERVA_CSRF_SECRET`, added to
-`secretBindings` like any other secret) for the token layer to actually run. The token binds
-to the identity `adminAuth` resolved; a custom `adminAuth` returning an anonymous
-`{ subject: '' }` makes the token interchangeable across every authorized caller instead of
-scoped to one — still fully protected by the origin check and the real secret, just not
-per-user. **This is belt and braces, not a substitute for configuring the Access application
-cookie itself**: in the Zero Trust dashboard, set the application's cookie SameSite to `Lax`
-or `Strict` (Cloudflare's platform default is `None`, which a Worker cannot override) — that
-remains the primary defense, since it stops the cookie from being sent cross-site at all.
+The token layer needs a `RESERVA_CSRF_SECRET` Worker secret
+(`wrangler secret put RESERVA_CSRF_SECRET`, listed in `secretBindings`). Without it there is
+nothing fit to sign with, so the token layer goes offline rather than emitting a token that
+only looks signed, and admin POSTs rely on the origin check alone. The token binds to the
+identity `adminAuth` resolved. This is belt and braces, not a substitute for the Access
+application's own cookie settings: in the Zero Trust dashboard set the cookie's SameSite to
+`Lax` or `Strict` (Cloudflare's default is `None`, which a Worker cannot override).
 
-**The manage page is gated by per-booking bearer tokens.** Every booking gets two independent
-random tokens at creation: a `cancelToken` (sent to the customer in their confirmation email
-link) and an `operatorToken` (shown only in the `adminAuth`-protected admin page's manage
-links). Both open `/booking/manage?token=…`; the page resolves the token kind and renders the
-matching role. The customer role can cancel and reschedule only within the configured cutoffs
-and never controls refunds; the operator role can cancel with a refund choice, reschedule at
-any time while confirmed, and mark no-shows after the start time. The tokens are pure bearer
-credentials — whoever holds one has that role for that booking — which is safe because
-operator tokens are only ever displayed behind the admin auth gate, and a customer token's
-blast radius is its own booking. The admin page intentionally never renders cancel tokens.
+**The manage page is gated by per-booking bearer tokens.** Every booking gets two random
+tokens at creation: a `cancelToken` (in the customer's confirmation email link) and an
+`operatorToken` (shown only in the admin page's manage links). Both open
+`/booking/manage?token=…`; the page resolves the token kind and renders the matching role.
+The customer role cancels and reschedules within the configured cutoffs and never controls
+refunds; the operator role cancels with a refund choice, reschedules any confirmed booking,
+and marks no-shows. A customer token's blast radius is its own booking; the admin page never
+renders cancel tokens.
 
-**Tokens are hashed at rest, expire, and (the customer one) get revoked on cancellation.**
-Only `SHA-256(token)` is stored for lookup — a raw D1 dump no longer yields a usable
-credential. Both tokens get a shared expiry (default 60 days past the booking's end; override
-with `config.booking.tokenExpiryDays`), and cancelling or no-showing a booking revokes its
-customer token. The operator token is deliberately left alone, since an operator may still
-need to resume or verify a stuck refund against an already-cancelled booking. An expired or
-revoked token is denied with the exact same 403 an unknown token gets, so a caller can never
-distinguish the two. Because confirmation/cancellation/reschedule emails and the admin
-dashboard's manage-link column render a booking's link from a fresh D1 read, a one-way hash
-alone cannot regenerate a working link — set an optional **`RESERVA_TOKEN_ENC_KEY`** Worker
-secret (added to `secretBindings` like any other) to also AES-GCM-encrypt each token,
-decryptable only with that secret, so those reads can still produce a working link. Without
-it, hashing, expiry, revocation, and lookup all still work exactly as described; only link
-*regeneration* degrades (links are omitted rather than rendered dead).
-**`RESERVA_TOKEN_ENC_KEY` must be set *before* a booking is created for that booking's link to
-ever be regenerable** — a row written without a key configured never has its plaintext at rest
-again, so there is nothing left to encrypt after the fact.
+**Tokens are hashed at rest, expire, and the customer one is revoked on cancellation.** Only
+`SHA-256(token)` is stored, both tokens share an expiry (default 60 days past the booking's
+end; `config.booking.tokenExpiryDays` overrides), and an expired or revoked token gets the
+exact same 403 as an unknown one. The operator token survives cancellation so a stuck refund
+can still be resumed. Because emails and the admin page render manage links from a fresh D1
+read, a hash alone cannot regenerate a link: set an optional `RESERVA_TOKEN_ENC_KEY` Worker
+secret to also AES-GCM-encrypt each token so those reads can produce working links. Without
+it, everything still works except link regeneration (links are omitted rather than rendered
+dead). The key must be set before a booking is created for that booking's link to ever be
+regenerable — a row written without it never has its plaintext at rest again.
 
 ## Why not Astro sessions?
 
-Reserva deliberately does not use Astro's `session` API for booking-flow state (holds,
-checkout progress, confirmation). That state lives in D1, keyed by booking id and the tokens
-on the booking, and is read back through `context.repo` rather than a session store. Astro
-sessions on Cloudflare are backed by Workers KV, and KV is only eventually consistent across
-regions: Cloudflare documents propagation of up to about 60 seconds. A customer can create a
-hold in one region and complete checkout redirected through another. Within that window, the
-session can read stale pre-hold or pre-payment state. Booking correctness — not overselling a
-slot, not losing a paid hold — needs strong read-after-write consistency. D1 provides it;
-KV-backed sessions do not.
+Booking-flow state (holds, checkout progress, confirmation) lives in D1, not Astro's
+`session` API. Astro sessions on Cloudflare are backed by Workers KV, which is only
+eventually consistent across regions (up to about 60 seconds). A customer can create a hold
+in one region and complete checkout through another; booking correctness needs
+read-after-write consistency, which D1 provides and KV-backed sessions do not.
 
 ## Cloudflare setup runbook
 
-1. **Apply the migrations.** Run `bunx reserva-migrate --local` for the local dev database, or
-   `bunx reserva-migrate` for the remote one — no `migrations_dir` edit needed first. The
-   command reads your `wrangler.jsonc`/`.json`/`.toml`, selects a D1 entry (the `RESERVA_DB`
-   binding, your sole `d1_databases` entry, or the entry matching an optional positional
-   database name/binding you pass, within the active `--env` section when present), and points
-   Wrangler at Reserva's own packaged `migrations/` directory for that entry. Wrangler has no
-   `--migrations-dir` flag, so this works by writing a derived config beside your own (same
-   directory, so Wrangler's default local-persistence root is unaffected) with only that
-   entry's `migrations_dir` overridden, then running
-   `wrangler d1 migrations apply <database_name> --config <derived config>`; the derived file
-   is removed afterward either way. If the selected entry already sets `migrations_dir` to
-   Reserva's packaged directory, your config is used unchanged; if it sets it to anything else,
-   the command refuses to override it (that is likely your own migration pipeline) and prints a
-   hard error naming both paths — see "Reserva and your own migrations" below. The command
-   accepts one optional database name plus Wrangler's migration options: value options `-c`/
-   `--config`, `--cwd`, `-e`/`--env`, `--env-file`, `--profile`, and `--persist-to`; boolean
-   options `--local`, `--remote`, `--preview`, `--install-skills`, `-h`/`--help`, and `-v`/
-   `--version`. Value options also accept `--option=value`. Unknown options are rejected; use
-   `--` to pass remaining arguments to Wrangler verbatim. At the first request in each isolate,
-   `defineCloudflareReservaRuntime` checks the migrations and throws a descriptive error naming
-   any unapplied migration instead of a raw D1 SQL error. If your D1 binding sets Wrangler's
-   `migrations_table`, pass the same name as `migrationsTable` to
-   `defineCloudflareReservaRuntime`; it defaults to `d1_migrations`.
+1. **Apply the migrations.** `bunx reserva-migrate --local` for the local dev database,
+   `bunx reserva-migrate` for the remote one. The command reads your Wrangler config, selects
+   a D1 entry (the `RESERVA_DB` binding, a sole `d1_databases` entry, or the entry matching an
+   optional positional name), and points Wrangler at Reserva's packaged `migrations/`
+   directory by writing a derived config beside your own and running
+   `wrangler d1 migrations apply` against it. If the entry already sets `migrations_dir` to
+   something else, the command refuses with an error naming both paths — see "Reserva and your
+   own migrations". It accepts Wrangler's migration options (`--env`, `--config`, `--remote`,
+   `--preview`, `--persist-to`, …); use `--` to pass anything else through verbatim. At the
+   first request in each isolate, the runtime checks the migrations and throws a descriptive
+   error naming any unapplied one. If your binding sets Wrangler's `migrations_table`, pass
+   the same name as `migrationsTable` to `defineCloudflareReservaRuntime`.
 2. Set `RESERVA_DB` in the Worker bindings. Optionally expose `RESERVA_CACHE`.
 3. Add payment, calendar, email, and webhook credentials as Worker secrets with
-   `wrangler secret put <NAME>`; see "Secrets and `astro:env`" for the canonical names. Keep
-   them out of the config module.
-4. Run `wrangler types` (wired as `pretypes`/`predev`) and pass the generated `Env` to
-   `defineCloudflareReservaRuntime<Env>()`.
-5. Implement or import the provider adapters in the user-owned runtime module.
-6. Configure an admin auth strategy for `/booking/admin` and the operator routes: either
-   Cloudflare Access, configured for the same team domain and audience as
-   `config.admin.access`, or a custom `adminAuth` callback.
-   `defineCloudflareReservaRuntime` throws at startup if neither (or both) are configured while
-   these routes are enabled, so a missing strategy fails loud in every environment, not just
-   production. Before go-live, confirm the production environment does not define any dev-bypass
-   variable your runtime's `adminAuth` honors.
+   `wrangler secret put <NAME>`; see "Secrets and `astro:env`" for the canonical names.
+4. Run `wrangler types` and pass the generated `Env` to `defineCloudflareReservaRuntime<Env>()`.
+5. Implement or import the provider adapters in the runtime module.
+6. Configure an admin auth strategy: Cloudflare Access matching `config.admin.access`, or a
+   custom `adminAuth`. The runtime throws at startup if neither (or both) is configured while
+   the admin/ops routes are enabled. Before go-live, confirm production defines no dev-bypass
+   variable your `adminAuth` honors.
 7. Deploy with `output: 'server'` and `@astrojs/cloudflare`. Do not prerender booking routes.
 8. **Deploy the scheduled reconciliation Worker.** `@reservajs/astro/runtime` exports
    `runReconciliation`, a bounded sweep that resumes stuck side-effect/refund debt, clears
-   expired holds, and opens/resolves operator incidents without an HTTP request ever touching
-   the affected booking — the outage-survival backstop behind the "Attention required" cards on
-   `/booking/admin`. `@astrojs/cloudflare`'s build regenerates its own Wrangler config on every
-   `astro build` with `main` pointed at its own compiled entry, so there is no supported way to
-   splice a `scheduled()` handler into your site's own Worker. Instead, deploy a second Worker
-   that implements `scheduled()` and shares your `RESERVA_DB` binding — the published package
+   expired holds, and opens/resolves operator incidents — the outage-survival backstop behind
+   the "Attention required" cards on `/booking/admin`. `@astrojs/cloudflare` regenerates its
+   Wrangler config on every build, so a `scheduled()` handler cannot be spliced into the site
+   Worker: deploy a second Worker sharing your `RESERVA_DB` binding. The published package
    includes the complete template at `examples/smoke-site/worker/` (`scheduled.ts` +
-   `wrangler.jsonc`). The handler must `await runReconciliation(context, { requireAlertSink: true })`;
-   do not acknowledge a missing alert sink or float the reconciliation promise through
+   `wrangler.jsonc`). The handler must
+   `await runReconciliation(context, { requireAlertSink: true })`; do not float it through
    `waitUntil`.
 
-   The Cron Worker does **not** inherit bindings or secrets from the site Worker. Its shared
-   runtime constructs the same payment, calendar, email, operations, and alert providers, so
-   configure on it every binding/secret that factory reads: `RESERVA_DB`; the payment adapter's
-   keys; `GOOGLE_SA_EMAIL`, `GOOGLE_SA_PRIVATE_KEY`, `GOOGLE_IMPERSONATE_EMAIL`, and the
-   calendar-id binding used by your factory; `BREVO_API_KEY`; every `secretBinding` named by
-   `config.webhooks`; the central alert webhook/token; and `RESERVA_TOKEN_ENC_KEY` when retried
-   messages need regenerated management links. Cloudflare secrets are per Worker, so repeat
-   `wrangler secret put <NAME> --config worker/wrangler.jsonc` even when the site Worker already
-   has that name. Non-secret URLs and ids belong in this Worker's `vars`; credentials do not.
-
-   This Worker is installed once by whoever deploys your infrastructure, not configured by the
-   business owner. Enable Workers observability with full logs
-   (`observability.enabled`/`logs.enabled` with `head_sampling_rate: 1`) on both Workers, and
-   **separately set up a Cloudflare-side alert on this Worker's cron failures/error logs**
-   (Workers Observability → Alerts, or a Logpush/Log Alert rule) before go-live: the
-   independent `ReservaProviders.alerts` sink only fires from *inside* an invocation, so if D1
-   is unavailable, the trigger fails, or the Worker throws before alert delivery, the
-   Cloudflare-side cron-failure alert is the independent detection path.
+   The cron Worker does not inherit bindings or secrets from the site Worker. Configure on it
+   every binding and secret your provider factory reads (`RESERVA_DB`, payment keys, Google
+   calendar credentials, `BREVO_API_KEY`, every `secretBinding` from `config.webhooks`, the
+   alert sink, `RESERVA_TOKEN_ENC_KEY`), repeating
+   `wrangler secret put <NAME> --config worker/wrangler.jsonc` even for names the site Worker
+   already has. Enable Workers observability with full logs on both Workers, and set up a
+   Cloudflare-side alert on this Worker's cron failures before go-live: the in-process alert
+   sink only fires from inside an invocation, so the platform alert is the independent
+   detection path when the trigger itself fails.
 9. In a staging Worker, verify availability, checkout holds, webhook redelivery, status
-   confirmation, customer cutoff behavior, operator actions, and admin authentication.
+   confirmation, cutoffs, operator actions, and admin authentication.
 10. Monitor the outbox and payment-webhook responses. Calendar and confirmation-email failures
     intentionally return non-2xx so the payment provider retries delivery. Also alert on
     persistent `confirmation_in_progress` 503s (a stuck lease), on `payment_amount_mismatch`
     409s (never expected in normal operation), and on the "confirming expired hold after
-    payment" warning, which marks a possible one-slot oversell that may need a phone call to the
-    customer.
+    payment" warning, which marks a possible one-slot oversell.
 
 ### Reserva and your own migrations
 
-Reserva shares Wrangler's migration ledger (`d1_migrations` by default, or your configured
-`migrations_table`) with any migrations of your own applied to the same database — Wrangler
-has no concept of per-package migration namespaces, so both Reserva's and your own migration
-filenames are recorded side by side in one table. The supported layout is a **dedicated D1
-database for Reserva**, separate from any database your own application migrates. If you do
-share a database, avoid filename collisions with Reserva's `migrations/*.sql` files
-(`0001_init.sql` through `0019_admin_change_history.sql`): a colliding filename that isn't
-actually Reserva's SQL satisfies the ledger check without ever creating Reserva's schema.
-`defineCloudflareReservaRuntime` guards against this at context-creation time with a schema
-fingerprint layered on top of the filename check: if the ledger says every migration is applied
-but the fingerprint doesn't match, the isolate throws a distinct "migration ledger reports every
-migration applied, but the schema itself doesn't match Reserva's migrations" error naming the
-likely collision, instead of either passing incorrectly or failing with a confusing raw SQL
-error later. This is collision *detection*, not a fix.
+Reserva shares Wrangler's migration ledger (`d1_migrations` by default) with any migrations of
+your own applied to the same database; Wrangler has no per-package namespaces. The supported
+layout is a dedicated D1 database for Reserva. If you do share one, avoid filename collisions
+with Reserva's `migrations/*.sql` (`0001_init.sql` through `0019_admin_change_history.sql`):
+a colliding filename satisfies the ledger check without creating Reserva's schema. The runtime
+layers a schema fingerprint on top of the filename check and throws a distinct error naming
+the likely collision when the ledger and the schema disagree. This is collision detection, not
+a fix.
 
 ## Design notes
 
 Decisions that are easy to mistake for accidents:
 
 - **Confirmation lease.** A payment webhook and a `/status` poll can both observe an
-  unconfirmed booking and both try to create a calendar event. Reserva acquires a
-  compare-and-set lease (5-minute TTL) before the confirm-plus-side-effects section, which makes
-  it mutually exclusive across concurrent callers. A blocked attempt returns
-  `503 confirmation_in_progress`. On the webhook path the provider treats that as a failed
-  delivery and redelivers, which is the desired behavior; on the `/status` path the handler
-  catches it and re-reads the booking instead of failing the customer.
-- **Webhook hardening guards.** The payment webhook rejects `409 payment_session_mismatch` when
-  the event's session conflicts with the booking's stored session, and
-  `409 payment_amount_mismatch` when the captured amount does not equal the stored price. Both
-  are non-2xx, so the provider retries them. That is intentional: an amount mismatch must page
-  someone through webhook-failure alerts, not silently confirm the booking.
+  unconfirmed booking. Reserva acquires a compare-and-set lease (5-minute TTL) before the
+  confirm-plus-side-effects section. A blocked attempt returns `503 confirmation_in_progress`:
+  the webhook path lets the provider redeliver, the `/status` path re-reads the booking.
+- **Webhook hardening guards.** The payment webhook rejects `409 payment_session_mismatch`
+  when the event's session conflicts with the stored one, and `409 payment_amount_mismatch`
+  when the captured amount differs from the stored price. Both are non-2xx on purpose: an
+  amount mismatch must page someone through webhook-failure alerts, not silently confirm.
 - **Refunds are durable, not in-memory.** A `refund_operations` table records every refund
-  decision, with `UNIQUE(booking_id)` acting as a compare-and-set claim: the operator-cancel
-  handler inserts a `requested` row — atomically racing the cancel transition from the same
-  claim — before it ever calls the payment provider, so a `refund=full` and a `refund=none`
-  request racing on the same booking can never both issue a refund; the loser gets
-  `409 refund_conflict`, or resumes the same decision if it matches. The adapter's idempotency
-  marker makes a retry of a crashed operation safe. The provider's own refund webhook upserts
-  the same table, so operator- and dashboard-initiated refunds reconcile through one durable
-  record. Partial refunds are out of scope.
+  decision, with `UNIQUE(booking_id)` as a compare-and-set claim inserted before the payment
+  provider is ever called, so racing `refund=full` and `refund=none` requests can never both
+  refund; the loser gets `409 refund_conflict`. The provider's refund webhook upserts the same
+  table. Partial refunds are out of scope.
 - **Delivery state is not an entity flag.** There are no `*_synced` columns on a booking.
-  Calendar, email, hook, and webhook delivery live only in `side_effect_operations` rows, with
-  retries, abandonment, and reconciliation; anything that needs to know derives it from there.
+  Calendar, email, hook, and webhook delivery live only in `side_effect_operations` rows;
+  anything that needs to know derives it from there.
 - **Email templates are code, not files.** Per-locale template objects live in the package's
-  email module rather than a `templates/{locale}/{event}.ts` file layout. Behavior is the same;
-  only the packaging differs.
+  email module rather than a `templates/{locale}/{event}.ts` layout.
 
 ## Upgrading from 0.1.x
 
-0.1.0 was the private, single-package, tour-specific era. 0.2.0 renames the product, splits the
-Stripe adapter into its own package, generalizes the domain vocabulary, and removes the booking
-widget from the library. `docs/MIGRATING-v2.md` maps every renamed binding, symbol, module
-specifier, config key, and database column, and lists what deliberately keeps its old name.
+0.1.0 was the private, single-package, tour-specific era. 0.2.0 renames the product, splits
+the Stripe adapter into its own package, generalizes the domain vocabulary, and removes the
+booking widget from the library. `docs/MIGRATING-v2.md` maps every renamed binding, symbol,
+module specifier, config key, and database column.
 
 ## Contributing and development
 
@@ -944,16 +740,11 @@ bun run check      # audit + typecheck + unit/component + workers + scheduled + 
 bun run test:e2e   # Playwright, against examples/smoke-site
 ```
 
-`check` begins with `bun audit` to block known dependency advisories. The Vitest suites cover
-the pure core, handlers, provider adapters, and Access verification; `test:workers` applies the
-real D1 migrations and exercises repository leases, durable per-IP hold limits, and runtime
-bindings through Cloudflare's `@cloudflare/vitest-pool-workers`; `test:pack` packs both
-tarballs and builds two throwaway consumer projects against them (one with the Stripe adapter,
-one with a custom payment provider and no Stripe installed).
-
-The contract tables in this file and in `AGENTS.md` are generated: run
-`bun run docs:contract` after changing routes, error codes, or booking events.
-`bun run docs:contract:check` fails when they have drifted, and runs in CI.
+`test:workers` applies the real D1 migrations through `@cloudflare/vitest-pool-workers`;
+`test:pack` packs both tarballs and builds two throwaway consumers against them;
+`test:quickstart` executes the README's own quickstart blocks. The contract tables in this
+file and `AGENTS.md` are generated: run `bun run docs:contract` after changing routes, error
+codes, or booking events (`bun run docs:contract:check` runs in CI).
 
 Security reports: see [`SECURITY.md`](./SECURITY.md).
 
