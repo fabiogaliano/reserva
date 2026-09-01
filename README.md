@@ -83,6 +83,49 @@ Pass `bookkit({ ..., envSchema: false })` to skip this contribution, for example
 
 Import each provider from its own narrow subpath: `bookkit/providers/payments-stripe`, `bookkit/providers/email-brevo`, `bookkit/providers/email-none`, `bookkit/providers/calendar-google`. Avoid the bare `bookkit/providers` barrel. The barrel re-exports every provider from one module, so importing it pulls every provider's SDK dependency (for example `stripe`) into the module graph together. The narrow subpaths import only the one provider, and its one SDK, that you construct in your runtime module. `bookkit/providers` remains available for quick prototyping. The package's `"sideEffects"` field marks only `**/*.css` as side-effectful (so bundlers keep the components' CSS imports); everything else, including the providers barrel, remains tree-shakeable, so a bundler can still tree-shake the unused providers out of the barrel import — but the subpaths make that guarantee structural instead of dependent on bundler dead-code elimination.
 
+## Email templates
+
+The email template renderer lives in `src/email/` and is provider-agnostic: `@reservajs/astro/email` exports exactly `renderDefaultEmail`, `EmailRenderer`, `EmailTemplateContext`, and `RenderedEmail` (`{ subject, html, text? }`). Copy catalogs, the HTML model builder, and branding defaults stay internal to that module — the subpath exists so a non-Brevo transport can reuse the maintained template without depending on Brevo at all. There is no separate opt-in for the default template: configuring an email provider is the only switch. Three levels, each layering on the previous:
+
+1. **Choose a provider, get the default template.** `bookkit/providers/email-brevo`'s `brevoEmail({ apiKey })` renders every booking event with `renderDefaultEmail` automatically.
+
+   ```ts
+   import { brevoEmail } from 'bookkit/providers/email-brevo';
+   const email = brevoEmail({ apiKey: env.BREVO_API_KEY });
+   ```
+
+2. **Branding and copy overrides.** `config.emails.branding` restyles the HTML shell (logo, colors); `config.emails.messages` overrides any copy key per locale, merged over the bundled English/European Portuguese catalogs the same way `config.ui.messages` overrides widget copy. `EmailCopyKey` (exported from the package root) types an override map at compile time. For example, the library's neutral `refund.timing` default ("Refunds are returned to your original payment method.") becomes a concrete promise:
+
+   ```ts
+   // client-config.ts
+   emails: {
+     branding: { accentColor: '#0f6b3f' },
+     messages: {
+       en: { 'refund.timing': 'Refunds arrive in your account within 5-10 business days.' },
+       'pt-PT': { 'refund.timing': 'O reembolso chega à sua conta em 5 a 10 dias úteis.' },
+     },
+   },
+   ```
+
+3. **Full custom renderer.** `renderEmail: EmailRenderer` on a provider (Brevo's constructor option, or any transport implementing the same option) replaces the whole template. Because `renderDefaultEmail` is public, a custom renderer can override one event and delegate every other event to the shipped default instead of copying it:
+
+   ```ts
+   import { renderDefaultEmail } from '@reservajs/astro/email';
+   import { brevoEmail } from 'bookkit/providers/email-brevo';
+
+   const email = brevoEmail({
+     apiKey: env.BREVO_API_KEY,
+     renderEmail(context) {
+       if (context.event === 'booking.no_show') {
+         return { subject: 'We missed you', html: '<p>...</p>' };
+       }
+       return renderDefaultEmail(context); // every other event keeps the shipped template
+     },
+   });
+   ```
+
+   A non-Brevo transport (Resend, Postmark, SES, …) implements `EmailProvider` (`send`/`sendToRecipient`) and imports `renderDefaultEmail` from `@reservajs/astro/email` the same way — the renderer has no Brevo dependency.
+
 ## Config validation
 
 `bookkit()` runs `validateConfig()` during `astro:config:setup`. Build-time failures include malformed schedules, invalid IANA timezones, unsupported Stripe locales, `holdMinutes < 35`, and pricing gaps for any widget-generated party-size and pickup combination. The thrown Zod error includes the field paths that Astro reports during configuration.
@@ -242,7 +285,7 @@ The package includes three embeddable components: `BookingWidget.astro` (the cus
 
 **CSP.** Nothing bookkit renders is inline: the pages use only external same-origin assets (`style-src 'self'`/`script-src 'self'` suffice), forms are plain POSTs, and the pending-payment confirmation state polls via meta refresh, not script. `BookingWidget.astro`'s `<script>` is a hoisted Astro module (not `is:inline`), emitted as an external hashed file by the consumer's build, and its per-render data (copy, pricing, locale) travels in a non-executable JSON island. The manage page's reschedule keeps a native `datetime-local` input as the no-JS fallback; the served enhancer upgrades it to a calendar plus availability-backed slot picker. `BookingWidget.astro` itself requires JavaScript to book (checkout is a `fetch`, not a form POST) — without it, visitors see a `<noscript>` message with the business contact instead of the dead form; pass `contactEmail`/`contactPhone` to surface it.
 
-**UI copy and locales.** European Portuguese (`pt-PT`) and English are bundled, with `pt-PT` used by components when no locale is supplied. Every rendered string uses the typed key set in `src/ui/messages.ts` (`defaultMessages`, exported from the package root, contains the English fallback). Add partial per-locale overrides under `config.ui.messages` and/or pass a `messages` prop to the components; resolution layers region-specific copy over its base language, deployment overrides over bundled copy, and English as the final fallback. Customer pages pick their locale from the booking (`booking.locale`), a `?locale=` query parameter, or `config.locales.default`. The admin dashboard and settings use `config.admin.locale` when set and otherwise fall back to `config.locales.default`; an explicit `locale` prop still takes precedence for `AdminDashboard.astro`. This keeps an operator UI such as `pt-PT` separate from English customer pages, emails, and Stripe Checkout without copying catalog keys into `ui.messages`. The admin locale does not need to appear in `locales.supported`, because it is never sent to Stripe. Dates and prices are formatted with `Intl` in the business timezone. Stripe Checkout receives `pt`, Stripe’s equivalent locale tag for European Portuguese.
+**UI copy and locales.** English and European Portuguese (`pt-PT`) are bundled, with English used by components when no locale is supplied (a generic library must not default to Portuguese). Every rendered string uses the typed key set in `src/ui/messages.ts` (`defaultMessages`, exported from the package root, contains the English fallback). Add partial per-locale overrides under `config.ui.messages` and/or pass a `messages` prop to the components; resolution layers region-specific copy over its base language, deployment overrides over bundled copy, and English as the final fallback. Customer pages pick their locale from the booking (`booking.locale`), a `?locale=` query parameter, or `config.locales.default`. The admin dashboard and settings use `config.admin.locale` when set and otherwise fall back to `config.locales.default`; an explicit `locale` prop still takes precedence for `AdminDashboard.astro`. This keeps an operator UI such as `pt-PT` separate from English customer pages, emails, and Stripe Checkout without copying catalog keys into `ui.messages`. The admin locale does not need to appear in `locales.supported`, because it is never sent to Stripe. Dates and prices are formatted with `Intl` in the business timezone. Stripe Checkout receives `pt`, Stripe’s equivalent locale tag for European Portuguese.
 
 ## Local interactive demo
 
@@ -264,7 +307,7 @@ Bookkit's build contract is the reference spec, but the implementation deliberat
 - **Per-IP hold cap storage.** The spec defines `maxHoldsPerIp` and a `429 too_many_holds` response, but its schema never stores the requesting IP. `migrations/0003_hold_ip.sql` adds a `hold_ip` column. `insertHold` in `src/repo.ts` does an atomic count-and-insert against it, so the cap is actually enforceable.
 - **`payment.dispute_created` event.** The spec requires `charge.dispute.created` to become "log + ops event," but its own `BookingEvent` list has no member to carry it. `src/core/events.ts` adds `payment.dispute_created` to `BOOKING_EVENTS` and explicitly excludes it from `EmailBookingEvent`. The event reaches hooks and webhooks but can never reach the email provider.
 - **Refund operations are durable, not in-memory (BK-REFUND-001).** A `refund_operations` table (`migrations/0006_refund_operations.sql`) records every refund decision, with `UNIQUE(booking_id)` acting as a compare-and-set claim: the operator-cancel handler inserts a `requested` row — atomically racing the CAS cancel transition from the same claim — before it ever calls Stripe, so a `refund=full` and `refund=none` request racing on the same booking can never both call Stripe; the loser gets `409 refund_conflict` or resumes the same decision if it matches. `refund()` (`src/providers/stripe.ts`) returns `{ refundId, amountCents }` from Stripe's response instead of discarding it, and Stripe's own idempotency key (`bookkit-refund-<paymentIntent>`) makes a retry of a crashed operation safe: replaying the call either returns the original refund or (once the key's ~24h window has lapsed) hits Stripe's "already refunded" error, which is reconciled via `refunds.list` instead of surfacing as a false failure. The `charge.refunded` webhook branch upserts the same table, so operator- and Stripe-dashboard-initiated refunds reconcile through one durable record instead of the deleted in-memory `refundedPayments` set. Partial refunds and a reconciliation dashboard/job are out of scope.
-- **Brevo templates are inlined.** `src/providers/brevo.ts` keeps per-locale template objects, with fallback to the configured default locale, instead of the spec's `templates/{locale}/{event}.ts` file layout. Behavior is the same; only the packaging differs. To add a locale, add an entry to that file's `templates` map.
+- **Email templates are code, not files.** `src/email/copy.ts` keeps per-locale template objects, with fallback to the configured default locale, instead of the spec's `templates/{locale}/{event}.ts` file layout. Behavior is the same; only the packaging differs. To add a locale, add an entry to that file's catalog map. Plan 026 extracted this system out of `src/providers/brevo.ts` into the provider-agnostic `src/email/` — see "Email templates" above.
 
 ## Admin access and booking tokens
 
