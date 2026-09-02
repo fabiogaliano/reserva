@@ -20,10 +20,9 @@ function seedSideEffect(repo: FakeRepository, bookingId: string, identity: SideE
   });
 }
 
-// The admin "Try again" action's underlying dispatcher. These tests
-// exercise src/confirmation.ts's retrySideEffectOperation directly (the admin handler itself is
-// wired in the HTTP layer) — proving each kind bucket's claim -> run -> resolve/dispatch path
-// and the STOP-condition-driven 'not_retryable' outcome for 'oversell'.
+// The admin "Try again" action's underlying dispatcher, exercised directly (the admin handler
+// itself is wired in the HTTP layer) — proving each kind bucket's claim -> run -> resolve/dispatch
+// path and the STOP-condition-driven 'not_retryable' outcome for 'oversell'.
 describe('retrySideEffectOperation', () => {
   it('refuses to retry an oversell marker (STOP condition: no safe one-shot retry for a permanent marker)', async () => {
     const seeded = booking({ id: 'retry-oversell', status: 'confirmed' });

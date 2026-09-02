@@ -21,21 +21,14 @@ export interface ReservaIntegrationOptions {
   // Set to `false` to skip contributing reserva's secret names to the `astro:env` schema, e.g. if
   // the consumer already declares its own schema for these names. Defaults to on.
   envSchema?: boolean;
-  // Prepended to every injected route pattern, and to every URL reserva's own components/handlers
-  // render (widget endpoints, manage/admin page links and form actions, the Stripe webhook path).
-  // Normalized via `normalizeRoutePrefix` (leading slash, no trailing slash, ''/'/' => none);
-  // validated first via Zod (see `validateRouteOptions`) to reject obviously broken values. This
-  // stays an Astro-only option (mounting detail); route group flags live in `config.routes` — see
-  // ClientConfig in core/config.ts.
+  // Prepended to every injected route pattern and every URL reserva renders. Normalized (leading
+  // slash, no trailing) and validated; an Astro-only mounting option — route group flags live in `config.routes`.
   routePrefix?: string;
 }
 
-// Canonical secret names for reserva's optional providers, sourced from scripts/manual-*.ts (the
-// existing hand-rolled env var conventions for Stripe/Brevo/Google) and RESERVA_OPERATOR_SECRET
-// (the operator endpoints' shared secret; see README). All optional: every provider is opt-in, so
-// a consumer wiring up only Stripe must not fail env validation over a missing Brevo/Google key.
-// This only declares the names for typed access and build-time visibility — it does not change how
-// providers or `secrets()` read them; see README "Secrets and astro:env" for the full contract.
+// Canonical secret names for reserva's optional providers. All optional: every provider is opt-in,
+// so a consumer wiring up only Stripe must not fail env validation over a missing Brevo/Google key.
+// This only declares the names for typed access and build-time visibility; it doesn't change how providers read them.
 const reservaSecretEnvSchema = {
   STRIPE_SECRET_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
   STRIPE_WEBHOOK_SECRET: envField.string({ context: 'server', access: 'secret', optional: true }),
@@ -121,15 +114,9 @@ export function reserva(options: ReservaIntegrationOptions): AstroIntegration {
     name: 'reserva',
     hooks: {
       'astro:config:setup': ({ config, injectRoute, logger, updateConfig }) => {
-        // This hook runs during `astro build`/`astro dev` config resolution, a separate
-        // process/lifecycle phase from request-time Worker execution — defineReservaRuntime /
-        // defineCloudflareReservaRuntime independently call validateConfig on the consumer's
-        // runtime entrypoint and thread THAT return value through context.config (see
-        // runtime-context.ts), which is what actually backs priceFor/checkout. The validated value
-        // captured here is used for exactly one thing below: reading `routes.admin`/`routes.ops` to
-        // decide which route groups to inject — declared route-injection intent, not runtime
-        // pricing/business data, so reading it here can't cause the stale/unsorted-pricing problem
-        // discarding the return value elsewhere guards against.
+        // This hook runs during build/dev config resolution, separate from request-time Worker
+        // execution — defineReservaRuntime/defineCloudflareReservaRuntime independently validate the
+        // config that actually backs runtime behavior. The value captured here only decides which route groups to inject.
         let validatedConfig: ClientConfig;
         try {
           validatedConfig = validateConfig(options.config);
@@ -189,11 +176,9 @@ export function reserva(options: ReservaIntegrationOptions): AstroIntegration {
         );
       },
       'astro:config:done': ({ config, injectTypes, logger }) => {
-        // Exact match only: a substring/case-insensitive check both false-positives on any
-        // adapter with "cloudflare" in its name and false-negatives on legitimate wrappers/forks
-        // around @astrojs/cloudflare with a different package name. The runtime itself already
-        // fails with descriptive errors when D1/env bindings are absent, so this is advisory,
-        // not a hard gate — untested adapters may still work.
+        // Exact match only: a substring/case-insensitive check both false-positives on adapters with
+        // "cloudflare" in the name and false-negatives on legitimate forks with a different name.
+        // This is advisory, not a hard gate — untested adapters may still work.
         if (config.adapter?.name !== '@astrojs/cloudflare') {
           logger.warn(
             `Reserva is built for @astrojs/cloudflare >= 14 (Workers runtime, D1 bindings via `

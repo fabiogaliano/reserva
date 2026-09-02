@@ -1,6 +1,5 @@
 {
-  // The publish build. `bun run build` (scripts/build.ts) runs this and then copies the raw
-  // assets tsc knows nothing about; the repo's own tsconfig.json stays noEmit for typechecking.
+  // Publish build only; the repo's own tsconfig.json stays noEmit for typechecking.
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": false,
@@ -12,8 +11,8 @@
     // the sources is what makes a consumer's stack trace resolve to real code.
     "inlineSources": true,
     "allowImportingTsExtensions": false,
-    // Only the ambient types the emitted declarations actually need: test-runner globals are not
-    // part of a consumer's compile.
+    // Only the ambient types the emitted declarations need: test-runner globals aren't part of a
+    // consumer's compile.
     "types": ["@cloudflare/workers-types"]
   },
   "include": ["src"]

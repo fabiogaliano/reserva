@@ -4,10 +4,8 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { callyVersion } from '../src/ui/vendor/cally-bundle';
 
-// src/ui/vendor/cally-bundle.ts is generated (scripts/vendor-cally.ts), never hand-edited, and
-// stamps the cally version it was generated from. Nothing else keeps that stamp in sync with the
-// installed dependency, so a `cally` bump with no re-vendor would silently ship a stale bundle —
-// this is the only guard against that drift.
+// cally-bundle.ts is generated (scripts/vendor-cally.ts), never hand-edited, and stamps the cally
+// version it was generated from -- the only guard against a `cally` bump shipping a stale bundle.
 function installedCallyVersion(): string {
   try {
     // cally's exports map may not expose "./package.json" — prefer require() when it does, since

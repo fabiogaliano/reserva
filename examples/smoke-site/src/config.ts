@@ -8,16 +8,10 @@ export default {
     url: 'http://localhost:4321',
     timezone: 'UTC',
   },
-  // The local demo is also the reference example of a non-Access deployment — Cloudflare
-  // Access cannot protect `localhost` anyway (see README "Admin access and booking tokens"), so this
-  // drops `admin.access` entirely rather than pointing it at a fake team domain, and the runtime
-  // module (src/runtime.ts) registers a custom `adminAuth` instead.
   admin: { locale: baseConfig.admin.locale },
   services: {
     oldTown: {
       ...baseConfig.services.oldTown,
-      // Two free meeting points, so the e2e suite has a real multi-point service to book the second
-      // point through.
       location: {
         meetingPoints: [
           { id: 'fountain', label: 'Main square fountain', mapsUrl: 'https://maps.google.com/?q=Main+square' },
@@ -32,13 +26,7 @@ export default {
         intervalMin: 60,
       }],
     },
-    // Maze Riverside 2h, priced 180/200/200/210 € (non-additive: +20 for either custom leg,
-    // but +30 for both — see README "Config" for why that rules out a surcharge model).
-    //
-    // Two meeting points (not one), so this same fixture also covers the usesMeetingPoint axis
-    // (custom_dropoff picks a second point; custom_pickup/custom_both hide the group) instead of
-    // isolating it to oldTown — the two axes' options are otherwise never exercised together in a
-    // browser test.
+    // Pricing is deliberately non-additive: +20 for either custom leg, but +30 for both.
     mazeRiverside: {
       durationMin: 120,
       turnaroundMin: 15,
@@ -67,14 +55,6 @@ export default {
         { maxQuantity: 4, pickup: 'custom_both', priceMinor: 21000 },
       ],
     },
-    // The location module is optional per service — this one has no pickup/meeting-point axis at
-    // all, so the e2e suite has a real location-less service to book through (quantity-tier
-    // pricing only, no `pickup` on any rule).
-    //
-    // Also the e2e suite's real consumer-declared metadata service — one required `text` field
-    // and one `select` field, so tests/e2e/booking-metadata.spec.ts can prove the whole funnel
-    // (checkout validation -> D1 -> confirmation -> manage, both roles) with real
-    // declared/labeled/typed fields, not a fixture.
     riverCruise: {
       durationMin: 90,
       turnaroundMin: 15,

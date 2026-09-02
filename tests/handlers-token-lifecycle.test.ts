@@ -5,13 +5,9 @@ import { handleCustomerCancel, handleManage } from '../src/handlers';
 import { booking, config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
-// Manage-token hashing, expiry, and revocation. These cover the security properties
-// the old plaintext-column design didn't have — an expired or revoked token denied identically to
-// an unknown one (no oracle), the stored representation not itself being a usable credential, and
-// the compatibility fallback for rows written before this feature landed. Existing valid-token
-// behavior (customer/operator role resolution, cutoffs, etc.) stays covered by
-// tests/handlers-manage.test.ts and tests/handlers-customer-actions.test.ts; this file only adds
-// the lifecycle behavior those didn't need to exercise.
+// Manage-token hashing, expiry, and revocation — an expired or revoked token denied identically to
+// an unknown one (no oracle), the stored hash not itself a usable credential, and the compat
+// fallback for rows written before this feature landed.
 
 const clock = () => new Date('2026-06-14T08:00:00.000Z');
 
@@ -29,7 +25,7 @@ function cancelRequest(token: string): Request {
   });
 }
 
-describe('manage-token expiry and revocation (BK-SEC-002)', () => {
+describe('manage-token expiry and revocation', () => {
   it('denies an expired cancel token with the same 403 as an unknown token', async () => {
     const seeded = booking({ id: 'b-token-expired', cancelToken: 'expiring-cancel-token' });
     const repo = fakeRepository([seeded]);
@@ -99,9 +95,8 @@ describe('manage-token expiry and revocation (BK-SEC-002)', () => {
     expect(state?.cancelTokenHash).not.toBe(seeded.cancelToken);
 
     // The stored hash is not itself a usable credential: presenting it as a token must not
-    // resolve, either via the hash path (it won't hash to itself) or the plaintext fallback
-    // (guarded by cancelTokenHash !== null — mirrors src/repo.ts's `cancel_token_hash IS NULL`
-    // guard, which is what closes the "leaked hash presented as a token" oracle).
+    // resolve, via either the hash path or the plaintext fallback (guarded by cancelTokenHash
+    // !== null) — this is what closes the "leaked hash presented as a token" oracle.
     const hashAsToken = await handleManage(manageRequest(state!.cancelTokenHash!), context);
     expect(hashAsToken.status).toBe(403);
 

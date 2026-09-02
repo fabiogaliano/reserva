@@ -15,10 +15,8 @@ interface Props {
   serviceSlug: string;
   checkoutEndpoint?: string;
   availabilityEndpoint?: string;
-  // The two endpoints this component's config props resolve to. The service's pickup options and
-  // meeting points come from the deployment's own catalog,
-  // and every price shown comes from the quote endpoint — the same code path checkout charges on —
-  // so an embed can no longer describe the service differently than the server does.
+  // catalogEndpoint supplies pickup options/meeting points; quoteEndpoint is the same code path
+  // checkout charges on, so an embed can never describe the service differently than the server does.
   catalogEndpoint?: string;
   quoteEndpoint?: string;
   availabilityFrom?: string;
@@ -266,11 +264,9 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     if (retry) retry.hidden = true;
   }
 
-  // The price shown is the price the server quotes, fetched from the endpoint checkout prices on
-  // — the widget carries no price table of its own, so it can never disagree with what the
-  // customer is charged. Only the latest request may write to the
-  // DOM: quantity/pickup changes fire in quick succession and an older quote settling last would
-  // display a price for a selection the visitor has already changed.
+  // The price shown is always the server-quoted price -- the widget carries no price table of its
+  // own. Only the latest request may write to the DOM: quantity/pickup changes fire in quick
+  // succession, and an older quote settling last must not overwrite a newer selection's price.
   const quoteState = new WeakMap<HTMLFormElement, number>();
   async function updatePrice(form: HTMLFormElement, data: WidgetData): Promise<void> {
     const target = form.querySelector<HTMLElement>('[data-reserva-price-value]');
@@ -382,11 +378,9 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     }
   }
 
-  // Hides AND disables the meeting-point group while the selected pickup option doesn't use
-  // one — disabling (not just
-  // hiding) is what actually drops its radios from FormData, which is what the submit handler
-  // below relies on to omit meetingPointId rather than send it empty. No-ops when the group isn't
-  // rendered at all (0-1 declared points).
+  // Hides AND disables the meeting-point group when the selected pickup option doesn't use one --
+  // disabling (not just hiding) is what drops its radios from FormData, so the submit handler
+  // omits meetingPointId rather than sending it empty. No-op when the group isn't rendered at all.
   function syncMeetingPoints(form: HTMLFormElement): void {
     const wrap = form.querySelector<HTMLElement>('[data-reserva-meeting-points]');
     if (!wrap) return;
@@ -469,11 +463,9 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     if (submit) submit.disabled = false;
   }
 
-  // Per-form in-flight request state (keyed by the form element, not module-scope, since a page
-  // can host several widget instances — see the instance loop below). Each entry pairs the
-  // AbortController that cancels the previous request with a monotonically increasing generation
-  // number, which is the actual correctness guard (see loadAvailability): aborting only saves
-  // work, since an aborted fetch can still settle before its abort takes effect.
+  // Per-form in-flight request state (keyed by the form element, since a page can host several
+  // widget instances). The generation number is the actual correctness guard: an aborted fetch
+  // can still settle before its abort takes effect, so every mutation re-checks it first.
   const requestState = new WeakMap<HTMLFormElement, { controller: AbortController; generation: number }>();
 
   // keepError leaves the current error message (e.g. a checkout failure the user still needs to
@@ -491,11 +483,10 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     });
     const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
 
-    // Fired from initial load, every party-size change, retry click, and post-checkout failure —
-    // an older request settling after a newer one must never win. Abort it (saves the network/
-    // parse work) and bump the generation (the actual guard: every UI mutation below re-checks
-    // this before touching shared form state, since an in-flight fetch can still resolve, or
-    // reject with something other than AbortError, before the abort takes effect).
+    // Fired from initial load, every party-size change, retry click, and post-checkout failure.
+    // Aborting the previous request only saves work; the generation bump is the actual guard,
+    // since an in-flight fetch can still resolve (or reject with something other than
+    // AbortError) after abort.
     const previous = requestState.get(form);
     previous?.controller.abort();
     const controller = new AbortController();
@@ -602,10 +593,8 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
       const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
       const idleLabel = submit?.textContent ?? '';
       try {
-        // data-endpoint is always rendered by the component (checkoutEndpoint always has a
-        // resolved default), so a missing value here means the markup was hand-edited or the
-        // form is missing its wrapper — either way, falling back to an unprefixed literal would
-        // silently 404 under a routePrefix, so surface the error instead of guessing a URL.
+        // data-endpoint is always rendered by the component; a missing value means hand-edited
+        // markup, so surface an error instead of silently falling back to a URL that could 404.
         const endpoint = form.dataset.endpoint;
         if (!endpoint) throw new Error('Booking form is missing its endpoint');
         clearError(form);

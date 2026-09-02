@@ -48,15 +48,9 @@ describe('core pricing', () => {
   });
 
   it('keeps the widget lookup table in parity with server priceFor for an unsorted imported config', () => {
-    // Reproduces the real integration path, not just already-canonical input: a consumer page
-    // typically builds BookingWidget's `pricing` prop straight from its own hand-authored config
-    // module (examples/smoke-site/src/config.ts, imported independently of runtime.ts), never
-    // touching validateConfig's canonical return. The server, meanwhile, always resolves against
-    // context.config, which IS validateConfig's return (see runtime-context.ts). So this test feeds
-    // priceFor the validated/canonical service and resolvedPriceTableFor the raw, never-validated
-    // array, and asserts they still agree for every party size — the actual displayed-vs-charged
-    // guarantee. This fails on a resolvedPriceTableFor that trusts its input's order (pre-fix) and
-    // passes once it canonicalizes independently of what validateConfig did upstream.
+    // Reproduces the real integration path: BookingWidget's `pricing` prop comes from raw,
+    // never-validated config, while the server resolves against the validated one. Feeds each
+    // path its own input and asserts they agree for every party size (displayed vs charged).
     const pricingVariants: PricingRule[][] = [
       [
         { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
@@ -143,11 +137,9 @@ describe('location-less pricing (tiers only)', () => {
   });
 });
 
-// Maze Services' motivating case — four declared pickup options priced outright
-// (180/200/200/210 €), not as a surcharge on top of the meeting-point price. custom_both must
-// resolve to 210 €, not 180 + 20 + 20 = 220 €, proving priceFor's per-(pickup, maxQuantity)
-// lookup stays non-additive once the axis is a service-declared id set instead of a fixed
-// default/custom pair.
+// Four declared pickup options priced outright (180/200/200/210 €), not as a surcharge on the
+// meeting-point price. custom_both must resolve to 210 €, not 220 (180+20+20), proving priceFor's
+// per-(pickup, maxQuantity) lookup stays non-additive for a service-declared pickup id set.
 describe('non-additive pickup options (Maze fixture)', () => {
   const mazePricing: PricingRule[] = [
     { maxQuantity: 4, pickup: 'meeting_point', priceMinor: 18000 },

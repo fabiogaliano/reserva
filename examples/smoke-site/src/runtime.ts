@@ -5,24 +5,20 @@ import { defineCloudflareReservaRuntime, type ReservaProviders } from '../../../
 import { pickupOptionFor, resolveService } from '../../../src/core/config';
 import config from './config';
 
-// Hand-declared because this fixture has no real `wrangler types` codegen in CI; it mirrors the
-// bindings in wrangler.jsonc. A real consumer runs `wrangler types` (see README) and imports the
-// generated `Env` from worker-configuration.d.ts instead of declaring it by hand.
+// Hand-declared since this fixture has no `wrangler types` codegen in CI; mirrors wrangler.jsonc.
+// A real consumer imports the generated `Env` from worker-configuration.d.ts instead.
 interface Env {
   RESERVA_DB: D1Database;
   RESERVA_TOKEN_ENC_KEY: string;
   RESERVA_OPERATOR_SECRET: string;
-  // Configured so the e2e suite exercises the admin CSRF layer (src/admin-csrf.ts) the way the
-  // README recommends for production, instead of its fail-open "no secret configured" path.
+  // Set so the admin CSRF layer runs in its enforcing mode rather than its fail-open path.
   RESERVA_CSRF_SECRET: string;
 }
 
 const calendarEvents = new Map<string, CalEvent>();
 const checkoutSessions = new Map<string, { amountTotal: number; currency: string; pickupAddress: string | null }>();
 
-// The deterministic address any real Stripe-hosted address collection would produce for this
-// fixture's test customer — kept as one constant so both the e2e suite and this fake session
-// state agree on the exact string.
+// One constant so every caller that needs the fake collected address agrees on the exact string.
 export const SMOKE_TEST_PICKUP_ADDRESS = '42 Fixture Lane, Testville';
 
 function manageUrl(token: string): string {
@@ -31,19 +27,10 @@ function manageUrl(token: string): string {
 
 export const emailOutbox: Array<{ event: string; reference: string; customerManageUrl: string; operatorManageUrl: string; sentAt: string }> = [];
 
-// The independent operator alert sink, captured in-memory the same way emailOutbox captures the
-// confirmation-email provider above — proves the scheduled reconciler's alert-drain call actually
-// reaches a configured `ReservaProviders.alerts` and delivers exactly the seven-field
-// `OperationalAlert` shape, no more, no less.
+// In-memory sink for the `alerts` provider, mirroring emailOutbox below.
 export const alertOutbox: OperationalAlert[] = [];
 
-// Armed by the dev-only /dev/force-calendar-failure.json route (examples/smoke-site/src/pages/dev/)
-// before the e2e suite creates a booking, so exactly the
-// booking's first calendar_create attempt fails — permanently (a 400-shaped error, see
-// src/provider-failure.ts's isRetryableStatus), so src/confirmation.ts's classifyAttemptOutcome
-// abandons it on that first attempt rather than making the test wait out the real ten-minute
-// delayed-incident threshold. Consumed (reset to false) on the throw, so it never affects any
-// booking after the one it was armed for.
+// Makes one calendar create fail permanently so the e2e suite can observe abandonment.
 let forceNextCalendarFailure = false;
 export function armNextCalendarFailure(): void {
   forceNextCalendarFailure = true;
@@ -53,10 +40,7 @@ const providers: ReservaProviders = {
   payments: {
     async createCheckout(booking, checkoutConfig) {
       const sessionRef = `local_session_${booking.id}`;
-      // Derives requiresAddress from the booking's own selected option (via the service config),
-      // not from pickupType naming — a fake Stripe address collection step only ever runs for an
-      // option the service itself declares as requiring one, same as the real custom_fields gate
-      // (src/providers/stripe.ts).
+      // Derives requiresAddress from the selected option's own config, not from pickupType naming.
       const service = resolveService(checkoutConfig, booking.serviceSlug);
       const requiresAddress = pickupOptionFor(service, booking.pickupType)?.requiresAddress ?? false;
       checkoutSessions.set(sessionRef, {
@@ -100,8 +84,7 @@ const providers: ReservaProviders = {
     async createEvent(booking) {
       if (forceNextCalendarFailure) {
         forceNextCalendarFailure = false;
-        // status 400 -> classifyProviderError/isRetryableStatus treats this as permanent, so the
-        // first attempt itself abandons (see this file's armNextCalendarFailure doc comment).
+        // status 400 is treated as permanent, so this abandons on the first attempt.
         throw Object.assign(new Error('simulated calendar outage'), { status: 400 });
       }
       const id = `local_calendar_${booking.id}`;
@@ -153,8 +136,7 @@ const providers: ReservaProviders = {
   },
 };
 
-// An in-process listener on the booking-event catalog. Non-durable (the default): fired
-// post-commit, never retried.
+// Non-durable listener: fired post-commit, never retried.
 const hooks: BookingEventHook[] = [
   {
     name: 'demo-log',
@@ -168,9 +150,6 @@ export default defineCloudflareReservaRuntime<Env>(config, {
   providers,
   hooks,
   secretBindings: ['RESERVA_TOKEN_ENC_KEY', 'RESERVA_OPERATOR_SECRET', 'RESERVA_CSRF_SECRET'],
-  // The local demo's custom admin auth strategy — config declares no `admin.access`
-  // (Access cannot protect `localhost`), so this unconditionally admits every request as an
-  // anonymous admin. A real deployment must not do this; see README "Admin access and booking
-  // tokens" for the documented dev-only-bypass pattern this stands in for here.
+  // Dev-only bypass: admits every request as an anonymous admin. Never do this in production.
   adminAuth: async () => ({ subject: '' }),
 });

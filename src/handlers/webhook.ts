@@ -52,11 +52,9 @@ export function handlePaymentWebhook(request: Request, context: ReservaContext):
         const booking = byPayment ?? (event.bookingId ? await context.repo.getBookingById(event.bookingId) : null);
         if (booking) {
           const timestamp = nowIso(context);
-          // Reconcile the durable operation record regardless of which side (this webhook or an
-          // operator's own claim) ends up owning the booking's cancelled_by — the payment provider
-          // is the source of truth for whether the money moved, so its refund id/amount wins here.
-          // Upsert rather than claim: a dashboard-initiated refund has no prior
-          // claim to race against.
+          // Reconcile the durable operation record regardless of which side ends up owning
+          // cancelled_by — the payment provider is the source of truth for whether the money moved,
+          // so its refund id/amount wins here. Upsert rather than claim: a dashboard-initiated refund has no prior claim to race against.
           const refund = {
             id: crypto.randomUUID(),
             bookingId: booking.id,
@@ -71,9 +69,8 @@ export function handlePaymentWebhook(request: Request, context: ReservaContext):
           if (booking.status !== 'cancelled') {
             const updated = await context.repo.upsertRefundOperationAndTransitionToCancelled(refund, booking.id, {
               // no_show and cancelled are terminal: a refund arriving after either must not
-              // resurrect/overwrite them (spec item 4). CAS loss leaves this webhook's
-              // transition as a no-op; the winner's existing outbox drains below, and the provider
-              // still gets 200 so a retry never causes redelivery storms.
+              // resurrect/overwrite them. CAS loss leaves this webhook's transition as a no-op; the
+              // winner's existing outbox drains below, and the provider still gets 200 so a retry never causes redelivery storms.
               expectedStatusIn: ['hold', 'confirmed', 'expired'],
               cancelledAt: timestamp, cancelledBy: 'operator', updatedAt: timestamp,
               mutationSideEffects: cancellationSideEffectSeeds(context, booking, 'booking.cancelled_by_operator', timestamp),
@@ -88,9 +85,8 @@ export function handlePaymentWebhook(request: Request, context: ReservaContext):
             }
           } else {
             await context.repo.reconcileStripeRefundOperation(refund);
-            // Idempotent redelivery of an already-cancelled booking —
-            // still a booking-touching request, so drain any rows a prior delivery left owed
-            // (e.g. the isolate died between this same webhook's earlier CAS win and its attempt).
+            // Idempotent redelivery of an already-cancelled booking — still a booking-touching
+            // request, so drain any rows a prior delivery left owed (e.g. the isolate died mid-attempt).
             await runOwedMutationSideEffects(context, booking);
           }
         }

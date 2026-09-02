@@ -1,10 +1,6 @@
-// Proves migrations/0011_schema_constraints.sql's rebuild against real
-// D1 (SQLite) -- the fake in-memory repo (tests/fakes.ts) has no schema at all, so it cannot prove
-// any of this. Three concerns, three describe blocks: (1) the new CHECK constraints/partial unique
-// index reject invalid rows at the DB layer, (2) a second booking cannot silently steal an
-// already-used payment_ref through the real application write paths, (3) the rebuild
-// itself is lossless -- every one of the 42 physical bookings columns survives migration 0011
-// unchanged, which is the column-drop safety net for a migration that recreates the whole table.
+// Proves migrations/0011_schema_constraints.sql's rebuild against real D1: the new CHECK
+// constraints/partial unique index reject invalid rows, a payment_ref can't be silently stolen
+// through the write paths, and the rebuild's INSERT...SELECT is lossless across all 42 columns.
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -27,10 +23,9 @@ beforeEach(async () => {
   await db.prepare('DELETE FROM capacity_defaults').run();
 });
 
-// A minimal, always-valid row satisfying every NOT NULL/UNIQUE column, so each rejection-matrix
-// test only needs to override the one field it's testing. Raw SQL (not the repo layer) is
-// deliberate: this proves the SCHEMA itself rejects the row, independent of any application-level
-// validation that might also happen to catch it.
+// A minimal, always-valid row so each rejection-matrix test only overrides the field it's
+// testing. Raw SQL is deliberate — this proves the SCHEMA itself rejects the row, independent of
+// any application-level validation.
 const validBooking = {
   id: 'raw-valid', reference: 'BKT-RAW-VALID', service_slug: 'vintage', quantity: 2, pickup_type: 'default',
   starts_at: '2026-08-01T09:00:00.000Z', ends_at: '2026-08-01T10:00:00.000Z', locale: 'en',
@@ -45,7 +40,7 @@ function insertRawBooking(overrides: Record<string, unknown>) {
     .bind(...columns.map((column) => row[column])).run();
 }
 
-describe('bookings CHECK constraints and partial unique index (BK-SCHEMA-001, migration 0011)', () => {
+describe('bookings CHECK constraints and partial unique index (migration 0011)', () => {
   it('rejects quantity = 0', async () => {
     await expect(insertRawBooking({
       id: 'quantity-0', reference: 'BKT-PEOPLE-0', cancel_token: 'ct-quantity-0', operator_token: 'ot-quantity-0', quantity: 0,
@@ -107,10 +102,8 @@ describe('bookings CHECK constraints and partial unique index (BK-SCHEMA-001, mi
     })).resolves.toBeDefined();
   });
 
-  // Migration 0015 rebuilds `bookings` with the
-  // CHECK (pickup_type IN ('default','custom')) removed -- the domain now lives in
-  // ServiceConfig.pickupOptions (config), which the DB can't enumerate. A non-enum pickup id, which
-  // this same INSERT would have rejected before 0015, must now succeed at the SQL level.
+  // Migration 0015 removed the pickup_type CHECK (domain now lives in config's pickupOptions) —
+  // a non-enum pickup id, rejected before 0015, must now succeed at the SQL level.
   it('accepts a non-enum pickup_type (migration 0015 removed the CHECK; the domain now lives in config)', async () => {
     await expect(insertRawBooking({
       id: 'pickup-non-enum', reference: 'BKT-PICKUP-NON-ENUM', cancel_token: 'ct-pickup-non-enum', operator_token: 'ot-pickup-non-enum',
@@ -201,10 +194,8 @@ describe('duplicate payment_ref surfaces a clean conflict through the real write
     await expect(attempt).rejects.toMatchObject({ status: 409, code: 'duplicate_payment_ref' });
   });
 
-  // guardDuplicatePaymentIntent used to skip reclassification via a
-  // truthiness check on paymentRef, so a collision on '' (falsy but non-null, and still covered
-  // by the partial index's WHERE payment_ref IS NOT NULL clause) would have bubbled up
-  // as an unhandled 500 instead of a clean 409.
+  // guardDuplicatePaymentIntent used to skip reclassification via a truthiness check, so a
+  // collision on '' would have bubbled up as an unhandled 500 instead of a clean 409.
   it('also rejects a duplicate EMPTY-STRING payment intent, not just a truthy one', async () => {
     const first = await seedHold('empty-1');
     const second = await seedHold('empty-2');
@@ -216,12 +207,9 @@ describe('duplicate payment_ref surfaces a clean conflict through the real write
   });
 });
 
-describe('migration 0011 rebuild is lossless (BK-SCHEMA-001)', () => {
-  // The full 42-column physical checklist from migrations 0001 (30), 0002 (+2), 0003 (+1), 0008
-  // (+2), 0009 (+6), 0010 (+1). This list, not src/repo.ts's 36-column `bookingColumns` (the
-  // app-read subset), is the ground truth for "did the rebuild's INSERT...SELECT drop or mismap
-  // anything" -- it deliberately includes the 6 columns bookingColumns omits
-  // (confirmation_lease_token/until, hold_ip, occupancy_units/ends_at, reschedule_transition_version).
+describe('migration 0011 rebuild is lossless', () => {
+  // The full 42-column physical checklist — ground truth for "did the rebuild's INSERT...SELECT
+  // drop or mismap anything", unlike src/repo.ts's 36-column app-read subset.
   const ALL_BOOKING_COLUMNS = [
     'id', 'reference', 'tour_slug', 'people', 'pickup_type', 'pickup_address', 'starts_at', 'ends_at',
     'customer_name', 'customer_email', 'customer_phone', 'locale', 'price_cents', 'status', 'hold_expires_at',
@@ -277,11 +265,8 @@ describe('migration 0011 rebuild is lossless (BK-SCHEMA-001)', () => {
       `INSERT INTO bookings (${ALL_BOOKING_COLUMNS.join(', ')}) VALUES (${ALL_BOOKING_COLUMNS.map(() => '?').join(', ')})`,
     ).bind(...ALL_BOOKING_COLUMNS.map((column) => seeded[column])).run();
 
-    // side_effect_operations.booking_id REFERENCES bookings(id) (migrations
-    // 0007, 0010), and D1 enforces foreign keys -- so DROP TABLE bookings inside 0011's rebuild
-    // must not choke on a real child row. A prior version of this test masked that risk entirely
-    // by dropping side_effect_operations and never seeding one; this seeds a real child row
-    // instead, and the assertions below prove it (and its FK reference) survive the rebuild.
+    // side_effect_operations.booking_id REFERENCES bookings(id), and D1 enforces foreign keys —
+    // so DROP TABLE bookings inside 0011's rebuild must not choke on a real child row.
     await db.prepare(
       `INSERT INTO side_effect_operations (
          booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at

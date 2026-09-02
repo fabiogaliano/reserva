@@ -1,9 +1,8 @@
 import { test, expect } from '@playwright/test';
 
-// BookingWidget.astro used to hardcode `id="bkw-date-label"`, so two instances on
-// one page produced duplicate ids and an ambiguous aria-labelledby target. Proves the fix on a real
-// rendered page (examples/smoke-site/src/pages/two-widgets.astro): distinct label ids, each
-// calendar's aria-labelledby resolving to its own instance, and both widgets independently usable.
+// BookingWidget used to hardcode `id="bkw-date-label"`, so two instances on one page produced
+// duplicate ids and an ambiguous aria-labelledby target. Proves the fix: distinct label ids, each
+// calendar resolving to its own instance, both widgets independently usable.
 test('two widget instances get distinct label ids and stay independently operable', async ({ page }) => {
   await page.goto('/two-widgets');
 

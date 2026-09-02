@@ -47,14 +47,9 @@ test('booking a slot decreases its remaining count by one, and selling it out re
   if (!openDay) throw new Error('No available day found to exercise capacity against');
   const targetStart = openDay.slots[0].start;
   const targetDate = openDay.date;
-  // The fixture's oldTown service has no custom occupancyFor, so every booking (any party size)
-  // consumes exactly one capacity unit — `remaining` here is already bounded by capacity.defaultCapacity
-  // (3 in this fixture) and only ever counts down, so however many other specs' bookings already
-  // landed on this exact slot before this test ran, driving it the rest of the way to zero (rather
-  // than assuming a fixed starting count) keeps this test independent of run order.
-  // The exact count is published only once it is at or below the
-  // deployment's limitedThreshold, so this drives the slot to sold-out and asserts the countdown
-  // over whatever part of it is visible, rather than assuming a starting number.
+  // Every booking consumes one capacity unit and `remaining` only counts down, so driving it the
+  // rest of the way to zero (rather than assuming a starting count) keeps this independent of run
+  // order. The count is only published once at/below limitedThreshold.
   let previous: number | null = openDay.slots[0].remaining;
   let soldOut = false;
   for (let attempt = 0; attempt < 10 && !soldOut; attempt += 1) {

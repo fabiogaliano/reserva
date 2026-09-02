@@ -40,7 +40,7 @@ function capturingLogger(): { logger: ReservaLogger; errors: Array<[string, Reco
 
 // Outbox rows stop being retried forever once a provider
 // failure is classified permanent, or a retryable failure has exhausted the attempt cap.
-describe('outbox permanent-failure classification and attempt cap (plan 016)', () => {
+describe('outbox permanent-failure classification and attempt cap', () => {
   it('abandons a confirmation-path row after one permanent (401) failure, never claims it again, logs exactly once, and never returns a retryable webhook response', async () => {
     const seeded = booking({ id: 'abandon-401', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', paymentSessionRef: 'cs_abandon_401' });
     const repo = fakeRepository([seeded]);

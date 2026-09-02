@@ -7,12 +7,9 @@ import { createBookingRepository } from '../../src/repo';
 import { defineCloudflareReservaRuntime, type ReservaProviders } from '../../src/runtime';
 import { booking as bookingFixture, config as baseConfig } from '../fixtures';
 
-// A from-scratch, non-Brevo transport that imports `renderDefaultEmail` through
-// `@reservajs/astro/email` (`../../src/email` resolves the exact same module a consumer's
-// `@reservajs/astro/email` specifier resolves to), overrides exactly one event, and delegates
-// every other event -- including the one this test round-trips through a real confirmation
-// against real D1 -- to the shipped default template. Proves the public seam is enough to build a
-// working provider without touching src/providers/email-brevo/index.ts at all.
+// A from-scratch, non-Brevo transport that imports `renderDefaultEmail` through the public
+// `@reservajs/astro/email` seam, overrides exactly one event, and delegates every other event —
+// including one round-tripped through a real confirmation — to the shipped default template.
 
 interface TestEnv { RESERVA_DB: D1Database }
 const db = (env as unknown as TestEnv).RESERVA_DB;
@@ -81,7 +78,7 @@ beforeEach(async () => {
   rendered = [];
 });
 
-describe('a non-Brevo fake provider built on renderDefaultEmail (plan 026 step 5)', () => {
+describe('a non-Brevo fake provider built on renderDefaultEmail', () => {
   it('delegates booking.confirmed to renderDefaultEmail and round-trips a real confirmation through real D1', async () => {
     const now = new Date().toISOString();
     const seeded = await repo.insertHold({

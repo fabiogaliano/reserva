@@ -17,11 +17,9 @@ test('customer can cancel a booking within the cutoff, a cancellation email land
 
   await page.getByRole('button', { name: 'Yes, cancel this booking' }).click();
 
-  // The customer is redirected to the manage page, which now rejects their revoked token — this
-  // round trip only works because src/routes/booking/manage.ts serves `referrer-policy:
-  // strict-origin` (not `no-referrer`): the browser sends a real Origin on this same-origin POST,
-  // so Astro's default checkOrigin lets it through. (See the "does not leak the token" test below
-  // for the Referer-trimming half of that same header choice.)
+  // Redirect to the manage page, which rejects the revoked token — only works because manage.ts
+  // serves `strict-origin` (not `no-referrer`), so the real Origin on this same-origin POST
+  // satisfies Astro's checkOrigin. (See the Referer-trimming test below for the other half.)
   await expect(page.locator('h1')).toContainText('Link not valid');
 
   const outbox = await (await page.request.get('/dev/outbox.json')).json();
@@ -38,12 +36,9 @@ test('customer can cancel a booking within the cutoff, a cancellation email land
   expect(await revoked.json()).toEqual(await garbage.json());
 });
 
-// The manage page loads same-origin CSS/JS
-// (src/ui/layout.ts), so under the old `Referrer-Policy: same-origin` every asset request carried
-// the full manage page URL -- including the live customer token in its query string -- into
-// `Referer`. `strict-origin` still lets same-origin subresource requests through (unlike
-// `no-referrer`, which nulls Origin on this page's own form POSTs and broke Astro's checkOrigin --
-// see the comment on the cancel test above) but trims Referer to the origin alone.
+// Under the old `same-origin` policy, asset requests leaked the live token via the full manage URL
+// in `Referer`. `strict-origin` trims Referer to the origin alone while still letting same-origin
+// subresource requests through (unlike `no-referrer`, which breaks checkOrigin — see above).
 test('manage page asset requests do not leak the token in their Referer header', async ({ page }) => {
   const { outboxEntry } = await createBooking(page, { service: TOUR, quantity: 2 });
   const manageUrl = new URL(outboxEntry.customerManageUrl);
@@ -88,11 +83,9 @@ test('customer can reschedule to another available slot, the manage page reflect
   expect(rescheduleEmail).toBeTruthy();
 });
 
-// Regression coverage for manage-enhancer.ts's dateKey() switch from local to UTC Date getters —
-// the same cally/Date.UTC mismatch as BookingWidget's dateKey (see the twin test in
-// funnel.spec.ts): with local getters, the reschedule calendar marks every open day as disallowed
-// in any timezone behind UTC. The dev machine is UTC+1, where both agree, so only a pinned
-// negative-offset timezone exercises this.
+// Regression: manage-enhancer's dateKey() must use UTC getters (same cally/Date.UTC mismatch as
+// BookingWidget's dateKey, see funnel.spec.ts) or the reschedule calendar marks every open day
+// disallowed in any timezone behind UTC — needs a pinned negative-offset timezone to catch.
 test.describe('reschedule calendar in a timezone behind UTC (regression: manage-enhancer dateKey)', () => {
   test.use({ timezoneId: 'America/New_York' });
 

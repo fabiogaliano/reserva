@@ -3,8 +3,7 @@ import type { EmailBookingEvent } from '../core/events.js';
 
 // ---------------------------------------------------------------------------
 // Copy catalogs. Flat keys so a client can override any string per locale via
-// config.emails.messages — the same merge pattern ui.messages uses for widget
-// copy. {placeholders} interpolate with HTML-escaped values in htmlContent and
+// config.emails.messages. {placeholders} interpolate with HTML-escaped values in htmlContent,
 // raw values in subject/textContent.
 // ---------------------------------------------------------------------------
 export const eventCopyKey: Record<EmailBookingEvent, string> = {
@@ -34,9 +33,8 @@ export const englishEmailCopy: Record<string, string> = {
   'pickup.pending': 'Custom pickup address pending',
   'contact.lead.whatsapp': 'Questions? Just reply to this email, or call / WhatsApp us:',
   'contact.lead.plain': 'Questions? Just reply to this email, or call us:',
-  // A neutral default a consumer can override with a concrete
-  // turnaround promise via config.emails.messages — the library has no business making a timing
-  // guarantee on any operator's behalf.
+  // Neutral default; a consumer can override with a concrete turnaround promise via
+  // config.emails.messages — the library makes no timing guarantee on an operator's behalf.
   'refund.timing': 'Refunds are returned to your original payment method.',
   'confirmed.customer.subject': 'Booking confirmed: {serviceTitle} — {when}',
   'confirmed.customer.lead': 'Your <strong>{serviceTitle}</strong> is confirmed — we look forward to seeing you!',
@@ -112,9 +110,8 @@ const emailCopyCatalogs: Record<string, Record<string, string>> = {
   en: englishEmailCopy, pt: portuguesePortugalEmailCopy, 'pt-PT': portuguesePortugalEmailCopy,
 };
 
-// The copy-key union so an unknown `config.emails.messages[locale]` key is a compile-time error
-// for TS consumers (ClientConfig's emails.messages field type references this) instead of a
-// silently ignored override — runtime behavior for an actually-unknown key is unchanged.
+// The copy-key union so an unknown `config.emails.messages[locale]` key is a compile-time error,
+// instead of a silently ignored override.
 export type EmailCopyKey = keyof typeof englishEmailCopy;
 
 function candidates(locale: string, fallback: string): string[] {

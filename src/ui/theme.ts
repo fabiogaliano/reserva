@@ -1,13 +1,6 @@
-// The whole visual system as one stylesheet string, served at the assetsCss route so the
-// server-rendered pages (confirmation/manage/admin) can reference it as an external same-origin
-// file — no inline <style>, which keeps consumers' hash- or 'self'-based CSP policies intact.
-// Every value routes through a --bk-* custom property so a client site can rebrand by overriding
-// tokens in its own CSS without touching reserva.
-//
-// Visual direction: Linear-style — indigo #5E6AD2 accent, cool neutral surfaces, hairline
-// borders, tight sans typography, restrained shadows, and a near-black masthead with a soft
-// accent glow. Font stack prefers Inter when the host provides it and falls back to the system
-// sans (no external font requests: the strict-CSP pages stay dependency-free).
+// The whole visual system as one stylesheet string, served at assetsCss so pages can reference it
+// as an external same-origin file (keeps CSP intact — no inline <style>). Every value routes
+// through a --bk-* custom property so a client site can rebrand without touching reserva.
 
 // The dark palette lives here once and is interpolated into both the OS-driven media query and the
 // viewer-forced `[data-theme="dark"]` selector below, so the two can never drift apart.
@@ -61,12 +54,9 @@ export const themeCss = `
   --bk-focus: 0 0 0 3px color-mix(in srgb, var(--bk-accent) 50%, transparent);
   --bk-ease: cubic-bezier(0.16, 1, 0.3, 1);
 }
-/* Dark palette applies when the OS prefers dark AND the viewer hasn't forced a theme (no
-   data-theme attribute), or whenever the viewer explicitly picks dark. The viewer's choice is a
-   bk_theme cookie the server reflects onto <html data-theme> so first paint is already correct —
-   these pages ship no inline theme script (strict CSP), so a JS-applied flip would flash first.
-   :root[data-theme=…] carries higher specificity than the media-query :root, so a forced light
-   theme still wins under a dark OS. */
+/* Applies when the OS prefers dark and no theme is forced, or when the viewer picks dark via the
+   bk_theme cookie (reflected onto <html data-theme> server-side for a flash-free first paint).
+   :root[data-theme] outranks the media query, so a forced light theme wins under a dark OS. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {${darkTokens}
   }
@@ -102,9 +92,8 @@ export const themeCss = `
 }
 .bk-skip:focus { translate: 0; }
 
-/* Masthead: the near-black header band every server-rendered page opens with — same in both
-   color schemes, with a soft accent glow bleeding in from the top corner. Content cards below
-   pull up over its lower edge (bk-main--raised) for the overlapping-card layout. */
+/* Masthead: the near-black header band every page opens with, same in both color schemes. Cards
+   below overlap its lower edge (bk-main--raised). */
 .bk-masthead {
   background:
     radial-gradient(70rem 26rem at 88% -30%, color-mix(in srgb, #5e6ad2 30%, transparent), transparent 60%),
@@ -143,10 +132,9 @@ export const themeCss = `
 }
 .bk-masthead .bk-pagehead .bk-lead { margin-bottom: 0; }
 
-/* Per-viewer theme toggle (System → Light → Dark). Server-rendered hidden; the enhancer reveals
-   and wires it (assetsJs route), so no-JS viewers never see a dead control and simply get the
-   OS-driven default. Lives on the dark masthead (customer pages) or the dark sidebar (admin), so
-   it borrows the same glass treatment as the masthead's secondary button. */
+/* Per-viewer toggle (System → Light → Dark), server-rendered hidden; the enhancer reveals it so
+   no-JS viewers get the OS default instead of a dead control. Uses the masthead's glass button
+   treatment on both the dark masthead and dark sidebar. */
 .bk-theme-toggle {
   display: inline-flex;
   align-items: center;
@@ -168,8 +156,8 @@ export const themeCss = `
 }
 .bk-theme-toggle:focus-visible { outline: none; box-shadow: var(--bk-focus); }
 .bk-theme-toggle svg { flex: none; opacity: 0.85; }
-/* In-flow (not absolute) as the masthead's first row, right-aligned on its own line, so the brand
-   line and title flow below it and can never underlap the control on a narrow screen. */
+/* In-flow as the masthead's first row, right-aligned, so title text below can't underlap the
+   control on a narrow screen. */
 .bk-masthead .bk-theme-toggle { display: flex; width: fit-content; margin: 0 0 0.9rem auto; }
 .bk-sidebar .bk-theme-toggle { grid-column: 2; grid-row: 1; min-height: 2.75rem; margin-left: auto; }
 @media (min-width: 880px) {
@@ -833,7 +821,7 @@ export const themeCss = `
 }
 .bk-linkbtn:focus-visible { outline: none; box-shadow: var(--bk-focus); border-radius: 2px; }
 
-/* Calendar + slot picker injected by the manage-page enhancer (assetsJs route) */
+/* Calendar + slot picker injected by the manage-page enhancer at runtime */
 .bk-cal-wrap { margin: 0 0 1rem; }
 .bk-cal {
   display: block;
@@ -913,9 +901,8 @@ export const themeCss = `
 .bk-slot-hint { font-size: 0.75rem; color: var(--bk-warning); }
 `;
 
-// The per-viewer theme override. An absent cookie means "follow the OS" (prefers-color-scheme); the
-// toggle only ever stores an explicit light/dark choice, and clearing it (System) deletes the
-// cookie. Read server-side so <html data-theme> is correct on first paint.
+// An absent cookie means "follow the OS" (prefers-color-scheme); the toggle only stores an
+// explicit choice, and clearing it (System) deletes the cookie.
 export type ThemePreference = 'light' | 'dark';
 
 export const themeCookieName = 'bk_theme';

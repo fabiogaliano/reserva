@@ -1,8 +1,6 @@
 #!/usr/bin/env bun
-// Regenerates the contract tables inside README.md and AGENTS.md from the exported constants that
+// Regenerates the contract tables in README.md and AGENTS.md from the exported constants that
 // define them, so documentation of a closed vocabulary cannot drift from the vocabulary itself.
-// `--check` re-renders without writing and fails when the committed docs differ;
-// CI runs that, `bun run docs:contract` fixes it.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';

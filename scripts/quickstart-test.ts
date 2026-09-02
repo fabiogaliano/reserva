@@ -1,17 +1,10 @@
 #!/usr/bin/env bun
-// Proves the README's quickstart is a working set of instructions, not prose.
-// The four files it shows are EXTRACTED FROM README.md at run time (never copied into this script),
-// written into a fresh directory outside the repository, installed against the packed tarballs, and
-// then driven through a real booking to confirmation. If the quickstart drifts from the library,
-// this fails; if someone edits the README's snippets into something that doesn't run, this fails.
+// Extracts the quickstart's file blocks straight from README.md (never copied here), so drift
+// between the docs and the library breaks this test instead of shipping silently.
 //
-// One documented substitution: the runtime module's payment provider. The README wires
-// `@reservajs/stripe`, which cannot complete a checkout without a live Stripe account, so the two
-// exact lines that construct it are swapped for a local `PaymentProvider` written against the same
-// public port. Both replacements assert on their expected source text, so a README edit that moves
-// them fails here instead of silently disabling the substitution.
-//
-// Run: `bun run test:quickstart`.
+// The README wires `@reservajs/stripe`, which needs a live Stripe account to complete a checkout,
+// so the two lines that construct it are swapped for a local `PaymentProvider` on the same public
+// port. Both swaps assert on exact source text, so a README edit that moves them fails here too.
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -37,13 +30,8 @@ function mustRun(phase: string, command: string, args: string[], cwd: string): v
   if (result.status !== 0) fail(`[${phase}] \`${command} ${args.join(' ')}\` failed:\n${result.stdout}\n${result.stderr}`);
 }
 
-// ---------------------------------------------------------------------------
-// 1. The README is the source of the consumer's files
-// ---------------------------------------------------------------------------
-
-// A quickstart block is a fenced code block whose first line is a `// path` (or `// path — note`)
-// comment naming where the file goes. That comment is what a reader follows, so it is also what
-// this script follows.
+// A quickstart block is identified by a `// path` (or `// path — note`) first line naming where
+// the file goes, matching what a reader would follow.
 function quickstartFiles(): Map<string, string> {
   const readme = readFileSync(resolve(repoRoot, 'README.md'), 'utf8');
   const start = readme.indexOf('\n## Quickstart\n');
@@ -86,10 +74,9 @@ runtimeModule = replaceOnce(
   'its `stripe(...)` provider construction',
 );
 
-// The one file the README does not contain, and the reason: Stripe cannot be driven from CI. It is
-// written against the same public `PaymentProvider` port a real alternative processor would use.
-// The amount travels inside the session ref rather than in a module-level map, so verification
-// works no matter which isolate answers `getSession`.
+// Not shown in the README: Stripe can't be driven from CI, so this fills the same public
+// `PaymentProvider` port instead. The amount lives in the session ref, not a module-level map, so
+// verification works no matter which isolate answers `getSession`.
 const simulatedPaymentsModule = `import type { PaymentProvider } from '@reservajs/astro/core';
 
 export const simulatedPayments: PaymentProvider = {
@@ -116,10 +103,6 @@ export const simulatedPayments: PaymentProvider = {
   },
 };
 `;
-
-// ---------------------------------------------------------------------------
-// 2. Pack both packages and assemble the fresh consumer
-// ---------------------------------------------------------------------------
 
 mustRun('build', 'bun', ['run', 'build'], repoRoot);
 mustRun('build', 'bun', ['run', '--filter', '@reservajs/stripe', 'build'], repoRoot);
@@ -165,9 +148,8 @@ writeFileSync(join(projectDir, 'tsconfig.json'), `${JSON.stringify({
 console.log(`quickstart-test: assembled the README's quickstart in ${projectDir}`);
 mustRun('install', 'bun', ['install'], projectDir);
 
-// Same real-consumer flow (and the same unpublished-peer tolerance) as scripts/pack-test.ts: until
-// release day bun resolves @reservajs/stripe's peer against the registry, which 404s even though
-// both tarballs land correctly, so the outcome is proven on disk instead of by exit code.
+// Until release day, bun resolves @reservajs/stripe's peer against the registry and 404s even
+// though both tarballs land correctly, so the outcome is proven on disk instead of by exit code.
 const add = run('bun', ['add', astroTarball, stripeTarball], projectDir);
 for (const installed of ['@reservajs/astro', '@reservajs/stripe']) {
   if (!existsSync(join(projectDir, 'node_modules', installed, 'package.json'))) {
@@ -175,17 +157,9 @@ for (const installed of ['@reservajs/astro', '@reservajs/stripe']) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// 3. Follow the rest of the quickstart: wrangler types, migrate, build
-// ---------------------------------------------------------------------------
-
 mustRun('types', 'bunx', ['wrangler', 'types'], projectDir);
 mustRun('migrate', 'bunx', ['reserva-migrate', '--local'], projectDir);
 mustRun('build', 'bunx', ['astro', 'build'], projectDir);
-
-// ---------------------------------------------------------------------------
-// 4. Serve the built Worker and book something
-// ---------------------------------------------------------------------------
 
 const preview = spawn(join(projectDir, 'node_modules/.bin/astro'), ['preview', '--host', HOST, '--port', String(PORT)], {
   cwd: projectDir,

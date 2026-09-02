@@ -64,14 +64,9 @@ describe('POST /cancel (customer, spec §11)', () => {
     expect(emails).toEqual(['booking.cancelled_by_customer']);
   });
 
-  // A successful cancel now revokes the customer's cancel_token (migrations/
-  // 0009_token_hashing.sql — cancel_token_revoked_at), since a cancelled booking's link has no
-  // further legitimate customer use. That changes what a same-token retry sees: it can no longer
-  // re-authenticate at all, so it gets 403 forbidden (the same denial an unknown token gets, per
-  // the "no oracle" requirement) rather than replaying the old idempotent 200. The property this
-  // test actually cares about — a repeat request can never cause a second calendar delete or a
-  // second email — holds even more strongly now: the retry cannot get far enough to attempt the
-  // mutation at all.
+  // A successful cancel revokes the customer's cancel_token, since a cancelled booking's link has
+  // no further legitimate use — a same-token retry now gets 403 (same denial as an unknown token,
+  // no oracle) instead of replaying the old idempotent 200, so it can never reach the mutation at all.
   it('revokes the customer token on a successful cancel, so a same-token retry is denied like an unknown token — without ever risking a second calendar delete or email', async () => {
     const seeded = booking({ id: 'b-cancel-idempotent', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z', calendarEventId: 'cal-idempotent' });
     const repo = fakeRepository([seeded]);
@@ -141,12 +136,9 @@ describe('POST /cancel (customer, spec §11)', () => {
     expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_delete`)).toMatchObject({ status: 'succeeded' });
   });
 
-  // src/core/occupancy.ts:158-185 dedups a calendar-sourced interval against its booking only
-  // while that booking is still active (hold/confirmed) — a cancelled row is excluded from
-  // listOccupancyBookings entirely, so once cancelled its calendarEventId no longer suppresses
-  // the matching calendar event. That's the real failure mode a transient delete failure exposes:
-  // Stripe/D1 already show the booking as cancelled, but the *calendar* event survives (delete
-  // failed), so it still occupies the slot until a later request drains the calendar_delete debt.
+  // A cancelled row is excluded from listOccupancyBookings entirely, so its calendarEventId no
+  // longer suppresses the matching calendar event — a failed delete leaves a stale calendar event
+  // that still occupies the slot until a later request drains the calendar_delete debt.
   it('a stale calendar event survives a failed delete: occupancy still blocks the slot until a later request drains the debt and frees it', async () => {
     const singleCapacityConfig = { ...config, capacity: { default: 1 } };
     const seeded = booking({
@@ -465,11 +457,8 @@ describe('POST /reschedule (customer, spec §11)', () => {
     await expect(response.json()).resolves.toMatchObject({ error: { code: 'invalid_transition' } });
   });
 
-  // tokens_expire_at must track the booking's CURRENT endsAt,
-  // not whatever it was at checkout — otherwise a reschedule that moves a booking out drops its
-  // manage link's expiry before the (new, later) service date, and one moved in leaves an
-  // over-long window relative to the new (earlier) end. repo.tokenState mirrors the DB-side
-  // tokens_expire_at column (see tests/fakes.ts).
+  // tokens_expire_at must track the booking's CURRENT endsAt, not whatever it was at checkout —
+  // otherwise a reschedule that moves a booking out drops the manage link's expiry too early.
   it('moves tokens_expire_at to (new endsAt + tokenExpiryDays) on a LATER reschedule', async () => {
     const seeded = booking({ id: 'b-reschedule-expiry-later', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z' });
     const repo = fakeRepository([seeded]);

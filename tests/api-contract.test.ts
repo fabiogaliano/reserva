@@ -14,7 +14,7 @@ import type {
 } from '../src/core';
 import { errorResponse, HttpError } from '../src/http';
 
-describe('API_ERROR_CODES (plan 027 design decision 2)', () => {
+describe('API_ERROR_CODES', () => {
   it('is a runtime array on the public core entrypoint, so docs and consumers can enumerate it', () => {
     // Imported from '../src/core' (what package.json maps to `@reservajs/astro/core`), not from
     // the internal module — the generated error-code table is built from exactly this import.
@@ -74,7 +74,7 @@ describe('the error envelope (src/http.ts errorResponse)', () => {
   });
 });
 
-describe('exported wire types (plan 027 design decision 2)', () => {
+describe('exported wire types', () => {
   it('pins the response envelopes the handlers return', () => {
     expectTypeOf<QuoteResponse>().toEqualTypeOf<{ priceMinor: number; currency: string }>();
     expectTypeOf<CheckoutResponse>().toEqualTypeOf<{ checkoutUrl: string; bookingId: string; reference: string }>();

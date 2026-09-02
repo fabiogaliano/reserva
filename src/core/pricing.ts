@@ -3,8 +3,7 @@ import { resolveService } from './config.js';
 
 export class PricingError extends Error {
   readonly quantity: number;
-  // null is the location-less booking (no pickup axis at all) or a location-ful lookup for the
-  // implicit '' table key — see priceFor below.
+  // null means either a location-less booking, or a location-ful lookup for the implicit '' key.
   readonly pickup: PickupType | null;
 
   constructor(quantity: number, pickup: PickupType | null) {
@@ -22,22 +21,16 @@ export type ResolvedPriceTable = Record<string, number[]>;
 export function priceFor(service: Pick<ServiceConfig, 'pricing'>, quantity: number, pickup: PickupType | null): number {
   if (!Number.isInteger(quantity) || quantity < 1) throw new PricingError(quantity, pickup);
   // Config validation orders each pickup's rules by maxQuantity, so the first fit is the tightest
-  // tier. A location-less rule's `pickup` is undefined; normalizing it to null here is what lets a
-  // location-less lookup (pickup: null) match it — see core/config.ts validateService, which
-  // guarantees the two never mix within one service.
+  // tier. Normalizing an undefined `pickup` to null lets a location-less lookup match it.
   const rule = service.pricing.find((candidate) => (candidate.pickup ?? null) === pickup && quantity <= candidate.maxQuantity);
   if (!rule) throw new PricingError(quantity, pickup);
   return rule.priceMinor;
 }
 
 export function resolvedPriceTableFor(service: Pick<ServiceConfig, 'pricing'>): ResolvedPriceTable {
-  // This is what builds the widget's price lookup table, and its `pricing` argument travels
-  // however the embedding page sourced it — typically the consumer's own raw config module, not
-  // validateConfig's canonical return (see examples/smoke-site: config.ts is imported directly by
-  // pages, independently of runtime.ts's validateConfig call). Sorting a local copy here — rather
-  // than trusting priceFor's sortedness invariant on the array we were handed — makes this table
-  // match the tightest-fitting-tier semantics by construction, regardless of input order, so it
-  // can never silently diverge from the server's canonicalized resolution.
+  // `pricing` may arrive unsorted (e.g. a raw config module, not validateConfig's canonical
+  // return), so this sorts a local copy rather than trusting the array's order — the table always
+  // matches tightest-fitting-tier semantics, regardless of input order.
   const canonicalPricing = [...service.pricing].sort((a, b) => a.maxQuantity - b.maxQuantity);
   const highest = Math.max(...canonicalPricing.map((row) => row.maxQuantity), 0);
   // The key set is each row's own `pickup` (or '' for a location-less row), in first-occurrence

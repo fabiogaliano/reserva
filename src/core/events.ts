@@ -3,11 +3,8 @@ import type { Booking, WireBooking } from './booking.js';
 import type { CalEvent } from './occupancy.js';
 import type { ReservaResolvedRouteConfig } from '../routes-manifest.js';
 
-// The closed set of emittable booking events, exported as a runtime
-// VALUE (not only a type) so a consumer — or an agent reading the package — can enumerate every
-// case, and so hook/webhook `events` filters can be validated against it at startup instead of
-// failing silently on a typo. `BookingEvent` derives from it, which is what keeps the two from
-// drifting.
+// The closed set of emittable booking events, exported as a runtime value so hook/webhook
+// `events` filters validate against it at startup. `BookingEvent` derives from it.
 export const BOOKING_EVENTS = [
   'booking.confirmed',
   'booking.cancelled_by_customer',
@@ -40,10 +37,8 @@ export interface PaymentCustomerDetails {
   pickupAddress?: string | null;
 }
 
-// The closed set of payment events Reserva reacts to, exported as a
-// runtime VALUE so a provider author (or an agent) can enumerate every case an adapter has to map
-// its vendor's event names onto. A provider that parses an event outside this set returns its own
-// vendor string and Reserva ignores it, which is why `type` stays open.
+// The closed set of payment events Reserva reacts to, exported as a runtime value so a provider
+// can enumerate every case. An event outside this set keeps its vendor string; Reserva ignores it.
 export const PAYMENT_EVENTS = [
   'checkout_completed',
   'checkout_expired',
@@ -63,9 +58,8 @@ export interface PaymentEventParsed extends PaymentCustomerDetails {
   amountRefunded?: number;
   currency?: string;
   paymentStatus?: 'paid' | 'unpaid' | 'no_payment_required' | string;
-  // The provider's own id for the refund a 'refunded' event describes, when its payload carries one
-  // — lets the webhook branch record which refund actually moved the money, not just that a refund
-  // happened.
+  // The provider's own id for the refund a 'refunded' event describes, so the webhook branch can
+  // record which refund actually moved the money.
   refundRef?: string;
   paid?: boolean;
   raw?: unknown;
@@ -83,27 +77,23 @@ export interface SessionStatus extends PaymentCustomerDetails {
 
 export type EmailBookingEvent = Exclude<BookingEvent, 'payment.dispute_created'>;
 
-// Who a given event's email goes to. Kept generic here (not
-// Brevo-specific) so the mutation dispatcher (src/confirmation.ts) can ask any provider which
-// recipients apply without depending on a concrete implementation's template config.
+// Who a given event's email goes to. Kept generic (not provider-specific) so the mutation
+// dispatcher can ask any provider which recipients apply.
 export type EmailRecipientRole = 'customer' | 'owner';
 
 export interface EmailProvider {
-  // The whole resolved route config, not just its paths — an email
-  // template is a link producer, and `routes.manage: false` means the built-in manage page doesn't
-  // exist, so a renderer needs `groups.manage` to decide whether the manage button is a live link
-  // or a dead one. (PaymentProvider stays paths-only: it never links into an optional page.)
+  // The whole resolved route config, not just its paths: an email template is a link producer, and
+  // `routes.manage: false` means the manage page doesn't exist, so it needs `groups.manage` to know
+  // whether the manage button is live. `PaymentProvider` stays paths-only — it never links to it.
   send(
     event: EmailBookingEvent,
     booking: Booking,
     config: ClientConfig,
     routeConfig?: ReservaResolvedRouteConfig,
   ): Promise<void>;
-  // Optional per-recipient split: a provider that implements both of these lets the
-  // mutation dispatcher record + retry each recipient as its own durable outbox operation, so an
-  // owner-send failure can never cause a retry to re-send the customer's already-delivered
-  // message. A provider without them falls back to `send` as a single, unsplit operation — still
-  // recorded and retried durably, just not per-recipient.
+  // Optional per-recipient split: implementing both lets the dispatcher retry each recipient as
+  // its own durable operation, so an owner-send failure can't cause a re-send to the customer.
+  // Without them, `send` runs as one unsplit (but still durable) operation.
   recipientsForEvent?(event: EmailBookingEvent): EmailRecipientRole[];
   sendToRecipient?(
     recipient: EmailRecipientRole,
@@ -123,11 +113,9 @@ export interface CalendarProvider {
   deleteEvent(eventId: string): Promise<void>;
 }
 
-// Provider-neutral by construction — no name here belongs to any one
-// payment vendor. Reserva ships and tests exactly one implementation (Stripe), but a community
-// adapter implements this same interface from its own package, using only the exported core types
-// and helpers. Amounts are always minor units of the booking's own currency (core/currency.ts); a
-// "ref" is whatever opaque identifier the provider uses for that object.
+// Provider-neutral: no name here belongs to any one vendor. Reserva ships one implementation
+// (Stripe); a community adapter can implement this from its own package. Amounts are always minor
+// units of the booking's own currency; a "ref" is whatever opaque id the provider uses.
 export interface PaymentProvider {
   createCheckout(
     booking: Booking,
@@ -139,11 +127,9 @@ export interface PaymentProvider {
   // The expected total lets a retry distinguish an incomplete historical partial refund from a
   // completed full refund; amountMinor reports the cumulative total the operation satisfied.
   refund(paymentRef: string, expectedAmountMinor: number): Promise<{ refundRef: string; amountMinor: number }>;
-  // Optional synchronous config check, invoked exactly once while the runtime definition
-  // initializes (runtime-context.ts) — never per request and never at first checkout. This is where
-  // a provider's OWN limits live (its supported currencies and locales, how long it lets a checkout
-  // session stay open), so core config validation can stay vendor-neutral. Throw with the offending
-  // config path and the fix; the deployment fails before it serves anything.
+  // Optional synchronous config check, invoked once at runtime-definition init — never per
+  // request. This is where a provider's own limits live (currencies, locales, session lifetime),
+  // keeping core config validation vendor-neutral. Throw with the offending path and the fix.
   validateConfig?(config: ClientConfig): void;
 }
 
@@ -151,9 +137,8 @@ export function isBookingEvent(value: string): value is BookingEvent {
   return (BOOKING_EVENTS as readonly string[]).includes(value);
 }
 
-// A subscriber's `events` filter is checked against the catalog at
-// startup, and the rejection lists the whole valid vocabulary — an agent wiring a hook learns every
-// event name from the error alone, without reading source.
+// Lists the whole valid vocabulary in the rejection, so a hook author learns every event name
+// from the error alone.
 export function unknownBookingEventsMessage(event: string): string {
   return `Unknown booking event "${event}". Valid events: ${BOOKING_EVENTS.join(', ')}.`;
 }
@@ -176,12 +161,9 @@ export function validateBookingEventHooks(hooks: readonly BookingEventHook[]): v
   }
 }
 
-// The independent alert channel to the central technical operator.
-// Deliberately narrow — exactly these seven fields, reference/operation metadata only. Excludes
-// booking/customer ids, names, contact details, addresses, raw provider bodies, session ids, and
-// manage tokens. `action`/`severity` mirror the
-// operational-incident domain (src/repo.ts OperationalIncidentAction/-Severity) so the alert and
-// the admin card the operator opens from `adminUrl` always describe the same thing.
+// The alert channel to the central technical operator: reference/operation metadata only — no
+// booking/customer ids, names, contact details, or tokens. `action`/`severity` mirror the
+// operational-incident domain so the alert and the admin card describe the same thing.
 export interface OperationalAlert {
   incidentId: string;
   reference: string;
@@ -192,18 +174,15 @@ export interface OperationalAlert {
   adminUrl: string;
 }
 
-// Durable delivery (claim/attempt/backoff) is the reconciler's job,
-// not this sink's — send() is a single best-effort attempt; a thrown error just means "not
-// delivered this attempt", picked up again by the next eligible alert-claim pass.
+// Durable delivery (claim/attempt/backoff) is the reconciler's job. `send` is a single
+// best-effort attempt; a thrown error just means retry on the next claim pass.
 export interface OperationalAlertSink {
   send(alert: OperationalAlert): Promise<void>;
 }
 
-// The versioned envelope every durable booking event is delivered
-// in. `apiVersion` is an integer consumers dispatch shape on; `id` is stable across retries so
-// they can deduplicate on it; the booking payload comes from the single toWireBooking projection,
-// so pushed and pulled shapes cannot fork. Serialized once, when the occurrence happens — it is
-// the historical record of that occurrence, never a cache of the booking's current state.
+// `apiVersion` is the dispatch-shape version; `id` is stable across retries for deduplication.
+// The booking payload comes from `toWireBooking`, so pushed and pulled shapes can't fork. This is
+// a historical record of the occurrence, never a cache of current state.
 export const BOOKING_EVENT_API_VERSION = 1;
 
 export interface BookingEventEnvelope {
@@ -226,10 +205,9 @@ export interface BookingEventHookContext {
   config: ClientConfig;
 }
 
-// An in-process listener. `durable: false` (the default) fires
-// post-commit and is never retried; `durable: true` gets an outbox row per subscribed event and
-// rides the existing claim/attempt/abandon machinery. The handler receives the wire projection —
-// the same snapshot a webhook subscriber gets — so durability never changes an event's meaning.
+// An in-process listener. `durable: false` (default) fires post-commit and is never retried;
+// `durable: true` gets an outbox row and rides the existing claim/attempt/abandon machinery. The
+// handler receives the same wire projection a webhook subscriber gets.
 export interface BookingEventHook {
   name: string;
   events?: readonly BookingEvent[];

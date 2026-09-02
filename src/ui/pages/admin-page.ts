@@ -44,14 +44,9 @@ function adminSectionNav(messages: ReturnType<typeof resolveMessages>, hasIncide
     + `<div class="bk-section-nav-links">${links}</div></nav>`;
 }
 
-// The meeting-point label the
-// bookings-table row actually displays — '' when the row shows none. Shared by the row renderer
-// and the search haystack so search can only ever match visible text: only an option that starts
-// at a meeting point surfaces a choice, and only when the service declares more than one (a
-// single-point service's sub-line would just repeat what "Meeting point" implies). resolveService throws
-// for a serviceSlug no longer in the live config (renamed/removed since the booking was made) —
-// degrade to no label rather than 500 the whole admin page, the same tolerance the day-calendar
-// unit aggregation below already applies.
+// The meeting-point label the bookings-table row displays — '' when none. Shared with the search
+// haystack so search only matches visible text. `resolveService` throws for a serviceSlug no
+// longer in the live config; degrade to no label rather than 500 the whole admin page.
 function adminMeetingPointSubLabel(config: ReservaContext['config'], booking: Booking): string {
   try {
     const service = resolveService(config, booking.serviceSlug);
@@ -67,43 +62,30 @@ export function matchesAdminFilters(booking: Booking, filters: AdminFilters, con
   if (filters.status && booking.status !== filters.status) return false;
   if (filters.q) {
     const needle = filters.q.toLowerCase();
-    // adminMeetingPointSubLabel is exactly what the row displays (it is the renderer's own
-    // source), so a hidden meeting point can never make a booking match.
+    // adminMeetingPointSubLabel is exactly what the row displays, so a hidden meeting point can
+    // never make a booking match.
     const haystack = [booking.reference, booking.serviceSlug, booking.pickupType, booking.pickupAddress ?? '', adminMeetingPointSubLabel(config, booking), booking.customerName ?? '', booking.customerEmail ?? ''].join(' ').toLowerCase();
     if (!haystack.includes(needle)) return false;
   }
   return true;
 }
 
-// Shared by every admin manage-link render site below (the
-// bookings table, the day-detail island, and its server-rendered fallback) — never build an href
-// from a token that isn't presentable (see isManageableToken, src/repo.ts: a
-// `nohash:`-prefixed placeholder, meaning no decryptable blob exists to regenerate the real link
-// from). null tells each call site to render the "unavailable" fallback instead of a dead link.
-// Also null when the built-in manage page is switched off
-// (config.routes.manage: false) — that route isn't mounted, so every call site must render its
-// existing "unavailable" state rather than a dead link. The whole resolved route config is the
-// argument, not just the path, so the flag and the path can never be read from different places.
+// Shared by every manage-link render site: returns null for a non-presentable token or a
+// disabled manage route, so every caller renders the same "unavailable" fallback.
 export function manageLinkHref(routeConfig: ReservaResolvedRouteConfig, token: string): string | null {
   if (!routeConfig.groups.manage) return null;
   return isManageableToken(token) ? `${routeConfig.paths.managePage}?token=${encodeURIComponent(token)}` : null;
 }
 
-// Relative "how long ago" phrasing for a card's first-detected
-// timestamp — plain locale date/time is precise but doesn't read as urgency the way "since" does,
-// and this is the one place on the admin page that needs it.
+// Relative "how long ago" phrasing for a card's first-detected timestamp — reads as urgency where
+// a plain locale date/time wouldn't.
 function formatIncidentSince(iso: string, locale: string, timezone: string): string {
   return formatDateTime(utcToLocalIso(iso, timezone), locale, timezone);
 }
 
-// The "Attention required" section — open incident cards
-// (already sorted action-required-then-delayed-then-oldest by listOpenIncidents), each with a
-// collapsed technical-details disclosure and two CSRF-protected actions (retry, manual resolve),
-// plus a 30-day counts line and a short recently-resolved history distinguishing automatic from
-// manual resolutions. Never renders the internal word "abandoned" (ownerFacingIncidentTitle/plain
-// severity labels only) and never renders a Retry button for an 'oversell' incident — the STOP
-// condition in src/confirmation.ts's retrySideEffectOperation ('oversell' -> 'not_retryable') is
-// mirrored here so the UI never offers an action the server would refuse anyway.
+// The "Attention required" section: open incident cards with a technical-details disclosure and
+// CSRF-protected retry/resolve actions, plus 30-day counts and a resolved history. Never renders
+// a Retry button for an 'oversell' incident, mirroring the server's own not-retryable rule.
 export function incidentsSection(
   context: ReservaContext,
   messages: ReturnType<typeof resolveMessages>,
@@ -185,9 +167,8 @@ export function incidentsSection(
 export function adminPage(
   context: ReservaContext,
   bookings: Booking[],
-  // The table's source set — same as `bookings` with no filters active, widened to include
-  // cancelled/expired/past rows when a search or status filter is applied. Separate from
-  // `bookings` because the occupancy calendar and stats below must keep counting only live rows.
+  // The table's source set — same as `bookings` but widened to include cancelled/expired/past
+  // rows when a filter is applied. Kept separate so the occupancy calendar counts only live rows.
   tableBookings: Booking[],
   overrides: Awaited<ReturnType<ReservaContext['repo']['listDayOverrides']>>,
   fromDate: string,
@@ -196,8 +177,8 @@ export function adminPage(
   editDate: string,
   capacityDefaults: CapacityDefault[],
   saved: string,
-  // undefined when RESERVA_CSRF_SECRET isn't configured (src/admin-csrf.ts mintAdminCsrfToken) — the
-  // field below then renders empty and verifyAdminCsrfToken is a deliberate no-op on the POST side.
+  // undefined when CSRF isn't configured — the field below renders empty and verification is a
+  // no-op on the POST side.
   csrfToken: string | undefined,
   incidentsHtml: string,
   openIncidentCount: number,
@@ -217,10 +198,8 @@ export function adminPage(
       : '';
     const quantity = formatMessage(booking.quantity === 1 ? messages['widget.person'] : messages['widget.quantityCount'], { n: booking.quantity });
     const price = formatPrice(booking.priceMinor, locale, context.config.business.currency);
-    // resolveService throws for a renamed/removed serviceSlug (see
-    // adminMeetingPointSubLabel above) — degrade option to undefined rather than 500 the row; every
-    // gate below then falls back to the pickupType-keyed check ('default'/'custom' literal ids), so
-    // a legacy or service-disappeared booking still renders a pickup label.
+    // resolveService throws for a renamed/removed serviceSlug; degrade to undefined rather than
+    // 500 the row — every gate below falls back to the pickupType-keyed check.
     let rowTour: ServiceConfig | undefined;
     try {
       rowTour = resolveService(context.config, booking.serviceSlug);
@@ -228,10 +207,9 @@ export function adminPage(
       rowTour = undefined;
     }
     const option = rowTour ? pickupOptionFor(rowTour, booking.pickupType) : undefined;
-    // Gate on the row's own data, not config — a location-less
-    // booking (pickupType null) renders no pickup cell content at all. A non-null pickupType keeps
-    // the pre-023 fallback chain: a declared option's own label, else the message-catalog key for
-    // the 'default'/'custom' ids, else the raw id verbatim for a declared-but-uncataloged one.
+    // Gate on the row's own data, not config — a location-less booking (pickupType null) renders
+    // no pickup cell. A non-null pickupType falls back to the declared option, then the
+    // message-catalog key for 'default'/'custom', then the raw id.
     const pickupLabel = booking.pickupType === null
       ? ''
       : option?.label
@@ -242,8 +220,7 @@ export function adminPage(
     const pickupSub = requiresAddress && booking.pickupAddress
       ? `<span class="bk-sub">${escapeHtml(booking.pickupAddress)}</span>`
       : '';
-    // The same helper the search haystack uses (see matchesAdminFilters above), so the two can
-    // never disagree about which meeting points are visible.
+    // Same helper the search haystack uses, so the two never disagree about visible meeting points.
     const meetingPointLabel = adminMeetingPointSubLabel(context.config, booking);
     const meetingPointSub = meetingPointLabel ? `<span class="bk-sub">${escapeHtml(meetingPointLabel)}</span>` : '';
     // No row action on terminal rows (reachable since the filter widening): "Manage" would open
@@ -273,13 +250,10 @@ export function adminPage(
     if (list) list.push(booking);
     else bookingsByDate.set(date, [booking]);
   }
-  // Capacity units consumed per day, not raw booking-row counts: a single 5-person booking on a
-  // 4-seat vehicle occupies 2 vans (occupancyFor), and checkout enforces capacity in units, so the
-  // admin calendar must count in the same unit or a day can read "1/2" while it is actually full.
-  // resolveService throws for a serviceSlug no longer in the live config (e.g. renamed/removed since the
-  // booking was made) — unlike a single-booking lookup, this aggregates every booking in the
-  // rendered horizon, so one stale row must degrade to counting itself as one unit, not 500 the
-  // whole admin calendar.
+  // Capacity units consumed per day, not raw booking counts: a 5-person booking on a 4-seat
+  // vehicle occupies 2 vans, so the admin calendar must count in the same unit checkout does.
+  // resolveService throws for a serviceSlug no longer in the live config; a stale row degrades to
+  // counting itself as one unit rather than 500ing the whole calendar.
   const unitsByDate = new Map([...bookingsByDate].map(([date, list]) => [
     date,
     list.reduce((total, b) => {
@@ -294,9 +268,8 @@ export function adminPage(
     new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', timeZone: timezone }).format(new Date(startsAt));
   const quantityText = (quantity: number): string =>
     formatMessage(quantity === 1 ? messages['widget.person'] : messages['widget.quantityCount'], { n: quantity });
-  // The horizon rendered as month calendar grids instead of a day-per-row list: an operator's
-  // mental model of availability is a calendar, and 30 rows collapse into a screenful of cells
-  // where only exceptional days carry color. Each day links to the adjust form — still no JS.
+  // Rendered as month calendar grids instead of a day-per-row list: an operator's mental model of
+  // availability is a calendar. Each day links to the adjust form — still no JS.
   const dowLabels = Array.from({ length: 7 }, (_, index) =>
     // 2024-01-01 is a Monday; formatting it +index yields locale weekday names, Monday-first.
     new Intl.DateTimeFormat(locale, { weekday: 'short', timeZone: 'UTC' }).format(new Date(Date.UTC(2024, 0, 1 + index))));
@@ -341,9 +314,8 @@ export function adminPage(
         + `<span class="bk-day-num">${Number(date.slice(8, 10))}</span>${load}</a>`;
     }).join('');
     const grid = `<div class="bk-monthgrid">${header}${blanks}${cells}</div>`;
-    // Near months stay expanded; later mostly-quiet months collapse so ~90 day cells don't all
-    // compete at once. A collapsed month auto-opens when it holds signal (adjusted/closed days or
-    // the day being edited), so disclosure never hides anything the operator needs to see.
+    // Near months stay expanded; later mostly-quiet months collapse. A collapsed month auto-opens
+    // when it holds signal (adjusted/closed days, or the day being edited).
     if (monthIndex < 2) return `<div class="bk-month" data-label="${escapeHtml(monthTitle)}"><h3>${escapeHtml(monthTitle)}</h3>${grid}</div>`;
     const flaggedBadge = flagged > 0
       ? ` <span class="bk-badge bk-badge--warn">${escapeHtml(formatMessage(messages['admin.monthFlagged'], { n: flagged }))}</span>`
@@ -358,16 +330,14 @@ export function adminPage(
     return `<option value="${escapeHtml(value)}"${selected}>${escapeHtml(label)}</option>`;
   }).join('');
 
-  // The hidden date field keeps the selected day when filters are (re)applied — the two workflows
-  // share one URL, so neither form may silently drop the other's state.
+  // Keeps the selected day when filters are (re)applied — the two workflows share one URL.
   const clearParams = new URLSearchParams();
   if (editDate) clearParams.set('date', editDate);
   const clearHref = `${clearParams.size ? `?${clearParams}` : context.routeConfig.paths.adminPage}#bk-bookings`;
   const filterActions = `<div class="bk-filter-actions"><button type="submit" class="bk-btn bk-btn--secondary">${escapeHtml(messages['admin.apply'])}</button>`
     + (filters.q || filters.status ? `<a class="bk-filter-clear" href="${escapeHtml(clearHref)}">${escapeHtml(messages['admin.clearFilters'])}</a>` : '')
     + `</div>`;
-  // A deployment where no service declares a location module drops
-  // the "pickup" mention from the search hint.
+  // Drops the "pickup" mention from the search hint when no service declares a location module.
   const hasLocationService = Object.values(context.config.services).some((candidate) => candidate.location);
   const searchPlaceholder = hasLocationService ? messages['admin.searchPlaceholder'] : messages['admin.searchPlaceholderNoPickup'];
   const filterForm = `<form method="get" class="bk-filters" role="search">`
@@ -384,8 +354,7 @@ export function adminPage(
       : `<div class="bk-table-wrap"><table class="bk-table"><thead><tr><th>${escapeHtml(messages['common.date'])}</th><th>${escapeHtml(messages['common.customer'])}</th><th>${escapeHtml(messages['common.service'])}</th><th>${escapeHtml(messages['common.pickup'])}</th><th>${escapeHtml(messages['common.status'])}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`)
     + `</section>`;
 
-  // Row "Edit" links land here with ?date=…, prefilling the form with that day's current values —
-  // the whole edit flow stays plain GET/POST, no script.
+  // Row "Edit" links land here with ?date=…, prefilling the form — no script needed.
   const editOverride = editDate ? overridesByDate.get(editDate) : undefined;
   const editDefault = defaultCapacityForDate(editDate || fromDate, context.config.capacity.default, capacityDefaults);
   // Explicit post-save confirmation inside whichever form was just submitted — the POST redirects
@@ -400,8 +369,8 @@ export function adminPage(
   for (const [date, list] of bookingsByDate) {
     daySummaries[date] = [...list].sort(byStart).map((entry) => {
       const tone = statusToneOf(entry.status);
-      // Omitted (not a dead-link href) when the token isn't
-      // presentable — admin-enhancer.ts renders the "unavailable" fallback when `u` is absent.
+      // Omitted (not a dead-link href) when the token isn't presentable — the enhancer renders
+      // the "unavailable" fallback when `u` is absent.
       const manageHref = manageLinkHref(context.routeConfig, entry.operatorToken);
       return {
         t: formatDayTime(entry.startsAt),
@@ -453,10 +422,8 @@ export function adminPage(
   const editReason = editOverride?.reason ?? '';
   const csrfField = `<input type="hidden" name="csrf_token" value="${escapeHtml(csrfToken)}">`;
   const overrideForm = `<form method="post" id="bk-override" class="bk-day-form">${csrfField}${adminIsland}`
-    // role="status" makes this an accessible live region: once the enhancer (src/ui/
-    // admin-enhancer.ts) starts rewriting this text on selection changes, a screen reader
-    // announces "N days selected" etc. without focus ever needing to move there. Inert without
-    // JS — a static heading whose text only ever changes via a full page reload.
+    // role="status" makes this a live region: once the enhancer starts rewriting this text on
+    // selection changes, a screen reader announces it without focus moving. Inert without JS.
     + `<h2 data-reserva-day-title role="status">${escapeHtml(editDate ? formatDayDate(editDate, locale) : messages['admin.overrideTitle'])}</h2>`
     + savedAlert('day')
     + dayDetail
@@ -481,9 +448,8 @@ export function adminPage(
     + `</span><form method="post">${csrfField}<input type="hidden" name="date" value="${escapeHtml(entry.fromDate)}">`
     + `<button type="submit" class="bk-btn bk-btn--secondary bk-btn--sm" name="action" value="default-clear">${escapeHtml(messages['admin.remove'])}</button></form></li>`).join('');
   // The capacity-default form is the rare, high-blast-radius task, so it sits behind a collapsed
-  // disclosure — one visible form (the day exception) instead of two near-identical ones. It must
-  // be open after its own POST so the saved confirmation is visible; the scheduled-change count in
-  // the summary keeps active rules discoverable while collapsed.
+  // disclosure. Opens after its own POST so the saved confirmation is visible; the
+  // scheduled-change count keeps active rules discoverable while collapsed.
   const scheduledBadge = capacityDefaults.length > 0
     ? ` <span class="bk-badge">${escapeHtml(formatMessage(messages['admin.defaultScheduled'], { n: capacityDefaults.length }))}</span>`
     : '';

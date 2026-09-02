@@ -21,7 +21,7 @@ Order of operations for an existing deployment:
 | `bookkit/providers/payments-stripe` | `@reservajs/stripe` (separate package, own `stripe` dependency) |
 | `bookkit/components/BookingWidget.astro` | removed — copy `examples/smoke-site/src/components/BookingWidget.astro` |
 | `bookkit-migrate` (bin) | `reserva-migrate` |
-| `bookkit/core`, `/email`, `/providers`, `/providers/calendar-google`, `/providers/email-brevo`, `/providers/email-none`, `/runtime` | same subpaths under `@reservajs/astro` |
+| `bookkit/core`, `/email`, `/providers/calendar-google`, `/providers/email-brevo`, `/providers/email-none`, `/runtime` | same subpaths under `@reservajs/astro` |
 | — | new: `@reservajs/astro/ui` (the copy seam, moved off the root barrel) |
 
 The package now ships compiled `dist/` output. Remove any

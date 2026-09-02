@@ -23,18 +23,15 @@ export interface ReservaRuntimeFactoryOptions {
   createContext(input: ReservaRuntimeRequest & { config: ClientConfig }): ReservaContextInput | Promise<ReservaContextInput>;
 }
 
-// The minimal env surface reserva itself reads (db/cache/secrets). Consumers pass their
-// `wrangler types`-generated Env, which structurally satisfies this, as the TEnv type argument
-// to get keyof-checked binding names and a typed `env` in provider factories instead of `unknown`.
-// No index signature here: a real wrangler-generated Env has none either, and a generic
-// constraint with a string index signature would reject any type that lacks one.
+// The minimal env surface reserva reads. Consumers pass their wrangler-generated Env as TEnv for
+// keyof-checked binding names. No index signature: a real wrangler Env has none either.
 export interface ReservaEnvShape {
   RESERVA_DB?: D1Database;
   RESERVA_CACHE?: unknown;
 }
 
-// Default TEnv for the zero-config path (no type argument supplied): adds the index signature so
-// bare-string binding-name options keep accepting arbitrary names, same as before this change.
+// Default TEnv for the zero-config path: adds the index signature so bare-string binding-name
+// options keep accepting arbitrary names.
 type UntypedReservaEnv = ReservaEnvShape & Record<string, unknown>;
 
 export interface CloudflareRuntimeBindings<TEnv extends object = UntypedReservaEnv> {
@@ -51,16 +48,12 @@ export interface CloudflareReservaRuntimeOptions<TEnv extends object = UntypedRe
   db?: CloudflareBinding<D1Database, TEnv>;
   cache?: CloudflareBinding<ReservaCache, TEnv> | null;
   providers: ReservaProviders | ((bindings: CloudflareRuntimeBindings<TEnv>) => ReservaProviders | Promise<ReservaProviders>);
-  // In-process booking-event listeners. Validated eagerly at
-  // definition time, not per request, so a bad name or a misspelled event fails the deployment
-  // rather than one booking's dispatch.
+  // In-process booking-event listeners, validated eagerly at definition time so a bad name or
+  // misspelled event fails the deployment, not one booking's dispatch.
   hooks?: readonly BookingEventHook[];
   secretBindings?: ReadonlyArray<keyof TEnv & string>;
-  // The custom admin auth strategy's one registration — there is
-  // no separate `{ kind: 'custom' }` marker. Auto-overridden by cloudflareAccessAdminAuth whenever
-  // `config.admin.access` is configured (validated together, synchronously, at
-  // defineCloudflareReservaRuntime call time — see resolveAdminAuth below); supplying both is a
-  // build-time error, not a silent precedence rule.
+  // The custom admin auth strategy's one registration. Auto-overridden by cloudflareAccessAdminAuth
+  // when config.admin.access is set; supplying both is a build-time error, not a silent precedence rule.
   adminAuth?: AdminAuth;
   logger?: ReservaLogger | ((bindings: CloudflareRuntimeBindings<TEnv>) => ReservaLogger);
   migrationsTable?: string;
@@ -123,23 +116,16 @@ function isD1Like(value: unknown): value is D1Database {
   return typeof value === 'object' && value !== null && typeof (value as { prepare?: unknown }).prepare === 'function';
 }
 
-// A payment provider's own limits (its supported currencies and
-// locales, how long it lets a checkout session stay open) are checked ONCE, before the deployment
-// serves anything — not per request, and never as a surprise on the first real checkout. When
-// `providers` is a plain object the check runs while the runtime definition is being built; when it
-// is a factory (it needs the Worker's env), the first context creation is the earliest the provider
-// exists, so it runs there and is remembered.
+// A payment provider's own limits are checked ONCE, before the deployment serves anything — never
+// as a surprise on the first real checkout. When `providers` is a plain object the check runs at
+// build time; when it's a factory, the first context creation is the earliest it can run.
 function validatePaymentProvider(providers: ReservaProviders, config: ClientConfig): void {
   providers.payments.validateConfig?.(config);
 }
 
-// Resolves the one admin auth path a deployment actually uses and
-// validates the combination synchronously, before defineCloudflareReservaRuntime returns — composing
-// with, not replacing, validatePaymentProvider above at the same runtime-definition boundary. When
-// neither protected route group (admin/ops) is enabled, whichever path is configured (if any) is
-// still wired for defense in depth (a consumer manually rendering the admin page despite disabling
-// its route still hits the shared fail-closed gate — src/admin-access.ts), but the combination is
-// never validated, since there is no protected route to guard.
+// Resolves the one admin auth path a deployment uses and validates the combination synchronously.
+// When neither protected route group (admin/ops) is enabled, whichever path is configured is still
+// wired for defense in depth, but the combination itself is not validated.
 function resolveAdminAuth(config: ClientConfig, custom: AdminAuth | undefined): AdminAuth | undefined {
   const access = config.admin.access;
   const resolved: AdminAuth | undefined = access ? cloudflareAccessAdminAuth(access.teamDomain, access.aud) : custom;
@@ -179,12 +165,9 @@ export function defineReservaRuntime(options: ReservaRuntimeFactoryOptions): Res
   };
 }
 
-// Two overloads rather than a single `TEnv = UntypedReservaEnv` default: `keyof TEnv` appearing in
-// `options` makes TEnv an inference site, and TypeScript resolves an uninferrable-but-present type
-// parameter to its constraint rather than its default. Without the plain overload below, an
-// untyped call like `{ providers, secretBindings: [...] }` would silently narrow TEnv to the bare
-// `ReservaEnvShape` (no index signature) and reject any binding name — the exact "zero-config path
-// must not get worse" regression this feature has to avoid.
+// Two overloads rather than a single `TEnv = UntypedReservaEnv` default: `keyof TEnv` in `options`
+// makes TEnv an inference site, so TypeScript would resolve an untyped call to the bare
+// `ReservaEnvShape` (losing its index signature) without the plain overload below.
 export function defineCloudflareReservaRuntime(
   configInput: unknown,
   options: CloudflareReservaRuntimeOptions<UntypedReservaEnv>,
@@ -205,8 +188,8 @@ export function defineCloudflareReservaRuntime<TEnv extends object>(
   let providerValidated = typeof options.providers !== 'function';
   const secretBindings = new Set<string>(options.secretBindings ?? [OPERATOR_SECRET_NAME]);
   const confirmationLocks = new Map<string, Promise<void>>();
-  // Memoized across every request this isolate handles: the schema check must run once at
-  // first context creation, not on every request (see checkReservaMigrationsApplied in src/schema-check.ts).
+  // Memoized across every request this isolate handles: the schema check must run once at first
+  // context creation, not on every request.
   let migrationsChecked: Promise<void> | undefined;
   return {
     config,

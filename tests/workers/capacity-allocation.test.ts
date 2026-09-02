@@ -9,17 +9,9 @@ interface TestEnv {
   RESERVA_DB: D1Database;
 }
 
-// This is the decisive layer for the atomic capacity guard —
-// insertHoldWithCapacity / rescheduleWithCapacity run as single conditional statements, so their
-// atomicity claim only means something proven against the real D1 binding (a fake repo's
-// "atomicity" is just "no await between check and write", which doesn't exercise the actual SQL).
-//
-// Each race below follows repo-cas-transitions.test.ts's own established pattern for proving
-// atomicity against real D1: two conflicting writes applied in a concrete order, asserting the
-// loser reports no change (null/unchanged row) rather than relying on Promise.all — D1 processes
-// every statement serially in its own implicit transaction, so a fixed ordering already proves
-// "at most one winner" for either interleaving; running both orderings (where the pair is
-// genuinely symmetric) covers whichever request reaches D1 first in production.
+// insertHoldWithCapacity/rescheduleWithCapacity's atomicity only means something proven against
+// real D1, not a fake repo. Each race applies two conflicting writes in a fixed order and asserts
+// the loser reports no change — D1 processes statements serially, so one ordering already proves "at most one winner".
 const db = (env as unknown as TestEnv).RESERVA_DB;
 const repo = createBookingRepository(db);
 
@@ -87,7 +79,7 @@ async function seedConfirmed(id: string, startsAt: string, endsAt: string, quant
 const TARGET_START = '2026-08-10T09:00:00.000Z';
 const TARGET_END = '2026-08-10T10:00:00.000Z';
 
-describe('atomic capacity allocation against real D1 (BK-CAP-001 / AR-001)', () => {
+describe('atomic capacity allocation against real D1', () => {
   describe('concurrent last-unit checkout x2', () => {
     it('checkout A commits first: A wins the last unit, B is rejected', async () => {
       const a = await repo.insertHoldWithCapacity(buildHold('checkout-a', TARGET_START, TARGET_END, 2, 1));
@@ -185,11 +177,9 @@ describe('atomic capacity allocation against real D1 (BK-CAP-001 / AR-001)', () 
       expect(inWindow).toHaveLength(1); // just c0 -- within the overridden capacity of 1.
     });
 
-    // The reschedule's own atomic guard resolved capacity at the moment IT ran (still 2), so it
-    // correctly succeeds -- a later override is a forward-looking capacity change, not a retroactive
-    // eviction of an already-confirmed booking (oversell repair for pre-existing rows is out of
-    // scope). What the override DOES do is bind on every write from that point on,
-    // which the final insertHoldWithCapacity call below confirms.
+    // The reschedule's own guard resolved capacity when IT ran (still 2), so it succeeds — a later
+    // override doesn't retroactively evict an already-confirmed booking, it only governs writes
+    // from that point on, as the final insertHoldWithCapacity call below confirms.
     it('the reschedule commits first (capacity is still 2 when it runs): it succeeds, and the override that lands right after does not retroactively evict it but still governs the next write', async () => {
       await seed();
       const rescheduled = await repo.rescheduleWithCapacity('ra', buildReschedule('2026-08-10T13:00:00.000Z', TARGET_START, TARGET_END, 2, 2));
@@ -233,12 +223,9 @@ describe('atomic capacity allocation against real D1 (BK-CAP-001 / AR-001)', () 
   });
 
   describe('disjoint-overlap parity: max-concurrency guard vs a naive SUM-of-overlaps guard (patch-05-r1 Fix 1)', () => {
-    // Both neighbors overlap the REQUESTED window but never overlap EACH OTHER inside it (A's
-    // occupancy ends at 11:30, B's starts at 12:00), so the true max-concurrent occupancy at any
-    // single point in the window is 1, not 2. A SUM-of-overlaps guard double-counts both
-    // neighbors (1 + 1 = 2) and wrongly rejects a 1-unit request against capacity 2; the correct
-    // guard must agree with maxConcurrentOccupancy (1) and accept (1 + 1 <= 2). This is the exact
-    // shape a SUM-of-overlaps guard gets wrong (bookings at 10:00 and 12:00, request at 11:00).
+    // Both neighbors overlap the requested window but never overlap each other inside it, so true
+    // max-concurrent occupancy is 1, not 2 — a SUM-of-overlaps guard double-counts them and wrongly
+    // rejects a 1-unit request against capacity 2; the correct guard agrees with maxConcurrentOccupancy.
     const NEIGHBOR_A_START = '2026-08-10T10:00:00.000Z';
     const NEIGHBOR_A_END = '2026-08-10T11:00:00.000Z'; // occupancy window [10:00, 11:30) after +30 turnaround
     const NEIGHBOR_B_START = '2026-08-10T12:00:00.000Z';

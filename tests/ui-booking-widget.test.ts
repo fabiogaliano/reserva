@@ -1,9 +1,6 @@
-// BookingWidget.astro is the example site's own Astro SFC — no booking funnel ships in the
-// library. Its rendered markup is asserted against the real compiler
-// in tests/component/booking-widget-catalog.test.ts, and its browser behavior end-to-end in
-// tests/e2e; what's left here are the source-level properties neither harness can observe — that
-// the client bundle contains no pricing or scarcity rule of its own — plus the message-catalog and
-// CSS facts the component depends on.
+// BookingWidget.astro is the example site's own SFC -- no booking funnel ships in the library.
+// Its markup and browser behavior are covered elsewhere; this tests source-level properties
+// neither harness can observe, plus the message-catalog and CSS facts it depends on.
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -14,7 +11,7 @@ const widgetSource = readFileSync(widgetPath, 'utf8');
 const widgetCssPath = resolve(import.meta.dirname, '..', 'examples/smoke-site/src/components/booking-widget.css');
 const widgetCssSource = readFileSync(widgetCssPath, 'utf8');
 
-describe('BookingWidget.astro carries no server-owned rule of its own (plan 027)', () => {
+describe('BookingWidget.astro carries no server-owned rule of its own', () => {
   // The drift this deletes is the one that makes a customer pay a different price than the one
   // they were shown, so the guarantee is the *absence* of any local price computation — a
   // positive test of the quote call can't prove a second path isn't there.
@@ -58,7 +55,7 @@ describe('BookingWidget.astro carries no server-owned rule of its own (plan 027)
   });
 });
 
-describe('BookingWidget.astro (BK-UI-001: no-JS degradation)', () => {
+describe('BookingWidget.astro (no-JS degradation)', () => {
   it('starts the form hidden and reveals it from the enhancement script, not from markup', () => {
     expect(widgetSource).toMatch(/<form[\s\S]*?\bhidden\b[\s\S]*?>/);
     expect(widgetSource).toContain('form.hidden = false;');
@@ -94,7 +91,7 @@ describe('BookingWidget.astro (BK-UI-001: no-JS degradation)', () => {
   });
 });
 
-describe('BookingWidget.astro (Plan 017 design decision 5: meeting-point radio group)', () => {
+describe('BookingWidget.astro', () => {
   it('ships the widget.meetingPoint legend key in the shipped English catalog', () => {
     expect('widget.meetingPoint' in defaultMessages).toBe(true);
     expect(typeof defaultMessages['widget.meetingPoint']).toBe('string');
@@ -112,7 +109,7 @@ describe('BookingWidget.astro (Plan 017 design decision 5: meeting-point radio g
     expect(widgetSource).toMatch(/void updatePrice\(form, data\);\s*syncMeetingPoints\(form\);\s*void loadAvailability\(form, data\);/);
   });
 
-  it('a disabled meeting-point group actually renders display:none — the .bkw-field display:block rule does not silently win the cascade over [hidden] the way it did for .bk-widget in plan 014', () => {
+  it('a disabled meeting-point group actually renders display:none — the .bkw-field display:block rule does not silently win the cascade over [hidden] the way it did for .bk-widget in ', () => {
     expect(widgetCssSource).toMatch(/\.bk-widget \.bkw-field\[hidden\] \{ display: none; \}/);
   });
 

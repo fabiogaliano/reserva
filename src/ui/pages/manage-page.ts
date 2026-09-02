@@ -32,14 +32,11 @@ export interface ManagePageOptions {
   };
 }
 
-// The manage payload's shape has one declaration — the exported
-// `ManageBooking` wire type — and this renderer reads a Partial of it rather than restating the
-// fields. Partial because the page also renders for a direct caller's hand-built payload (and for
-// the error page's empty object), where every field may be missing.
+// The manage payload's shape has one declaration — the exported `ManageBooking` wire type — and
+// this renderer reads a Partial of it: the page also renders hand-built or empty payloads.
 type ManageBookingPayload = Partial<ManageBooking>;
 
-// Defaults keep the original two-argument call shape working (tests and any consumer calling this
-// directly); the manage route passes the resolved options so copy, locale, and styling apply.
+// Defaults keep the original two-argument call shape working; the manage route passes resolved options.
 export function renderManagePage(payload: Record<string, unknown>, managePagePath: string, options: ManagePageOptions = {}): string {
   const locale = options.locale ?? defaultLocale;
   const messages = options.messages ?? resolveMessages(undefined, locale);
@@ -70,18 +67,16 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
   if (typeof booking.priceMinor === 'number' && options.currency) {
     facts.push([messages['common.price'], escapeHtml(formatPrice(booking.priceMinor, locale, options.currency))]);
   }
-  // Both facts key off the chosen option's flags, independently — a
-  // both-flags option (Maze's custom drop-off) shows its address AND its meeting point. When a
-  // direct caller's payload predates the flags, fall back to the pre-018 behavior: address only
-  // for the literal 'custom' id, meeting point whenever one resolved.
+  // Both facts key off the chosen option's flags independently — a both-flags option shows its
+  // address AND its meeting point. A payload predating the flags falls back to the literal
+  // 'custom' id for address, and any resolved point for the meeting-point row.
   const requiresAddress = typeof booking.pickupRequiresAddress === 'boolean'
     ? booking.pickupRequiresAddress
     : booking.pickupType === 'custom';
   if (requiresAddress && booking.pickupAddress) {
     facts.push([messages['common.pickupAddress'], escapeHtml(booking.pickupAddress)]);
   }
-  // Contact details are operator-only: customers already know who they are, and the customer
-  // token page shouldn't echo PII back beyond what the booking itself needs.
+  // Contact details are operator-only: the customer token page shouldn't echo PII back.
   if (role === 'operator') {
     if (booking.customerName) facts.push([messages['common.customer'], escapeHtml(booking.customerName)]);
     if (booking.customerEmail) {
@@ -97,10 +92,8 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
       : '';
     facts.push([messages['common.meetingPoint'], `${escapeHtml(booking.meetingPoint.label)}${maps}`]);
   }
-  // Boolean -> the app's existing yes/no copy pair (admin.on/off,
-  // reused rather than inventing a second one); everything else renders as its plain string form.
-  // Every value is attacker-controlled free text for `text` fields, so it goes through escapeHtml
-  // like every other fact here.
+  // Boolean -> the app's existing yes/no copy pair; everything else its plain string form. Every
+  // value is attacker-controlled free text, escaped like every other fact here.
   for (const row of booking.metadataRows ?? []) {
     const displayValue = typeof row.value === 'boolean'
       ? (row.value ? messages['admin.on'] : messages['admin.off'])
@@ -117,8 +110,7 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
     + `<h1>${escapeHtml(messages['manage.title'])} <strong>${escapeHtml(booking.reference)}</strong></h1>`
     + `<p class="bk-lead">${status ? statusBadge(status, messages) : ''}${operatorBadge}</p>`;
 
-  // Post-redirect/GET feedback: an action either just succeeded or bounced back with an error
-  // code — both must be stated in words, not left to the reader to diff the facts card.
+  // An action either just succeeded or bounced back with an error code — both stated in words.
   const successNotice = options.notice === 'rescheduled'
     ? `<p class="bk-alert bk-alert--ok" role="status">${escapeHtml(messages['manage.rescheduled'])}</p>`
     : '';
@@ -153,8 +145,8 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
       time: messages['widget.time'],
     }).replace(/</g, '\\u003c')}</script>`
     : '';
-  // The native datetime-local stays as the no-JS fallback; the served enhancer (assetsJs route)
-  // hides it and swaps in the calendar + slot chips when availability loads successfully.
+  // The native datetime-local stays as the no-JS fallback; the enhancer hides it and swaps in the
+  // calendar + slot chips when availability loads.
   const rescheduleForm = canReschedule
     ? `<section class="bk-card"><h2>${escapeHtml(messages['manage.rescheduleTitle'])}</h2>`
       + `<p class="bk-hint">${escapeHtml(messages['manage.rescheduleHint'])}</p>`
@@ -166,8 +158,7 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
   const refundControl = role === 'operator'
     ? `<label class="bk-field"><span>${escapeHtml(messages['manage.refund'])}</span><select class="bk-select" name="refund"><option value="none">${escapeHtml(messages['manage.refundNone'])}</option><option value="full">${escapeHtml(messages['manage.refundFull'])}</option></select></label>`
     : '<input type="hidden" name="refund" value="none">';
-  // A disclosure (details/summary) makes the destructive action two-step without any script,
-  // and leaves room for a client-specific refund policy line via the message catalog.
+  // A disclosure makes the destructive action two-step without any script.
   const cancelForm = canCancel
     ? `<details class="bk-disclosure bk-card--danger"><summary>${escapeHtml(messages['manage.cancelTitle'])}</summary><div>`
       + `<p>${escapeHtml(messages['manage.cancelWarning'])}</p>${policyNote}`
@@ -183,9 +174,8 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
       + `<form method="post" action="${action}"><input type="hidden" name="action" value="no-show"><input type="hidden" name="operatorToken" value="${escapeHtml(token)}"><button type="submit" class="bk-btn bk-btn--secondary">${escapeHtml(messages['manage.noShowSubmit'])}</button></form></div></details>`
     : '';
 
-  // Notices span the full width; below them the booking summary sits as a sticky side column
-  // beside the actions (reschedule/cancel/no-show) on wide screens, stacking on mobile. With no
-  // actions available (cancelled/past bookings) the summary takes the full width instead.
+  // The booking summary sits as a sticky side column beside the actions on wide screens, stacking
+  // on mobile. With no actions available, the summary takes the full width instead.
   const hasActions = Boolean(rescheduleForm || cancelForm || noShowForm);
   const summaryCard = `<section class="bk-card${hasActions ? ' bk-col-side' : ''}" aria-label="${escapeHtml(messages['manage.yourBooking'])}"><h2>${escapeHtml(messages['manage.yourBooking'])}</h2>${factList(facts)}</section>`;
   const actionsColumn = `<div class="bk-col-main">${rescheduleForm}<section aria-label="${escapeHtml(messages['manage.title'])}">${cancelForm}${noShowForm}</section></div>`;
@@ -208,7 +198,7 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
   });
 }
 
-// Rendered when the token is missing/invalid: a styled explanation plus a token entry form, so a
+// Rendered when the token is missing/invalid: an explanation plus a token entry form, so a
 // customer with a mangled link can still recover without seeing raw JSON.
 export function renderManageErrorPage(managePagePath: string, options: ManagePageOptions = {}): string {
   const locale = options.locale ?? defaultLocale;

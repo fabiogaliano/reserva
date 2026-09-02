@@ -5,10 +5,8 @@ import { stripe, type StripeClient } from '../src/index';
 import { sessionStatusFromStripe, stripeEventToParsed, stripePaymentMethodTypes } from '../src/provider';
 import type { ClientConfig, ServiceConfig } from '@reservajs/astro/core';
 
-// The adapter's own source reaches only published entrypoints; this suite additionally drives the
-// library's internal checkout handler and shares the root suite's fixtures, because it also pins
-// how core checkout behaves against a failing Stripe. That reach is in-repo test wiring, not part
-// of the package's contract.
+// This suite additionally drives the library's internal checkout handler (not just the adapter's
+// published entrypoints) because it also pins how core checkout behaves against a failing Stripe.
 import { createReservaContext } from '../../../src/context';
 import { resolveRouteConfig } from '../../../src/routes-manifest';
 import { handleCheckout } from '../../../src/handlers';
@@ -170,9 +168,7 @@ describe('stripe() adapter', () => {
   });
 
   // The custom_fields gate is keyed on the service's declared requiresAddress flag, not the
-  // literal id 'custom' — any id a service marks requiresAddress collects the same
-  // 'pickup_address' field, and an id that doesn't never does, even though neither is named
-  // 'default' or 'custom'.
+  // literal id 'custom' -- any id marked requiresAddress collects 'pickup_address', regardless of name.
   it('collects pickup_address for any declared option with requiresAddress, not just the id "custom"', async () => {
     const { client, sessions } = makeClient();
     const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
@@ -276,10 +272,9 @@ describe('stripe() adapter', () => {
     expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 100 });
   });
 
-  // Stripe replays a cached idempotent result *including* error responses, even a cached 500
-  // unrelated to refunds by message — so gating reconciliation on an "already refunded" message
-  // match misses exactly the caveat-(b) scenario this test drives: a generic/opaque error whose
-  // underlying refund actually succeeded.
+  // Stripe replays a cached idempotent result *including* error responses -- gating reconciliation
+  // on an "already refunded" message match would miss a generic/opaque error whose underlying
+  // refund actually succeeded.
   it('reconciles a replayed cached error via refunds.list even when the error message does not mention a refund', async () => {
     const client = {
       checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
@@ -377,11 +372,9 @@ describe('stripe() adapter', () => {
     await expect(provider.refund('pi_1', 10000)).rejects.toThrow('Stripe create response was lost');
   });
 
-  // charge_already_refunded: Stripe's 400 rejection when a refund actually succeeded on an
-  // earlier attempt whose response was lost, and the idempotency key later aged out of Stripe's
-  // ~24h cache, so the retry lands as a fresh create() against an already-refunded charge. Unlike
-  // other StripeInvalidRequestError codes this one still gets a reconciliation pass before
-  // rethrowing — see isChargeAlreadyRefundedError in src/providers/stripe.ts.
+  // charge_already_refunded: Stripe's 400 when an idempotency key aged out and the retry lands as
+  // a fresh create() against a charge already refunded by the lost earlier attempt. Unlike other
+  // codes, this one still gets a reconciliation pass before rethrowing.
   it('reconciles a charge_already_refunded StripeInvalidRequestError via refunds.list', async () => {
     const client = {
       checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
@@ -475,10 +468,8 @@ describe('stripe() adapter', () => {
     expect(client.webhooks.constructEventAsync).toHaveBeenCalledWith('{"raw":true}', 't=1,v1=x', 'whsec_test', 300, expect.anything());
   });
 
-  // parseWebhook buffered request.text() unbounded. A body whose declared Content-Length already
-  // exceeds the 1 MB webhook limit must 413 ahead of signature verification -- not get collapsed
-  // into the generic invalid_payment_signature error the surrounding try/catch maps everything
-  // else to.
+  // A body whose declared Content-Length already exceeds the 1 MB webhook limit must 413 ahead of
+  // signature verification, not get collapsed into the generic invalid_payment_signature error.
   it('rejects an oversized webhook body with 413 before attempting signature verification', async () => {
     const { client } = makeClient();
     const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
@@ -494,11 +485,9 @@ describe('stripe() adapter', () => {
 });
 
 // A lost checkout.sessions.create response used to make handleCheckout expire the hold and let
-// the client retry into a second, orphaned Stripe session for the same intent-to-book. These
-// tests pin the fix: a deterministic per-hold idempotency key, a retry-once that reuses
-// byte-identical params (so Stripe replays instead of 409ing), and unchanged expire-on-error
-// behavior for rejections a retry could never turn into a success.
-describe('Checkout idempotency (BK-PAY-002)', () => {
+// the client retry into an orphaned second Stripe session. These tests pin the fix: a
+// deterministic per-hold idempotency key that replays instead of 409ing on retry.
+describe('Checkout idempotency', () => {
   const checkoutRequest = (start = '2026-06-15T08:00:00.000Z') => new Request('https://example.test/api/booking/checkout', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -516,10 +505,9 @@ describe('Checkout idempotency (BK-PAY-002)', () => {
   });
 
   it('retries once with the same idempotency key and byte-identical params after an ambiguous (network-ish) failure, replaying the original session', async () => {
-    // Deep snapshots (not the live `params` reference) per call: the provider reuses the same
-    // object across both attempts, so pushing the reference itself would make paramsPerCall[0]
-    // and [1] literally the same object — always "equal" no matter what a drifting implementation
-    // did to it. A structuredClone freezes what each call actually saw at the time it was made.
+    // structuredClone snapshots each call's params: the provider reuses the same object across
+    // both attempts, so pushing the live reference would make paramsPerCall[0] and [1] always
+    // "equal" regardless of what a drifting implementation did to it.
     const paramsPerCall: Stripe.Checkout.SessionCreateParams[] = [];
     let original: { id: string; url: string } | null = null;
     const create = vi.fn(async (params: Stripe.Checkout.SessionCreateParams, options?: { idempotencyKey?: string }) => {
@@ -541,10 +529,9 @@ describe('Checkout idempotency (BK-PAY-002)', () => {
       refunds: { create: vi.fn(), list: vi.fn() },
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
-    // An advancing clock, not a frozen one: expires_at is derived from `now`, so if a future
-    // regression rebuilt params on retry (re-invoking `now`), a frozen clock could land the retry
-    // in the same second and hide the drift. Each call to `now` here returns a later time, so any
-    // recompute would produce a strictly later expires_at and be caught by the equality checks below.
+    // An advancing clock, not a frozen one: a frozen clock could hide a regression that rebuilds
+    // params on retry, since a re-invoked `now` would land in the same second. Each call here
+    // returns a later time, so any recompute produces a strictly later expires_at.
     let tick = 0;
     const now = () => new Date('2026-06-15T08:00:00.000Z').getTime() + (tick++) * 60_000;
     const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client, now });

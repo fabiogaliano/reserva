@@ -12,15 +12,9 @@ const payments = {
   refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
 };
 
-// The real column/table/index names the schema fingerprint checks for (see
-// src/schema-check.ts's REQUIRED_BOOKINGS_COLUMNS and sideEffectOperationsSchemaPresent).
-// Duplicated here rather than imported since these are the fake's own PRAGMA/sqlite_master
-// response shapes, not the implementation under test.
-// meeting_point_id is 0014's addition to REQUIRED_BOOKINGS_COLUMNS. Migration 0015 removes the
-// pickup_type CHECK (domain moved to config-declared option ids), so a "fully migrated" fake must
-// NOT carry it -- the column itself stays, unconstrained, matching 0015's rebuilt schema.
-// currency/metadata are 0018's additions, and the per-entity sync flags it dropped must
-// be absent for a "fully migrated" fake -- the fingerprint reads their presence as the old shape.
+// The real column/table/index names the schema fingerprint checks for (see src/schema-check.ts).
+// Duplicated here since these are the fake's own PRAGMA/sqlite_master response shapes, not the
+// implementation under test -- must track each migration's schema changes for a "fully migrated" fake.
 const FINGERPRINT_BOOKINGS_COLUMNS = ['occupancy_units', 'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at', 'reschedule_transition_version', 'meeting_point_id', 'currency', 'metadata'];
 const FINGERPRINT_BOOKINGS_SQL = `CREATE TABLE bookings (
   quantity INTEGER CHECK (quantity > 0), pickup_type TEXT,
@@ -42,12 +36,9 @@ const FINGERPRINT_SIDE_EFFECT_COLUMNS = ['family', 'name', 'event', 'discriminat
 const FINGERPRINT_REFUND_SQL = "CREATE TABLE refund_operations (status TEXT CHECK (status IN ('requested','in_flight','succeeded','failed','abandoned')))";
 const FINGERPRINT_REFUND_COLUMNS = ['execution_claim_token', 'execution_claim_until', 'attempt_count', 'attempted_at', 'failure_started_at', 'next_attempt_at'];
 
-// A fake standing in for the D1 surface the check uses: `db.prepare(sql).all()` returning
-// `{ results }`, matching the real D1Database shape closely enough for this logic. It distinguishes
-// the ledger's sqlite_master table-presence probe, the schema fingerprint's PRAGMA/sqlite_master
-// queries, and the real `d1_migrations` select by query text, since the check now issues all of
-// them as separate statements. `schemaFingerprint` defaults to a fully-migrated schema so tests
-// that only care about the ledger don't need to know about the fingerprint at all.
+// A fake for the D1 surface the check uses: `db.prepare(sql).all()` returning `{ results }`.
+// Distinguishes the ledger probe, the fingerprint queries, and the `d1_migrations` select by query
+// text. `schemaFingerprint` defaults to fully-migrated so ledger-only tests don't need to know about it.
 function fakeD1(
   appliedNames: string[],
   options: { missingTable?: boolean; selectError?: Error; tableName?: string; queries?: string[]; schemaFingerprint?: boolean } = {},

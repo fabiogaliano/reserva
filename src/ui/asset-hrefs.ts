@@ -5,9 +5,8 @@ import { settingsEnhancerJs } from './settings-enhancer.js';
 import { themeToggleJs } from './theme-toggle.js';
 import { callyBundleJs } from './vendor/cally-bundle.js';
 
-// Content-derived version in the query string so pages always reference the exact asset build they
-// were rendered against: any change to the CSS/JS produces a new URL, which lets the asset routes
-// serve long-lived immutable cache headers without ever showing a browser stale styles.
+// Content-derived version in the query string: any CSS/JS change produces a new URL, so asset
+// routes can serve long-lived immutable cache headers without ever showing stale styles.
 function contentVersion(source: string): string {
   let hash = 5381;
   for (let index = 0; index < source.length; index += 1) {

@@ -1,7 +1,5 @@
-// The load check for raising the availability cap. The old
-// fixed 62-day limit is why the first consumer chunk-and-merged its requests; removing it is only
-// safe if a full-horizon request actually completes inside a Worker. This runs the real handler in
-// workerd against real D1, over a 365-day horizon with a year of bookings seeded across it.
+// Proves a full 365-day availability request completes inside a Worker, against real D1 — the
+// old fixed 62-day limit forced callers to chunk-and-merge their requests.
 import { env } from 'cloudflare:workers';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { ReservaContext } from '../../src/context';
@@ -72,7 +70,7 @@ beforeAll(async () => {
   }
 });
 
-describe('full-horizon availability (plan 027 design decision 3)', () => {
+describe('full-horizon availability', () => {
   it('answers a whole-horizon request in one call, with a day entry for every date', async () => {
     const from = dateKey(0);
     const to = dateKey(HORIZON_DAYS);
@@ -92,10 +90,8 @@ describe('full-horizon availability (plan 027 design decision 3)', () => {
     // truncated to keep the response cheap.
     expect(payload.days.some((day) => day.slots.length > 0)).toBe(true);
 
-    // A soft ceiling, not a benchmark: it exists so a future change that makes this request
-    // quadratic fails here instead of on a consumer's Worker. Measured at ~0.5s wall clock in this
-    // pool (366 days x 7 slots/day against 50 confirmed bookings), which is why optional internal
-    // chunking was not needed.
+    // A soft ceiling, not a benchmark — guards against a future quadratic regression. Measured at
+    // ~0.5s wall clock here (366 days x 7 slots/day against 50 confirmed bookings).
     expect(elapsedMs).toBeLessThan(10_000);
   });
 

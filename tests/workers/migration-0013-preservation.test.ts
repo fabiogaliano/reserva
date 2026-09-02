@@ -1,9 +1,6 @@
-// migrations/0013_side_effect_operations_abandoned.sql rebuilds side_effect_operations the same way
-// 0010/0011/0012 already do (rename -> create -> INSERT...SELECT -> drop — see
-// tests/workers/migration-0012-preservation.test.ts, which this mirrors), plus a one-time upgrade
-// conversion: any pre-existing nonterminal row already at or over the new attempt cap becomes
-// 'abandoned' with a bounded max-attempts error, so no capped pending, failed, or stale in_flight row
-// is left invisible to the claim predicates.
+// Proves migrations/0013_side_effect_operations_abandoned.sql's rebuild of side_effect_operations
+// against real D1, plus its one-time upgrade: any pre-existing nonterminal row already at the
+// attempt cap becomes 'abandoned', so no capped row is left invisible to the claim predicates.
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
@@ -16,12 +13,9 @@ interface TestEnv {
 const bindings = env as unknown as TestEnv;
 const db = bindings.RESERVA_DB;
 
-// repo.insertHold now always writes meeting_point_id/-label (migration 0014), so it can't seed the
-// FK-parent rows below against this test's deliberately pre-0013 schema. Only these FK-parent rows
-// need to exist at all (nothing here asserts on their own columns) -- a raw INSERT covering just the
-// columns 0001_init.sql guarantees NOT NULL, present since before every migration this suite ever
-// slices before, decouples this historical-schema test from the CURRENT repo.ts column list going
-// forward.
+// repo.insertHold now always writes meeting_point_id/-label (migration 0014), so it can't seed
+// these FK-parent rows against this deliberately pre-0013 schema — a raw INSERT of just the
+// 0001_init.sql NOT NULL columns decouples this historical-schema test from repo.ts's current columns.
 async function seedBooking(id: string): Promise<void> {
   await db.prepare(
     `INSERT INTO bookings (id, reference, tour_slug, people, pickup_type, starts_at, ends_at, locale, price_cents, status, cancel_token, operator_token, created_at, updated_at)

@@ -11,11 +11,8 @@ const clock = () => new Date('2026-06-14T08:00:00.000Z');
 const CSRF_NOW = clock().getTime();
 const ADMIN_URL = 'https://example.test/api/booking/admin';
 const ADMIN_ORIGIN = 'https://example.test';
-// Every admin context built in this file configures a RESERVA_CSRF_SECRET via `secrets`, so CSRF
-// layer 2 is active (src/admin-csrf.ts requires a real secret to sign/verify a token at all —
-// otherwise mint returns undefined and verify no-ops). Without this fixture, every
-// "invalid/expired/foreign token -> 403" assertion below would trivially pass for the wrong
-// reason (layer 2 disabled), not because the guard actually rejected the token.
+// A real RESERVA_CSRF_SECRET keeps CSRF layer 2 active (src/admin-csrf.ts no-ops without one) —
+// otherwise the "invalid/expired/foreign token -> 403" assertions below would pass for the wrong reason.
 const CSRF_TEST_SECRET = 'handlers-admin-test-secret';
 const csrfSecrets = async (name: string) => (name === 'RESERVA_CSRF_SECRET' ? CSRF_TEST_SECRET : undefined);
 
@@ -53,10 +50,8 @@ function adminPostRequest(fields: Record<string, string> | Array<[string, string
   });
 }
 
-// handleAdminPost read request.formData() unbounded. This proves the real wiring (not just the
-// requestFormData helper, covered generically in tests/http-body-limits.test.ts) rejects an
-// oversized declared Content-Length with 413 — and does so ahead of/independent from the CSRF
-// check, since the body must be read before csrf_token can even be extracted from the form.
+// Proves the real handler wiring rejects an oversized declared Content-Length with 413, ahead of
+// the CSRF check — the body must be read before csrf_token can be extracted from the form.
 describe('request body size limit (audit finding #10)', () => {
   it('rejects an admin POST whose declared Content-Length exceeds the 256 KB form limit with 413', async () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
@@ -195,11 +190,8 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
     expect(body).not.toContain(second.cancelToken);
   });
 
-  // A `nohash:`-prefixed operatorToken (src/repo.ts placeholderToken) is what a real, DB-loaded
-  // booking looks like when there's no decryptable blob to regenerate its link from (no
-  // RESERVA_TOKEN_ENC_KEY configured, or a not-yet-backfilled legacy row) — the admin table and the
-  // day-detail JSON island must never render a link built from it, since it would 403 the instant an
-  // operator clicked it.
+  // A `nohash:`-prefixed operatorToken (src/repo.ts placeholderToken) means no decryptable blob
+  // exists to rebuild its link — rendering one would 403 the instant an operator clicked it.
   it('omits the manage link (never a dead href) for a booking whose operator token is not presentable', async () => {
     const seeded = booking({
       id: 'b-admin-nohash', reference: 'LVT-2026-210', startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
@@ -247,7 +239,7 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
   // The meeting-point sub-line only renders for a default pickup on a service that actually
   // declares more than one point — mirrors the existing pickupAddress sub-line pattern, and search
   // must match what the row displays.
-  describe('meeting-point sub-line + search (plan 017)', () => {
+  describe('meeting-point sub-line + search', () => {
     const points = [
       { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
       { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
@@ -291,11 +283,9 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
   });
 });
 
-// The pickup-cell label re-keys off the service's declared option, falling back through
-// option?.label -> the message-catalog key for 'default'/'custom' -> the raw id, and the
-// requiresAddress/usesMeetingPoint sub-line gates re-key the same way the checkout meeting-point
-// requirement does.
-describe('pickup option label + sub-lines (plan 018 design decision 8)', () => {
+// The pickup-cell label falls back through option?.label -> the message-catalog key for
+// 'default'/'custom' -> the raw id; sub-line gates mirror checkout's meeting-point requirement.
+describe('pickup option label + sub-lines', () => {
   const points = [
     { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
     { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
@@ -644,23 +634,15 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     expect(repo.settings.get('booking.holdMinutes')).toBe('40');
   });
 
-  // handleAdminPost has no "re-render the page with field errors" convention for ANY admin action
-  // (day overrides, capacity defaults, settings) — every action uniformly throws HttpError and the
-  // client gets a JSON error body, never an HTML re-render. That's the established convention this
-  // repo uses, so mapping SettingsMergeError to HttpError(400, ...) is consistent with it; the bar
-  // to clear is that the message names which field(s) failed. SettingsMergeError's constructor
-  // already formats `path.join('.'): message` per issue, so the HttpError message an operator sees
-  // is field-attributed. This exercises that via a genuinely cross-field validateConfig rejection
-  // (see core-settings.test.ts for why locales is the only reachable one), reaching
-  // mergeAndValidateSettings — not just a single field's SettingKind bound.
+  // Every admin action throws HttpError on failure (never an HTML re-render), so mapping
+  // SettingsMergeError to HttpError(400, ...) must still name which field failed — exercised via a
+  // genuinely cross-field validateConfig rejection reaching mergeAndValidateSettings.
   it('field-attributes a mergeAndValidateSettings cross-field rejection in the HttpError message', async () => {
     const repo = fakeRepository();
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
-    // createReservaContext runs `config` through validateConfig, so it can't hold a broken value —
-    // but `baseConfig` (the pristine file config the handler merges over, src/handlers/index.ts
-    // `base = context.baseConfig ?? context.config`) isn't re-validated there. Setting it directly
-    // is the most direct way to exercise the handler's SettingsMergeError branch (see
-    // core-settings.test.ts for why locales is the only reachable cross-field rule).
+    // `config` is validated by createReservaContext, but `baseConfig` (the pristine file config the
+    // handler merges over) isn't — setting it directly is the most direct way to exercise the
+    // handler's SettingsMergeError branch.
     const brokenLocalesConfig: ClientConfig = { ...config, locales: { supported: ['pt-BR'], default: 'en' } };
     context.baseConfig = brokenLocalesConfig;
 
@@ -670,12 +652,8 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     expect(repo.settings.size).toBe(0);
   });
 
-  // Handler-level error-path test: proves handleAdminPost surfaces an applySettingsBatch failure
-  // as a 500 and never redirects to a saved state. This does NOT by itself prove atomicity — a
-  // fake repo that throws before touching `settings` trivially "applies nothing" either way. The
-  // real atomicity guarantee (every key of a section travels in exactly one db.batch() call, so
-  // D1's single-transaction batch semantics make the write all-or-nothing) is proven at the unit
-  // level in tests/repo.test.ts, which exercises the actual createBookingRepository implementation.
+  // Proves handleAdminPost surfaces an applySettingsBatch failure as a 500 and never redirects to a
+  // saved state. The atomicity guarantee itself is proven at the repo unit level in tests/repo.test.ts.
   it('propagates an applySettingsBatch failure as a 500 without redirecting to a saved state', async () => {
     const repo = fakeRepository();
     repo.applySettingsBatch = async () => { throw new Error('D1 batch failed'); };
@@ -687,7 +665,7 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
   });
 });
 
-describe('BK-SEC-001: admin mutation origin + CSRF guard (src/admin-csrf.ts)', () => {
+describe('admin mutation origin + CSRF guard (src/admin-csrf.ts)', () => {
   it('rejects a cross-origin POST (foreign Origin, Sec-Fetch-Site: cross-site) even with a valid Access session, and does not mutate', async () => {
     const repo = fakeRepository();
     const calls: string[] = [];
@@ -784,10 +762,8 @@ describe('BK-SEC-001: admin mutation origin + CSRF guard (src/admin-csrf.ts)', (
     expect(repo.settings.get('booking.minNoticeHours')).toBe('2');
   });
 
-  // Every action dispatched from handleAdminPost (spec: settings-save, settings-reset, set, close,
-  // clear, default-set, default-clear) must go through the same guard — proven by asserting the
-  // guard's 403 for a cross-origin attempt, and that a same-origin+token attempt is never itself
-  // rejected by the guard (its status is then whatever the action's own field validation decides).
+  // Every action dispatched from handleAdminPost must go through the same guard — a cross-origin
+  // attempt gets 403, and a same-origin+token attempt is never itself rejected by the guard.
   const mutationActions: Array<[string, Record<string, string>]> = [
     ['set', { action: 'set', date: '2026-06-20', capacity: '2' }],
     ['close', { action: 'close', date: '2026-06-20' }],
@@ -815,11 +791,8 @@ describe('BK-SEC-001: admin mutation origin + CSRF guard (src/admin-csrf.ts)', (
     expect(response.headers.get('cache-control')).toBe('no-store');
   });
 
-  // Only the successful 303 redirects set no-store; a 4xx/5xx admin POST response went through
-  // plain errorResponse (src/http.ts), which sets no cache-control header at all, so a shared cache
-  // could serve a stale/sensitive admin error page. runAdminPost (src/handlers/index.ts) now sets
-  // no-store on every admin POST response, success or error. Covers the guard's own 403 as the
-  // concrete example, but the fix is applied to the whole error path, not this one status code.
+  // Plain errorResponse sets no cache-control header at all, risking a shared cache serving a
+  // stale/sensitive admin error page — runAdminPost sets no-store on every admin POST, success or error.
   it('sets Cache-Control: no-store on an admin POST that 403s (cross-origin, no mutation)', async () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'clear' }, {
@@ -837,13 +810,9 @@ describe('BK-SEC-001: admin mutation origin + CSRF guard (src/admin-csrf.ts)', (
   });
 });
 
-// When no RESERVA_CSRF_SECRET is configured, src/admin-csrf.ts takes the token layer offline
-// rather than fall back to a forgeable key (see admin-csrf.test.ts for the unit-level proof).
-// These are the end-to-end equivalents: no context in this block passes `secrets`, so
-// mintAdminCsrfToken returns undefined (the rendered form gets an empty token field) and
-// verifyAdminCsrfToken is a no-op. The origin guard is unconditional and must still fully gate the
-// route on its own in this mode.
-describe('BK-SEC-001: admin CSRF layer 2 without RESERVA_CSRF_SECRET (layer 1 alone still blocks the attack)', () => {
+// With no RESERVA_CSRF_SECRET, admin-csrf.ts takes the token layer offline rather than fall back to
+// a forgeable key — the origin guard alone must still fully gate the route in this mode.
+describe('admin CSRF layer 2 without RESERVA_CSRF_SECRET (layer 1 alone still blocks the attack)', () => {
   it('a same-origin admin POST succeeds with no csrf_token at all when no secret is configured', async () => {
     const repo = fakeRepository();
     const calls: string[] = [];
@@ -879,11 +848,10 @@ describe('BK-SEC-001: admin CSRF layer 2 without RESERVA_CSRF_SECRET (layer 1 al
   });
 });
 
-// Every settings/capacity write records who changed it, atomically with the change itself
-// (src/repo.ts). These tests exercise the actor-threading in handleAdminPost specifically — the
-// atomicity guarantee (one db.batch() call per mutating method) is proven at the repo unit level
-// in tests/repo.test.ts, which exercises the real createBookingRepository implementation.
-describe('plan 005: admin_change_history (actor-attributed, batch-atomic settings/capacity audit)', () => {
+// Every settings/capacity write records who changed it, atomically with the change itself. These
+// tests exercise the actor-threading in handleAdminPost; the atomicity guarantee itself is proven
+// at the repo unit level in tests/repo.test.ts.
+describe('admin_change_history (actor-attributed, batch-atomic settings/capacity audit)', () => {
   it('settings-save records one history row per changed key with the Access subject as actor and the serialized value', async () => {
     const repo = fakeRepository();
     const subject = 'ops@example.test';

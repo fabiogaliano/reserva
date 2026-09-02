@@ -41,11 +41,9 @@ async function seedConfirmed(id: string): Promise<void> {
   expect(confirmed).toMatchObject({ status: 'confirmed' });
 }
 
-// claimRefundOperation is the compare-and-set primitive that makes a booking's
-// refund decision race-proof. D1 processes every statement serially on a single-threaded Durable
-// Object (see repo-cas-transitions.test.ts's header comment), so UNIQUE(booking_id) plus the
-// WHERE NOT EXISTS conditional insert is a true claim under real concurrent writers, not just in
-// a single-threaded fake. These tests exercise that against the real binding.
+// claimRefundOperation is the compare-and-set primitive making a booking's refund decision
+// race-proof — UNIQUE(booking_id) plus WHERE NOT EXISTS is a true claim under real concurrent
+// writers, not just a single-threaded fake.
 describe('refund_operations concurrent claim uniqueness on real D1', () => {
   it('exactly one of two concurrent claims for the same booking (different choices) wins', async () => {
     const id = 'refund-claim-race-a';
@@ -192,10 +190,8 @@ describe('refund_operations concurrent claim uniqueness on real D1', () => {
     });
   });
 
-  // Once a row is full/succeeded, it is the terminal, authoritative statement of
-  // what Stripe did — stale/failed data reaching reconcileStripeRefundOperation afterwards (a
-  // late-arriving duplicate webhook, a stale operator retry) must never regress it, and repeating
-  // the SAME authoritative reconciliation must be a true no-op against real D1.
+  // A full/succeeded row is the terminal, authoritative statement of what Stripe did — stale or
+  // late-arriving data must never regress it, and repeating the same reconciliation must be a true no-op.
   it('reconcileStripeRefundOperation leaves an existing full/succeeded row unchanged against stale requested/failed data, and repeated identical reconciliations are idempotent', async () => {
     const id = 'refund-reconcile-non-regressing';
     await seedConfirmed(id);

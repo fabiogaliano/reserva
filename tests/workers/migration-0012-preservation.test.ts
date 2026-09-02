@@ -1,9 +1,6 @@
-// migrations/0012_calendar_delete_outbox.sql rebuilds side_effect_operations via rename -> create ->
-// INSERT...SELECT * -> drop, the same rebuild shape 0010 and 0011 already have preservation tests for
-// (tests/workers/repo-d1.test.ts:572, tests/workers/schema-constraints.test.ts:226). 0012 had none.
-// This proves the actual migration, applied against real D1, carries every pre-existing outbox row
-// through byte-for-byte, keeps the pending index, widens the kind CHECK to admit 'calendar_delete',
-// and leaves no dangling FK.
+// Proves migrations/0012_calendar_delete_outbox.sql's rebuild of side_effect_operations against
+// real D1: every pre-existing outbox row survives byte-for-byte, the pending index and kind CHECK
+// (now admitting 'calendar_delete') are correct, and no FK is left dangling.
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
@@ -16,12 +13,9 @@ interface TestEnv {
 const bindings = env as unknown as TestEnv;
 const db = bindings.RESERVA_DB;
 
-// repo.insertHold now always writes meeting_point_id/-label (migration 0014), so it can't seed the
-// FK-parent rows below against this test's deliberately pre-0012 schema. Only these FK-parent rows
-// need to exist at all (nothing here asserts on their own columns) -- a raw INSERT covering just the
-// columns 0001_init.sql guarantees NOT NULL, present since before every migration this suite ever
-// slices before, decouples this historical-schema test from the CURRENT repo.ts column list going
-// forward.
+// repo.insertHold now always writes meeting_point_id/-label (migration 0014), so it can't seed
+// these FK-parent rows against this deliberately pre-0012 schema — a raw INSERT of just the
+// 0001_init.sql NOT NULL columns decouples this historical-schema test from repo.ts's current columns.
 async function seedBooking(id: string): Promise<void> {
   await db.prepare(
     `INSERT INTO bookings (id, reference, tour_slug, people, pickup_type, starts_at, ends_at, locale, price_cents, status, cancel_token, operator_token, created_at, updated_at)
@@ -29,7 +23,7 @@ async function seedBooking(id: string): Promise<void> {
   ).bind(id, `BKT-2026-${id}`, `cancel-${id}`, `operator-${id}`).run();
 }
 
-describe('migration 0012 rebuild preserves every legacy outbox row (BK-SCHEMA-001)', () => {
+describe('migration 0012 rebuild preserves every legacy outbox row', () => {
   it('applies the actual 0012 migration while preserving every legacy outbox row, its index, and FK integrity', async () => {
     for (const table of [
       'side_effect_operations', 'refund_operations', 'settings', 'capacity_defaults', 'day_overrides', 'bookings',

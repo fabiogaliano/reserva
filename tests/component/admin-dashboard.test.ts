@@ -1,8 +1,6 @@
-// Renders the actual compiled AdminDashboard.astro component (not just its source text, unlike
-// tests/ui-booking-widget.test.ts — see vitest.component.config.ts for why this needs its own
-// Vitest config). Proves the component mints a working CSRF token from the Access-authenticated
-// subject, matches the built-in admin page's "no secret configured" fail-open, and fails visibly
-// (a notice, not a form that can only 403) when Access itself fails.
+// Renders the actual compiled AdminDashboard.astro component, not just its source text (see
+// vitest.component.config.ts). Proves it mints a working CSRF token from the Access-authenticated
+// subject, matches the "no secret configured" fail-open, and fails visibly when Access fails.
 import { experimental_AstroContainer as AstroContainer } from 'astro/container';
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error -- resolved by vitest.component.config.ts's Astro Vite pipeline, not by tsc.
@@ -18,7 +16,7 @@ async function render(headers: HeadersInit): Promise<string> {
   return container.renderToString(AdminDashboard, { request: requestWith(headers) });
 }
 
-describe('AdminDashboard.astro (plan 009: works with CSRF enabled)', () => {
+describe('AdminDashboard.astro', () => {
   it('mints and renders a hidden csrf_token field when a secret is configured and Access allows the request', async () => {
     const html = await render({ [ACCESS_HEADER]: 'claims', [SECRET_HEADER]: 'component-test-secret' });
     expect(html).toContain('<form method="post"');

@@ -273,10 +273,9 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     expect(repo.refundOperations.get(seeded.id)).toMatchObject({ status: 'succeeded' });
   });
 
-  // getBookingByOperatorTokenForRefundRecovery (src/repo.ts) only lets an expired token through
-  // when a refund operation is still 'requested' or 'failed' — a resolved ('succeeded') operation,
-  // or no operation row at all, must fall back to the plain expiry check and get the same generic
-  // 403 an unknown token would.
+  // getBookingByOperatorTokenForRefundRecovery only lets an expired token through when a refund
+  // operation is still 'requested' or 'failed' — a resolved or absent operation must fall back to
+  // the plain expiry check and get the same generic 403 an unknown token would.
   it('rejects an expired operator token on cancel once its refund operation has already succeeded', async () => {
     const seeded = booking({
       id: 'b-expired-refund-succeeded',
@@ -320,10 +319,9 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     expect(response.status).toBe(403);
   });
 
-  // Only handleOperatorCancel passes refundRecovery=true to operatorBooking (src/handlers/index.ts)
-  // — handleManage, handleOperatorReschedule, and handleOperatorNoShow always use the plain
-  // getBookingByOperatorToken lookup, so an expired token must stay 403 on those routes even while
-  // an unresolved ('requested') refund operation exists that would let handleOperatorCancel through.
+  // Only handleOperatorCancel passes refundRecovery=true — manage, reschedule, and no-show always
+  // use the plain lookup, so an expired token stays 403 on those routes even with an unresolved
+  // refund operation that would let cancel through.
   it('confines the expired-token recovery bypass to the cancel route: manage, reschedule, and no-show stay 403 while a refund operation is still requested', async () => {
     const seeded = booking({
       id: 'b-expired-requested-route-scope',
@@ -390,7 +388,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     await expect(response.json()).resolves.toMatchObject({ error: { code: 'invalid_transition' } });
   });
 
-  it('a throwing refund() surfaces as a non-2xx response, but the cancellation is already durable and the failure is recorded on the operation row (BK-REFUND-001)', async () => {
+  it('a throwing refund() surfaces as a non-2xx response, but the cancellation is already durable and the failure is recorded on the operation row', async () => {
     const seeded = booking({ id: 'b-op-cancel-refund-throws', paymentRef: 'pi_refund_throws' });
     const repo = fakeRepository([seeded]);
     const context = createReservaContext({
@@ -412,7 +410,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     expect(operation?.error).toContain('refund provider down');
   });
 
-  it('(F7) a refund=full and refund=none request racing FOR REAL on the same booking: exactly one cancels and refunds, the loser calls no Stripe and gets refund_conflict — including the already-cancelled interleaving that follows (BK-REFUND-001)', async () => {
+  it('(F7) a refund=full and refund=none request racing FOR REAL on the same booking: exactly one cancels and refunds, the loser calls no Stripe and gets refund_conflict — including the already-cancelled interleaving that follows', async () => {
     const seeded = booking({ id: 'b-op-cancel-race', paymentRef: 'pi_refund_race' });
     const repo = fakeRepository([seeded]);
     let refunds = 0;
@@ -529,10 +527,8 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     expect(idempotencyKeys).toEqual(['reserva-refund-pi_post_stripe_crash', 'reserva-refund-pi_post_stripe_crash']);
   });
 
-  // The handler must forward the booking's full expected price as the second argument to
-  // payments.refund() so the provider can reject partial-amount reconciliations. Without this, a
-  // stale or unrelated historical Stripe refund with a different amount could satisfy
-  // reconciliation even though the customer still owes money.
+  // The handler must forward the booking's full expected price to payments.refund() so the
+  // provider can reject partial-amount reconciliations against a stale, unrelated refund.
   it('passes the booking\'s priceMinor as the expectedAmountCents argument to payments.refund()', async () => {
     const seeded = booking({ id: 'b-op-cancel-expected-amount', paymentRef: 'pi_expected_amount' });
     const repo = fakeRepository([seeded]);
@@ -559,8 +555,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
       executionClaimToken: null, executionClaimUntil: null, attemptCount: 0, attemptedAt: null,
       failureStartedAt: null, nextAttemptAt: null,
     };
-    // A brand-new repo instance — no object here is shared with whatever originally produced
-    // this state — seeded to look exactly like a fresh D1 read from a different isolate would: a
+    // A brand-new repo instance, seeded to look like a fresh D1 read from a different isolate: a
     // same-choice claim already exists, but the booking is still confirmed because the original
     // claim-holder crashed before its CAS.
     const freshRepo = fakeRepository([seeded]);
@@ -811,17 +806,11 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
       await winnerResolved;
       return realGetBookingById(id);
     };
-    // getBookingByOperatorToken now hashes the presented token (a genuine async
-    // WebCrypto op, unlike the old synchronous in-memory find()), so the two concurrent requests'
-    // initial token lookups no longer reliably resolve in lockstep before either can progress.
-    // The "loser" can now reach the claim race by EITHER of two valid, already-existing paths
-    // (src/handlers/index.ts handleOperatorCancel): losing claimRefundOperation (the `!claimed`
-    // branch, which calls getBookingById), or observing status 'cancelled' directly because its
-    // own lookup happened to resolve after the winner had already finished (the
-    // reconcileCancelledRefund branch, which does not call getBookingById at all). Both branches'
-    // very first repo call is getRefundOperationByBookingId, so triggering the same
-    // notifyLoserReached from there too makes this test's synchronization robust to whichever
-    // branch the loser actually takes, instead of assuming the specific one.
+    // getBookingByOperatorToken hashes the presented token (an async WebCrypto op), so the two
+    // requests' lookups no longer reliably resolve in lockstep — the "loser" can reach the claim
+    // race via either the losing claimRefundOperation branch or the reconcileCancelledRefund
+    // branch. Both call getRefundOperationByBookingId first, so hooking that too keeps this robust
+    // to whichever branch the loser actually takes.
     const realGetRefundOperation = repo.getRefundOperationByBookingId;
     repo.getRefundOperationByBookingId = async (bookingId) => {
       notifyLoserReached?.();
@@ -844,13 +833,9 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
       db: {} as D1Database,
       repo,
       clock,
-      // With the loser now reachable via either
-      // branch, a genuine race can put both the winner's own resolvePendingRefund call and the
-      // loser's re-check within a hair of each other, so this mock can no longer assume it is
-      // called at most once — it now models Stripe's real idempotency-key behavior instead (same
-      // paymentRef -> the same refund result every time, never a second real charge), which is
-      // the actual safety net resolvePendingRefund's own comment (src/handlers/index.ts) already
-      // documents production relying on. What must still hold — and is asserted below — is that
+      // The loser being reachable via either branch means this mock can no longer assume it's
+      // called at most once — it models Stripe's real idempotency-key behavior instead (same
+      // paymentRef -> the same refund result, never a second charge). What must still hold is that
       // the durable operation row ends up 'succeeded' with one consistent refund id.
       providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionRef: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => {
         refunds += 1;

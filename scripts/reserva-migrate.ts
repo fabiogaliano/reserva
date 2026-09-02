@@ -1,9 +1,7 @@
 #!/usr/bin/env node
-// Thin wrapper around `wrangler d1 migrations apply`, published as the `reserva-migrate` bin so
-// consumers can run `bunx reserva-migrate --local` instead of hand-writing a db:migrate script.
-// Node builtins only for JSON/JSONC configs (no runtime dependency for the common case): it shells
-// out to whatever `wrangler` is on PATH (the consumer's own devDependency) rather than bundling or
-// vendoring wrangler itself. `smol-toml` is loaded dynamically, only for TOML configs.
+// Node builtins only for JSON/JSONC configs (no runtime dependency for the common case): shells
+// out to whatever `wrangler` is on PATH rather than bundling or vendoring it. `smol-toml` loads
+// dynamically, only for TOML configs.
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -49,9 +47,8 @@ function stripJsonc(source: string): string {
       continue;
     }
     if (character === ',') {
-      // The lookahead must skip comments as well as whitespace: comments are removed from the
-      // output on later iterations, so a comma judged trailing only against whitespace would
-      // survive as `,\n]` once a comment between it and the bracket is stripped.
+      // Must skip comments as well as whitespace, or a comma judged trailing only against
+      // whitespace survives as `,\n]` once a comment between it and the bracket is stripped.
       let next = index + 1;
       for (;;) {
         if (/\s/.test(source[next] ?? '')) {
@@ -85,9 +82,9 @@ interface D1DatabaseConfig {
   [key: string]: unknown;
 }
 
-// The subset of wrangler.jsonc/.toml this tool reads/writes; everything else is opaque and
-// preserved verbatim through clone + targeted mutation, never re-derived field by field — future
-// Wrangler config keys (account metadata, other bindings, etc.) survive untouched.
+// The subset of wrangler.jsonc/.toml this tool reads/writes; everything else stays opaque and is
+// preserved verbatim through clone + targeted mutation, so future Wrangler config keys survive
+// untouched.
 interface WranglerConfigRoot {
   d1_databases?: D1DatabaseConfig[];
   env?: Record<string, { d1_databases?: D1DatabaseConfig[] }>;
@@ -106,9 +103,8 @@ function fail(message: string): never {
   throw new CliFailure(`reserva-migrate: ${message}\n${usage}`);
 }
 
-// Resolved from the script's own location, not the consumer's cwd. The source lives in scripts/
-// and the published executable in dist/, so ../migrations reaches the package-owned directory in
-// both layouts.
+// Resolved from the script's own location, not the consumer's cwd, so ../migrations reaches the
+// package-owned directory whether run from scripts/ (source) or dist/ (published).
 function resolvePackagedMigrationsDir(): string {
   return fileURLToPath(new URL('../migrations', import.meta.url));
 }
@@ -144,9 +140,9 @@ async function writeDerivedConfig(configPath: string, root: WranglerConfigRoot):
   }
 }
 
-// Written beside the consumer's own config (not in os.tmpdir()) so wrangler's project root, and
-// therefore its default `.wrangler/state/v3` local-persistence location, is unaffected.
-// randomUUID() makes concurrent invocations collision-resistant without a retry loop.
+// Written beside the consumer's config (not os.tmpdir()) so wrangler's project root, and thus its
+// default local-persistence location, is unaffected. randomUUID() avoids collisions between
+// concurrent invocations without a retry loop.
 function uniqueSiblingConfigPath(configPath: string): string {
   return resolve(dirname(configPath), `.reserva-migrate.${randomUUID()}${extname(configPath)}`);
 }
@@ -165,8 +161,7 @@ function databasesForEnvironment(root: WranglerConfigRoot, environment: string |
   return environment === undefined ? root.d1_databases : root.env?.[environment]?.d1_databases;
 }
 
-// Selection is explicit and uniform, whether or not a positional database name was passed: a
-// derived config must never guess database metadata, so an explicit name that doesn't identify
+// A derived config must never guess database metadata, so an explicit name that doesn't identify
 // exactly one configured entry fails here rather than being passed to wrangler blind.
 function selectDatabaseEntry(root: WranglerConfigRoot, environment: string | undefined, explicitName: string | undefined): DatabaseSelection {
   const databases = databasesForEnvironment(root, environment);
@@ -329,8 +324,8 @@ async function run(): Promise<number> {
     if (entry.migrations_dir !== undefined) {
       const configuredDir = resolve(dirname(configPath), entry.migrations_dir);
       if (configuredDir === packagedMigrationsDir) {
-        // Already correctly configured (today's smoke-site behavior): use the consumer's config
-        // unchanged rather than writing a redundant derived copy.
+        // Already correctly configured: use the consumer's config unchanged rather than writing
+        // a redundant derived copy.
         effectiveMigrationsDir = configuredDir;
       } else {
         fail(
@@ -342,9 +337,8 @@ async function run(): Promise<number> {
         );
       }
     } else {
-      // Clone + re-select on the clone (rather than tracking array indices) to get a mutable
-      // reference to the same entry inside a config we're free to rewrite; selection is a pure
-      // function of (root, environment, explicitDatabaseName), so it lands on the same entry.
+      // Clone + re-select (rather than tracking array indices) for a mutable reference inside a
+      // config we're free to rewrite; selection is pure, so it lands on the same entry.
       const derivedRoot = structuredClone(root);
       const derivedSelection = selectDatabaseEntry(derivedRoot, environment, explicitDatabaseName);
       if (derivedSelection.kind !== 'selected') throw new Error('unreachable: selection changed between the original config and its clone');

@@ -1,8 +1,6 @@
-// The admin auth port's identity shape. `subject` is what the admin CSRF token binds to
-// (src/admin-csrf.ts) — the default Cloudflare Access implementation below prefers the Access JWT's
-// `email` claim over its raw `sub` claim (matching what an operator actually recognizes); a custom
-// adminAuth with no per-user identity to bind may return the documented empty-string subject
-// instead (see admin-csrf.ts's anonymous-subject fallback).
+// The admin auth port's identity shape. `subject` is what the admin CSRF token binds to — the
+// default Cloudflare Access implementation prefers the JWT's `email` claim over `sub` (what an
+// operator actually recognizes); a custom adminAuth with no per-user identity may return an empty-string subject.
 export interface AdminIdentity {
   subject: string;
   email?: string;
@@ -110,13 +108,9 @@ export async function verifyAccessJwt(request: Request, config: AccessAdminConfi
   if (!jwk || !(await verify(parts, jwk, crypto))) throw new AccessVerificationError('access assertion signature mismatch');
   return parts.claims;
 }
-// The admin auth port's default implementation. Auto-wired by
-// defineCloudflareReservaRuntime only when `config.admin.access` is configured — never both this
-// and a consumer-supplied `adminAuth` at once (validated once, synchronously, at runtime-definition
-// initialization; see src/runtime-context.ts). A single-argument `(request) => ...` function is
-// assignable everywhere the two-argument `AdminAuth` port type (src/context.ts) is expected: this
-// implementation never needs the ReservaContext argument, since Access verification is pure JWT
-// verification against `teamDomain`/`aud`.
+// The admin auth port's default implementation. Auto-wired only when `config.admin.access` is
+// configured — never both this and a consumer-supplied `adminAuth` at once. A single-argument
+// function is assignable to the two-argument `AdminAuth` type since Access verification never needs the ReservaContext.
 export function cloudflareAccessAdminAuth(teamDomain: string, aud: string): (request: Request) => Promise<AdminIdentity | null> {
   return async (request) => {
     let claims: AccessClaims;

@@ -1,10 +1,6 @@
-// Nothing in src/ bounded a request body before this — requestJson called request.json()
-// unbounded, handleAdminPost and src/routes/booking/manage.ts called request.formData()
-// unbounded, and the Stripe webhook buffered request.text() unbounded. These prove the shared
-// bounded reader behind requestJson/requestFormData/requestText: an under-limit body still works
-// exactly as before, a valid Content-Length that already overshoots rejects before a single byte
-// is read off the wire, and a body that lies about its length (or omits Content-Length entirely)
-// is still caught mid-stream once the real byte count overshoots.
+// requestJson/requestFormData/requestText share one bounded reader: an under-limit body still
+// works exactly as before, an over-limit Content-Length rejects before a byte is read, and a body
+// that lies about its length is still caught mid-stream once the real byte count overshoots.
 import { describe, expect, it } from 'vitest';
 import { FORM_BODY_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES, requestFormData, requestJson, requestText, PAYMENT_WEBHOOK_BODY_LIMIT_BYTES } from '../src/http';
 
@@ -20,8 +16,8 @@ function declaredOverLimitRequest(limitBytes: number, headers: HeadersInit = {})
 }
 
 // A real streamed body (backed by an actual buffer, not a hand-rolled `pull()` source) that
-// understates its own length via a small declared Content-Length -- the adversarial case the
-// mid-stream byte-counting check exists for.
+// understates its own length via a small declared Content-Length -- the case the mid-stream
+// byte-counting check exists for.
 function dishonestStreamedOverLimitRequest(limitBytes: number, headers: HeadersInit = {}): Request {
   const bytes = new Uint8Array(limitBytes + 4096).fill(97);
   const stream = new Response(bytes).body as ReadableStream<Uint8Array>;

@@ -1,12 +1,6 @@
 {
   "$schema": "../../../node_modules/wrangler/config-schema.json",
-  // A separate, minimal Worker whose only job is the scheduled reconciliation sweep — see
-  // scheduled.ts's header comment for why this lives outside the Astro site's own
-  // build/deploy instead of wrapping @astrojs/cloudflare's generated entrypoint. It shares the same
-  // RESERVA_DB database (same database_name/id as ../wrangler.jsonc) so both Workers read/write one
-  // D1 instance; it does not need HTTP-only ASSETS/SESSION/IMAGES bindings. Production copies do
-  // need their own payment/calendar/email/ops/alert credentials because Worker secrets are not
-  // inherited — see ../README.md.
+  // Separate Worker for the scheduled reconciliation sweep — see scheduled.ts.
   "name": "reserva-smoke-scheduled",
   "compatibility_date": "2026-07-21",
   "main": "scheduled.ts",
@@ -23,16 +17,10 @@
     "RESERVA_CSRF_SECRET": "local-demo-csrf-secret"
   },
   "triggers": {
-    // Every 5 minutes: matches the 5/10/20/40/60-minute retry backoff schedule closely enough that
-    // a retryable failure gets its first re-attempt on roughly the same cadence it was computed
-    // for. A production deployment can tune this per its own outage tolerance — nothing in
-    // src/reconciliation.ts assumes this exact cadence.
+    // Every 5 minutes, matching the retry backoff schedule's cadence closely enough.
     "crons": ["*/5 * * * *"]
   },
-  // Full-logs observability here matters more than on the site
-  // Worker — this is the only place reconciliation/incident/alert structured log fields
-  // (src/reconciliation.ts) are emitted, and a failed cron run has no other durable trace unless a
-  // production deployment also wires the separate cron-failure/log alert README.md documents.
+  // Full logging here since this is the only trace of reconciliation/incident/alert events.
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1,

@@ -1,22 +1,5 @@
-// Browser-side progressive enhancement for the admin section menu and availability calendar,
-// served (after the manage enhancer) from the assetsJs route. Without it, section links still use
-// native anchors and day cells are links that reload the page with the form prefilled, months
-// render stacked (far ones collapsed), and there is no in-page multi-day selection at all — every
-// bulk edit needs the "To date" field. Enhancement adds current-section tracking and
-// reduced-motion-aware scrolling, plus a one-month pager, instant in-page day selection, and a day
-// panel listing the selected day's bookings from the JSON island.
-//
-// The "To date" field stays visible (not hidden) in enhanced mode — a contiguous
-// selection (pointer or keyboard) syncs it, and typing into either date field updates the enhanced
-// selection right back, so pointer, keyboard, and the native inputs can never drift from each
-// other. A scattered (non-contiguous) selection travels as repeated hidden date fields with toDate
-// explicitly blanked; handleAdminPost (src/handlers/index.ts) unions repeated `date` fields with
-// any toDate expansion, so these two submission shapes must never both be populated at once —
-// applySelection always clears the other shape's fields before writing its own. Day cells gain
-// toggle-button semantics (role="button", aria-pressed) since they're no longer simple navigating
-// links once this script takes over, and the day title becomes a role="status" live region so a
-// screen reader hears the selection count change without focus ever needing to move. IIFE so
-// nothing leaks into the concatenated bundle.
+// Progressive enhancement for the admin section nav and calendar: adds current-section tracking,
+// a month pager, and multi-day selection. IIFE so nothing leaks into the concatenated bundle.
 
 export const adminEnhancerJs = `(() => {
   const sectionNav = document.querySelector('[data-reserva-section-nav]');
@@ -132,18 +115,13 @@ export const adminEnhancerJs = `(() => {
   const cells = new Map();
   monthsBox.querySelectorAll('.bk-day[data-date]').forEach((cell) => {
     cells.set(cell.dataset.date, cell);
-    // No longer a plain navigating link once this script takes over — removing href (not just
-    // intercepting click) is required, not cosmetic: a browser opens ctrl/cmd-click on an
-    // <a href> as a new background tab at the browser-chrome level, before any page JS ever sees a
-    // click event, so preventDefault() on 'click' cannot stop it and the toggle gesture would
-    // silently never fire. Losing href also loses the anchor's native tab-stop and
-    // Enter-activates-click behavior, so both are restored explicitly (tabIndex, and the keydown
-    // listener below handles Enter and Space alike).
+    // Removing href (not just intercepting click) is required: a browser opens ctrl/cmd-click on
+    // an <a href> as a new tab before any JS sees the click, so preventDefault() can't stop it.
+    // tabIndex and the keydown listener below restore the lost tab-stop and Enter-activation.
     cell.removeAttribute('href');
     cell.tabIndex = 0;
     cell.setAttribute('role', 'button');
-    // aria-pressed starts from the server-rendered selected class, since the no-JS markup already
-    // reflects the initial (single) selection correctly.
+    // Starts from the server-rendered selected class, which already reflects initial selection.
     cell.setAttribute('aria-pressed', String(cell.classList.contains('bk-day--selected')));
   });
   let selected = dateInput.value && cells.has(dateInput.value) ? [dateInput.value] : [];
@@ -176,9 +154,8 @@ export const adminEnhancerJs = `(() => {
       const status = document.createElement('span');
       status.className = 'bk-badge' + (row.sc ? ' bk-badge--' + row.sc : '');
       status.textContent = row.s;
-      // row.u is only present when the server found a presentable operator token
-      // (src/ui/pages/admin-page.ts manageLinkHref) -- otherwise render plain text, never a link that
-      // would 403 the instant it's clicked.
+      // row.u is present only when the server found a presentable operator token — otherwise
+      // render plain text, never a link that would 403 the instant it's clicked.
       let manage;
       if (row.u) {
         manage = document.createElement('a');
@@ -195,11 +172,9 @@ export const adminEnhancerJs = `(() => {
     detail.appendChild(list);
   };
 
-  // Reflects \`selected\` onto the calendar cells and the day panel (title/detail/capacity
-  // prefill). Shared by every path that can change \`selected\` — pointer clicks, Space, and typing
-  // directly into the date/toDate inputs — so all three stay visually and semantically in sync.
-  // Returns the sorted selection so callers that also need to rewrite the form fields don't
-  // recompute it.
+  // Reflects \`selected\` onto the calendar cells and day panel. Shared by every path that changes
+  // \`selected\` (pointer, Space, typed dates) so all three stay in sync. Returns the sorted
+  // selection for callers that also rewrite the form fields.
   const renderCells = () => {
     const sorted = [...selected].sort();
     cells.forEach((cell, date) => {
@@ -244,10 +219,8 @@ export const adminEnhancerJs = `(() => {
   };
 
   // Rewrites the form's submission shape from \`selected\`: a contiguous run travels as
-  // date+toDate (the same shape the no-JS bulk path already produces), a scattered set travels as
-  // repeated hidden date fields with toDate explicitly blanked so it never falsely implies a
-  // contiguous range covering the gaps. Always clears the other shape's fields first, so a pointer/
-  // keyboard selection can never leave behind a stale field from an earlier selection.
+  // date+toDate; a scattered set travels as repeated hidden date fields with toDate blanked so it
+  // never implies a range covering the gaps. Always clears the other shape's fields first.
   const applySelection = () => {
     const sorted = renderCells();
     form.querySelectorAll('input[data-reserva-extra-date]').forEach((input) => input.remove());
@@ -296,9 +269,8 @@ export const adminEnhancerJs = `(() => {
     selectDate(cell.dataset.date, modeFromEvent(event));
   });
 
-  // href is gone (see above), so neither Enter nor Space is wired by the browser for free anymore
-  // — both are handled here, sharing the same modifier-based mode as a click (e.g. Shift+Enter is
-  // a range, same as shift-click).
+  // href is gone (see above), so Enter/Space aren't wired by the browser anymore — both are
+  // handled here, sharing the same modifier-based mode as a click.
   monthsBox.addEventListener('keydown', (event) => {
     if (event.key !== ' ' && event.key !== 'Spacebar' && event.key !== 'Enter') return;
     const cell = event.target.closest('.bk-day[data-date]');
@@ -307,10 +279,9 @@ export const adminEnhancerJs = `(() => {
     selectDate(cell.dataset.date, modeFromEvent(event));
   });
 
-  // Typing directly into either date field is a first-class selection path, not just a no-JS
-  // fallback: it must update \`selected\` (so cell highlighting/aria-pressed/the live-region title
-  // agree with what's typed) and must never leave a stale hidden extra-date field from an earlier
-  // scattered pointer selection lying around to combine with the freshly typed toDate.
+  // Typing into either date field is a first-class selection path: it must update \`selected\` (so
+  // highlighting/aria-pressed/the title stay in sync) and must clear stale hidden extra-date
+  // fields left by an earlier scattered pointer selection.
   const applyTypedRange = () => {
     form.querySelectorAll('input[data-reserva-extra-date]').forEach((input) => input.remove());
     const date = dateInput.value;

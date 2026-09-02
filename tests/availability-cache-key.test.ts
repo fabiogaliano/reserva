@@ -1,7 +1,6 @@
-// availabilityInput validates exactly service/quantity/from/to,
-// but the cache key used to be the whole sorted request URL — any extra query parameter (a
-// tracking nonce, cache-buster, etc.) minted a fresh cache entry, bypassing and bloating the 60s
-// public availability cache. The key must be built from the four validated parameters only.
+// availabilityInput validates exactly service/quantity/from/to, but the cache key used to be the
+// whole sorted request URL — an extra query parameter (tracking nonce, cache-buster) minted a
+// fresh entry, bypassing and bloating the 60s public availability cache.
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import type { ReservaCache } from '../src/context';
@@ -36,10 +35,9 @@ function contextWithoutCalendar(cache: ReservaCache, listOccupancyBookings: () =
     repo,
     cache,
     clock: () => new Date('2026-06-14T08:00:00.000Z'),
-    // availabilityInput's own request-scope cache (handleAvailability) only engages when there's
-    // no calendar provider — calendarEventsForWindow has a separate cache path when one exists.
-    // The key must be omitted, not set to undefined: ReservaProviders.calendar is optional under
-    // exactOptionalPropertyTypes, which rejects an explicit `undefined` value for it.
+    // handleAvailability's request-scope cache only engages with no calendar provider. The key
+    // must be omitted, not set to undefined — exactOptionalPropertyTypes rejects an explicit
+    // undefined for the optional ReservaProviders.calendar.
     providers: (({ calendar: _calendar, ...rest }) => rest)(providers()),
   });
 }

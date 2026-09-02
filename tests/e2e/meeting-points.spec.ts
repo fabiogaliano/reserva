@@ -1,12 +1,9 @@
 import { test, expect } from '@playwright/test';
 import { createBooking } from './helpers';
 
-// The smoke-site's oldTown service declares two free meeting
-// points (examples/smoke-site/src/config.ts) instead of the single-point shorthand. These prove
-// the SECOND point survives the whole path — widget selection, checkout, storage, and rendering
-// back on the confirmation page — not just that "a" point round-trips (which the first-checked
-// default already covered, and every other e2e spec that books oldTown still
-// exercises unchanged, since the first point stays pre-checked).
+// oldTown declares two free meeting points instead of the single-point shorthand. Proves the
+// SECOND point survives the whole path — not just that "a" point round-trips, which the
+// pre-checked default already covers everywhere else.
 
 test('booking the second meeting point carries its label through checkout to the confirmation page', async ({ page }) => {
   const { reference } = await createBooking(page, { service: 'oldTown', quantity: 2, meetingPointId: 'station' });

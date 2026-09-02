@@ -9,11 +9,8 @@ import { nowIso } from '../context.js';
 import { HttpError, json, parseDate, requireInteger, requireString } from '../http.js';
 import { run } from './shared.js';
 
-// The bound is the deployment's own booking horizon, not a fixed cap — a fixed cap would force a
-// consumer to chunk-and-merge availability requests, which nothing here should require. Nothing
-// bookable exists past `maxHorizonDays`
-// (core/occupancy.ts filters those slots out anyway), so a request may span the whole window and no
-// more. The span is still bounded BEFORE enumerating (zero-padded keys compare lexicographically),
+// Bounded by the deployment's own maxHorizonDays, not a fixed cap, so a consumer never needs to
+// chunk-and-merge requests. Checked BEFORE enumerating (zero-padded keys compare lexicographically)
 // so an adversarial multi-century range fails fast instead of allocating one key per day.
 function validDateRange(from: string, to: string, maxHorizonDays: number): string[] {
   parseDate(from, 'from');
@@ -126,7 +123,7 @@ export async function calendarEventsForWindow(context: ReservaContext, fromUtc: 
     const events = await flight;
     if (context.cache) {
       try {
-        // caches.default is per-colo, so this outage grace is intentionally local to each datacenter.
+        // caches.default is per-colo, so this outage grace applies only within each datacenter.
         await context.cache.put(cacheKey, json(events, 200, {
           'cache-control': `public, max-age=${context.config.booking.calendarMaxStaleSeconds}`,
           [CALENDAR_STORED_AT_HEADER]: now,
@@ -161,11 +158,9 @@ function availabilityInput(request: Request, context: ReservaContext): Availabil
   const service = resolveService(context.config, serviceSlug);
   assertSupportedPartySize(service, quantity);
   try {
-    // The party size must price under every pickup id the service's
-    // own pricing rows declare — derived like resolvedPriceTableFor, not a fixed
-    // default/custom pair, since a service with declared location.pickupOptions need not use one.
-    // A location-less rule's `pickup` is undefined, normalized to null (the same key
-    // priceFor expects for such a service).
+    // Party size must price under every pickup id the service actually declares (derived, not a
+    // fixed default/custom pair) since a service need not use pickupOptions. A location-less rule's
+    // `pickup` is undefined, normalized to null — the same key priceFor expects.
     for (const pickup of new Set(service.pricing.map((row) => row.pickup ?? null))) {
       priceFor(service, quantity, pickup);
     }
@@ -175,12 +170,9 @@ function availabilityInput(request: Request, context: ReservaContext): Availabil
   return { quantity, dates, service };
 }
 
-// Scarcity leaves the library as a structured number, never a
-// rendered string, and the exact count is published only inside the scarce band — at or below
-// `limitedThreshold` a consumer gets the number it needs to say "only N left" (the copy keys are
-// exported: SLOT_STATUS_MESSAGE_KEYS, src/ui/messages.ts), and above it the field is null so a
-// deployment's real capacity stays private. Slots that fit nothing are already filtered out
-// upstream, so `remaining` is never 0.
+// `remaining` is published only at or below `limitedThreshold` so a consumer can say "only N left";
+// above it the field is null so real capacity stays private. Slots that fit nothing are filtered
+// out upstream, so `remaining` is never 0.
 function wireDay(day: DayAvailability, limitedThreshold: number): AvailabilityDay {
   return {
     date: day.date,
@@ -259,12 +251,9 @@ export function handleAvailability(request: Request, context: ReservaContext): P
     const availabilityCache = context.providers.calendar ? undefined : context.cache;
     let cacheKey: Request | undefined;
     if (availabilityCache) {
-      // Built from exactly the four availabilityInput validates, in fixed order — not the raw
-      // request URL — so a junk query parameter (nonce, cache-buster, tracking param) can't mint a
-      // fresh cache entry that bypasses and bloats the 60s public cache. Reading
-      // these again (rather than threading them out of AvailabilityInput) is safe: availabilityInput
-      // above already validated them, so this is a lossless re-read of the exact strings that
-      // validated cleanly, not a second, divergent parse.
+      // Built from exactly the four validated params, in fixed order — not the raw URL — so a junk
+      // query param can't mint a fresh cache entry that bypasses the 60s public cache. Re-reading them
+      // here is safe: they're already validated above, so this is a lossless re-read, not a second parse.
       const requestParams = new URL(request.url).searchParams;
       const keyUrl = new URL(request.url);
       keyUrl.search = '';

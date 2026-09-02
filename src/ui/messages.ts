@@ -1,6 +1,5 @@
-// Single key set for every string reserva renders to a customer or operator. English is the
-// default and the fallback; European Portuguese ships as a bundled catalog a consumer selects via
-// `config.locales`, and both can be overridden per locale through `config.ui.messages`.
+// Single key set for every string reserva renders. English is the default and fallback; European
+// Portuguese ships as a bundled catalog, and both can be overridden per locale via `config.ui.messages`.
 
 import type { ClientConfig } from '../core/config.js';
 // The import attribute is what makes the published `dist/` loadable by a plain ESM runtime, not
@@ -56,9 +55,7 @@ export const defaultMessages = {
   'widget.pickupDefaultHint': 'Meet us at the starting point',
   'widget.pickupCustom': 'Custom pickup',
   'widget.pickupCustomHint': 'We pick you up at your address',
-  // Legend for the meetingPointId radio group, shown only when a
-  // service declares 2+ points — labels themselves are config-provided plain strings, like
-  // meetingPoint.label today.
+  // Shown only when a service declares 2+ meeting points.
   'widget.meetingPoint': 'Choose a meeting point',
   'widget.start': 'Start',
   'widget.startPlaceholder': 'Select a start time',
@@ -156,16 +153,14 @@ export const defaultMessages = {
   'admin.remove': 'Remove',
   'admin.search': 'Search',
   'admin.searchPlaceholder': 'Reference, service, pickup…',
-  // Shown instead of the key above when no configured service
-  // declares a location module.
+  // Shown instead of the key above when no configured service declares a location module.
   'admin.searchPlaceholderNoPickup': 'Reference, service…',
   'admin.filterStatus': 'Status',
   'admin.all': 'All',
   'admin.apply': 'Apply filters',
   'admin.manage': 'Manage',
-  // Shown instead of a manage-link href when the booking's
-  // operatorToken isn't presentable (see isManageableToken, src/repo.ts) — a
-  // not-yet-backfilled legacy row, or no RESERVA_TOKEN_ENC_KEY configured at all.
+  // Shown instead of a manage-link href when the booking's operatorToken isn't presentable — a
+  // not-yet-backfilled legacy row, or no encryption key configured at all.
   'admin.manageUnavailable': 'Manage link unavailable',
   'admin.results': '{n} bookings',
   'admin.resultsOne': '{n} booking',
@@ -196,9 +191,8 @@ export const defaultMessages = {
   'admin.on': 'On',
   'admin.off': 'Off',
   'admin.none': 'None',
-  // Shown by the embeddable AdminDashboard component in place of its override form when the
-  // viewing request isn't Cloudflare Access-authenticated (see src/components/AdminDashboard.astro)
-  // — rendering a form that could only ever 403 on submit is worse than saying so up front.
+  // Shown by the embeddable AdminDashboard component when the viewing request isn't Cloudflare
+  // Access-authenticated — a form that could only ever 403 on submit is worse than saying so.
   'admin.accessRequired': 'Cloudflare Access authorization required to manage this booking.',
   'settingGroup.window': 'Booking window',
   'settingGroup.changes': 'Cancellation & rescheduling',
@@ -263,20 +257,17 @@ export const defaultMessages = {
 export type ReservaMessageKey = keyof typeof defaultMessages;
 export type ReservaMessages = Record<ReservaMessageKey, string>;
 
-// The availability API returns structured scarcity, never rendered
-// status text — this is the closed set of catalog keys that renders it, exported so a consumer
-// that wants Reserva's own copy reads these (through resolveMessages/formatMessage) instead of
-// inventing English strings the way the first consumer's widget had to. `widget.limited` and
-// `widget.spotsLeft` interpolate {n} from a slot's non-null `remaining`.
+// The availability API returns structured scarcity, never rendered status text — this is the
+// closed set of catalog keys that renders it. `widget.limited`/`widget.spotsLeft` interpolate
+// {n} from a slot's non-null `remaining`.
 export const SLOT_STATUS_MESSAGE_KEYS = [
   'widget.limited', 'widget.spotsLeft', 'widget.soldOut', 'widget.noSlots', 'widget.closed',
 ] as const satisfies readonly ReservaMessageKey[];
 
 export type SlotStatusMessageKey = (typeof SLOT_STATUS_MESSAGE_KEYS)[number];
 
-// A generic library must not default to Portuguese. Both real
-// consumers (consumer-a, consumer-b) set config.locales.default explicitly, so this only
-// changes behavior for a caller of resolveMessages/the components with no locale argument at all.
+// A generic library must not default to Portuguese; deployments set config.locales.default, so
+// this only matters for a caller of resolveMessages/the components with no locale argument at all.
 export const defaultLocale = 'en';
 
 const portuguesePortugalMessages: ReservaMessages = portuguesePortugalCatalog;

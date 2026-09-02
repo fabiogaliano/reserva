@@ -7,8 +7,8 @@
     "verbatimModuleSyntax": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
-    // Workspace packages import the published entrypoints, exactly as an external adapter author
-    // does; in this repo those specifiers resolve to the sources rather than to a built dist/.
+    // These specifiers resolve to source, not a built dist/, so workspace code typechecks
+    // against the same published entrypoints an external consumer would import.
     "paths": {
       "@reservajs/astro": ["./src/index.ts"],
       "@reservajs/astro/core": ["./src/core/index.ts"],
@@ -18,9 +18,8 @@
     }
   },
   "include": ["src", "tests", "examples", "scripts", "packages", "vitest.config.ts", "vitest.workers.config.ts", "vitest.component.config.ts"],
-  // tests/pack-fixture is a standalone consumer project (its own tsconfig.json, typechecked by
-  // scripts/pack-test.ts against the packed tarball) whose files import the bare `@reservajs/astro`
-  // specifier on purpose, exercising package self-resolution the way a real install would rather
-  // than this repo's own source — that would not resolve under the root project's tsconfig.
+  // tests/pack-fixture is a standalone consumer project that imports the bare `@reservajs/astro`
+  // specifier, to exercise real package resolution — that doesn't resolve under this repo's own
+  // tsconfig.
   "exclude": ["tests/pack-fixture"]
 }

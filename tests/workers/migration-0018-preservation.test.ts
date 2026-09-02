@@ -1,16 +1,6 @@
-// migrations/0018_v2_domain_rename.sql is the wave's one and only
-// `bookings` rebuild — it renames five columns, drops five, adds two, relaxes pickup_type to
-// nullable, and re-keys two settings rows. Because it recreates the whole table (and both its FK
-// children), a dropped or mismapped column would silently lose production data, so this proves,
-// against real D1 and the actual migration file:
-//   * every one of the 39 physical columns that survives arrives with its exact value;
-//   * the five dropped columns are gone and the two new ones present, with currency backfilled;
-//   * an existing pickup_type id is untouched, and NULL is now storable;
-//   * both children's rows and the FK graph survive the parent rebuild;
-//   * every index (including the renamed partial payment index) is back;
-//   * the calendar_synced/email_synced flags became the succeeded outbox rows they described,
-//     without duplicating a row a post-0010 booking already had;
-//   * fleet.defaultCapacity is re-keyed and payments.methods deleted.
+// migrations/0018_v2_domain_rename.sql is the wave's one `bookings` rebuild — renames/drops/adds
+// columns, relaxes pickup_type to nullable, and re-keys settings rows. Proves against real D1 that
+// columns/FKs/indexes survive, dropped/added columns are correct, and sync flags convert to outbox rows.
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';

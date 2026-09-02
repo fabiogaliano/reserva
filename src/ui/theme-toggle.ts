@@ -1,9 +1,6 @@
-// Browser-side progressive enhancement for the per-viewer theme toggle, served (with the other
-// enhancers) from the assetsJs route. The server renders the button hidden with the current mode
-// (from the bk_theme cookie) in data-mode; without this script it stays hidden, so no-JS viewers
-// just get the OS-driven default and never see a dead control. On click it cycles
-// System → Light → Dark, flips <html data-theme> live, and persists the choice to the cookie the
-// server reads on the next request. IIFE so nothing leaks into the concatenated bundle.
+// Browser-side progressive enhancement for the per-viewer theme toggle. Server renders it hidden
+// with the current mode; without this script it stays hidden, so no-JS viewers get the OS
+// default. Click cycles System → Light → Dark and persists the choice to the cookie.
 
 export const themeToggleJs = `(() => {
   const button = document.querySelector('[data-reserva-theme-toggle]');

@@ -144,10 +144,9 @@ describe('D1 booking repository', () => {
     await db.prepare('DROP TRIGGER fail_confirmation_outbox').run();
   });
 
-  // Proves the optional subscriber row shares confirmWithSideEffectOperations' one D1
-  // batch just like calendar_create/email_confirmation above — a failure inserting ONLY the
-  // hook row (the other two rows would insert cleanly on their own) must still roll back the
-  // whole batch, leaving the booking unconfirmed and no partial rows behind.
+  // Proves the optional subscriber row shares confirmWithSideEffectOperations' one D1 batch too —
+  // a failure inserting only the hook row must still roll back the whole batch, leaving the
+  // booking unconfirmed and no partial rows behind.
   it('rolls back the confirmation status when creating its hook outbox row fails inside the same batch', async () => {
     const created = await repo.insertHold({
       id: 'booking-hook-outbox-atomic',
@@ -187,10 +186,9 @@ describe('D1 booking repository', () => {
     await db.prepare('DROP TRIGGER fail_hook_outbox').run();
   });
 
-  // Proves the split confirmation-path email rows share confirmWithSideEffectOperations'
-  // one D1 batch too — a failure inserting just the owner recipient's row (the customer row and
-  // calendar_create would insert cleanly on their own) must still roll back the whole batch,
-  // leaving the booking unconfirmed and no partial rows behind.
+  // Proves the split confirmation-path email rows share confirmWithSideEffectOperations' one D1
+  // batch too — a failure inserting just the owner recipient's row must still roll back the whole
+  // batch, leaving the booking unconfirmed and no partial rows behind.
   it('rolls back the confirmation status when creating a split email outbox row fails inside the same batch', async () => {
     const created = await repo.insertHold({
       id: 'booking-email-split-outbox-atomic',
@@ -292,11 +290,9 @@ describe('D1 booking repository', () => {
     });
   });
 
-  // Migration 0015 removed the pickup_type CHECK (domain moved to
-  // config-declared option ids, ServiceConfig.pickupOptions) -- this is the row the old CHECK
-  // (pickup_type IN ('default','custom')) would have rejected, round-tripped through the real
-  // application write/read paths, not just a raw SQL INSERT (see tests/workers/schema-constraints.test.ts
-  // for the SQL-layer proof).
+  // Migration 0015 removed the pickup_type CHECK (domain moved to config-declared option ids) —
+  // this is the row the old CHECK would have rejected, round-tripped through the real application
+  // write/read paths (see schema-constraints.test.ts for the SQL-layer proof).
   it('inserts and reads back a booking with a non-enum pickup_type id (migration 0015)', async () => {
     const created = await repo.insertHold({
       id: 'booking-pickup-non-enum', reference: 'BKT-2026-PICKUPNE', serviceSlug: 'vintage', quantity: 2,
@@ -325,10 +321,9 @@ describe('D1 booking repository', () => {
     await expect(repo.getBookingById('booking-pickup-empty')).rejects.toThrow(/pickup_type must be a non-empty string/);
   });
 
-  // Migration 0018 makes pickup_type nullable so the
-  // location-less service can store "no pickup at all" as NULL rather than a sentinel id. The
-  // read-time floor must let NULL through untouched (it is a declared state, not a corrupt row),
-  // which is the one case the empty-string rejection above must NOT be widened to cover.
+  // Migration 0018 makes pickup_type nullable for the location-less service to store "no pickup
+  // at all" as NULL — the read-time floor must let NULL through untouched, since it's a declared
+  // state, not a corrupt row.
   it('hydrates a NULL pickup_type as pickupType: null rather than rejecting the row', async () => {
     await repo.insertHold({
       id: 'booking-pickup-null', reference: 'BKT-2026-PICKUPNULL', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
@@ -341,11 +336,10 @@ describe('D1 booking repository', () => {
     await expect(repo.getBookingById('booking-pickup-null')).resolves.toMatchObject({ pickupType: null });
   });
 
-  describe('token hashing, expiry, and revocation (BK-SEC-002)', () => {
-    // A second repository instance bound to the SAME D1 database but with RESERVA_TOKEN_ENC_KEY
-    // configured, so these tests can exercise the full "encrypt at insert, decrypt at read" round
-    // trip that lets a later DB-loaded read (a confirmation email, the admin dashboard) regenerate
-    // a working manage link — see migrations/0009_token_hashing.sql for why that's needed at all.
+  describe('token hashing, expiry, and revocation', () => {
+    // A second repository instance bound to the same D1 database but with RESERVA_TOKEN_ENC_KEY
+    // configured, so these tests can exercise the full encrypt-at-insert/decrypt-at-read round trip
+    // (see migrations/0009_token_hashing.sql).
     const encRepo = createBookingRepository(db, (name) => (name === 'RESERVA_TOKEN_ENC_KEY' ? 'test-only-token-encryption-secret' : undefined));
 
     it('never stores a plaintext token for a new booking, even without RESERVA_TOKEN_ENC_KEY configured, and lookup still authenticates', async () => {
@@ -390,9 +384,8 @@ describe('D1 booking repository', () => {
       await expect(encRepo.getBookingByCancelToken(row!.cancel_token_hash, '2026-07-21T10:00:00.000Z')).resolves.toBeNull();
 
       // Full round trip: the presented token authenticates, and the returned booking's tokens are
-      // the real plaintext again (decrypted from cancel_token_enc/operator_token_enc) — this is
-      // what lets a later DB-loaded read (confirmation email, admin dashboard) regenerate a
-      // working link without D1 ever having stored that plaintext at rest.
+      // the real plaintext again (decrypted from cancel_token_enc/operator_token_enc), without D1
+      // ever having stored that plaintext at rest.
       await expect(encRepo.getBookingByCancelToken('hash-cancel-token', '2026-07-21T10:00:00.000Z')).resolves.toMatchObject({ id: created.id, cancelToken: 'hash-cancel-token' });
       await expect(encRepo.getBookingByOperatorToken('hash-operator-token', '2026-07-21T10:00:00.000Z')).resolves.toMatchObject({ id: created.id, operatorToken: 'hash-operator-token' });
       await expect(encRepo.getBookingById(created.id)).resolves.toMatchObject({ cancelToken: 'hash-cancel-token', operatorToken: 'hash-operator-token' });
@@ -440,17 +433,9 @@ describe('D1 booking repository', () => {
       await expect(encRepo.getBookingByCancelToken('legacy-cancel-token', '2026-07-21T10:00:01.000Z')).resolves.toMatchObject({ id: created.id, cancelToken: 'legacy-cancel-token' });
     });
 
-    // migrations/0009_token_hashing.sql's ADD COLUMN statements alone leave
-    // cancel_token_revoked_at NULL on every pre-existing row regardless of status, so a booking
-    // that was ALREADY cancelled/no_show before this migration ran would otherwise keep a live
-    // customer manage link forever (null hash -> the compat fallback in getBookingByCancelToken
-    // just keeps matching the original plaintext cancel_token). The fix is a retroactive
-    // `UPDATE ... WHERE status IN ('cancelled','no_show')` appended to the same migration. The
-    // vitest-pool-workers harness applies every migration to an EMPTY database before any test
-    // row exists, so 0009's own retroactive UPDATE never had a real row to act on when it
-    // actually ran here — this test re-runs that exact statement (copied verbatim from the
-    // migration) against hand-crafted rows shaped exactly like they'd have looked immediately
-    // before 0009 ran, to prove the statement's logic is correct.
+    // migration 0009's retroactive UPDATE never had a real row to act on when it ran here (the
+    // harness migrates an empty database) — this re-runs that exact statement against
+    // hand-crafted rows shaped like they'd have looked immediately before 0009 ran.
     it("re-running migration 0009's retroactive UPDATE revokes an already-terminal (cancelled/no_show) legacy row's customer token, while leaving its operator token usable", async () => {
       await db.prepare(
         `INSERT INTO bookings (
@@ -502,10 +487,8 @@ describe('D1 booking repository', () => {
       await expect(repo.getBookingByCancelToken('legacy-active-cancel-token', now)).resolves.toMatchObject({ id: 'booking-legacy-active-1' });
     });
 
-    // tokens_expire_at must move with the booking on reschedule (both
-    // repo entry points — rescheduleWithCapacity, the one src/handlers/index.ts actually calls,
-    // and transitionReschedule, exercised directly by tests/workers/repo-cas-transitions.test.ts)
-    // — otherwise a booking moved later could have its manage link expire before the rescheduled
+    // tokens_expire_at must move with the booking on reschedule (both repo entry points) —
+    // otherwise a booking moved later could have its manage link expire before the rescheduled
     // service, and one moved earlier would keep an over-long window relative to its new end.
     it('rescheduleWithCapacity moves tokens_expire_at to (new endsAt + tokenExpiryDays) on both a later and an earlier reschedule, and leaves it untouched when the caller omits it', async () => {
       const created = await repo.insertHoldWithCapacity({
@@ -762,12 +745,9 @@ describe('mutation side-effect outbox on real D1', () => {
     await db.prepare('DROP TRIGGER fail_mutation_outbox').run();
   });
 
-  // repo.insertHold now always writes meeting_point_id/-label
-  // (migration 0014), so it cannot seed the FK-parent booking rows below against this test's
-  // deliberately pre-0010 schema. Only these FK-parent rows need to exist at all (nothing here
-  // asserts on their own columns) -- a raw INSERT covering just the columns 0001_init.sql
-  // guarantees NOT NULL, present since before every migration this suite ever slices before,
-  // decouples this historical-schema test from the CURRENT repo.ts column list going forward.
+  // repo.insertHold now always writes meeting_point_id/-label (migration 0014), so it cannot seed
+  // these FK-parent rows against this deliberately pre-0010 schema — a raw INSERT of just the
+  // 0001_init.sql NOT NULL columns decouples this historical-schema test from repo.ts's current columns.
   async function seedRawBookingForFk(id: string): Promise<void> {
     await db.prepare(
       `INSERT INTO bookings (id, reference, tour_slug, people, pickup_type, starts_at, ends_at, locale, price_cents, status, cancel_token, operator_token, created_at, updated_at)

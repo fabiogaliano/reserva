@@ -42,10 +42,8 @@ async function seedConfirmed(id: string): Promise<void> {
   expect(confirmed).toMatchObject({ status: 'confirmed' });
 }
 
-// claimRefundExecution is the shared refund executor's own atomic
-// claim, mirroring claimRefundOperation's real-D1 concurrency proof — exactly one of several
-// concurrent scheduled-reconciler passes (or an HTTP request racing the cron) may claim a given
-// refund_operations row's execution slot at a time.
+// claimRefundExecution is the shared refund executor's own atomic claim — exactly one of several
+// concurrent reconciler passes (or a racing HTTP request) may claim a given row's execution slot.
 describe('claimRefundExecution / claimRefundExecutionForRetry concurrent claim uniqueness on real D1', () => {
   it('exactly one of five concurrent execution claims for the same requested refund wins', async () => {
     const id = 'refund-exec-claim-race';

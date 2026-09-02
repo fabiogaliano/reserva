@@ -1,8 +1,6 @@
-// Regenerates src/ui/vendor/cally-bundle.ts from the installed cally package. The served
-// /booking/assets/reserva.js route can't use a Vite `?raw` import: in a consumer's dev server the
-// Cloudflare module runner denies file ids outside the consumer project root (reserva lives in
-// node_modules, or behind a symlink), so the bundle is vendored as a plain string module instead.
-// Run after bumping the cally dependency: bun scripts/vendor-cally.ts
+// Can't use a Vite `?raw` import here: in a consumer's dev server the Cloudflare module runner
+// denies file ids outside the consumer project root (reserva lives in node_modules, or behind a
+// symlink), so the bundle is vendored as a plain string module instead.
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';

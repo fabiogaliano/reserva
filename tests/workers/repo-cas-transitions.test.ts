@@ -14,18 +14,10 @@ beforeEach(async () => {
   await db.prepare('DELETE FROM refund_operations').run();
 });
 
-// Pairwise interleavings against real D1: each test seeds one booking, applies
-// two conflicting transitions in a concrete order, and asserts the loser's CAS reports no
-// change (null) and none of its fields leak into the row the winner committed. D1 runs every
-// statement in its own implicit transaction on a single-threaded, serially-processing Durable
-// Object (see the handoff doc), so a conditional UPDATE ... WHERE id = ? AND status = ? is a
-// true compare-and-swap — these tests exercise that against the real binding, not the fake.
-//
-// Pairs with a genuinely forbidden overlap (cancel-vs-no-show, cancel-vs-reschedule,
-// no_show-vs-refund) run BOTH orderings so exactly-one-winner holds regardless of which
-// transition reaches D1 first. confirm-vs-cancel is intentionally single-ordering: a cancel
-// arriving after a confirm is a legitimate sequential transition (not a race loss), so there is
-// no reverse-order "forbidden combination" to assert there.
+// Pairwise interleavings against real D1: each test races two conflicting transitions on one
+// seeded booking and asserts the loser's CAS reports no change and leaks no fields into the
+// winner's row. Genuinely forbidden pairs run both orderings; confirm-vs-cancel doesn't, since a
+// cancel after a confirm is a legitimate sequential transition, not a race loss.
 async function seedConfirmed(id: string): Promise<void> {
   await repo.insertHold({
     id,
@@ -51,7 +43,7 @@ async function seedConfirmed(id: string): Promise<void> {
   expect(confirmed).toMatchObject({ status: 'confirmed' });
 }
 
-describe('BK-DATA-001 pairwise CAS interleavings on real D1', () => {
+describe('pairwise CAS interleavings on real D1', () => {
   it('cancel vs no-show: cancel wins first, the racing no-show loses and cannot leave a no_show row with cancelled_by set', async () => {
     const id = 'cas-cancel-vs-noshow-a';
     await seedConfirmed(id);
@@ -64,7 +56,7 @@ describe('BK-DATA-001 pairwise CAS interleavings on real D1', () => {
     });
     expect(winner).toMatchObject({ status: 'cancelled', cancelledBy: 'customer' });
 
-    // The exact corrupted-row example from the handoff: a stale no-show that only patches
+    // The exact corrupted-row example: a stale no-show that only patches
     // status + updated_at must not land on top of an already-cancelled row.
     const loser = await repo.transitionToNoShow(id, {
       expectedStatusIn: ['confirmed'],
@@ -132,13 +124,9 @@ describe('BK-DATA-001 pairwise CAS interleavings on real D1', () => {
     expect(final?.startsAt).toBe(original.startsAt);
   });
 
-  // Without the expectedStartsAt guard on
-  // transitionToCancelled, a stale cancel (still holding the pre-reschedule starts_at) would
-  // match on status alone and win here too, writing a cancellation decision (refund/notice)
-  // computed against a starts_at the row no longer has. With the guard, the reschedule's own
-  // starts_at change invalidates the stale cancel's precondition, so it correctly loses instead
-  // of corrupting the row — this assertion would fail pre-fix (loser would be non-null and the
-  // row would end up 'cancelled' instead of the rescheduled 'confirmed').
+  // Without the expectedStartsAt guard, a stale cancel (still holding the pre-reschedule
+  // starts_at) would win here too, computing its decision against a starts_at the row no longer
+  // has. The guard makes the reschedule's own starts_at change invalidate the stale cancel.
   it('cancel vs reschedule: reschedule wins first, the racing stale cancel loses instead of clobbering the moved booking', async () => {
     const id = 'cas-cancel-vs-reschedule-b';
     await seedConfirmed(id);
@@ -199,12 +187,9 @@ describe('BK-DATA-001 pairwise CAS interleavings on real D1', () => {
     expect(final?.status === 'no_show' && final?.cancelledBy !== null).toBe(false);
   });
 
-  // A refund arriving after an operator has already marked
-  // the booking no_show must not resurrect/overwrite that terminal state. Pre-fix, the
-  // webhook's expectedStatusIn included 'no_show', so this refund would have won and clobbered
-  // the row with status='cancelled' — losing the no-show record entirely. Post-fix, 'no_show'
-  // is excluded from the set, so the refund's CAS correctly reports no match (loser === null)
-  // and the booking stays exactly as the operator left it.
+  // A refund arriving after an operator marks the booking no_show must not resurrect that
+  // terminal state. Excluding 'no_show' from the webhook's expectedStatusIn makes the refund's
+  // CAS correctly report no match, leaving the booking exactly as the operator left it.
   it('no-show vs refund-webhook: no-show wins first, the racing refund loses and cannot overwrite the terminal no_show state', async () => {
     const id = 'cas-noshow-vs-refund-b';
     await seedConfirmed(id);

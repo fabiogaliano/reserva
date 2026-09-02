@@ -49,12 +49,10 @@ function eventPayload(booking: Booking, config: ClientConfig | undefined, _timez
   // Gated on the row's own data first — a location-less booking
   // gets no Pickup line at all, not a "Default meeting point" placeholder.
   const presentation = service ? pickupPresentationFor(service, booking) : null;
-  // Same per-booking resolution as Brevo — a removed meeting point
-  // id falls back to the booking's stored label snapshot with no maps link.
+  // A removed meeting point id falls back to the booking's stored label snapshot with no maps link.
   const resolvedPoint = service && presentation ? meetingPointForBooking(service, booking.meetingPointId ?? null, booking.meetingPointLabel ?? null) : null;
-  // The two flags are independent gates, so an option declaring
-  // BOTH (Maze's combined pickup+drop-off) shows the address on the Pickup line AND the maps URL
-  // line.
+  // The two flags are independent gates, so an option declaring both shows the address on
+  // the Pickup line AND the maps URL line.
   const requiresAddress = presentation?.requiresAddress ?? false;
   const usesMeetingPoint = presentation?.usesMeetingPoint ?? false;
   const pickupLine = requiresAddress
@@ -84,9 +82,8 @@ export class GoogleCalendarProvider implements CalendarProvider {
     this.calendarId = options.calendarId;
     this.cacheKey = options.calendarId;
     this.auth = options.auth ?? new GoogleServiceAccountAuth(options);
-    // A bare global fetch stored as a method throws "Illegal invocation" in
-    // workerd, which rebinds `this` to the instance; wrap it so `this` stays
-    // globalThis (auth.ts uses defaultFetch for the same reason).
+    // A bare global fetch stored as a method throws "Illegal invocation" in workerd, which
+    // rebinds `this` to the instance; wrap it so `this` stays globalThis.
     this.request = options.fetchImpl ?? options.fetch ?? ((input, init) => fetch(input, init));
     this.apiBase = (options.apiBaseUrl ?? options.calendarApiUrl ?? options.apiBase ?? 'https://www.googleapis.com/calendar/v3').replace(/\/$/, '');
     this.timezone = options.timezone ?? 'UTC';
@@ -102,8 +99,8 @@ export class GoogleCalendarProvider implements CalendarProvider {
     headers.set('accept', 'application/json');
     headers.set('authorization', `Bearer ${await this.auth.getAccessToken()}`);
     const response = await this.request(this.url(path), { ...init, headers });
-    // A structured ProviderFailure (status already in hand) so the
-    // outbox attempt cap (src/confirmation.ts) can classify this without parsing message text.
+    // Structured ProviderFailure so callers can classify retryability from `.status` without
+    // parsing message text.
     if (!response.ok) throw new ProviderFailure({ status: response.status, message: `Google Calendar request failed (${response.status})` });
     return response;
   }

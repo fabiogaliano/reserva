@@ -1,9 +1,6 @@
-// A restaurant taking deposit-backed dinner reservations. Reserva's flow is hold → pay → confirm,
-// so the pricing rows are per-party deposits, not menu prices; the balance is settled in person.
-//
-// No `location` module: a restaurant has no pickup axis, so checkout, emails, and the admin
-// dashboard carry no pickup or meeting-point fields at all. Business-specific questions travel
-// as declared `metadataFields` instead.
+// A restaurant taking deposit-backed dinner reservations: pricing rows are per-party deposits
+// (the balance is settled in person), and there's no `location` module since a restaurant has no
+// pickup axis -- business-specific questions travel as declared `metadataFields` instead.
 import type { ClientConfig } from '@reservajs/astro';
 
 export default {

@@ -1,8 +1,6 @@
 // A tuk-tuk tour operator: small fleet, hourly departures, three seats per vehicle, paid up front.
-//
-// The riverside route shows why `pricing` rows are priced outright per pickup option instead of
-// as surcharges: +20 € for a custom drop-off, +20 € for a custom pick-up, but +30 € (not +40 €)
-// for both. A surcharge model cannot express that; four explicit rows can.
+// The riverside route prices pickup options outright rather than as surcharges: +20 € for either
+// custom leg alone, but +30 € (not +40 €) for both -- a surcharge model can't express that.
 import type { ClientConfig } from '@reservajs/astro';
 
 export default {

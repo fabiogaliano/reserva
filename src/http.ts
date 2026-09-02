@@ -38,20 +38,16 @@ export function errorResponse(error: unknown): Response {
   return json<ApiErrorEnvelope>({ error: { code: 'internal_error', message: 'An unexpected error occurred' } }, 500);
 }
 
-// One limit per traffic class, chosen for the largest
-// legitimate payload each entrypoint actually receives — public JSON endpoints, both form-POST
-// entrypoints, and the buffered payment webhook body all read request.json()/formData()/text()
-// through these bounds.
+// One limit per traffic class, chosen for the largest legitimate payload each entrypoint actually
+// receives — public JSON endpoints, form-POST entrypoints, and the buffered payment webhook body
+// all read through these bounds.
 export const JSON_BODY_LIMIT_BYTES = 32 * 1024;
 export const FORM_BODY_LIMIT_BYTES = 256 * 1024;
 export const PAYMENT_WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024;
 
-// Rejects a request whose body exceeds limitBytes: immediately, from a valid (numeric)
-// Content-Length header that already overshoots, before a single byte is read off the wire; or
-// mid-stream, tracking real bytes read, when the header is absent or understates the true body (a
-// client can lie about Content-Length, so the enforced count is always the one actually read).
-// Uint8Array<ArrayBuffer> (not the bare, ArrayBufferLike-generic Uint8Array) so the return value is
-// directly usable as a Request/Response BodyInit at every call site below without a cast.
+// Rejects a body exceeding limitBytes: immediately from an overshooting Content-Length header, or
+// mid-stream by tracking real bytes read (a client can lie about Content-Length). Returns
+// Uint8Array<ArrayBuffer>, not the generic Uint8Array, so it's usable as BodyInit without a cast.
 async function readBoundedBytes(request: Request, limitBytes: number): Promise<Uint8Array<ArrayBuffer>> {
   const declared = request.headers.get('content-length');
   if (declared !== null) {
@@ -97,10 +93,9 @@ export async function requestJson(request: Request, limitBytes = JSON_BODY_LIMIT
   return value as Record<string, unknown>;
 }
 
-// Used by both form-POST entrypoints (handleAdminPost, src/routes/booking/manage.ts). FormData has
-// no bytes-based constructor, so this rebuilds a Request from the already-bounded bytes (identical
-// headers, so multipart/urlencoded parsing still sees the right content-type/boundary) and lets the
-// platform's own parser run on it.
+// FormData has no bytes-based constructor, so this rebuilds a Request from the already-bounded
+// bytes (identical headers, so multipart/urlencoded parsing still sees the right content-type)
+// and lets the platform's own parser run on it.
 export async function requestFormData(request: Request, limitBytes = FORM_BODY_LIMIT_BYTES): Promise<FormData> {
   const bytes = await readBoundedBytes(request, limitBytes);
   return new Request(request.url, { method: request.method, headers: request.headers, body: bytes }).formData();
@@ -133,13 +128,9 @@ export function tokenBytes(length = 32): string {
   return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
 }
 
-// One-way digest used to hash manage/operator tokens at rest (src/repo.ts) so a D1
-// dump no longer contains a usable credential. Unsalted SHA-256 is appropriate here specifically
-// because the input is always a 256-bit crypto.getRandomValues token (tokenBytes above), never a
-// low-entropy secret like a password — there is no dictionary/rainbow-table attack to defend
-// against, only "don't hand back the original bytes from the digest", which SHA-256 already
-// gives. Same base64url alphabet as tokenBytes so hashes and tokens are visually distinguishable
-// only by never having been presented as a token, not by character set.
+// One-way digest to hash manage/operator tokens at rest so a D1 dump no longer contains a usable
+// credential. Unsalted SHA-256 is fine here because the input is always a 256-bit random token, not
+// a low-entropy secret — there's no dictionary/rainbow-table attack to defend against.
 export async function sha256Base64Url(value: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
   const bytes = new Uint8Array(digest);

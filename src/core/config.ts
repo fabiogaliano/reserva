@@ -8,10 +8,8 @@ import {
   type BookingEvent,
 } from './events.js';
 
-// A plain string because the pickup axis is whatever ids a service declares in
-// ServiceConfig.location.pickupOptions (below), which no static union can enumerate. Kept as a
-// named export (rather than inlining `string` everywhere) so call sites read as "the pickup axis"
-// and so a future narrowing wouldn't need to touch every signature again.
+// A plain string: the pickup axis is whatever ids a service declares in
+// `ServiceConfig.location.pickupOptions`, which no static union can enumerate.
 export type PickupType = string;
 
 export interface ScheduleRule {
@@ -25,9 +23,8 @@ export interface ScheduleRule {
 
 export interface PricingRule {
   maxQuantity: number;
-  // Optional — a service with no `location` module has no pickup
-  // axis at all, so its rules select by quantity tier alone. A service that declares `location`
-  // still requires every rule to name a declared pickup option id (validateService).
+  // Optional: a service with no `location` module has no pickup axis, so rules select by quantity
+  // tier alone. A `location` service requires every rule to name a declared pickup option id.
   pickup?: PickupType;
   priceMinor: number;
 }
@@ -38,12 +35,9 @@ export interface MeetingPoint {
   mapsUrl: string;
 }
 
-// A service-declared pickup option — the unit the pricing axis's
-// `pickup` column points at. `requiresAddress` is what gates Stripe's custom_fields address
-// collection (stripe.ts); `usesMeetingPoint` is what the meeting-point requirement re-keys
-// off instead of `pickupType === 'default'`, so an option like Maze's "custom drop-off" can still
-// start at a meeting point. `label`/`hint` are config-provided plain strings — absent falls back to
-// the message-catalog keys for the `default`/`custom` ids so pre-existing widgets keep their copy.
+// The unit the pricing axis's `pickup` column points at. `requiresAddress` gates address
+// collection at checkout; `usesMeetingPoint` decides the meeting-point requirement instead of a
+// fixed `pickupType === 'default'`. Missing `label`/`hint` fall back to message-catalog copy.
 export interface PickupOption {
   id: string;
   label?: string;
@@ -52,10 +46,8 @@ export interface PickupOption {
   usesMeetingPoint: boolean;
 }
 
-// A label (field label, option label) is either a plain string or a
-// per-locale map resolved the same way config.ui.messages/config.emails.messages already are
-// (candidate locale, then its base language, then the config's default locale/its base, then the
-// first declared value) — see resolveMetadataFieldLabel below.
+// Either a plain string or a per-locale map, resolved with the same candidate-locale → base
+// language → default-locale fallback as `config.ui.messages` (see `resolveMetadataFieldLabel`).
 export type LocalizedText = string | Record<string, string>;
 
 export interface MetadataFieldOption {
@@ -63,11 +55,9 @@ export interface MetadataFieldOption {
   label: LocalizedText;
 }
 
-// The whole consumer-declared metadata DSL — four types, three
-// optional modifiers. This is deliberately the entire language: no conditional fields, cross-field
-// rules, custom validators, regex types, or a fifth type. `key` is the
-// wire/storage key (validated against METADATA_FIELD_KEY_PATTERN); `maxLength` applies to `text`
-// only (default 500, enforced at checkout — see handlers/checkout.ts).
+// The whole consumer-declared metadata DSL: four types, three optional modifiers, no conditional
+// fields, cross-field rules, or custom validators. `maxLength` applies to `text` only (default
+// 500, enforced at checkout).
 export interface MetadataField {
   key: string;
   label: LocalizedText;
@@ -86,19 +76,14 @@ export interface ServiceConfig {
   schedule: ScheduleRule[];
   pricing: PricingRule[];
   occupancyFor?: (quantity: number) => number;
-  // The whole pickup/meeting-point axis, opt-in per service. Absent
-  // means the service has no location dimension anywhere — no pickup field in pricing, checkout,
-  // emails, admin, or the calendar description. Declaring it requires at least one pickup option;
-  // meetingPoints is optional within it (a service can collect only a custom address, with no
-  // meeting-point choice at all). The v1 top-level `meetingPoint`/`meetingPoints`/`pickupOptions`
-  // keys are gone — validateConfig rejects them with a message pointing here.
+  // Opt-in per service; absent means no pickup/meeting-point dimension anywhere (pricing, checkout,
+  // emails, admin, calendar). Requires at least one pickup option; meeting points stay optional.
   location?: {
     meetingPoints?: MeetingPoint[];
     pickupOptions: PickupOption[];
   };
-  // The extension mechanism for anything business-specific that
-  // isn't core and isn't location — dietary notes, skill level, table preference, etc. Absent means
-  // the service accepts no metadata at all; checkout rejects a non-empty `metadata` body for it.
+  // Extension point for business-specific fields — dietary notes, skill level, etc. Absent means no
+  // metadata; checkout rejects a non-empty `metadata` body for it.
   metadataFields?: MetadataField[];
 }
 
@@ -117,8 +102,8 @@ export interface ClientConfig {
     shortCode: string;
     url: string;
     timezone: string;
-    // Any ISO 4217 alphabetic code, lowercase (see core/currency.ts). Prices are stored in this
-    // currency's minor unit; the configured payment provider validates its own narrower set.
+    // Any ISO 4217 alphabetic code, lowercase. Prices are stored in this currency's minor unit;
+    // the payment provider validates its own narrower set.
     currency: string;
     contact: {
       email: string;
@@ -132,12 +117,9 @@ export interface ClientConfig {
     default: number;
   };
   admin: {
-    // Optional as a pair — present auto-selects Cloudflare Access
-    // as the admin/ops auth implementation (cloudflareAccessAdminAuth, src/access.ts); absent means
-    // the consumer must supply a custom `adminAuth` callback to the runtime instead. Exactly one of
-    // the two is required whenever the admin or ops route group is enabled, checked once,
-    // synchronously, at runtime-definition initialization (src/runtime-context.ts) — not here,
-    // since this schema has no way to see a runtime-only `adminAuth` callback.
+    // Present auto-selects Cloudflare Access as the admin/ops auth; absent requires a custom
+    // `adminAuth` callback. Exactly one is required when admin/ops routes are enabled — checked at
+    // runtime init, not here, since this schema can't see a runtime-only callback.
     access?: {
       teamDomain: string;
       aud: string;
@@ -158,11 +140,8 @@ export interface ClientConfig {
     limitedThreshold: number;
     calendarMaxStaleSeconds: number;
     maxHoldsPerIp?: number;
-    // Manage/operator token lifetime, counted from booking end (not creation) so a
-    // link keeps working through the whole pre-service period plus a post-service grace window
-    // (late reschedules, refund follow-up, review requests). Optional — defaults to
-    // DEFAULT_TOKEN_EXPIRY_DAYS below when unset, so existing deployments don't need a config
-    // change to pick up expiry.
+    // Token lifetime counted from booking end, not creation, so links survive reschedules, refund
+    // follow-up, and review requests. Defaults to `DEFAULT_TOKEN_EXPIRY_DAYS` when unset.
     tokenExpiryDays?: number;
   };
   locales: {
@@ -172,26 +151,18 @@ export interface ClientConfig {
   legal: {
     termsUrl: string;
   };
-  // Outbound signed webhook endpoints. `url` is ordinary config; the
-  // signing key is a Worker secret referenced by binding name, so it never lives in the config file
-  // a consumer commits. Names follow the same domain as in-process hook names, and a hook and a
-  // webhook may share one: outbox rows tell them apart by their `family` column, not by a
-  // qualified key.
+  // `url` is ordinary config; the signing key is a Worker secret referenced by binding name, so it
+  // never lives in a committed config file. A hook and a webhook may share a name — outbox rows
+  // tell them apart by `family`, not a qualified key.
   webhooks?: WebhookEndpointConfig[];
-  // Moved here from the Astro-only `ReservaIntegrationOptions.routes`
-  // so the same declared intent drives both route injection (the integration reads it during
-  // astro:config:setup) and admin-auth selection (the runtime factory reads it at
-  // runtime-definition initialization) — one shared declaration instead of two independent
-  // options that could disagree. Both default to `true`; the public booking API and customer
-  // manage routes are load-bearing and are never disableable here.
+  // One shared declaration drives both route injection and admin-auth selection, instead of two
+  // options that could disagree. Both default to `true`; the booking API and manage routes are
+  // load-bearing and never disableable here.
   routes?: {
     admin?: boolean;
     ops?: boolean;
-    // Controls ONLY Reserva's built-in server-rendered
-    // /booking/manage page. The manage/cancel/reschedule APIs stay mounted either way, so a
-    // headless consumer can replace the page with its own UI; when this is false, every
-    // library-owned link producer (default emails, the admin table) stops emitting links to it
-    // rather than pointing at a route that isn't mounted.
+    // Controls only the built-in server-rendered /booking/manage page; the manage/cancel/reschedule
+    // APIs stay mounted either way. False stops library link producers from pointing at it.
     manage?: boolean;
   };
   ui?: {
@@ -225,9 +196,8 @@ export function adminLocaleFor(config: ClientConfig): string {
   return config.admin.locale ?? config.locales.default;
 }
 
-// Default for booking.tokenExpiryDays when a deployment doesn't set one — long
-// enough to cover post-service reschedules/refund disputes/review-request follow-ups without ever
-// being effectively unlimited.
+// Long enough to cover post-service reschedules, refund disputes, and review-request follow-ups,
+// without being effectively unlimited.
 export const DEFAULT_TOKEN_EXPIRY_DAYS = 60;
 
 const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -280,9 +250,8 @@ const metadataFieldSchema = z.object({
   maxLength: z.number().int().positive().optional(),
 });
 
-// pickupOptions is required within a declared location (at least one
-// entry) — a location with no pickup options is not expressible. meetingPoints stays optional: a
-// service can collect only a custom address, with no meeting-point choice at all.
+// `pickupOptions` is required (at least one) within a declared location; `meetingPoints` stays
+// optional since a service can collect only a custom address.
 const locationSchema = z.object({
   meetingPoints: z.array(meetingPointSchema).min(1).optional(),
   pickupOptions: z.array(pickupOptionSchema).min(1),
@@ -295,21 +264,14 @@ const serviceSchema = z.object({
   schedule: z.array(scheduleSchema).min(1),
   pricing: z.array(z.object({
     maxQuantity: z.number().int().positive(),
-    // A plain zod enum can't express a per-service id set, so validateService checks each row's
-    // pickup against the service's own declared location.pickupOptions ids (or rejects it outright
-    // when the service declares no location at all).
+    // A plain zod enum can't express a per-service id set; `validateService` checks each row's
+    // pickup against the service's own declared location options.
     pickup: z.string().min(1).optional(),
     priceMinor: z.number().int().nonnegative(),
   })).min(1),
   occupancyFor: z.custom<(quantity: number) => number>((value) => typeof value === 'function').optional(),
   location: locationSchema.optional(),
   metadataFields: z.array(metadataFieldSchema).optional(),
-  // The v1 top-level keys. Kept in the schema as z.unknown() (rather
-  // than omitted, which zod would just strip silently) purely so validateService below can detect
-  // their presence and reject the config with a message pointing at the new `location` path.
-  meetingPoint: z.unknown().optional(),
-  meetingPoints: z.unknown().optional(),
-  pickupOptions: z.unknown().optional(),
 });
 
 export const clientConfigSchema = z.object({
@@ -423,24 +385,7 @@ function isValidMonthDay(value: string): boolean {
   return probe.getUTCMonth() === month - 1 && probe.getUTCDate() === day;
 }
 
-// The v1 top-level keys a service might still carry (present in the
-// zod schema as z.unknown() precisely so this can see them) — each maps onto where it now lives
-// under `location`, so the message tells the operator exactly what to move, not just that
-// something is wrong.
-const legacyLocationKeys: Array<{ key: 'meetingPoint' | 'meetingPoints' | 'pickupOptions'; movesTo: string }> = [
-  { key: 'meetingPoint', movesTo: 'location.meetingPoints' },
-  { key: 'meetingPoints', movesTo: 'location.meetingPoints' },
-  { key: 'pickupOptions', movesTo: 'location.pickupOptions' },
-];
-
 function validateService(service: ServiceConfig, serviceSlug: string, add: (path: (string | number)[], message: string) => void): void {
-  const raw = service as unknown as Record<string, unknown>;
-  for (const { key, movesTo } of legacyLocationKeys) {
-    if (raw[key] !== undefined) {
-      add(['services', serviceSlug, key], `'${key}' is a v1 top-level key removed in v2; declare services.${serviceSlug}.${movesTo} instead (see the location-module migration guide)`);
-    }
-  }
-
   const location = service.location;
   const pickupOptions = location?.pickupOptions ?? [];
   const pickupOptionIds = pickupOptions.map((option) => option.id);
@@ -453,9 +398,6 @@ function validateService(service: ServiceConfig, serviceSlug: string, add: (path
       }
       seenOptionIds.add(option.id);
     }
-    // "A pickup option with usesMeetingPoint requires meeting
-    // points" — previously guaranteed for free (every service had to declare a meeting point);
-    // now that meetingPoints is optional within location, it needs an explicit check.
     const meetingPoints = location.meetingPoints ?? [];
     if (pickupOptions.some((option) => option.usesMeetingPoint) && meetingPoints.length === 0) {
       add(['services', serviceSlug, 'location', 'meetingPoints'], 'at least one pickup option has usesMeetingPoint: true, so location.meetingPoints must declare at least one point');
@@ -469,9 +411,7 @@ function validateService(service: ServiceConfig, serviceSlug: string, add: (path
     }
   }
 
-  // The duplicate-breakpoint map is keyed by declared pickup id when
-  // the service is location-ful, or a single '' key (tiers only) when it's location-less — the same
-  // key convention resolvedPriceTableFor/pricingCombinations (core/pricing.ts) use.
+  // Keyed by declared pickup id when location-ful, or a single '' key (tiers only) otherwise.
   const pricingBreakpoints = new Map<string, Map<number, number>>();
   for (const [index, rule] of service.pricing.entries()) {
     if (location) {
@@ -527,8 +467,7 @@ function validateService(service: ServiceConfig, serviceSlug: string, add: (path
 
   const highest = Math.max(...service.pricing.map((row) => row.maxQuantity), 0);
   const quantityValues = Array.from({ length: highest }, (_, index) => index + 1);
-  // Coverage is checked per declared pickup id when location-ful, or
-  // once (the '' key) when location-less — mirrors the breakpoint map above.
+  // Coverage is checked per declared pickup id when location-ful, or once (the '' key) otherwise.
   const coverageKeys = location ? pickupOptionIds : [''];
   for (const quantity of quantityValues) {
     for (const key of coverageKeys) {
@@ -540,9 +479,8 @@ function validateService(service: ServiceConfig, serviceSlug: string, add: (path
       }
     }
   }
-  // Key uniqueness and select-needs-options are the whole shape
-  // check config validation owns; per-value type/required/maxLength enforcement happens at
-  // checkout (handlers/checkout.ts), where the request body is available.
+  // Config validation only checks key uniqueness and select-needs-options; per-value
+  // type/required/maxLength enforcement happens at checkout, where the request body is available.
   const seenMetadataKeys = new Set<string>();
   for (const [index, field] of (service.metadataFields ?? []).entries()) {
     if (seenMetadataKeys.has(field.key)) {
@@ -593,10 +531,8 @@ export function validateConfig(input: unknown): ClientConfig {
   if (!isValidTimezone(config.business.timezone)) {
     add(['business', 'timezone'], 'must be a valid IANA timezone');
   }
-  // Only the floor is a core rule — a hold shorter than the payment
-  // session it guards can expire while that session is still payable, which oversells. Any upper
-  // bound belongs to the payment provider that has to keep the session open, and it enforces it
-  // through PaymentProvider.validateConfig (core/events.ts).
+  // Only the floor is a core rule: a hold shorter than the payment session it guards can expire
+  // while the session is still payable, which oversells. The payment provider enforces any ceiling.
   if (config.booking.holdMinutes < 35) {
     add(['booking', 'holdMinutes'], 'must be at least 35 minutes, so a hold outlives the payment session it guards');
   }
@@ -611,9 +547,8 @@ export function validateConfig(input: unknown): ClientConfig {
   for (const [slug, service] of Object.entries(config.services)) {
     validateService(service, slug, add);
   }
-  // The same closed-vocabulary check hooks get at startup, applied
-  // to declared webhook endpoints during config validation — a typo'd event name fails the build
-  // with the whole valid set in the message rather than silently never firing.
+  // Same closed-vocabulary check as hooks at startup: a typo'd event name fails the build with
+  // the valid set in the message, rather than silently never firing.
   const webhookNames = new Set<string>();
   for (const [index, endpoint] of (config.webhooks ?? []).entries()) {
     if (!BOOKING_EVENT_SUBSCRIBER_NAME_PATTERN.test(endpoint.name)) {
@@ -650,9 +585,8 @@ export function resolveService(config: ClientConfig, serviceSlug: string): Servi
   return service;
 }
 
-// Id match wins; no id or an unknown id falls back to the first
-// declared point. Throws for a service that declares no meeting points at all — checkout only ever
-// calls this after confirming the chosen pickup option actually uses one (checkSlot/checkout.ts).
+// Id match wins; no id or unknown id falls back to the first declared point. Throws if the
+// service declares no meeting points — callers must confirm the pickup option uses one first.
 export function resolveMeetingPoint(service: ServiceConfig, meetingPointId?: string): MeetingPoint {
   const points = service.location?.meetingPoints ?? [];
   if (points.length === 0) {
@@ -665,21 +599,15 @@ export function resolveMeetingPoint(service: ServiceConfig, meetingPointId?: str
   return points[0]!;
 }
 
-// No fixed default/custom pickup-options fallback — a
-// service with no `location` has no pickup options to match, and a null id (the location-less
-// booking's stored value) is never a real option either way.
+// No fixed default/custom fallback: a service with no `location` has no options to match, and a
+// null id is never a real option either way.
 export function pickupOptionFor(service: ServiceConfig, id: string | null): PickupOption | undefined {
   if (id === null) return undefined;
   return service.location?.pickupOptions.find((option) => option.id === id);
 }
 
-// The read-surface gate every email/manage/admin/calendar render
-// site shares. A booking has location data iff its pickupType is non-null — checkout writes
-// NULL for a location-less service, and NULL is also what any pre-023 row already carries if
-// nothing was ever collected. Once there IS a pickupType, presentation prefers the currently
-// declared option; a stale/removed id (the service was reconfigured since the booking was made)
-// falls back to what the row itself proves was collected, rather than guessing from the retired
-// fixed 'default'/'custom' pickup-options pair.
+// A booking has location data iff `pickupType` is non-null. Once set, presentation prefers the
+// currently declared option; a stale/removed id falls back to what the row itself recorded.
 export function pickupPresentationFor(
   service: ServiceConfig,
   booking: { pickupType: PickupType | null; pickupAddress: string | null; meetingPointId: string | null },
@@ -692,14 +620,9 @@ export function pickupPresentationFor(
   };
 }
 
-// Per-booking rendering resolution, shared by the manage/
-// confirmation payloads, brevo, calendar, and the admin table. Unlike resolveMeetingPoint's
-// first-point fallback (checkout-time resolution against currently-declared points), a stored id
-// that is NO LONGER declared falls back to the booking's stored label snapshot with no maps link —
-// validateConfig cannot cross-check the DB, and an operator may remove a point (or the whole
-// location module) that existing bookings still reference. Never throws: callers gate on
-// pickupPresentationFor first, but a service that has since dropped location entirely must still
-// degrade gracefully here too, since pre-v2 rows must still render.
+// Shared rendering resolution for manage/confirmation, calendar, and admin. A stored id no longer
+// declared falls back to the booking's stored label with no maps link, since config can't be
+// cross-checked against the DB. Never throws: must degrade for services that dropped location.
 export function meetingPointForBooking(
   service: ServiceConfig,
   meetingPointId: string | null,
@@ -716,10 +639,8 @@ export function meetingPointForBooking(
   return { label: meetingPointLabel ?? '', mapsUrl: null };
 }
 
-// The same candidate-locale-then-default-then-base-language fallback
-// chain config.ui.messages/config.emails.messages already use (src/ui/messages.ts, src/providers/
-// brevo.ts) — duplicated narrowly here rather than imported, since core must not depend on the ui
-// layer and this file is metadata's only declaration point.
+// Same locale-fallback chain as `config.ui.messages`, duplicated here rather than imported:
+// core must not depend on the ui layer, and this file is metadata's only declaration point.
 function metadataLabelCandidates(locale: string, defaultLocale: string): string[] {
   const values = [locale, locale.split('-')[0], defaultLocale, defaultLocale.split('-')[0]];
   return values.filter((value, index): value is string => Boolean(value) && values.indexOf(value) === index);
@@ -737,19 +658,14 @@ export function resolveMetadataFieldLabel(label: LocalizedText, locale: string, 
 export interface MetadataRow {
   key: string;
   label: string;
-  // A raw boolean/number/string, or (for `select`) the resolved option label — never the bare
-  // option value. Renderers turn boolean into the existing yes/no copy pair and everything else
-  // into its plain string form; every renderer HTML-escapes it, since this is attacker-controlled
-  // free text for `text` fields.
+  // Raw boolean/number/string, or (for `select`) the resolved option label. Every renderer
+  // HTML-escapes this — it's attacker-controlled free text for `text` fields.
   value: string | number | boolean;
 }
 
-// The one place a booking's raw stored metadata is turned into
-// labeled, presentation-ready rows — shared by the manage/confirmation JSON payloads and the email
-// renderer so a field's label and a select value's option label can never be resolved two
-// different ways. A stored key no longer declared (the service dropped or renamed a field since
-// the booking was made) is silently omitted rather than shown unlabeled, the same tolerance
-// meetingPointForBooking/pickupOptionFor already apply to a stale config reference.
+// Turns a booking's raw metadata into labeled rows, shared by manage/confirmation JSON and email
+// rendering so labels never resolve two different ways. A key no longer declared is silently
+// omitted, the same stale-config tolerance as `meetingPointForBooking`.
 export function metadataRowsForBooking(
   service: ServiceConfig,
   metadata: Record<string, unknown> | null,

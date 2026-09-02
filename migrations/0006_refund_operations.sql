@@ -1,9 +1,6 @@
--- BK-REFUND-001: durable refund-operation record, replacing the in-memory refundedPayments Set.
--- UNIQUE(booking_id) is the compare-and-set primitive: exactly one request can INSERT a refund
--- decision ('full'/'none') for a given booking, so a refund=full and refund=none request racing
--- on the same booking can never both call Stripe. The row survives Stripe success/failure and any
--- crash in between, so a retry (or the charge.refunded webhook for a Stripe-dashboard-initiated
--- refund) can resume/reconcile from it instead of relying on per-isolate memory.
+-- Durable refund-operation record, replacing the in-memory refundedPayments Set.
+-- UNIQUE(booking_id) ensures only one refund decision is ever committed per booking, so a
+-- crash mid-refund can be resumed or reconciled from this row instead of per-isolate memory.
 CREATE TABLE refund_operations (
   id               TEXT PRIMARY KEY,
   booking_id       TEXT NOT NULL UNIQUE,

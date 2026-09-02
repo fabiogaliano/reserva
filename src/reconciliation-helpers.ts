@@ -1,7 +1,5 @@
-// Pure functions shared by the reconciliation engine (src/reconciliation.ts), the
-// confirmation/mutation drains (src/confirmation.ts), and the shared refund executor
-// (src/refund-executor.ts). Kept dependency-free (no D1, no context) so every boundary/threshold
-// here is unit-testable without a fake repository or real workerd.
+// Pure functions shared by the reconciliation engine, confirmation/mutation drains, and the refund
+// executor. Kept dependency-free (no D1, no context) so every threshold here is unit-testable.
 import type { OperationalAlert } from './core/events.js';
 import type {
   OperationalIncidentAction,
@@ -16,9 +14,8 @@ import type {
 // (attemptNumber - 1); attempts past the schedule's length reuse the last (60-minute) value.
 export const RETRY_BACKOFF_MINUTES = [5, 10, 20, 40, 60] as const;
 
-// attemptNumber is 1-based (the claim that just ran incremented attempt_count to this value — see
-// src/confirmation.ts's classifyAttemptOutcome for the same convention). Returns the ISO instant a
-// 'failed' row next becomes eligible for an ordinary (non-admin-retry) claim.
+// attemptNumber is 1-based (the claim that just ran incremented attempt_count to this value).
+// Returns the ISO instant a 'failed' row next becomes eligible for an ordinary claim.
 export function computeNextAttemptAt(now: Date, attemptNumber: number): string {
   const index = Math.min(Math.max(attemptNumber, 1) - 1, RETRY_BACKOFF_MINUTES.length - 1);
   const minutes = RETRY_BACKOFF_MINUTES[index] ?? RETRY_BACKOFF_MINUTES[RETRY_BACKOFF_MINUTES.length - 1] ?? 60;
@@ -34,17 +31,16 @@ export function isDelayIncidentDue(failureStartedAtIso: string, nowIso: string):
 }
 
 // A row is eligible for an ORDINARY (non-admin-retry) automatic claim exactly when it has never
-// failed (next_attempt_at NULL — "the first pending execution is immediate", decision 5) or its
-// backoff window has elapsed. Admin retry claims bypass this entirely (decision 5) via a distinct,
-// separately-gated repository claim method — this helper is never consulted for that path.
+// failed (next_attempt_at NULL — the first pending execution is immediate) or its backoff window
+// has elapsed. Admin retry claims bypass this entirely via a distinct, separately-gated repository
+// claim method — this helper is never consulted for that path.
 export function isEligibleForAutomaticClaim(nextAttemptAtIso: string | null, nowIso: string): boolean {
   return nextAttemptAtIso === null || nextAttemptAtIso <= nowIso;
 }
 
-// Maps a side-effect outbox row onto the owner-facing action bucket
-// an incident/alert reports, read off the identity COLUMNS, never a parsed kind string.
-// 'oversell' rows are scanned separately (they're markers, not retryable debt — see
-// src/reconciliation.ts) but still classify here for completeness.
+// Maps a side-effect outbox row onto the owner-facing action bucket an incident/alert reports,
+// read off the identity COLUMNS, never a parsed kind string. 'oversell' rows are scanned separately
+// (they're markers, not retryable debt) but still classify here for completeness.
 export function actionForSideEffectOperation(operation: SideEffectOperationIdentity): OperationalIncidentAction {
   switch (operation.family) {
     case 'oversell': return 'oversell';
@@ -70,9 +66,8 @@ export function ownerFacingIncidentTitle(action: OperationalIncidentAction): str
 }
 
 // The current state of a debt source (a side-effect kind, a refund operation, or an oversell
-// marker), as observed by one reconciliation pass — the input to the pure incident-projection
-// decision below. `detected: false` means the source currently has no open debt (succeeded, or a
-// retryable failure not yet past the ten-minute threshold).
+// marker), as observed by one reconciliation pass. `detected: false` means the source currently
+// has no open debt (succeeded, or a retryable failure not yet past the ten-minute threshold).
 export interface IncidentSourceSignal {
   detected: boolean;
   severity: OperationalIncidentSeverity;
@@ -80,7 +75,7 @@ export interface IncidentSourceSignal {
   attemptCount: number;
   // A fingerprint of the underlying source's current state — changes only when the source itself
   // materially changes (e.g. a fresh failed attempt, a reopened refund). Used to decide whether a
-  // manually resolved incident should stay resolved (decision 9).
+  // manually resolved incident should stay resolved.
   sourceUpdatedAt: string;
 }
 
@@ -95,19 +90,17 @@ export type IncidentProjection =
   // Insert a brand-new row, or reopen a previously (auto- or source-changed-manually) resolved one.
   | { action: 'open'; escalate: boolean }
   // Row stays open; bump last_detected_at/attempt_count, and escalate the alert revision if
-  // severity worsened delayed -> action_required (decision 9).
+  // severity worsened delayed -> action_required.
   | { action: 'update'; escalate: boolean }
-  // A manually resolved incident whose source fingerprint hasn't changed — decision 9: "stays
-  // resolved while the source fingerprint is unchanged."
+  // A manually resolved incident whose source fingerprint hasn't changed stays resolved.
   | { action: 'skip' }
-  // The source cleared (succeeded) while an incident was open — decision 6/9: automatic resolution.
+  // The source cleared (succeeded) while an incident was open — automatic resolution.
   | { action: 'resolve-automatic' };
 
-// Repeated scans update one incident. Escalation from delayed to
-// final increments its alert revision. A manually resolved incident stays resolved while the
-// source fingerprint is unchanged; a new source transition can reopen it. Automatic source success
-// resolves it. Pure decision function — the caller (src/reconciliation.ts) performs the actual
-// upsert/resolve against the repository.
+// Repeated scans update one incident. Escalation from delayed to final increments its alert
+// revision. A manually resolved incident stays resolved while the source fingerprint is unchanged;
+// a new source transition can reopen it. Automatic source success resolves it. Pure decision
+// function — the caller performs the actual upsert/resolve against the repository.
 export function projectIncident(signal: IncidentSourceSignal, existing: ExistingIncidentSignal | null): IncidentProjection {
   if (!signal.detected) {
     if (existing && existing.status === 'open') return { action: 'resolve-automatic' };
@@ -122,9 +115,8 @@ export function projectIncident(signal: IncidentSourceSignal, existing: Existing
   return { action: 'update', escalate };
 }
 
-// The alert payload is exactly these seven fields — built through
-// this one function (never an object spread) so a future caller can't accidentally widen it with a
-// PII-bearing field.
+// The alert payload is exactly these seven fields — built through this one function (never an
+// object spread) so a future caller can't accidentally widen it with a PII-bearing field.
 export function buildOperationalAlert(input: {
   incidentId: string;
   reference: string;

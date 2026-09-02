@@ -21,17 +21,9 @@ export const prerender = false;
 const htmlHeaders = {
   'content-type': 'text/html; charset=utf-8',
   'cache-control': 'no-store',
-  // Hardening sweep (audit finding #3): `same-origin` closed the cross-origin Referer leak plan
-  // 007 was guarding against, but this page also loads same-origin CSS/JS (src/ui/layout.ts), and
-  // `same-origin` sends the FULL referring URL — including this page's `?token=…` query — on every
-  // one of those same-origin subresource requests, into whatever access logging sits in front of
-  // the asset routes. `strict-origin` trims Referer to the origin alone (no path, no token) for
-  // every request, same-origin or not, while still sending a real Referer at all — unlike
-  // `no-referrer`, which per the Fetch spec nulls the `Origin` header too, on this page's own
-  // same-origin form POSTs (cancel/reschedule/no-show, below), tripping Astro's checkOrigin default
-  // (Origin "null" != url.origin) even though the browser sent them from this exact page.
-  // `strict-origin` is not on that null-Origin list, so same-origin POSTs keep a real Origin header
-  // and pass the check, exactly like `same-origin` did — only the Referer *value* changes.
+  // `strict-origin` trims Referer to the origin alone (no path, no token) while still sending a
+  // real Origin header on same-origin POSTs below — `no-referrer` would null Origin per the Fetch
+  // spec and trip Astro's checkOrigin default; `strict-origin` avoids that without leaking the token.
   'referrer-policy': 'strict-origin',
 };
 
@@ -78,9 +70,8 @@ export async function GET({ request, locals }: APIContext): Promise<Response> {
       new Date(parseUtcInstant(now).getTime() + context.config.booking.maxHorizonDays * 86_400_000).toISOString(),
       timezone,
     );
-    // The availability endpoint now bounds a request by the same
-    // maxHorizonDays this end is derived from, so the reschedule picker asks for the whole horizon
-    // instead of clamping to the retired 62-day cap.
+    // Availability bounds requests by maxHorizonDays, so the reschedule picker can ask for the
+    // whole horizon.
     const to = horizonEnd;
     options.scriptHref = jsAssetHref(context.routeConfig.paths.assetsJs);
     options.availability = {

@@ -42,11 +42,9 @@ function seedSideEffect(repo: FakeRepository, bookingId: string, identity: SideE
   });
 }
 
-// The admin "Attention required" section — the GET render pulls open/resolved incidents into the
-// page, and the two CSRF-protected POST actions (Try again / I handled this manually) dispatch to
-// the right executor per source type without ever falsifying the underlying booking/side-effect/
-// refund row.
-describe('admin incidents (plan 020 design decisions 12-14)', () => {
+// The admin "Attention required" section: POST actions (Try again / I handled this manually)
+// dispatch to the right executor per source type without ever falsifying the underlying row.
+describe('admin incidents', () => {
   it('does not render the incident section before any incident activity exists', async () => {
     const context = createReservaContext({
       config,

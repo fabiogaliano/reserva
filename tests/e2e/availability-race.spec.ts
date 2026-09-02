@@ -1,15 +1,8 @@
 import { test, expect } from '@playwright/test';
 
-// loadAvailability (BookingWidget.astro) is fired from initial load, every party-size change,
-// retry click, and post-checkout failure, with no AbortController and no generation check — every
-// resolved fetch unconditionally overwrote the calendar/slot UI. An older response settling late
-// (e.g. a slow network hiccup) could overwrite a newer party-size's already-rendered slots, and
-// the user would then hit an avoidable checkout 409 against a slot the UI no longer actually
-// reflects.
-//
-// Mocks the availability endpoint with distinguishable fake slots per party size (rather than
-// relying on the fixture's real capacity happening to differ between party sizes) so "which
-// response is currently displayed" is unambiguous.
+// loadAvailability fires on every party-size change with no abort/generation check, so a stale
+// response settling late could overwrite a newer party size's slots. Mocks distinguishable fake
+// slots per party size so which response won is unambiguous.
 test('a stale availability response cannot overwrite a newer party-size selection', async ({ page }) => {
   const from = new Date().toISOString().slice(0, 10);
   let releaseStale: () => void = () => {};

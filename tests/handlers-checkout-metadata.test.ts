@@ -6,11 +6,9 @@ import { handleCheckout } from '../src/handlers';
 import { config, service } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
-// Checkout is the whole validation boundary for consumer-declared
-// metadata — unknown keys rejected, required enforced, strict type coercion (no "true" -> boolean),
-// the whole serialized object capped at 8 KB, and a declared-less service rejects non-empty
-// metadata. Every rejection is a remediating 400 (direction doc §8): it names the offending key,
-// its declared type, and the violated constraint.
+// Checkout is the whole validation boundary for consumer-declared metadata — unknown keys
+// rejected, required enforced, strict type coercion, serialized size capped at 8 KB. Every
+// rejection is a remediating 400 naming the offending key, its type, and the violated constraint.
 
 const dietaryField: MetadataField = { key: 'dietary_notes', label: 'Dietary notes', type: 'text', required: true, maxLength: 20 };
 const seatField: MetadataField = {
@@ -50,7 +48,7 @@ function contextFor(clientConfig: typeof config) {
   return { context, repo };
 }
 
-describe('checkout metadata validation (plan 024)', () => {
+describe('checkout metadata validation', () => {
   it('accepts a valid metadata object and stores it verbatim on the created hold', async () => {
     const { context, repo } = contextFor(metadataConfig);
     const response = await handleCheckout(checkoutRequest({ metadata: { dietary_notes: 'Vegan', seat_pref: 'window', vegetarian: true } }), context);

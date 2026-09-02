@@ -108,7 +108,7 @@ describe('GET /manage (spec §11)', () => {
   // The manage page can't know from the raw id whether an address or
   // meeting point applies, so the summary carries the chosen option's two flags and the renderer
   // gates each fact on them independently.
-  describe('pickup option flags (plan 018 design decision 8)', () => {
+  describe('pickup option flags', () => {
     const points = [
       { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
       { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
@@ -284,7 +284,7 @@ describe('GET /manage (spec §11)', () => {
 // The manage page is BOTH surfaces — "admin booking detail" is the
 // same renderer with role: 'operator', not a separate admin-only render path. XSS payloads must be
 // escaped for both roles since both render the same metadata rows through the same shared helper.
-describe('metadata on the manage page (plan 024)', () => {
+describe('metadata on the manage page', () => {
   const dietaryField: MetadataField = { key: 'dietary_notes', label: 'Dietary notes', type: 'text' };
   const vegetarianField: MetadataField = { key: 'vegetarian', label: 'Vegetarian', type: 'boolean' };
   const metadataConfig = { ...config, services: { ...config.services, vintage: { ...service, metadataFields: [dietaryField, vegetarianField] } } };

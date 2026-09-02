@@ -276,14 +276,10 @@ describe('reserva-migrate CLI', () => {
   });
 });
 
-// The CLI must tell Wrangler where reserva's packaged migrations live -- previously it
-// only forwarded the consumer's own `--config`, so a consumer with no `migrations_dir` got nothing
-// applied (or, worse, applied a colliding directory of the consumer's own). Since Wrangler has no
-// `--migrations-dir` flag, the mechanism writes a derived config with only the selected entry's
-// `migrations_dir` overridden. These tests use the arg-capturing stub above (fast) to inspect the
-// derived config's *content*, since reserva-migrate deletes the file itself right after wrangler
-// exits -- a real invocation would only prove wrangler accepted it, not what was actually written.
-describe('reserva-migrate derived config (plan 008)', () => {
+// Wrangler has no `--migrations-dir` flag, so the CLI writes a derived config with only the
+// selected entry's `migrations_dir` overridden. These tests use the arg-capturing stub to inspect
+// the derived config's content, since reserva-migrate deletes the file right after wrangler exits.
+describe('reserva-migrate derived config', () => {
   it('overrides only the selected entry\'s migrations_dir and leaves the rest of the config untouched', () => {
     const result = run(`{
       "name": "consumer-site",
@@ -367,7 +363,7 @@ migrations_table = "custom_migrations"
 // The derived config is a temp file, not part of the consumer's repo -- it must
 // never survive the invocation, whether wrangler succeeds or fails, and concurrent invocations
 // (e.g. two CI jobs) must never race on the same filename.
-describe('reserva-migrate derived config cleanup (plan 008)', () => {
+describe('reserva-migrate derived config cleanup', () => {
   const noMigrationsDirConfig = '{ "d1_databases": [{ "binding": "RESERVA_DB", "database_name": "bookings" }] }';
 
   it('removes the derived config after wrangler succeeds', () => {
@@ -395,12 +391,9 @@ describe('reserva-migrate derived config cleanup (plan 008)', () => {
   });
 });
 
-// The CLI must tell Wrangler where reserva's packaged migrations live -- previously it
-// only forwarded the consumer's own `--config`, so a consumer with no `migrations_dir` got nothing
-// applied. This proves the fix against REAL wrangler (not the arg-capturing stub above): Wrangler
-// has no `--migrations-dir` flag, so this is the mechanism's load-bearing assumption -- Wrangler
-// must accept an absolute `migrations_dir` in a derived config file.
-describe('reserva-migrate applies reserva packaged migrations against real wrangler (plan 008)', () => {
+// Proves the derived-config mechanism against REAL wrangler: since Wrangler has no
+// `--migrations-dir` flag, it must accept an absolute `migrations_dir` in a derived config file.
+describe('reserva-migrate applies reserva packaged migrations against real wrangler', () => {
   function realFixtureDirectory(): string {
     const directory = mkdtempSync(resolve(tmpdir(), 'reserva-migrate-real-'));
     fixtureDirectories.push(directory);
@@ -415,11 +408,9 @@ describe('reserva-migrate applies reserva packaged migrations against real wrang
     });
   }
 
-  // wrangler's own `apply` output includes a pre-flight table (pending items marked 🕒) as well as
-  // the results table, so scraping `apply`'s stdout can't distinguish "about to apply" from
-  // "applied". A separate `migrations list` against a config that points migrations_dir at the
-  // same packaged directory, over the same local persistence root (same directory => same default
-  // `.wrangler/state/v3`), is the authoritative "nothing left pending" check used throughout.
+  // wrangler's `apply` stdout includes a pre-flight table, so it can't distinguish "about to
+  // apply" from "applied". A `migrations list` against the same packaged migrations_dir and local
+  // persistence root is the authoritative "nothing left pending" check used throughout.
   function assertNothingPending(cwd: string, databaseName: string, options: { extraArgs?: string[]; migrationsTable?: string } = {}) {
     const entry: Record<string, unknown> = {
       binding: 'RESERVA_DB', database_name: databaseName,

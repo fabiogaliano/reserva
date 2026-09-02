@@ -3,14 +3,9 @@ import { getViteConfig } from 'astro/config';
 import { reserva } from './src/integration';
 import { config } from './tests/fixtures';
 
-// Separate from vitest.config.ts on purpose: rendering an actual `.astro` component —
-// src/components/AdminDashboard.astro reads the request at render time, so text-matching its
-// source like tests/ui-booking-widget.test.ts does isn't enough — needs Astro's real Vite
-// pipeline (the `.astro` compiler plus reserva's own
-// virtual:reserva/runtime and virtual:reserva/config plugins, wired in by the reserva integration
-// below) — getViteConfig() is Astro's documented way to get that pipeline into Vitest. Every other
-// test file has no such need and stays on the plain config, so this doesn't add Astro's transform
-// overhead (or risk) to the whole suite.
+// Needs Astro's real Vite pipeline (via getViteConfig) to render `.astro` components that read
+// the request at render time, since text-matching the source isn't enough. Kept separate so the
+// plain config's tests don't pay this transform's overhead.
 export default getViteConfig(
   {
     test: {

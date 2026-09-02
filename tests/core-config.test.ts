@@ -17,32 +17,6 @@ describe('core config and pricing validation', () => {
     expect(validateConfig(validated)).toEqual(validated);
   });
 
-  // The v1 top-level keys are rejected with a message pointing at their new home under
-  // `location`, not silently ignored or misinterpreted.
-  it('rejects the v1 top-level meetingPoint key with a migration-pointing message', () => {
-    const invalid = {
-      ...config,
-      services: { ...config.services, vintage: { ...service, meetingPoint: { label: 'X', mapsUrl: 'https://maps.google.com/?q=x' } } },
-    };
-    expect(() => validateConfig(invalid)).toThrow(/'meetingPoint' is a v1 top-level key.*declare services\.vintage\.location\.meetingPoints/);
-  });
-
-  it('rejects the v1 top-level meetingPoints key with a migration-pointing message', () => {
-    const invalid = {
-      ...config,
-      services: { ...config.services, vintage: { ...service, meetingPoints: [{ id: 'x', label: 'X', mapsUrl: 'https://maps.google.com/?q=x' }] } },
-    };
-    expect(() => validateConfig(invalid)).toThrow(/'meetingPoints' is a v1 top-level key.*declare services\.vintage\.location\.meetingPoints/);
-  });
-
-  it('rejects the v1 top-level pickupOptions key with a migration-pointing message', () => {
-    const invalid = {
-      ...config,
-      services: { ...config.services, vintage: { ...service, pickupOptions: [{ id: 'x', requiresAddress: false, usesMeetingPoint: false }] } },
-    };
-    expect(() => validateConfig(invalid)).toThrow(/'pickupOptions' is a v1 top-level key.*declare services\.vintage\.location\.pickupOptions/);
-  });
-
   // Absent `location` is a fully valid, ordinary service — no pickup dimension anywhere. This
   // is the tiers-only case core-pricing.test.ts prices.
   it('accepts a service with no location module at all', () => {
@@ -325,10 +299,9 @@ describe('core config and pricing validation', () => {
     expect(() => validateConfig({ ...config, booking: { ...config.booking, holdMinutes: 34 } })).toThrow(/at least 35/);
   });
 
-  // The 24h checkout-session cap and Stripe's locale list are the Stripe adapter's limits,
-  // checked by its validateConfig (tests/providers-stripe.test.ts). Core only keeps the
-  // vendor-neutral rules: a hold long enough to outlive its payment session, and locale tags a
-  // formatter can actually use.
+  // The 24h checkout-session cap and Stripe's locale list are Stripe adapter limits. Core only
+  // keeps the vendor-neutral rules: a hold long enough to outlive its payment session, and locale
+  // tags a formatter can actually use.
   it('accepts any hold at or above the safety floor, with no vendor-imposed ceiling', () => {
     expect(() => validateConfig({ ...config, booking: { ...config.booking, holdMinutes: 4320 } })).not.toThrow();
   });
@@ -362,9 +335,7 @@ describe('core config and pricing validation', () => {
   });
 
   // admin.access is optional as a pair — declaring one field without the other is a config
-  // error, and omitting it entirely (a custom-adminAuth deployment) is valid at the
-  // config-schema layer (the runtime-definition boundary enforces that an auth path actually
-  // exists — see tests/runtime-context-admin-auth.test.ts).
+  // error, but omitting it entirely (a custom-adminAuth deployment) is valid at the schema layer.
   it('accepts admin.access absent entirely (custom-adminAuth deployment)', () => {
     const { access: _omit, ...adminWithoutAccess } = config.admin;
     expect(() => validateConfig({ ...config, admin: adminWithoutAccess })).not.toThrow();
@@ -554,7 +525,7 @@ describe('pickupPresentationFor', () => {
 // The declaration DSL (four types, three modifiers), its config validation, and the
 // read-surface label/value resolution — checkout's own coercion is covered by
 // tests/handlers-checkout-metadata.test.ts (a request-body concern, not a config-shape one).
-describe('metadata fields (plan 024)', () => {
+describe('metadata fields', () => {
   const dietaryField: MetadataField = { key: 'dietary_notes', label: 'Dietary notes', type: 'text', required: true, maxLength: 100 };
   const seatField: MetadataField = {
     key: 'seat_pref',

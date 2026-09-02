@@ -44,10 +44,6 @@
       "types": "./dist/email/index.d.ts",
       "default": "./dist/email/index.js"
     },
-    "./providers": {
-      "types": "./dist/providers/index.d.ts",
-      "default": "./dist/providers/index.js"
-    },
     "./providers/calendar-google": {
       "types": "./dist/providers/calendar-google/index.d.ts",
       "default": "./dist/providers/calendar-google/index.js"

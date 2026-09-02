@@ -13,19 +13,16 @@ import { factList, pageShell, themeToggle } from '../layout.js';
 import { formatMessage, resolveMessages } from '../messages.js';
 import { adminSidebar } from './admin-page.js';
 
-// The admin settings page (?view=settings). Layout follows settings-page UX conventions: grouped
-// sections behind a tab bar (one section on screen at a time), single-column fields within a
-// section (multi-column forms measurably hurt comprehension), plain-language helper text per
-// setting, switches for booleans, a per-field "Reset" where a value deviates from the file config,
-// and a visible saved confirmation after POST. Tabs degrade to plain links without JS.
-// csrfToken is undefined when RESERVA_CSRF_SECRET isn't configured — see adminPage's csrfToken param above.
+// The admin settings page (?view=settings): grouped sections behind a tab bar (one section on
+// screen at a time), single-column fields, switches for booleans, a per-field "Reset" where a
+// value deviates from the file config, and a saved confirmation after POST. Tabs degrade to plain
+// links without JS. csrfToken is undefined when CSRF isn't configured.
 export function settingsPage(context: ReservaContext, storedRows: Record<string, string>, saved: boolean, sectionParam: string, csrfToken: string | undefined): string {
   const locale = adminLocaleFor(context.config);
   const messages = resolveMessages(context.config, locale);
   const catalog = messages as Record<string, string>;
-  // One section visible at a time behind a tab bar; tabs are plain links (?section=) so switching
-  // works without JS, and the enhancer upgrades them to instant in-page toggles. The section query
-  // param survives save redirects because forms post to the current URL.
+  // Tabs are plain links (?section=) so switching works without JS; the enhancer upgrades them to
+  // instant in-page toggles. The section param survives save redirects.
   const activeSection = ([...settingSections, 'config'] as string[]).includes(sectionParam)
     ? sectionParam
     : settingSections[0] ?? 'policy';
@@ -54,9 +51,8 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
     const helpText = catalog[`${definition.labelKey}.hint`];
     const help = helpText ? `<span class="bk-hint">${escapeHtml(helpText)}</span>` : '';
     const effective = definition.get(context.config);
-    // The deviation row: only where a DB override exists — shows what the value falls back to and
-    // resets just this field. The reset button lives outside the <label> so clicking it never
-    // toggles or focuses the control it belongs to.
+    // Shown only where a DB override exists; the reset button lives outside the <label> so
+    // clicking it never toggles or focuses the control it belongs to.
     const modified = storedRows[definition.key] !== undefined
       ? `<span class="bk-modified"><span class="bk-badge bk-badge--accent">${escapeHtml(messages['admin.modified'])}</span>`
         + `<span>${escapeHtml(formatMessage(messages['admin.default'], { v: displayValue(definition.get(base)) }))}</span>`

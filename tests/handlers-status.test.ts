@@ -124,7 +124,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     expect(removedPayload.booking.meetingPoint).toEqual({ label: 'The Old Dock', mapsUrl: null });
   });
 
-  describe('confirmation summary meeting-point filtering (plan 019 design decision 2)', () => {
+  describe('confirmation summary meeting-point filtering', () => {
     const points = [
       { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
       { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },

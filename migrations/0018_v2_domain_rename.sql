@@ -1,48 +1,15 @@
--- Plan 022 (design decision 1): the single v2 rebuild of `bookings`. Reserva stops being a tour
--- product: the domain vocabulary becomes services/quantity/capacity, the vendor's name leaves the
--- core columns, the dead and duplicated columns go, and price gains its own currency.
---
---   tour_slug             -> service_slug
---   people                -> quantity
---   price_cents           -> price_minor      (+ new NOT NULL `currency` beside it)
---   stripe_session_id     -> payment_session_ref
---   stripe_payment_intent -> payment_ref      (its partial unique index follows the name)
---
--- Dropped: reminded_at / review_requested_at (dead -- nothing has ever written them),
--- tourflow_synced (its provider left with plan 021), and calendar_synced / email_synced (delivery
--- state is a side_effect_operations row's status; an entity flag may not duplicate it).
--- Added: currency TEXT NOT NULL, metadata TEXT (nullable JSON; plan 024 declares and validates it).
--- Changed: pickup_type becomes NULLABLE -- plan 023 makes the location module optional, and a
--- service with no location options must store NULL rather than a sentinel id like 'none'. Every
--- existing value is copied across unchanged.
---
--- Currency backfill: 'eur' for every existing row. Both deployments that can possibly run this
--- migration (v1-consumer and consumer-a) are euro businesses, and the column being replaced
--- (price_cents) was only ever written against ClientConfig.business.currency, which the pre-v2
--- schema validated as the literal 'eur' -- so 'eur' is not a guess, it is the only value those
--- rows could have carried.
---
--- Sync-flag materialization (below, before the rebuild): a booking confirmed before migration 0010
--- has no outbox row at all, and its calendar_synced/email_synced flags are the ONLY record that its
--- calendar event and confirmation email were already delivered. Dropping the flags without
--- converting them would let the legacy-repair path (repo.ensureConfirmationSideEffectOperations)
--- mint fresh pending rows and re-send a message the customer already received. So the "already
--- delivered" flags become the succeeded outbox rows they should always have been; a false flag
--- records nothing and is simply dropped, exactly as the repair path already treats it.
---
--- Rebuild shape: rename -> create -> copy -> drop, the same pattern as 0011/0013/0015/0016/0017
--- (see 0011's header for why this is crash-safe, and why an explicit transaction block must never
--- appear in a migration file -- wrangler's loader rejects that two-word phrase anywhere in the
--- file, even inside a comment). The order differs from 0015's in one way: `bookings` is renamed
--- away FIRST, so SQLite re-points side_effect_operations' and operational_incidents' foreign keys
--- at the renamed original, and each child then needs ONE rebuild (pointing its FK back at the new
--- `bookings`) instead of a remove-then-restore pair. At every statement boundary the FK that is
--- actually defined is satisfiable, so nothing needs deferring -- D1 enforces foreign keys
--- unconditionally here (0011's header documents the empirical proof).
+-- v2 rebuild of `bookings`: tour vocabulary becomes services/quantity/capacity (service_slug,
+-- quantity, price_minor + currency, payment_session_ref, payment_ref), dead columns
+-- (reminded_at, review_requested_at, tourflow_synced) are dropped, and calendar_synced /
+-- email_synced are dropped since delivery state belongs to side_effect_operations. pickup_type
+-- becomes nullable now that the location module is optional. Same rebuild pattern as 0011:
+-- rename -> create -> copy -> drop (see 0011's header for crash-safety details). The order
+-- differs from 0015's in one way: `bookings` is renamed away first, so each child FK needs one
+-- rebuild pointing it back at the new `bookings`, instead of a remove-then-restore pair.
 
--- Materialized while the flags still exist. Guarded by NOT EXISTS so a booking that already has the
--- row (every confirmation since migration 0010) is untouched. bookings.updated_at is the closest
--- timestamp to when the flag was actually set.
+-- Materializes calendar_synced/email_synced as succeeded outbox rows before those columns are
+-- dropped: a booking confirmed before migration 0010 has no outbox row, and losing the flag
+-- without converting it would let the legacy-repair path re-send an already-delivered message.
 INSERT INTO side_effect_operations (
   booking_id, family, name, event, discriminator, event_payload_json,
   status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
@@ -73,8 +40,7 @@ WHERE b.email_synced = 1
 ALTER TABLE bookings RENAME TO bookings_pre_0018;
 
 -- 41 physical columns: 0015's 44 minus the five dropped ones, plus currency and metadata. Every
--- other CHECK is 0011's, re-expressed against the new names; the pickup_type CHECK stays removed
--- (0015) and pickup_type is no longer NOT NULL.
+-- other CHECK is 0011's, re-expressed against the new names; pickup_type is no longer NOT NULL.
 CREATE TABLE bookings (
   id                             TEXT PRIMARY KEY,
   reference                      TEXT UNIQUE NOT NULL,
@@ -130,6 +96,8 @@ INSERT INTO bookings (
   cancel_token_hash, operator_token_hash, cancel_token_enc, operator_token_enc, tokens_expire_at,
   cancel_token_revoked_at, reschedule_transition_version, meeting_point_id, meeting_point_label
 )
+-- currency backfills to 'eur': the column it replaces (price_cents) was only ever validated
+-- against ClientConfig.business.currency, which every pre-v2 deploy pinned to 'eur'.
 SELECT
   id, reference, tour_slug, people, pickup_type, pickup_address, starts_at, ends_at,
   customer_name, customer_email, customer_phone, locale, price_cents, 'eur', status,
@@ -140,9 +108,8 @@ SELECT
   cancel_token_revoked_at, reschedule_transition_version, meeting_point_id, meeting_point_label
 FROM bookings_pre_0018;
 
--- Both children's FOREIGN KEY (booking_id) now points at bookings_pre_0018 (SQLite rewrites FK
--- clauses on RENAME), so each is rebuilt once to point back at the new `bookings`. Schema, CHECKs
--- and columns are otherwise byte-identical to 0017's and 0016's definitions.
+-- Both children's FK now points at the renamed bookings_pre_0018 (SQLite rewrites FK clauses on
+-- RENAME), so each is rebuilt once to point back at the new `bookings`.
 ALTER TABLE side_effect_operations RENAME TO side_effect_operations_pre_0018;
 
 CREATE TABLE side_effect_operations (
@@ -227,10 +194,7 @@ DROP TABLE operational_incidents_pre_0018;
 
 DROP TABLE bookings_pre_0018;
 
--- After the drops, not before: ALTER TABLE RENAME carries each original's indexes over under their
--- original names, so this is the first point at which those names are free again. Recreated verbatim
--- from 0001/0002/0003/0009/0015 (bookings), 0017 (side_effect_operations) and 0016
--- (operational_incidents), except that the partial payment index follows its column's new name.
+-- Recreated after the drops, once the original index names are free again.
 CREATE INDEX idx_bookings_window ON bookings (starts_at, status);
 CREATE INDEX idx_bookings_status_hold ON bookings (status, hold_expires_at);
 CREATE INDEX idx_bookings_confirmation_lease ON bookings (confirmation_lease_until);
@@ -248,13 +212,10 @@ CREATE INDEX idx_side_effect_operations_reconciliation ON side_effect_operations
 CREATE INDEX idx_operational_incidents_open ON operational_incidents (status, severity, first_detected_at);
 CREATE INDEX idx_operational_incidents_alert ON operational_incidents (alerted_revision, alert_next_attempt_at);
 
--- The admin settings page persists overrides by key string (src/core/settings.ts), so a rename that
--- doesn't follow through here would silently revert an operator's saved capacity to the file
--- default the moment this migration lands.
+-- The admin settings page persists overrides by key string; without this rename an operator's
+-- saved capacity override would silently revert to the file default.
 UPDATE settings SET key = 'capacity.default' WHERE key = 'fleet.defaultCapacity';
 
--- Plan 022 (design decision 7): payment methods stop being an admin-editable runtime setting and
--- become code-level options of the payment adapter (@reservajs/stripe's `paymentMethods`). The
--- definition leaves src/core/settings.ts with the settings page's whole `payments` section, so a
--- surviving row here would be an override nothing can read, edit, or clear.
+-- Payment methods move from an admin-editable setting to a code-level payment-adapter option;
+-- a surviving row here would be an override nothing can read, edit, or clear.
 DELETE FROM settings WHERE key = 'payments.methods';

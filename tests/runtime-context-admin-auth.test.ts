@@ -1,9 +1,6 @@
-// defineCloudflareReservaRuntime validates the admin-auth combination synchronously, before it
-// returns a runtime definition, exactly like it already does for booking event hooks and (when
-// providers isn't a factory) the payment provider — composing with, not replacing, that existing
-// validation at the same runtime-definition boundary. Real behavior tests against the actual
-// function, not a mock of it: every case here either throws synchronously (no context ever
-// created) or returns a usable definition.
+// defineCloudflareReservaRuntime validates the admin-auth combination synchronously, composing
+// with the existing booking-hooks/payment-provider validation rather than replacing it. Tests the
+// real function: every case either throws synchronously or returns a usable definition.
 import { describe, expect, it } from 'vitest';
 import { defineCloudflareReservaRuntime } from '../src/runtime-context';
 import { config as baseConfig } from './fixtures';

@@ -58,12 +58,9 @@ test('closing a day override removes it from availability, and clearing the over
   expect(dayRestored?.slots.length).toBeGreaterThan(0);
 });
 
-// Proves the exported AdminDashboard.astro component (embedded on the smoke site's home page,
-// distinct from the built-in /booking/admin page exercised above) actually works end to end under
-// the recommended production configuration — RESERVA_CSRF_SECRET set (see
-// examples/smoke-site/wrangler.jsonc) — instead of its POST always 403ing. A distinct target date
-// (offset 27, vs. 25 above) keeps this independent of the other day-override spec sharing the
-// same database.
+// Proves the embedded AdminDashboard.astro component (distinct from the built-in /booking/admin
+// page above) works under the recommended RESERVA_CSRF_SECRET config, not just always-403ing. A
+// distinct target date keeps this independent of the other day-override spec.
 test('the embedded AdminDashboard component mints a working CSRF token and its override form succeeds (component -> handler, CSRF enabled)', async ({ page }) => {
   const targetDate = format(addDays(new Date(), 27), 'yyyy-MM-dd');
 

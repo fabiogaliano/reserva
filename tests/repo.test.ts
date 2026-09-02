@@ -2,12 +2,9 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createBookingRepository, type AdminChangeAudit, type SettingsBatchOperation } from '../src/repo';
 
-// Minimal fake D1Database: every method under test here only ever calls prepare(sql).bind(...args)
-// and batch(statements), so that's all this needs to fake. A real-D1 test (tests/workers/) would be
-// preferable but can't force a genuine mid-batch failure yet: none of the tables involved have a
-// CHECK/UNIQUE constraint that a same-batch write could violate. This unit test instead proves the
-// mechanism atomicity depends on: one batch() call carrying every statement (the change AND its
-// admin_change_history row), not N sequential .run()s.
+// Minimal fake D1Database: every method under test only calls prepare(sql).bind(...args) and
+// batch(statements). Proves atomicity depends on one batch() call carrying every statement (the
+// change AND its history row), not N sequential .run()s.
 function fakeD1(): { db: D1Database; batchCalls: Array<Array<{ sql: string; args: unknown[] }>> } {
   const batchCalls: Array<Array<{ sql: string; args: unknown[] }>> = [];
   const db = {
@@ -25,11 +22,10 @@ function fakeD1(): { db: D1Database; batchCalls: Array<Array<{ sql: string; args
 const AUDIT: AdminChangeAudit = { actor: 'ops@example.test', changedAt: '2026-09-01T12:00:00.000Z' };
 const HISTORY_SQL = 'INSERT INTO admin_change_history (domain, item_key, action, value, actor, changed_at) VALUES (?, ?, ?, ?, ?, ?)';
 
-describe('createBookingRepository.applySettingsBatch (BK-CONFIG-001 task 4: atomic section save; plan 005 history)', () => {
-  // D1's batch() runs its statements in an implicit single transaction — if any fails, none
-  // commit. That all-or-nothing guarantee only holds if every operation (and its history row)
-  // travels in ONE batch() call; sequential .run() calls would each commit independently and a
-  // mid-save failure could leave a mixed revision, or a change with no history row.
+describe('createBookingRepository.applySettingsBatch (atomic section save; history)', () => {
+  // D1's batch() runs in an implicit single transaction -- the all-or-nothing guarantee only
+  // holds if every operation and its history row travel in ONE batch() call; sequential .run()s
+  // could each commit independently and leave a mixed revision or a change with no history row.
   it('sends every operation AND its history row as one db.batch() call carrying all the prepared statements, not sequential per-key writes', async () => {
     const { db, batchCalls } = fakeD1();
     const repo = createBookingRepository(db);
@@ -62,7 +58,7 @@ describe('createBookingRepository.applySettingsBatch (BK-CONFIG-001 task 4: atom
   });
 });
 
-describe('createBookingRepository single-key admin writes (plan 005: history rides the same batch)', () => {
+describe('createBookingRepository single-key admin writes', () => {
   it('deleteSetting is exactly one db.batch() call carrying the delete and its history row', async () => {
     const { db, batchCalls } = fakeD1();
     const repo = createBookingRepository(db);
@@ -107,7 +103,7 @@ describe('createBookingRepository single-key admin writes (plan 005: history rid
   });
 });
 
-describe('createBookingRepository plural day-override writes (plan 003 batching + plan 005 history)', () => {
+describe('createBookingRepository plural day-override writes', () => {
   it('upsertDayOverrides is exactly one db.batch() call carrying one change statement AND one history row per date', async () => {
     const { db, batchCalls } = fakeD1();
     const repo = createBookingRepository(db);

@@ -1,10 +1,8 @@
-// The scheduled reconciler keeps D1 authoritative and separates three bounded workloads:
-// executable rows that are eligible now, incident-worthy rows not yet reported, and existing
-// incidents whose source changed. Row-level execution preserves sibling backoff and failure
-// isolation; terminal history can never occupy the executable page. Side-effect backoff is derived
-// in the repository query because HTTP recovery deliberately remains immediate, while refund rows
-// use their persisted next_attempt_at. Both paths still claim through the same operation-specific
-// primitives used by ordinary request recovery.
+// The scheduled reconciler keeps D1 authoritative and separates three bounded workloads: executable
+// rows eligible now, incident-worthy rows not yet reported, and incidents whose source changed.
+// Row-level execution preserves sibling backoff and failure isolation. Side-effect backoff is
+// derived in the repository query because HTTP recovery remains immediate, while refund rows use
+// their persisted next_attempt_at.
 import { classifyAttemptOutcome, runScheduledSideEffectOperation } from './confirmation.js';
 import type { Booking } from './core/booking.js';
 import type { OperationalAlert } from './core/events.js';
@@ -38,8 +36,8 @@ const DEFAULT_SOURCE_LIMIT = 10;
 const HARD_SOURCE_LIMIT = 50;
 const DEFAULT_ALERT_LIMIT = 25;
 const HARD_ALERT_LIMIT = 50;
-// Mirrors MUTATION_SIDE_EFFECT_LEASE_MS (src/repo.ts) — the alert claim's own lease window, so a
-// killed alert-delivery attempt is reclaimable by the next scan rather than stuck forever.
+// The alert claim's own lease window, so a killed alert-delivery attempt is reclaimable by the
+// next scan rather than stuck forever.
 const ALERT_CLAIM_LEASE_MS = 5 * 60_000;
 
 export interface ReconciliationOptions {
@@ -117,8 +115,8 @@ async function applyIncidentProjection(
   }
 }
 
-// The ledger key for a side-effect row, built from its identity columns — the TypeScript
-// twin of src/repo.ts's sideEffectSourceKeySql and migration 0017's re-keying expression.
+// The ledger key for a side-effect row, built from its identity columns — the TypeScript twin of
+// the repository's own SQL key expression.
 export function sideEffectIncidentSourceKey(operation: SideEffectOperationRecord): string {
   return `${operation.bookingId}:${sideEffectOperationKey(operation)}`;
 }
@@ -177,8 +175,8 @@ async function projectRefundIncidentForBooking(context: ReservaContext, tally: I
 }
 
 // Admin retries reproject synchronously so the card disappears in the same response flow. Cron's
-// independent source-change page now provides the equivalent safety net for ordinary status,
-// manage, and webhook recovery that happens outside reconciliation.
+// independent source-change page provides the equivalent safety net for ordinary status, manage,
+// and webhook recovery that happens outside reconciliation.
 export async function reprojectIncidentAfterAdminRetry(
   context: ReservaContext,
   sourceType: 'side_effect' | 'refund',
@@ -337,9 +335,8 @@ async function referenceForBooking(context: ReservaContext, bookingId: string): 
   return booking?.reference ?? bookingId;
 }
 
-// The one entry point a scheduled event (or a manual admin-triggered
-// sweep) calls. Bounded and resumable — a partial run (hitting a page limit, or one candidate
-// erroring) is safe; the next invocation picks up remaining debt via the same candidate queries.
+// The one entry point a scheduled event (or a manual admin-triggered sweep) calls. Bounded and
+// resumable — a partial run is safe; the next invocation picks up remaining debt via the same candidate queries.
 export async function runReconciliation(context: ReservaContext, options: ReconciliationOptions = {}): Promise<ReconciliationSummary> {
   const sourceLimit = clampLimit(options.sourceLimit, DEFAULT_SOURCE_LIMIT, HARD_SOURCE_LIMIT);
   const alertLimit = clampLimit(options.alertLimit, DEFAULT_ALERT_LIMIT, HARD_ALERT_LIMIT);

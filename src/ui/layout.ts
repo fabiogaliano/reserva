@@ -7,11 +7,9 @@ export interface PageShellOptions {
   title: string;
   cssHref: string;
   body: string;
-  // Page identity (brand, title, badges, lead) rendered inside the dark masthead band; the main
-  // content then overlaps its lower edge. Raw HTML, caller escapes. Customer-facing pages.
+  // Raw HTML rendered inside the dark masthead band; caller escapes. Customer-facing pages.
   header?: string;
-  // App-shell navigation (the dark sidebar) for operator surfaces; mutually exclusive with
-  // header in practice — sidebar wins if both are set. Raw HTML, caller escapes.
+  // App-shell sidebar for operator surfaces; wins over `header` if both are set. Caller escapes.
   sidebar?: string;
   // Content column width for masthead pages: default 44rem, mid 56rem, wide 72rem.
   width?: 'mid' | 'wide';
@@ -51,9 +49,8 @@ export function pageShell(options: PageShellOptions): string {
   return `<!doctype html>${htmlTag}${head}<body class="bk-page">${skip}${masthead}<main id="bk-main" class="${mainClass}">${options.body}</main></body></html>`;
 }
 
-// Builds the per-viewer theme toggle: a button the enhancer reveals and wires (see ui/theme-toggle).
-// Rendered hidden with the current mode + labels as data-* so the enhancer needs no separate i18n
-// island. `theme` is the viewer's forced choice; undefined renders as "System" (follow the OS).
+// Builds the per-viewer theme toggle: rendered hidden with mode + labels as data-* so the
+// enhancer needs no separate i18n island. `theme` undefined renders as "System".
 export function themeToggle(messages: ReservaMessages, theme: ThemePreference | undefined): string {
   const mode = theme ?? 'system';
   return `<button type="button" class="bk-theme-toggle" data-reserva-theme-toggle hidden`

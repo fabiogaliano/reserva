@@ -11,12 +11,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Split from a single `check` job (audit && typecheck && test && test:workers) so a red audit
-  # can no longer mask whether the code itself is sound: advisories can get stuck on transitive
-  # pins nested inside astro/wrangler/Cloudflare tooling, unfixable within this repo's declared
-  # ranges. These run independently, not chained, so `verify` still reports even when `audit`
-  # fails. `bun run check` (both, chained) remains the strict local pre-push gate; CI
-  # deliberately doesn't run it as a single step.
+  # Split from a single chained job so a red `audit` (stuck on unfixable transitive advisories in
+  # astro/wrangler/Cloudflare deps) can't mask whether the code itself is sound. `bun run check`
+  # still chains both locally as the strict pre-push gate; CI keeps them separate.
   audit:
     runs-on: ubuntu-latest
     steps:
@@ -37,11 +34,9 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run verify
 
-  # Plan 015 decision 5: test:preview builds examples/smoke-site (superseding the plain `astro
-  # build` this job ran before) and additionally serves that BUILT output through the pinned
-  # @astrojs/cloudflare adapter's `astro preview` entrypoint, probing it with real requests -- the
-  # `e2e` job below only ever exercises `astro dev` (examples/smoke-site/e2e-dev-server.ts), so a
-  # bug that only manifests in the built worker would otherwise pass every job here.
+  # Builds examples/smoke-site and serves the BUILT output through the pinned @astrojs/cloudflare
+  # adapter's `astro preview`, unlike the `e2e` job which only exercises `astro dev` — catches bugs
+  # that only manifest in the built worker.
   smoke:
     runs-on: ubuntu-latest
     steps:
@@ -73,10 +68,9 @@ jobs:
       - run: bunx playwright install --with-deps chromium
       - run: bun run test:e2e
 
-  # Plan 028 step 5: extracts the README quickstart's own code blocks, installs the packed tarballs
-  # into a fresh directory outside the repository, and books through to a confirmation. It is the
-  # only check that treats the documentation as executable, so a quickstart that stops working is a
-  # red build rather than a support thread.
+  # Extracts the README quickstart's own code blocks and installs the packed tarballs into a fresh
+  # directory, then books through to confirm. The only check that treats the docs as executable, so
+  # a broken quickstart is a red build, not a support thread.
   quickstart:
     runs-on: ubuntu-latest
     steps:
@@ -87,11 +81,8 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run test:quickstart
 
-  # Plan 028 decision 5: the contract tables in README.md/AGENTS.md are generated from the
-  # exported constants (routeManifest, API_ERROR_CODES, BOOKING_EVENTS). This job re-renders them
-  # and fails if the committed docs differ, so documentation of a closed vocabulary cannot rot.
-  # It is also chained into local `verify`; its own job here follows the audit/verify rationale of
-  # never letting one red check mask another.
+  # The contract tables in README.md/AGENTS.md are generated from exported constants; this job
+  # re-renders them and fails if the committed docs differ, so a closed vocabulary can't silently rot.
   docs:
     runs-on: ubuntu-latest
     steps:
@@ -102,9 +93,9 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run docs:contract:check
 
-  # Both tarballs are assembled exactly as the registry would assemble them, so a `files`, bin, or
-  # exports mistake fails here instead of after a version is permanently published. Pin the npm CLI:
-  # the version bundled with Node has historically accepted package shapes the live registry removes.
+  # Both tarballs are assembled exactly as the registry would, so a `files`, bin, or exports
+  # mistake fails here instead of after a version is permanently published. Pins the npm CLI:
+  # the version bundled with Node has accepted package shapes the live registry rejects.
   publish-dry-run:
     runs-on: ubuntu-latest
     permissions:
@@ -125,11 +116,9 @@ jobs:
         run: bunx npm@12.0.2 publish --dry-run --provenance=false
         working-directory: packages/stripe
 
-  # Plan 010 decision 3: test:pack packs the real tarball and installs it into a throwaway
-  # consumer project outside the repo, so it needs its own job (like smoke) rather than sharing
-  # the fast unit-test loop. It's also folded into the local `verify` aggregate, so this job is
-  # partly redundant with that one in CI -- deliberately so, matching the audit/verify split's
-  # rationale of never letting one slow/red check mask another job's result.
+  # Packs the real tarball and installs it into a throwaway consumer project outside the repo, so
+  # it needs its own job rather than sharing the fast unit-test loop. Redundant with the local
+  # `verify` aggregate for the same reason the audit/verify split exists.
   pack:
     runs-on: ubuntu-latest
     steps:

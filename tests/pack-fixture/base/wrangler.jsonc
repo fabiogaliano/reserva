@@ -2,7 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "reserva-pack-fixture",
   "compatibility_date": "2026-07-21",
-  // No migrations_dir on purpose (plan 010): this proves `reserva-migrate` derives the packaged
+  // No migrations_dir on purpose: this proves `reserva-migrate` derives the packaged
   // migrations directory from the *installed* package on its own, rather than relying on a
   // hand-configured relative path like examples/smoke-site's wrangler.jsonc has today.
   "d1_databases": [
@@ -12,7 +12,7 @@
       "database_id": "00000000-0000-0000-0000-000000000000"
     }
   ],
-  // Plan 020 (design decision 15): the reference configuration this fixture mirrors enables
+  // (design decision 15): the reference configuration this fixture mirrors enables
   // Workers observability with full logs; kept here too so the packed-consumer build proves the
   // pattern typechecks/builds with it present, not just the smoke-site copies.
   "observability": {

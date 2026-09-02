@@ -6,7 +6,7 @@ import { resolveLocale } from '../src/core/locale';
 const ptOnly = { supported: ['pt-PT'], default: 'pt-PT' };
 const multi = { supported: ['pt-PT', 'en'], default: 'en' };
 
-describe('resolveLocale (plan 027 design decision 5)', () => {
+describe('resolveLocale', () => {
   it('matches a bare language tag onto its supported regional variant', () => {
     expect(resolveLocale(ptOnly, 'pt')).toBe('pt-PT');
     expect(resolveLocale(multi, 'pt')).toBe('pt-PT');

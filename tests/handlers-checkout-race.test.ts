@@ -11,11 +11,10 @@ const checkoutRequest = (quantity: number) => new Request('https://example.test/
   body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity, pickupType: 'default', locale: 'en' }),
 });
 
-describe('checkout race for the last slot (BK-CAP-001 / AR-001 — was spec §11 / §6 accepted TOCTOU, now fixed)', () => {
-  // Intentional behavior-change test, not a weakening: this is the same interleaving harness
-  // that used to prove the accepted oversell window (both checkouts succeeding). It now proves
-  // the fix — insertHoldWithCapacity re-evaluates occupancy inside the same atomic INSERT as the
-  // write, so only one of two requests that both read the slot as empty can still win the write.
+describe('checkout race for the last slot (was spec §11 / §6 accepted TOCTOU, now fixed)', () => {
+  // Intentional behavior-change test, not a weakening: insertHoldWithCapacity now re-evaluates
+  // occupancy inside the same atomic INSERT as the write, so only one of two requests that both
+  // read the slot as empty can still win it.
   it('lets only one of two concurrent checkouts hold the last slot when interleaved: one 201, one 409, exactly one hold row', async () => {
     const repo = fakeRepository();
     const singleCapacityConfig = { ...config, capacity: { default: 1 } };

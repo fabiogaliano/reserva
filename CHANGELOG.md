@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- The `@reservajs/astro/providers` barrel subpath. Import each provider from its own subpath.
+
 ## [0.2.0]
 
 First public release, as `@reservajs/astro`. Everything before it shipped privately under a

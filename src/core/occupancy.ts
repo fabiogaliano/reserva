@@ -109,8 +109,8 @@ function instantFromValue(value: string | CalEventTime): string | undefined {
   return undefined;
 }
 
-// Secondary dedupe only: an event written by an older release carries a differently-named private
-// property and is still deduped by its id against the booking's stored calendarEventId below.
+// Secondary dedupe only: an event with a differently-named private property is still deduped by
+// id against the booking's stored calendarEventId below.
 function eventReservaBookingId(event: CalEvent): string | undefined {
   return event.reservaBookingId ?? event.extendedProperties?.private?.reservaBookingId;
 }
@@ -304,9 +304,9 @@ export function slotRemaining(
   return remainingCapacity(options.capacity, options.intervals, slotStart, end);
 }
 
-// How many more bookings of this party size still fit in the remaining capacity units — a slot with
-// 3 units left and a 2-unit party has room for 1 more booking, not 3. occupancyFor always returns
-// a positive integer (it throws otherwise), so this never divides by zero.
+// How many more bookings of this party size fit in the remaining capacity units — 3 units left
+// and a 2-unit party means room for 1 more, not 3. `occupancyFor` always returns a positive
+// integer, so this never divides by zero.
 export function remainingBookings(remainingUnits: number, service: Pick<ServiceConfig, 'occupancyFor'>, quantity: number): number {
   return Math.floor(remainingUnits / occupancyFor(service, quantity));
 }

@@ -11,51 +11,33 @@ export interface BookingInsert {
   reference: string;
   serviceSlug: string;
   quantity: number;
-  // Any service-declared option id, or null for a location-less service — see core/booking.ts
-  // Booking.pickupType.
   pickupType: PickupType | null;
   startsAt: string;
   endsAt: string;
   locale: string;
   priceMinor: number;
-  // Lowercase ISO 4217 (core/currency.ts). Captured on the row so a later config change cannot
-  // re-denominate money already taken.
+  // Captured on the row so a later config change can't re-denominate money already taken.
   currency: string;
   holdExpiresAt: string;
   cancelToken: string;
   operatorToken: string;
-  // Shared expiry for both tokens (see ClientConfig.booking.tokenExpiryDays).
-  // Optional/nullable so every pre-existing caller of insertHold/insertHoldWithCapacity (tests,
-  // mainly) that doesn't pass one keeps compiling and simply gets an unexpiring token, matching
-  // pre-migration behavior.
   tokensExpireAt?: string | null;
   holdIp?: string | null;
   maxActiveHoldsForIp?: number;
-  // The resolved meeting point at checkout time (see core/booking.ts Booking.meetingPointId/
-  // -Label). Optional/nullable for the same reason as tokensExpireAt above -- every pre-existing
-  // caller (tests, mainly) that doesn't pass these keeps compiling and simply writes NULL, matching
-  // pre-migration behavior.
   meetingPointId?: string | null;
   meetingPointLabel?: string | null;
-  // Validated/coerced by handlers/checkout.ts against the service's declaration before it ever
-  // reaches here — this layer just stores whatever it's given. Optional for the same
-  // pre-existing-caller reason as tokensExpireAt above.
   metadata?: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
 }
 
-// One section save = one atomic D1 batch, so a mid-save failure never leaves a mixed revision.
-// `value` is already the JSON-encoded SettingValue (serializeSettingValue).
+// One section save = one atomic D1 batch: a mid-save failure never leaves a mixed revision.
 export type SettingsBatchOperation =
   | { type: 'upsert'; key: string; value: string }
   | { type: 'delete'; key: string };
 
-// Every admin-surface write records who changed what, atomically in the same D1 batch as
-// the change itself (never a second, separate write — see adminHistoryInsert below). `actor` is the
-// admin auth port's AdminIdentity.subject (src/access.ts); null when the port exposes no identity
-// (an anonymous-verifier custom adminAuth resolves an empty-string subject, which handleAdminPost
-// normalizes to null before this ever reaches the repo).
+// Recorded atomically in the same D1 batch as the change itself, never a separate write.
+// actor is null when the auth port exposes no identity (e.g. an anonymous verifier).
 export interface AdminChangeAudit {
   actor: string | null;
   changedAt: string;
@@ -81,17 +63,11 @@ export class HoldLimitExceededError extends Error {
   }
 }
 
-// Thrown wherever a write would set payment_ref to a value
-// already claimed by a different booking, translating the D1 UNIQUE-violation on the partial
-// index (migrations/0018_v2_domain_rename.sql idx_bookings_payment_ref) into a typed error
-// instead of an opaque D1 error bubbling up as an unhandled 500. status/code follow the same
-// self-describing-error convention as ConfirmationInProgressError (src/confirmation.ts) and
-// AccessVerificationError (src/access.ts) -- src/http.ts's errorResponse already knows how to turn
-// any `Error & {status, code}` into a clean JSON response, so no handler-level catch is needed.
+// errorResponse turns any Error & {status, code} into a JSON response, so no handler-level
+// catch is needed to translate this into a 409.
 export class DuplicatePaymentRefError extends Error {
   readonly status = 409;
-  // Typed against the closed catalog, because errorResponse
-  // (src/http.ts) turns this into the API error envelope verbatim.
+  // Typed against the closed catalog since errorResponse turns this into the API envelope verbatim.
   readonly code: ApiErrorCode = 'duplicate_payment_ref';
   constructor(paymentRef: string) {
     super(`payment_ref ${paymentRef} already confirmed a different booking`);
@@ -99,13 +75,9 @@ export class DuplicatePaymentRefError extends Error {
   }
 }
 
-// migrations/0011_schema_constraints.sql adds CHECK constraints for the
-// domain invariants below, but they only guard rows written (or rewritten) after that migration
-// ran -- a pre-rebuild row already sitting in D1, or a future write that bypasses this repository
-// (a manual UPDATE, a restored backup), could still violate them. mapBooking throws this rather
-// than silently handing a corrupt row to callers that assume it's valid (pricing, capacity,
-// calendar-window math), so the bad data surfaces immediately at the one place every row becomes a
-// Booking, instead of producing a confusing failure two layers downstream.
+// DB CHECK constraints only guard rows written after they existed; an old row, or a write that
+// bypasses this repo, could still violate them. mapBooking throws here instead of handing a
+// corrupt row downstream, so bad data surfaces at the one place every row becomes a Booking.
 export class InvalidBookingRowError extends Error {
   constructor(bookingId: string, reason: string) {
     super(`booking ${bookingId} violates a domain invariant: ${reason}`);
@@ -113,24 +85,20 @@ export class InvalidBookingRowError extends Error {
   }
 }
 
-// SQLite reports a UNIQUE-index violation the same way regardless of whether the index is partial
-// or a plain column UNIQUE -- "UNIQUE constraint failed: <table>.<column>" -- so this doesn't need
-// to special-case the partial WHERE clause on idx_bookings_payment_ref.
+// SQLite's UNIQUE-violation message is identical for a partial or plain index, so no need to
+// special-case the partial WHERE clause here.
 function isPaymentRefUniqueViolation(error: unknown): boolean {
   return error instanceof Error && /UNIQUE constraint failed:.*\bpayment_ref\b/i.test(error.message);
 }
 
-// Shared by every repo method that can write payment_ref (updateBooking,
-// transitionToConfirmed, confirmWithSideEffectOperations, applyConfirmedPaymentDetails): runs the
-// D1 write and reclassifies a UNIQUE-violation on the partial index into DuplicatePaymentRefError,
-// leaving every other error (a different column's constraint, a transient D1 failure) untouched.
+// Reclassifies a payment_ref UNIQUE violation into DuplicatePaymentRefError; every other error
+// (a different constraint, a transient D1 failure) passes through untouched.
 async function guardDuplicatePaymentRef<T>(paymentRef: string | null | undefined, run: () => Promise<T>): Promise<T> {
   try {
     return await run();
   } catch (error) {
-    // Non-null (NOT falsy): the partial index's WHERE payment_ref IS NOT NULL clause
-    // covers '' just like any other non-null value, so a truthiness check here would wrongly skip
-    // reclassifying a collision on the empty string, letting it surface as an unhandled 500.
+    // Explicit non-null check, not truthiness: '' is a valid payment_ref under the partial
+    // index's WHERE clause, so truthiness would wrongly skip reclassifying it.
     if (paymentRef !== null && paymentRef !== undefined && isPaymentRefUniqueViolation(error)) {
       throw new DuplicatePaymentRefError(paymentRef);
     }
@@ -138,13 +106,8 @@ async function guardDuplicatePaymentRef<T>(paymentRef: string | null | undefined
   }
 }
 
-// Shared inputs for the atomic capacity guard used by both
-// insertHoldWithCapacity and rescheduleWithCapacity. occupancyUnits/occupancyEndsAt describe the
-// interval the *requesting* write needs (occupancyFor(service, quantity) units, and endsAt + that
-// service's turnaroundMin — the same window src/core/occupancy.ts uses for overlap); localDate is
-// the resolved local-date key (see core/time.ts localDateKey) the capacity lookup runs against;
-// defaultCapacity is the fallback when neither a day override nor a capacity default apply
-// (see core/occupancy.ts capacityForDate/defaultCapacityForDate, which this mirrors in SQL).
+// Inputs for the atomic capacity guard shared by insertHoldWithCapacity and
+// rescheduleWithCapacity. Mirrors core/occupancy.ts's capacity math in SQL — keep both in sync.
 export interface CapacityGuardInput {
   occupancyUnits: number;
   occupancyEndsAt: string;
@@ -152,13 +115,11 @@ export interface CapacityGuardInput {
   defaultCapacity: number;
 }
 
-// A durable record of a refund decision + its Stripe outcome. One row per booking (UNIQUE
-// booking_id — see migrations/0006_refund_operations.sql) so exactly one request can claim a
-// booking's refund decision.
+// A durable record of a refund decision + its Stripe outcome. One row per booking, so exactly
+// one request can claim a booking's refund decision.
 export type RefundChoice = 'full' | 'none';
-// 'in_flight' (the execution claim is held, Stripe may be in progress) and 'abandoned' (a
-// permanent/tenth-retry failure, terminal like side_effect_operations' 'abandoned') mirror
-// migration 0016's schema — see that migration's byte-preserving rebuild.
+// 'in_flight': execution claim held, Stripe call may be in progress.
+// 'abandoned': terminal — a permanent failure or exhausted retries, like side_effect_operations.
 export type RefundOperationStatus = 'requested' | 'in_flight' | 'succeeded' | 'failed' | 'abandoned';
 
 export interface RefundOperationRecord {
@@ -172,8 +133,7 @@ export interface RefundOperationRecord {
   requestedAt: string;
   resolvedAt: string | null;
   error: string | null;
-  // The scheduled reconciler's execution claim — mirrors the
-  // confirmation-lease pattern (src/confirmation.ts). Both null when no execution claim is held.
+  // The scheduled reconciler's execution claim; both null when nothing holds it.
   executionClaimToken: string | null;
   executionClaimUntil: string | null;
   attemptCount: number;
@@ -182,7 +142,7 @@ export interface RefundOperationRecord {
   nextAttemptAt: string | null;
 }
 
-// The operational-incident domain, matching migration 0016's operational_incidents CHECKs exactly.
+// Must match the operational_incidents table's CHECK constraints exactly.
 export type OperationalIncidentSourceType = 'side_effect' | 'refund' | 'oversell';
 export type OperationalIncidentAction = 'confirmation_email' | 'customer_notification' | 'calendar' | 'operations_sync' | 'refund' | 'oversell';
 export type OperationalIncidentStatus = 'open' | 'resolved';
@@ -214,25 +174,23 @@ export interface OperationalIncidentRecord {
   resolutionNote: string | null;
 }
 
-// The closed operation-kind set, mirrored by migration 0017's CHECK.
-// The first four are one-shot rows whose whole identity is their family; the last three carry a
-// name/event (and, for a repeatable event, a discriminator) in their own columns.
+// Closed set mirrored by a DB CHECK. The first four are one-shot rows identified solely by
+// family; the last three carry a name/event (and, for repeatable events, a discriminator) too.
 export const SIDE_EFFECT_FAMILIES = [
   'calendar_create', 'calendar_delete', 'email_confirmation', 'oversell',
   'email', 'hook', 'webhook',
 ] as const;
 export type SideEffectFamily = (typeof SIDE_EFFECT_FAMILIES)[number];
 
-// The row key. Every claim, resolve, drain-routing and incident-projection decision reads THESE
-// columns; nothing anywhere reconstructs them from a string. `name`/`event`/`discriminator` are
-// optional so a one-shot family is written as just `{ family: 'calendar_create' }`.
+// The row key: every claim/resolve/routing decision reads these columns directly, never
+// reconstructed from a string. Optional fields let a one-shot family be just { family }.
 export interface SideEffectOperationIdentity {
   family: SideEffectFamily;
   // Hook/webhook subscriber name, or the email recipient role for a per-recipient send.
   name?: string | null;
   event?: string | null;
-  // Per-occurrence uniqueness for an event that can happen more than once per booking. Assigned by
-  // the repository from the booking's reschedule transition version, inside the same atomic write.
+  // Per-occurrence uniqueness for events that can repeat per booking, assigned atomically from
+  // the reschedule transition version.
   discriminator?: string | null;
 }
 
@@ -253,36 +211,26 @@ export function sameSideEffectOperation(a: SideEffectOperationIdentity, b: SideE
 
 // A row this transition owes, recorded atomically with the transition itself.
 export interface SideEffectOperationSeed extends SideEffectOperationIdentity {
-  // The serialized envelope. Required for 'hook'/'webhook' rows (the
-  // historical record of the occurrence, re-sent unchanged on every retry); null for every other
-  // family, which reconstructs its work from the live booking.
+  // Required for hook/webhook rows, re-sent unchanged on every retry; null for every other
+  // family, which reconstructs its work from the live booking instead.
   eventPayloadJson: string | null;
-  // The envelope id WITHOUT a discriminator. A reschedule's version is only known inside the
-  // winning batch, so the repository appends it to both the discriminator column and this id there
-  // — the stored envelope is complete the moment the row exists, never patched afterwards.
+  // Envelope id without its discriminator: the reschedule version is only known inside the
+  // winning batch, so the repo appends it there. Complete the moment the row exists, never
+  // patched afterwards.
   eventIdPrefix: string | null;
 }
-// 'abandoned' is a terminal status distinct from 'failed' — a
-// permanent provider failure (see src/provider-failure.ts), or a retryable failure on the tenth
-// attempt, resolves here instead of 'failed' so the claim predicates below stop matching it
-// forever. Migration 0013 admits it in the `status` CHECK.
+// 'abandoned' is terminal, distinct from 'failed': a permanent provider failure or a retryable
+// failure's tenth attempt lands here so the claim predicates below stop matching it forever.
 export type SideEffectOperationStatus = 'pending' | 'in_flight' | 'succeeded' | 'failed' | 'abandoned';
 
-// A claimant that dies between claiming (status -> in_flight)
-// and resolving would otherwise leave the row stuck forever — claiming only matches
-// pending/failed, so nothing ever reclaims it. claimMutationSideEffectOperation additionally
-// matches an in_flight row whose attempted_at is older than this lease window. Reuses the same
-// 5-minute figure as the confirmation-lease pattern (src/confirmation.ts
-// acquireConfirmationLease/renewConfirmationLease) — both are "how long before we assume the
-// original claimant is dead" judgment calls with no reason to differ.
+// A claimant that dies between claiming and resolving would leave the row stuck forever, since
+// claiming only matches pending/failed. This lease window lets an in_flight row past its
+// attempted_at be reclaimed too — same 5-minute judgment call as the confirmation lease.
 export const MUTATION_SIDE_EFFECT_LEASE_MS = 5 * 60_000;
 
-// Attempt count means executions started, so 'attempt 10' is
-// unambiguous — both claim predicates below reject a row already at this count (belt-and-braces;
-// resolveSideEffectOperation/resolveMutationSideEffectOperation
-// already always resolve a retryable failure's 10th attempt as 'abandoned', so a claimable row
-// should never actually reach this count, but the claim itself enforces it too rather than relying
-// solely on the resolve side).
+// Attempt count means executions started. The resolve side already turns a retryable failure's
+// 10th attempt into 'abandoned', but claim predicates enforce this cap too, as a second line
+// of defense rather than relying on resolve alone.
 export const SIDE_EFFECT_MAX_ATTEMPTS = 10;
 
 export interface CancellationTransitionInput {
@@ -309,10 +257,8 @@ export interface RefundOperationUpsertInput {
   error?: string | null;
 }
 
-// Outbox debt per operation family, from one GROUP BY over the
-// `family` identity column (there is no kind string to parse any more).
-// `pending` counts every row that has neither succeeded nor been abandoned — pending, in flight,
-// and failed-but-retryable are all undelivered work an operator needs to see as one number.
+// Outbox debt per operation family. `pending` counts pending, in-flight, and failed-but-retryable
+// rows together, since all three are undelivered work an operator needs to see as one number.
 export interface SideEffectDebtByFamily {
   family: SideEffectFamily;
   pending: number;
@@ -325,9 +271,6 @@ export interface SideEffectOperationRecord extends SideEffectOperationIdentity {
   name: string | null;
   event: string | null;
   discriminator: string | null;
-  // Present only on 'hook'/'webhook' rows, and null on the ones
-  // migration 0017 converted from the retired ops-sync provider — those predate snapshots and keep
-  // v1's reconstruct-from-current-state behavior (documented exception in the migration).
   eventPayloadJson: string | null;
   status: SideEffectOperationStatus;
   providerResultId: string | null;
@@ -337,7 +280,6 @@ export interface SideEffectOperationRecord extends SideEffectOperationIdentity {
   error: string | null;
   createdAt: string;
   updatedAt: string;
-  // Migration 0016's additive backoff columns.
   failureStartedAt: string | null;
   nextAttemptAt: string | null;
 }
@@ -369,25 +311,21 @@ export interface BookingRepository {
   getBookingByReference(reference: string): Promise<Booking | null>;
   getBookingBySessionRef(sessionRef: string): Promise<Booking | null>;
   getBookingByPaymentRef?(paymentRef: string): Promise<Booking | null>;
-  // `now` gates expiry (tokens_expire_at) in the same query as the hash/fallback
-  // lookup, so an expired token is denied identically to an unknown one (no timing/response
-  // oracle distinguishing "expired" from "never existed").
+  // `now` gates expiry in the same query as the lookup, so an expired token is denied
+  // identically to an unknown one — no timing oracle distinguishing the two cases.
   getBookingByCancelToken(token: string, now: string): Promise<Booking | null>;
   getBookingByOperatorToken(token: string, now: string): Promise<Booking | null>;
   getBookingByOperatorTokenForRefundRecovery(token: string, now: string): Promise<Booking | null>;
   countReferencesForYear(prefix: string): Promise<number>;
   insertHold(input: BookingInsert): Promise<Booking>;
-  // Atomic checkout write: same per-IP hold-cap guard as insertHold, plus
-  // a single-statement capacity guard (occupied units in the target interval + requested <=
-  // capacity resolved for localDate). Returns null when the capacity guard loses the race —
-  // distinct from HoldLimitExceededError, which is still thrown for the unrelated per-IP cap —
-  // so the caller can surface the existing slot_unavailable 409 rather than a new error code.
+  // Same per-IP hold-cap guard as insertHold, plus a single-statement capacity guard. Returns
+  // null when the capacity guard loses the race, distinct from HoldLimitExceededError (still
+  // thrown for the per-IP cap), so the caller can surface the existing slot_unavailable 409.
   insertHoldWithCapacity(input: BookingInsert & CapacityGuardInput): Promise<Booking | null>;
   updateBooking(id: string, patch: BookingUpdate): Promise<Booking>;
-  // Compare-and-set status transitions: each issues a single conditional UPDATE scoped to
-  // expectedStatusIn (or, for reschedule, status + starts_at) and returns null when the
-  // predicate didn't match (the caller lost the race), so a stale in-memory read can never
-  // overwrite a row that has already moved to a different state.
+  // Compare-and-set: a single conditional UPDATE scoped to expectedStatusIn (or, for reschedule,
+  // status + starts_at) returns null when the predicate misses, so a stale read can never
+  // overwrite a row that already moved to a different state.
   transitionToCancelled(id: string, input: CancellationTransitionInput): Promise<Booking | null>;
   // The refund outcome and cancellation share a D1 batch so a failed webhook delivery cannot
   // leave a paid booking occupying capacity after its authoritative Stripe refund was recorded.
@@ -399,7 +337,6 @@ export interface BookingRepository {
   transitionToNoShow(id: string, input: {
     expectedStatusIn: BookingStatus[];
     updatedAt: string;
-    // See the identical field on transitionToCancelled above.
     mutationSideEffects?: SideEffectOperationSeed[];
   }): Promise<Booking | null>;
   transitionToConfirmed(id: string, input: {
@@ -421,15 +358,12 @@ export interface BookingRepository {
     leaseToken: string;
     oversold: boolean;
     updatedAt: string;
-    // One row per durable hook/webhook subscribed to
-    // booking.confirmed, each carrying the envelope serialized from THIS transition. They share
-    // the transition's D1 batch, so a subscriber's delivery debt can never exist without the
-    // confirmation that owes it, nor the confirmation without the debt.
+    // One row per durable hook/webhook subscribed to booking.confirmed, sharing the transition's
+    // D1 batch so delivery debt can never exist without the confirmation that owes it, nor vice versa.
     eventSeeds?: SideEffectOperationSeed[];
-    // Passed only when the current email provider implements both
-    // split methods (src/confirmation.ts) — a brand-new confirmation then gets one row per
-    // recipient instead of the single combined email_confirmation row, sharing this same D1 batch
-    // so the split shape and the transition it belongs to can never diverge.
+    // Only when the email provider implements the split send methods: one row per recipient
+    // instead of the single combined email_confirmation row, in the same D1 batch so the shape
+    // and the transition can never diverge.
     emailRecipients?: EmailRecipientRole[];
   }): Promise<Booking | null>;
   applyConfirmedPaymentDetails(id: string, patch: {
@@ -439,11 +373,9 @@ export interface BookingRepository {
     customerPhone?: string | null;
     pickupAddress?: string | null;
   }, leaseToken: string, updatedAt: string): Promise<boolean>;
-  // The lazy-repair path for a legacy confirmed booking whose confirmation rows are missing
-  // entirely (e.g. a subscriber or a split-capable email provider configured after it was already
-  // confirmed). Takes the same seeds/recipients confirmWithSideEffectOperations does; a split email
-  // row is only ever inserted when no legacy combined email_confirmation row already exists
-  // — see the implementation comment.
+  // Lazy repair for a confirmed booking whose confirmation rows are missing (a subscriber or a
+  // split-capable email provider configured after confirmation). A split email row is only
+  // inserted when no combined email_confirmation row already exists.
   ensureConfirmationSideEffectOperations(id: string, leaseToken: string, now: string, eventSeeds?: SideEffectOperationSeed[], emailRecipients?: EmailRecipientRole[]): Promise<void>;
   listSideEffectOperations(bookingId: string): Promise<SideEffectOperationRecord[]>;
   // Returns the authoritative attempt number assigned by the atomic claim, or null when the row
@@ -459,34 +391,18 @@ export interface BookingRepository {
     bookingId: string;
     identity: SideEffectOperationIdentity;
     leaseToken: string;
-    // 'abandoned' for a permanent failure, or a retryable failure's
-    // 10th attempt — see src/confirmation.ts's classifyAttemptOutcome, the only caller that ever
-    // picks it.
+    // 'abandoned': a permanent failure, or a retryable failure's 10th attempt.
     status: 'succeeded' | 'failed' | 'abandoned';
     providerResultId?: string | null;
     error?: string | null;
     resolvedAt: string;
-    // Set only when status is 'failed' — computed by the caller via
-    // src/reconciliation-helpers.ts's computeNextAttemptAt. A 'succeeded'/'abandoned' resolve always
-    // clears both next_attempt_at and failure_started_at (the row is no longer retrying), regardless
-    // of what's passed here.
+    // Set only when status is 'failed'. A 'succeeded'/'abandoned' resolve always clears both
+    // next_attempt_at and failure_started_at regardless of what's passed here.
     nextAttemptAt?: string | null;
   }): Promise<boolean>;
-  // Mutation-path outbox claim/resolve. Unlike the confirmation-path
-  // pair above, these aren't gated by a confirmation lease — cancel/reschedule/no-show already run
-  // their own compare-and-set in the transition methods, and the rows themselves are only ever
-  // written conditional on that CAS winning (see transitionToCancelled et al) — so this is a plain
-  // claim/resolve over the row's identity columns, with its OWN attempted_at doubling as a lease
-  // token since there's no separate lease concept here to reuse. listSideEffectOperations
-  // (above) is reused as-is to read them back — its SQL was never lease-scoped, just filtered by
-  // booking_id.
-  //
-  // Claimable from 'pending'/'failed', OR an 'in_flight' row whose attempted_at is older than
-  // MUTATION_SIDE_EFFECT_LEASE_MS (a killed claimant's stale claim) — never from 'succeeded' (never
-  // re-sent) or a live 'in_flight' (no double-claim by a concurrent retry).
-  // Returns the authoritative attempt number assigned by the atomic claim, or null when the row
-  // was not claimable. This closes the list-to-claim race between concurrent drains.
-  // Additionally requires next_attempt_at to be NULL or <= attemptedAt.
+  // Not lease-gated like the confirmation-path pair above: cancel/reschedule/no-show already run
+  // their own CAS, so this is a plain claim/resolve with attempted_at as the lease token. Returns
+  // the claimed attempt number or null, closing the list-to-claim race between concurrent drains.
   claimMutationSideEffectOperation(bookingId: string, identity: SideEffectOperationIdentity, attemptedAt: string): Promise<number | null>;
   // The admin "Try again" bypass — same staleness/ownership shape as
   // claimMutationSideEffectOperation, but ignores next_attempt_at AND the attempt-count cap.
@@ -494,23 +410,19 @@ export interface BookingRepository {
   resolveMutationSideEffectOperation(input: {
     bookingId: string;
     identity: SideEffectOperationIdentity;
-    // See the identical comment on resolveSideEffectOperation above.
     status: 'succeeded' | 'failed' | 'abandoned';
     providerResultId?: string | null;
     error?: string | null;
     resolvedAt: string;
-    // The attempted_at value THIS claimant set at claim time. Resolve requires it to
-    // still match — so a slow original claimant that wakes up after a reclaimer already took the
-    // row (bumping attempted_at again) fails to match here (0 rows) instead of clobbering the
-    // reclaimer's outcome.
+    // The attempted_at this claimant set at claim time; resolve requires it still match, so a
+    // slow original claimant waking up after a reclaimer took the row (bumping attempted_at)
+    // fails to match here instead of clobbering the reclaimer's outcome.
     claimedAt: string;
-    // See the identical field on resolveSideEffectOperation above.
     nextAttemptAt?: string | null;
   }): Promise<boolean>;
-  // Durable rows for an event that is NOT a booking transition — today only
-  // payment.dispute_created, whose occurrence is Stripe's, not this table's. Every other seed is
-  // written inside the transition batch that owes it; this one has no transition to ride, so the
-  // row itself is the record of the occurrence and a plain conflict-free insert is enough.
+  // For an event that isn't a booking transition (today only payment.dispute_created). Every
+  // other seed rides the transition batch that owes it; this one has none, so the row itself is
+  // the record and a plain conflict-free insert is enough.
   recordBookingEventOperations(bookingId: string, seeds: SideEffectOperationSeed[], now: string): Promise<void>;
   transitionReschedule(id: string, input: {
     expectedStatus: BookingStatus;
@@ -519,21 +431,15 @@ export interface BookingRepository {
     endsAt: string;
     rescheduledFrom: string;
     updatedAt: string;
-    // Recomputed from the NEW endsAt at the call site (src/handlers/
-    // booking-actions.ts's rescheduleWithToken), mirroring the checkout-time computation — otherwise a
-    // booking moved later could have its manage link expire before the rescheduled service even
-    // happens, and one moved earlier would keep an over-long window. Optional/nullable so
-    // existing callers that don't pass one (older tests, mainly) leave tokens_expire_at
-    // untouched rather than clobbering it to NULL — see the COALESCE in the implementation.
+    // Recomputed from the new endsAt so a booking moved later doesn't have its manage link
+    // expire before the rescheduled service happens (and one moved earlier doesn't keep an
+    // over-long window). Optional: omitting it leaves tokens_expire_at untouched via COALESCE.
     tokensExpireAt?: string | null;
     mutationSideEffects?: SideEffectOperationSeed[];
   }): Promise<Booking | null>;
-  // Atomic reschedule write: extends transitionReschedule's CAS (status +
-  // starts_at, guarding against a stale read racing a concurrent transition) with the same
-  // capacity guard as insertHoldWithCapacity, excluding this booking's own current occupancy
-  // from the "occupied" side so moving within/into a window it already partly occupies isn't
-  // double-counted against itself. Returns null on either the CAS loss or the capacity loss —
-  // the caller (rescheduleWithToken) already maps any null here to the existing 409 codes.
+  // Extends transitionReschedule's CAS with the same capacity guard as insertHoldWithCapacity,
+  // excluding this booking's own current occupancy so moving into a window it already partly
+  // occupies isn't double-counted. Returns null on either a CAS loss or a capacity loss.
   rescheduleWithCapacity(id: string, input: {
     expectedStatus: BookingStatus;
     expectedStartsAt: string;
@@ -542,7 +448,6 @@ export interface BookingRepository {
     rescheduledFrom: string;
     updatedAt: string;
     now: string;
-    // See the identical field on transitionReschedule above.
     tokensExpireAt?: string | null;
     // Reschedule rows receive the incremented per-booking transition version in the same batch,
     // so a repeated A→B hop cannot collide with an earlier one.
@@ -557,33 +462,26 @@ export interface BookingRepository {
   listDayOverrides(from: string, to: string): Promise<DayCapacityOverride[]>;
   upsertDayOverride(date: string, capacity: number, reason: string | null): Promise<void>;
   deleteDayOverride(date: string): Promise<void>;
-  // Plural, batched siblings of upsertDayOverride/deleteDayOverride: handleAdminPost's bulk day
-  // actions (set/close/clear over a date range) use these instead of looping the singular
-  // methods, so a range submit is one D1 round trip instead of up to 366. `audit` is required (not
-  // optional): these are the six methods handleAdminPost — the only production caller of each —
-  // uses to mutate admin state, and an admin write with no history entry is a bug, not a valid
-  // call. One admin_change_history row per date rides the same db.batch() as the change.
+  // Batched siblings of upsertDayOverride/deleteDayOverride so a range submit is one D1 round
+  // trip instead of many. `audit` is required, not optional: an admin write with no history
+  // entry is a bug. One admin_change_history row per date rides the same batch as the change.
   upsertDayOverrides(dates: string[], capacity: number, reason: string | null, audit: AdminChangeAudit): Promise<void>;
   deleteDayOverrides(dates: string[], audit: AdminChangeAudit): Promise<void>;
   listCapacityDefaults(): Promise<CapacityDefault[]>;
   upsertCapacityDefault(fromDate: string, capacity: number, reason: string | null, audit: AdminChangeAudit): Promise<void>;
   deleteCapacityDefault(fromDate: string, audit: AdminChangeAudit): Promise<void>;
-  // Operator-editable config overrides (core/settings.ts): key -> JSON-encoded value.
+  // Operator-editable config overrides: key -> JSON-encoded value.
   listSettings(): Promise<Record<string, string>>;
   upsertSetting(key: string, value: string): Promise<void>;
-  // handleAdminPost's only single-key write path (settings-reset for one key); see applySettingsBatch
-  // below for the multi-key save/reset path. Required audit param, same rationale as above.
+  // Single-key write path; required audit param for the same reason as above.
   deleteSetting(key: string, audit: AdminChangeAudit): Promise<void>;
-  // Applies every key of a settings section in one D1 batch (all-or-nothing) — see
-  // core/settings.ts mergeAndValidateSettings, which the admin save path runs first. One history
-  // row per operation rides the same batch.
+  // Applies every key of a settings section in one D1 batch, all-or-nothing. One history row
+  // per operation rides the same batch.
   applySettingsBatch(operations: SettingsBatchOperation[], audit: AdminChangeAudit): Promise<void>;
-  // Most-recent-first; read-only, for tests and a future admin-UI history view.
   listAdminChangeHistory(limit: number): Promise<AdminChangeHistoryEntry[]>;
-  // Compare-and-set claim: succeeds (true) only when no operation row exists yet for this
-  // booking_id, so a refund=full and refund=none request racing on the same booking can never
-  // both proceed to call Stripe. The loser calls getRefundOperationByBookingId to
-  // see which decision won.
+  // Compare-and-set: succeeds only when no operation row exists yet for this booking_id, so a
+  // refund=full and refund=none request racing on the same booking can never both call Stripe.
+  // The loser reads getRefundOperationByBookingId to see which decision won.
   claimRefundOperation(input: {
     id: string;
     bookingId: string;
@@ -592,14 +490,9 @@ export interface BookingRepository {
     requestedAt: string;
   }): Promise<boolean>;
   getRefundOperationByBookingId(bookingId: string): Promise<RefundOperationRecord | null>;
-  // Records the Stripe outcome of a claimed operation. Safe to call more than once (e.g. a
-  // resumed/retried operation) — it's a conditional UPDATE by id (WHERE status != 'succeeded'),
-  // not a plain write: status only ever advances (requested -> succeeded/failed), so a stale
-  // attempt (e.g. an operator retry racing the charge.refunded webhook) can never downgrade an
-  // already-succeeded row to 'failed' or clear its recorded refund id/amount.
-  // 'abandoned' (a permanent/tenth-attempt failure) and
-  // nextAttemptAt/clearing failure_started_at are additive to this same call — see
-  // src/refund-executor.ts, the only caller that ever sets them.
+  // A conditional UPDATE (WHERE status != 'succeeded'), not a plain write: status only ever
+  // advances, so a stale retry racing the charge.refunded webhook can never downgrade an
+  // already-succeeded row or clear its recorded refund id/amount.
   resolveRefundOperation(id: string, input: {
     status: 'succeeded' | 'failed' | 'abandoned';
     stripeRefundId?: string | null;
@@ -609,8 +502,8 @@ export interface BookingRepository {
     nextAttemptAt?: string | null;
   }): Promise<void>;
   // Removes this request's still-pending claim after its own CAS cancel loses to a non-cancelled
-  // winner (e.g. a reschedule), so it cannot block a later legitimate cancellation. A succeeded
-  // row is deliberately retained because it is the durable record that Stripe moved the money.
+  // winner, so it can't block a later legitimate cancellation. A succeeded row is retained: it's
+  // the durable record that Stripe moved the money.
   deleteRefundOperation(id: string): Promise<void>;
   // A non-authoritative upsert preserves any terminal outcome, so stale caller data cannot
   // regress a recorded Stripe refund. Does not overwrite requested_at on an existing row.
@@ -620,40 +513,28 @@ export interface BookingRepository {
 
   // ---- Autonomous reconciliation ----------------------------------------------------
 
-  // The scheduled reconciler's (and the shared refund executor's own)
-  // execution claim — a single atomic UPDATE, mirroring claimMutationSideEffectOperation's "the
-  // row's own attempted_at doubles as the lease/staleness reference" shape, since a refund
-  // operation is one row per booking, not one per kind. Claimable from 'requested'/'failed' (never
-  // 'succeeded'/'abandoned'), or a stale 'in_flight' row (a killed claimant), gated by
-  // next_attempt_at and the same SIDE_EFFECT_MAX_ATTEMPTS cap side-effect operations use. Returns
-  // the authoritative attempt number, or null when not claimable.
+  // A single atomic UPDATE with attempted_at doubling as the lease/staleness reference, since a
+  // refund operation is one row per booking. Claimable from 'requested'/'failed' or a stale
+  // 'in_flight' row; returns the attempt number, or null when not claimable.
   claimRefundExecution(id: string, attemptedAt: string): Promise<number | null>;
-  // The admin "Try again" bypass for a refund operation — ignores
-  // next_attempt_at and the attempt-count cap (so an 'abandoned' refund can be retried once), but
-  // still refuses a live (non-stale) 'in_flight' claim and still increments the lifetime count.
+  // Admin "Try again" bypass: ignores next_attempt_at and the attempt-count cap so an
+  // 'abandoned' refund can be retried, but still refuses a live 'in_flight' claim.
   claimRefundExecutionForRetry(id: string, attemptedAt: string): Promise<number | null>;
 
-  // Execution, first-time incident projection, and existing-incident maintenance use separate
-  // bounded pages. Terminal rows can therefore never consume the page reserved for executable
-  // debt, while row-level side-effect candidates preserve each sibling's independent backoff.
+  // Execution, incident projection, and incident maintenance each use separate bounded pages, so
+  // terminal rows never consume the page reserved for executable debt.
   listSideEffectExecutionCandidates(now: string, staleBefore: string, limit: number): Promise<SideEffectOperationRecord[]>;
   listRefundExecutionCandidateBookingIds(now: string, staleBefore: string, limit: number): Promise<string[]>;
   listSideEffectIncidentCandidateBookingIds(failureDueBefore: string, limit: number): Promise<string[]>;
   listRefundIncidentCandidateBookingIds(limit: number): Promise<string[]>;
   listIncidentReprojectionCandidates(limit: number): Promise<OperationalIncidentRecord[]>;
-  // 'oversell' rows are permanent markers (never retried — see
-  // confirmWithSideEffectOperations above), so the candidate set is simply "no incident row
-  // has ever been opened for this marker yet" rather than a claim/backoff query.
+  // 'oversell' rows are permanent markers, never retried, so the candidate set is simply "no
+  // incident has been opened for this marker yet" rather than a claim/backoff query.
   listUnreportedOversellMarkers(limit: number): Promise<SideEffectOperationRecord[]>;
 
-  // The incident ledger. `upsertOpenIncident` both inserts a
-  // brand-new row and reopens/updates an existing one (INSERT ... ON CONFLICT(source_type,
-  // source_key)) — the caller (src/reconciliation.ts) decides open vs. update vs. skip via
-  // src/reconciliation-helpers.ts's projectIncident and only calls this for 'open'/'update'.
-  // escalate bumps alert_revision; a plain update (no escalation) only refreshes
-  // last_detected_at/attempt_count/severity/source_updated_at, leaving alert_revision (and any
-  // resolved/manual state a reopen is superseding) alone until the caller decides otherwise —
-  // reopening a resolved row always clears resolved_at/resolution_kind/resolved_by/resolution_note.
+  // Both inserts a new row and reopens/updates an existing one (ON CONFLICT). `escalate` bumps
+  // alert_revision; a plain update only refreshes last_detected_at/attempt_count/severity/
+  // source_updated_at. Reopening a resolved row always clears its resolution fields.
   upsertOpenIncident(input: {
     id: string;
     bookingId: string;
@@ -666,9 +547,8 @@ export interface BookingRepository {
     now: string;
     escalate: boolean;
   }): Promise<void>;
-  // Any status (open OR resolved) — the caller (src/reconciliation-helpers.ts's projectIncident)
-  // needs a resolved row's own state (resolutionKind/sourceUpdatedAt) to decide whether a manual
-  // resolution should stay resolved, not just whether an open one exists.
+  // Any status (open or resolved): the caller needs a resolved row's own state
+  // (resolutionKind/sourceUpdatedAt) to decide whether a manual resolution should stay resolved.
   getIncidentBySource(sourceType: OperationalIncidentSourceType, sourceKey: string): Promise<OperationalIncidentRecord | null>;
   // The one row a manual "I handled this manually" action or an automatic-success scan resolves —
   // by (source_type, source_key), not id, so the caller never has to look the id up first.
@@ -680,22 +560,17 @@ export interface BookingRepository {
     resolvedBy: string;
     resolutionNote: string;
   }): Promise<boolean>;
-  // Open cards sort action-required before delayed, then oldest
-  // first.
+  // Sorts action-required before delayed, then oldest first.
   listOpenIncidents(limit: number): Promise<OperationalIncidentRecord[]>;
-  // Simple 30-day counts and recent resolved history.
   listRecentResolvedIncidents(since: string, limit: number): Promise<OperationalIncidentRecord[]>;
   countIncidentsSince(since: string): Promise<{ opened: number; resolved: number }>;
-  // The ops-health read surface. Both are pure aggregates — no
-  // booking data, no parameters — so the endpoint can answer "is this deployment healthy?" without
+  // Pure aggregates, no booking data and no parameters, so a health endpoint can answer without
   // exposing rows.
   countOpenIncidents(): Promise<number>;
   countSideEffectDebtByFamily(): Promise<SideEffectDebtByFamily[]>;
 
-  // Alert delivery's own claim/attempt/backoff, independent of the
-  // incident's own detection state — mirrors claimRefundExecution's single-row-lease shape.
-  // Claimable only when alerted_revision < alert_revision (an undelivered revision exists) and the
-  // claim/backoff windows allow it.
+  // Alert delivery's own claim/attempt/backoff, independent of the incident's detection state.
+  // Claimable only when alerted_revision < alert_revision and the claim/backoff windows allow it.
   listAlertCandidateIds(now: string, limit: number): Promise<string[]>;
   claimIncidentAlert(id: string, token: string, now: string, leaseUntil: string): Promise<OperationalIncidentRecord | null>;
   resolveIncidentAlertSuccess(id: string, token: string, alertedRevision: number): Promise<void>;
@@ -707,13 +582,10 @@ interface BookingRow {
   reference: string;
   service_slug: string;
   quantity: number;
-  // The pickup domain lives in ServiceConfig.location.pickupOptions,
-  // which the DB can't see — assertValidBookingRow below only enforces the config-independent
-  // invariant that a present id is a non-empty string. The column is nullable; NULL means no
-  // location module.
+  // The DB can't see the pickup-option domain (that's app config), so assertValidBookingRow
+  // below only enforces that a present id is a non-empty string. NULL means no location module.
   pickup_type: PickupType | null;
   pickup_address: string | null;
-  // See migrations/0014_meeting_points.sql for what each means.
   meeting_point_id: string | null;
   meeting_point_label: string | null;
   starts_at: string;
@@ -732,7 +604,6 @@ interface BookingRow {
   metadata: string | null;
   cancel_token: string;
   operator_token: string;
-  // See migrations/0009_token_hashing.sql for what each column means and why.
   cancel_token_hash: string | null;
   operator_token_hash: string | null;
   cancel_token_enc: string | null;
@@ -746,31 +617,26 @@ interface BookingRow {
   updated_at: string;
 }
 
-// The invariants migrations/0011_schema_constraints.sql's CHECK
-// constraints enforce at write time, re-checked here at read time -- see InvalidBookingRowError
-// above for why. String comparison of ends_at > starts_at mirrors the SQL CHECK exactly: both
-// columns are consistently-formatted ISO 8601 UTC instants (e.g. '2026-08-01T09:00:00.000Z'), so
-// lexical order matches chronological order, same as the CHECK constraint's own TEXT comparison.
+// Re-checks at read time the same invariants the DB's CHECK constraints enforce at write time.
+// The ends_at > starts_at string comparison mirrors the SQL CHECK exactly: both columns are
+// ISO 8601 UTC instants, so lexical order matches chronological order.
 function assertValidBookingRow(row: BookingRow): void {
   if (row.quantity <= 0) throw new InvalidBookingRowError(row.id, `quantity must be > 0, got ${row.quantity}`);
   if (row.price_minor < 0) throw new InvalidBookingRowError(row.id, `price_minor must be >= 0, got ${row.price_minor}`);
   if (!(row.ends_at > row.starts_at)) {
     throw new InvalidBookingRowError(row.id, `ends_at (${row.ends_at}) must be after starts_at (${row.starts_at})`);
   }
-  // Migration 0015 dropped the pickup_type CHECK because the id
-  // domain is per-service config the DB can't enumerate — but an empty id is invalid under every
-  // possible config (pickupOption ids are non-empty by schema), so that floor is enforced here.
-  // NULL is a distinct, legitimate state (the service declares no location options);
-  // the empty string is not, since it would read back as a declared-but-nameless option.
+  // The DB has no CHECK for pickup_type since the id domain is per-service config it can't
+  // enumerate, but an empty id is invalid under every config, so that floor is enforced here.
+  // NULL is legitimate (no location module); empty string is not (a nameless option).
   if (row.pickup_type !== null && (typeof row.pickup_type !== 'string' || row.pickup_type === '')) {
     throw new InvalidBookingRowError(row.id, 'pickup_type must be a non-empty string or NULL');
   }
 }
 
-// The metadata column is opaque consumer JSON. A row
-// that somehow holds unparseable text degrades to null rather than failing every read of the
-// booking -- the booking's own invariants don't depend on it, and an operator must still be able
-// to see, cancel, and refund that booking.
+// Opaque consumer JSON. Unparseable text degrades to null rather than failing the whole read:
+// the booking's own invariants don't depend on it, and an operator must still be able to see,
+// cancel, and refund that booking.
 function parseBookingMetadata(raw: string | null): Record<string, unknown> | null {
   if (raw === null) return null;
   try {
@@ -781,8 +647,7 @@ function parseBookingMetadata(raw: string | null): Record<string, unknown> | nul
   }
 }
 
-// The symmetric write side of parseBookingMetadata above — an empty/absent record stores as SQL
-// NULL rather than the literal string '{}', matching every existing row and keeping "no metadata"
+// An empty/absent record stores as SQL NULL rather than the string '{}', keeping "no metadata"
 // one representation, not two.
 function serializeBookingMetadata(value: Record<string, unknown> | null | undefined): string | null {
   if (!value || Object.keys(value).length === 0) return null;
@@ -971,8 +836,7 @@ function sideEffectIdentityParams(identity: SideEffectOperationIdentity): unknow
 }
 
 // The incident ledger's source key for a side-effect row, built (never parsed) from the identity
-// columns — the SQL twin of sideEffectOperationKey above. Migration 0017 re-keys existing rows with
-// the same expression.
+// columns — the SQL twin of sideEffectOperationKey above.
 const sideEffectSourceKeySql = `side_effect_operations.booking_id || ':' || side_effect_operations.family
   || COALESCE(':' || side_effect_operations.name, '')
   || COALESCE(':' || side_effect_operations.event, '')
@@ -999,13 +863,9 @@ function mapSideEffectOperation(row: SideEffectOperationRow): SideEffectOperatio
   };
 }
 
-// Name of the optional Worker secret used to decrypt cancel_token_enc/
-// operator_token_enc back into a usable link (see migrations/0009_token_hashing.sql for the full
-// rationale). Read the same way as RESERVA_CSRF_SECRET/RESERVA_OPERATOR_SECRET (src/admin-csrf.ts,
-// src/handlers/booking-actions.ts) — via the SecretLookup passed in below, never through ClientConfig — and,
-// like RESERVA_CSRF_SECRET, deliberately NOT added to runtime-context.ts's default
-// secretBindings or integration.ts's astro:env schema: a deployment must opt in by adding its name
-// to secretBindings (see README "Runtime module" / "Admin access and booking tokens").
+// Optional Worker secret to decrypt cancel_token_enc/operator_token_enc into a usable link. Not
+// added to the default secretBindings: a deployment must opt in explicitly, same as
+// RESERVA_CSRF_SECRET.
 const TOKEN_ENC_SECRET_NAME = 'RESERVA_TOKEN_ENC_KEY';
 
 function base64UrlEncodeBytes(bytes: Uint8Array): string {
@@ -1020,9 +880,8 @@ function base64UrlDecodeBytes(value: string): Uint8Array {
   return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
 }
 
-// Normalizes an arbitrary-length configured secret string into the exact 32 bytes AES-256-GCM
-// needs, the same way admin-csrf.ts's hmacSign accepts an arbitrary-length HMAC key — SHA-256 the
-// secret rather than requiring the operator to provision exactly 32 bytes themselves.
+// Normalizes an arbitrary-length secret into the exact 32 bytes AES-256-GCM needs by hashing it,
+// rather than requiring the operator to provision exactly 32 bytes themselves.
 async function importTokenKey(secret: string): Promise<CryptoKey> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret));
   return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
@@ -1037,9 +896,8 @@ async function encryptToken(key: CryptoKey, plaintext: string): Promise<string> 
   return base64UrlEncodeBytes(combined);
 }
 
-// Fails closed (null, not throw) on a corrupt/tampered/foreign-key blob so one bad row can never
-// crash an otherwise-successful list/read — callers already treat "no decrypted value" as "fall
-// back to whatever mapBooking put there" (see hydrateBooking).
+// Fails closed (null, not throw) on a corrupt/tampered blob so one bad row can never crash an
+// otherwise-successful list/read; callers fall back to whatever mapBooking put there.
 async function decryptToken(key: CryptoKey, blob: string): Promise<string | null> {
   try {
     const combined = base64UrlDecodeBytes(blob);
@@ -1052,31 +910,26 @@ async function decryptToken(key: CryptoKey, blob: string): Promise<string | null
   }
 }
 
-// Satisfies the legacy cancel_token/operator_token columns' NOT NULL UNIQUE constraint for rows
-// written after migrations/0009_token_hashing.sql, without those columns ever holding a usable
-// credential again. Safe even if it leaks in a dump: getBookingByCancelToken/
-// getBookingByOperatorToken below only ever consult this column via a query guarded by
-// `..._hash IS NULL`, and every row written after this migration has its hash set from the start.
+// Satisfies the legacy cancel_token/operator_token columns' NOT NULL UNIQUE constraint without
+// those columns ever holding a usable credential. Safe even if it leaks in a dump: lookups only
+// consult this column when `..._hash IS NULL`, and new rows always have their hash set.
 function placeholderToken(): string {
   return `nohash:${crypto.randomUUID()}`;
 }
 
-// The read side of placeholderToken: a booking whose cancelToken/operatorToken still carries the
-// `nohash:` prefix is one hydrateBooking could not restore to plaintext — either
-// RESERVA_TOKEN_ENC_KEY isn't configured, or the row predates that secret being set. Any link
-// built from such a token would 403 the instant it's clicked, so every render site
-// (email manage buttons, the admin dashboard's manage column) asks this first and omits the link
-// rather than showing one that looks live but is already dead.
+// A booking whose token still carries the `nohash:` prefix is one hydrateBooking couldn't
+// restore to plaintext — either the encryption secret isn't configured, or the row predates it.
+// A link built from such a token would 403 instantly, so render sites check this and omit it.
 export function isManageableToken(token: string): boolean { return !token.startsWith('nohash:'); }
 
 export function createBookingRepository(
   db: D1Database,
-  // Same shape as context.ts's SecretLookup; duplicated inline rather than imported to avoid a
-  // repo.ts <-> context.ts circular import (context.ts already imports createBookingRepository).
+  // Duplicated inline rather than imported from context.ts, to avoid a circular import
+  // (context.ts already imports createBookingRepository).
   secrets?: (name: string) => string | undefined | Promise<string | undefined>,
 ): BookingRepository {
-  // Resolved and imported at most once per repository instance (i.e. per request in the normal
-  // Cloudflare adapter — see context.ts), not once per token: the secret cannot change mid-request.
+  // Resolved at most once per repository instance, not once per token: the secret cannot change
+  // mid-request.
   let tokenKeyPromise: Promise<CryptoKey | null> | undefined;
   const resolveTokenKey = (): Promise<CryptoKey | null> => {
     if (!tokenKeyPromise) {
@@ -1088,13 +941,9 @@ export function createBookingRepository(
     return tokenKeyPromise;
   };
 
-  // Reconstitutes booking.cancelToken/operatorToken into their real, presentable plaintext for
-  // every DB-loaded booking that might flow into an email's manage link (providers/email-brevo
-  // manageUrl) or the admin dashboard's operator manage-link column (src/handlers/admin.ts) —
-  // both read straight off the Booking object, with no idea whether it came from a fresh insert,
-  // a token lookup, or an arbitrary later read. mapBooking already defaults these fields to
-  // row.cancel_token/row.operator_token (the legacy plaintext column, correct for a
-  // not-yet-backfilled legacy row); this only overrides them when a decryptable blob exists.
+  // Reconstitutes cancelToken/operatorToken into presentable plaintext for every DB-loaded
+  // booking. mapBooking already defaults these to the legacy plaintext column (correct for a
+  // not-yet-backfilled row); this only overrides them when a decryptable blob exists.
   async function hydrateBooking(row: BookingRow, key: CryptoKey | null): Promise<Booking> {
     const mapped = mapBooking(row);
     if (!key) return mapped;
@@ -1139,25 +988,12 @@ export function createBookingRepository(
     return hydrateBooking(row, await resolveTokenKey());
   };
 
-  // Builds the single INSERT statement transitionToCancelled/
-  // transitionToNoShow/transitionReschedule/rescheduleWithCapacity batch ALONGSIDE (before, specifically) their own CAS
-  // UPDATE, so the outbox rows land iff the transition actually happens. `casPredicate`/`casParams`
-  // are the EXACT SAME compare-and-set condition the UPDATE itself uses (id/status[/starts_at
-  // /capacity], whatever the caller's WHERE clause is) — wrapped in WHERE EXISTS and evaluated
-  // BEFORE the UPDATE runs, i.e. against the pre-batch snapshot. Because a db.batch() call is
-  // atomic relative to any OTHER writer (D1's core guarantee), this INSERT and the UPDATE right
-  // after it always agree: either both fire (this call's CAS wins) or neither does (a stale/
-  // duplicate call, or someone else already moved the row) — so a losing attempt can never record,
-  // and later drain-send, side effects for a mutation that didn't happen. (Placing the INSERT
-  // AFTER the UPDATE and checking POST-transition state instead — the way
-  // confirmWithSideEffectOperations does — doesn't work here: that method disambiguates "my write
-  // won" from "someone else already got here first" via a per-attempt confirmation_lease_token,
-  // which these plain CAS transitions have no equivalent of.) All N seeds are inserted by this ONE
-  // statement (a VALUES-derived table), not N separate ones, so nothing about statement count
-  // affects the guarantee above.
-  // A bookings-table rebuild must continue to preserve reschedule_transition_version; this
-  // insert reads its next value before the paired CAS update increments it, keeping the row's
-  // discriminator and the transition version inseparable without relying on wall-clock uniqueness.
+  // Runs in the same batch as, and before, the transition's own CAS UPDATE, using the identical
+  // predicate wrapped in WHERE EXISTS against the pre-batch snapshot. Since db.batch() is atomic,
+  // the INSERT and UPDATE always agree — both fire or neither does — so a losing CAS attempt can
+  // never record side effects for a mutation that didn't happen. Reads
+  // reschedule_transition_version before the paired UPDATE increments it, keeping the
+  // discriminator and the transition version inseparable.
   const mutationSideEffectInsert = (
     bookingId: string,
     seeds: SideEffectOperationSeed[],
@@ -1168,11 +1004,9 @@ export function createBookingRepository(
   ) => {
     const version = `(SELECT reschedule_transition_version + 1 FROM bookings WHERE ${casPredicate})`;
     const discriminator = appendRescheduleVersion ? version : 'NULL';
-    // The stored envelope must already carry the id a receiver will
-    // deduplicate on, and that id ends in this same discriminator. Completing it here — in the one
-    // atomic write that assigns the version — is what keeps the row and its payload consistent
-    // without a second, racy write afterwards. Seeds without a payload (email, calendar) pass
-    // through untouched.
+    // The stored envelope must carry the id a receiver dedupes on, ending in this same
+    // discriminator. Completing it here, in the one atomic write that assigns the version, keeps
+    // row and payload consistent without a second, racy write. Payload-less seeds pass through.
     const payload = appendRescheduleVersion
       ? `CASE WHEN k.column4 IS NULL THEN NULL ELSE json_set(k.column4, '$.id', k.column5 || ':' || ${version}) END`
       : 'k.column4';
@@ -1239,9 +1073,8 @@ export function createBookingRepository(
     input.stripeRefundId, input.amountCents, input.requestedAt, input.resolvedAt, input.error ?? null,
   );
 
-  // One bound statement per admin_change_history row, for the caller to fold into the
-  // same db.batch() as the change it records — never a second, separate write (see the six methods
-  // below and AdminChangeAudit's doc comment for why the caller's audit is required, not optional).
+  // One bound statement per admin_change_history row, for the caller to fold into the same
+  // db.batch() as the change it records — never a second, separate write.
   const adminHistoryInsert = (
     domain: AdminChangeDomain,
     itemKey: string,
@@ -1289,25 +1122,20 @@ export function createBookingRepository(
       ).bind(id, token).run();
     },
     getBookingById: (id) => oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id),
-    // Deliberately NOT routed through oneBooking's hydration: the only caller
-    // (handleCheckout's referenceExists, src/handlers/checkout.ts) only checks for a non-null
-    // result inside a reference-collision retry loop that can run up to a dozen times per
-    // checkout, and never reads the returned booking's tokens — hydrating here would be a
-    // real (if small) per-attempt AES-GCM cost for a value nothing ever uses.
+    // Not routed through oneBooking's hydration: the only caller checks for a non-null result
+    // in a retry loop that can run many times per checkout and never reads the tokens, so
+    // hydrating here would be a real per-attempt AES-GCM cost for a value nothing uses.
     getBookingByReference: async (reference) => {
       const row = await first(db.prepare(`SELECT ${bookingColumns} FROM bookings WHERE reference = ?`).bind(reference).all<BookingRow>());
       return row ? mapBooking(row) : null;
     },
     getBookingBySessionRef: (sessionRef) => oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE payment_session_ref = ?`, sessionRef),
     getBookingByPaymentRef: (paymentRef) => oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE payment_ref = ?`, paymentRef),
-    // Hash-first lookup with a guarded legacy-plaintext fallback + lazy backfill (see
-    // migrations/0009_token_hashing.sql). `now` gates tokens_expire_at in the SAME query as the
-    // hash/plaintext match, and cancel-token lookups additionally require
-    // cancel_token_revoked_at IS NULL — both an expired and a revoked token fail exactly like an
-    // unknown one (a plain null result), so callers (tokenBooking/handleManage,
-    // src/handlers/status-manage.ts) can't distinguish "wrong token" from "right token, denied" and no
-    // oracle is exposed. Operator tokens are deliberately never revoked (see the migration's
-    // comment on cancel_token_revoked_at) so they carry no revocation check here.
+    // Hash-first lookup with a guarded legacy-plaintext fallback and lazy backfill. `now` gates
+    // tokens_expire_at in the same query as the match, and additionally requires
+    // cancel_token_revoked_at IS NULL — an expired and a revoked token both fail exactly like an
+    // unknown one, so no oracle distinguishes them. Operator tokens are never revoked, so they
+    // carry no revocation check.
     async getBookingByCancelToken(token, now) {
       const key = await resolveTokenKey();
       const hash = await sha256Base64Url(token);
@@ -1317,11 +1145,9 @@ export function createBookingRepository(
            AND (tokens_expire_at IS NULL OR tokens_expire_at > ?)`,
       ).bind(hash, now).all<BookingRow>());
       if (hashRow) return hydrateBooking(hashRow, key);
-      // Compatibility fallback for a row written before this migration (cancel_token_hash IS
-      // NULL). Guarding on that column, not just cancel_token = ?, closes the "present the
-      // leaked hash value itself as a token" oracle: once a row has a hash (true for every row
-      // from the moment it's written, whether at insert or right here on first use), this branch
-      // can never match it again, so a hash appearing in a dump is never itself accepted.
+      // Fallback for a row with cancel_token_hash IS NULL. Guarding on that column, not just
+      // cancel_token = ?, closes a "present the leaked hash as a token" oracle: once a row has a
+      // hash, this branch can never match it again, so a hash in a dump is never itself accepted.
       const legacyRow = await first(db.prepare(
         `SELECT ${bookingColumns} FROM bookings
          WHERE cancel_token = ? AND cancel_token_hash IS NULL AND cancel_token_revoked_at IS NULL
@@ -1329,17 +1155,14 @@ export function createBookingRepository(
       ).bind(token, now).all<BookingRow>());
       if (!legacyRow) return null;
       const enc = key ? await encryptToken(key, token) : null;
-      // Re-guarded by cancel_token_hash IS NULL: a concurrent request racing this same backfill
-      // simply no-ops here (harmless — both already have the authenticated row in hand from the
-      // SELECT above) rather than clobbering whichever hash won.
+      // Re-guarded by cancel_token_hash IS NULL: a concurrent request racing this backfill just
+      // no-ops here instead of clobbering whichever hash won.
       await db.prepare(
         `UPDATE bookings SET cancel_token_hash = ?, cancel_token_enc = ?, cancel_token = ?
          WHERE id = ? AND cancel_token_hash IS NULL`,
       ).bind(hash, enc, placeholderToken(), legacyRow.id).run();
-      // legacyRow.cancel_token IS the presented token (that's how the WHERE above matched it),
-      // and cancel_token_enc was still NULL at read time, so hydrateBooking's default (mapBooking
-      // falling back to row.cancel_token) already yields the right plaintext without needing a
-      // second read of the just-updated row.
+      // legacyRow.cancel_token is the presented token, and cancel_token_enc was still NULL at
+      // read time, so hydrateBooking's default already yields the right plaintext.
       return hydrateBooking(legacyRow, key);
     },
     async getBookingByOperatorToken(token, now) {
@@ -1395,9 +1218,8 @@ export function createBookingRepository(
     async insertHold(input) {
       const holdIp = input.holdIp ?? null;
       const holdLimit = input.maxActiveHoldsForIp ?? null;
-      // Every row written from here on gets only a hash (+ encrypted blob, if a key
-      // is configured) — never real plaintext in cancel_token/operator_token (see
-      // migrations/0009_token_hashing.sql and newTokenColumns above).
+      // Every row written from here on gets only a hash (+ encrypted blob, if a key is
+      // configured), never real plaintext in cancel_token/operator_token.
       const tokenColumns = await newTokenColumns(input);
       const result = await db.prepare(
         `INSERT INTO bookings (
@@ -1427,37 +1249,15 @@ export function createBookingRepository(
       if (!created) throw new Error('Booking insert did not return a row');
       return created;
     },
-    // Same per-IP hold-cap guard as insertHold, plus a capacity guard —
-    // both evaluated in the same WHERE clause of one INSERT ... SELECT, so D1's single-writer,
-    // single-statement-transaction semantics make "check occupancy, then insert" atomic. The
-    // capacity subexpression mirrors core/occupancy.ts: capacityForDate (day override, else the
-    // capacity_defaults row with the latest from_date <= localDate, else defaultCapacity, each
-    // floored at 0 via the 2+-argument MAX).
+    // Same per-IP hold-cap guard as insertHold, plus a capacity guard, both in one INSERT ...
+    // SELECT's WHERE clause, so D1 makes check-then-insert atomic. Tests max concurrency at each
+    // booking's start point, not a SUM over overlaps (mirrors core/occupancy.ts, avoiding false 409s).
     //
-    // The occupancy test is a faithful MAX-CONCURRENCY test, not a SUM of
-    // every overlapping booking's units — SUM over-counts bookings that overlap the requested
-    // window but never overlap EACH OTHER (e.g. one ending as the other starts) and produces
-    // false 409s. This mirrors core/occupancy.ts's maxAtBoundaries exactly: the max is always
-    // attained at some point where an active booking starts, so "max-concurrent + requested <=
-    // capacity" is equivalent to "no candidate point p has SUM(units covering p) + requested >
-    // capacity", where candidate points are the request's own start plus every active
-    // overlapping booking's own starts_at (already >= the request start, by construction).
-    // "Active" = status IN ('hold','confirmed') AND (not a hold, or its hold hasn't expired).
-    // "Covering p" = starts_at <= p AND COALESCE(occupancy_ends_at, ends_at) > p — the same
-    // COALESCE fallback as before, so pre-migration NULL rows count as one default-turnaround
-    // unit (see migrations/0008).
-    //
-    // Known limitation (not a regression): this guard only sees
-    // the bookings table. External (non-reserva) Google Calendar events are folded into
-    // availability by checkSlot's pre-check (src/handlers/checkout.ts, via availabilityForDay) but
-    // are NOT part of this atomic statement — checkSlot's calendar read was already a
-    // non-atomic, best-effort pre-check, so this is not a new gap. Atomic
-    // calendar-aware occupancy is out of scope here; do not mirror calendar
-    // events into D1 to close it.
+    // Only sees the bookings table: external Google Calendar events are folded in by checkSlot's
+    // non-atomic pre-check, not by this statement.
     async insertHoldWithCapacity(input) {
       const holdIp = input.holdIp ?? null;
       const holdLimit = input.maxActiveHoldsForIp ?? null;
-      // See the identical comment in insertHold above.
       const tokenColumns = await newTokenColumns(input);
       const result = await db.prepare(
         `INSERT INTO bookings (
@@ -1504,8 +1304,7 @@ export function createBookingRepository(
         serializeBookingMetadata(input.metadata),
         input.createdAt, input.updatedAt,
         holdLimit, holdIp, input.createdAt, holdLimit,
-        // NOT EXISTS candidate points: the request's own start, then every active overlapping
-        // booking's own starts_at (b1.starts_at in [reqStart, reqEnd) that still covers reqStart).
+        // Candidate points: the request's own start, then each active overlapping booking's own start.
         input.startsAt,
         input.createdAt, input.startsAt, input.occupancyEndsAt, input.startsAt,
         // sum-at-point (b2) + requestedUnits > capacity resolution.
@@ -1514,11 +1313,9 @@ export function createBookingRepository(
         input.localDate, input.localDate, input.defaultCapacity,
       ).run();
       if (result.meta.changes === 0) {
-        // Reclassify a losing write: the hold-ip cap throws (matching insertHold's contract for
-        // existing callers), anything else is a capacity loss reported as null. This re-check is
-        // for error *classification* only — the atomic WHERE clause above already made the
-        // authoritative accept/reject decision, so a benign staleness here can misreport which
-        // guard tripped but can never cause an oversell.
+        // Reclassify a losing write: the hold-ip cap throws (matching insertHold's contract),
+        // anything else is a capacity loss reported as null. This re-check is for error
+        // classification only — the atomic WHERE clause already made the authoritative decision.
         if (holdLimit !== null) {
           const row = await first(db.prepare(
             `SELECT COUNT(*) AS count FROM bookings WHERE hold_ip = ? AND status = 'hold' AND hold_expires_at >= ?`,
@@ -1647,13 +1444,9 @@ export function createBookingRepository(
       // Each subscriber's row shares this exact batch, so it can
       // never exist without the confirmation it's owed by, nor vice versa.
       const eventOperations = (eventSeeds ?? []).map((seed) => operation(seed, seed.eventPayloadJson, 'pending', null, null));
-      // Split rows (one per recipient, in recipientsForEvent
-      // order) when the caller resolved a split-capable provider; otherwise the single legacy
-      // combined row. This is a brand-new confirmation (the CAS
-      // above only matches hold/expired), so no row of either shape can already exist here — the
-      // "legacy combined row wins" guard only applies to the repair path
-      // below (ensureConfirmationSideEffectOperations), which is where a pre-existing row is
-      // actually possible.
+      // Split rows (one per recipient) for a split-capable provider, otherwise the single legacy
+      // combined row. This is a brand-new confirmation, so no row of either shape already exists
+      // here — the "legacy row wins" guard only matters in the repair path below.
       const emailOperations = emailRecipients && emailRecipients.length > 0
         ? emailRecipients.map((recipient) => operation({ family: 'email', name: recipient, event: 'booking.confirmed' }, null, 'pending', null, null))
         : [operation({ family: 'email_confirmation' }, null, 'pending', null, null)];
@@ -1701,18 +1494,12 @@ export function createBookingRepository(
          WHERE id = ? AND status = 'confirmed' AND confirmation_lease_token = ?
          ON CONFLICT DO NOTHING`,
       ).bind(id, now, now, now, id, leaseToken);
-      // Always 'pending'. Migration 0018 turned every legacy "already delivered" flag into the
-      // succeeded row it describes, and ON CONFLICT DO NOTHING leaves that row alone here.
+      // Always 'pending'; ON CONFLICT DO NOTHING leaves an already-succeeded legacy row alone.
       //
-      // Same split-vs-combined choice confirmWithSideEffectOperations
-      // makes for a brand-new confirmation, applied here for legacy repair. A split row is only
-      // ever inserted when no legacy combined email_confirmation row already exists for this
-      // booking (the NOT EXISTS guard below) — an upgrade to a split-capable provider must never
-      // create fresh split rows alongside an already-executing (or already-succeeded) combined
-      // row, which would resend a customer message the combined attempt already delivered. The
-      // combined row itself carries no such guard: it is the legacy shape, and this repair
-      // path is the only place a split-capable provider can ever fall back to it (a brand-new
-      // confirmation always takes the branch above).
+      // Same split-vs-combined choice as confirmWithSideEffectOperations, for legacy repair. A
+      // split row is only inserted when no legacy combined email_confirmation row already exists
+      // (the NOT EXISTS guard below) — otherwise an upgrade to a split-capable provider could
+      // resend a message the combined attempt already delivered.
       const emailIdentities: SideEffectOperationIdentity[] = emailRecipients && emailRecipients.length > 0
         ? emailRecipients.map((recipient) => ({ family: 'email', name: recipient, event: 'booking.confirmed' }))
         : [{ family: 'email_confirmation' }];
@@ -1729,11 +1516,9 @@ export function createBookingRepository(
          WHERE id = ? AND status = 'confirmed' AND confirmation_lease_token = ? ${emailGuard}
          ON CONFLICT DO NOTHING`,
       ).bind(id, ...sideEffectIdentityParams(identity), now, now, id, leaseToken, ...(emailGuard ? [id] : [])));
-      // A legacy confirmed booking's subscriber rows, created lazily
-      // when a hook/webhook was registered after it was already confirmed. Always inserted
-      // 'pending' (unlike the calendar row above, which reads its outcome back off
-      // calendar_event_id), and always no-ops once the row exists — the row's own status is the
-      // only record of whether the subscriber has been told.
+      // A legacy confirmed booking's subscriber rows, created lazily when a hook/webhook was
+      // registered after confirmation. Always inserted 'pending' (unlike the calendar row above,
+      // which reads its outcome off calendar_event_id), and no-ops once the row exists.
       const eventOperations = (eventSeeds ?? []).map((seed) => db.prepare(
         `INSERT INTO side_effect_operations (
            booking_id, family, name, event, discriminator, event_payload_json,
@@ -1783,12 +1568,10 @@ export function createBookingRepository(
         .all<{ attempt_count: number }>();
       return result.results[0]?.attempt_count ?? null;
     },
-    // The admin retry bypass — same lease-ownership predicate, no
-    // next_attempt_at gate, no attempt-count cap (an 'abandoned' row is claimable), but a LIVE
-    // in_flight claim is still refused (status NOT IN ('succeeded') alone would also match 'in_flight' were it
-    // not for the fact this is a single-claimant confirmation-lease-gated table -- see
-    // renewConfirmationLease/acquireConfirmationLease: only the current lease holder can ever reach
-    // this call at all, so an in_flight row here can only be this same request's own earlier claim).
+    // Admin retry bypass: same lease-ownership predicate, no next_attempt_at gate, no
+    // attempt-count cap (an 'abandoned' row is claimable). A live in_flight claim is still
+    // refused, but since only the current lease holder can reach this call, an in_flight row
+    // here can only be this same request's own earlier claim.
     async claimSideEffectOperationForRetry(bookingId, identity, leaseToken, attemptedAt) {
       const result = await db.prepare(
         `UPDATE side_effect_operations
@@ -1802,10 +1585,8 @@ export function createBookingRepository(
         .all<{ attempt_count: number }>();
       return result.results[0]?.attempt_count ?? null;
     },
-    // The booking row no longer mirrors delivery state -- the operation row's own status
-    // IS that state, and the two can no longer disagree. What still has to be written back is
-    // calendar_event_id: the provider's event id is needed later to patch or delete the event, and
-    // an outbox row can be pruned while the calendar entry lives on.
+    // Delivery state lives on the operation row, not the booking row. Only calendar_event_id is
+    // written back, needed to patch or delete the event after the outbox row is pruned.
     async resolveSideEffectOperation(input) {
       const rowUpdate = db.prepare(
         `UPDATE side_effect_operations
@@ -1835,13 +1616,9 @@ export function createBookingRepository(
       const result = await db.batch([rowUpdate, bookingUpdate]);
       return (result[0]?.meta.changes ?? 0) > 0;
     },
-    // See the BookingRepository interface comment above these two
-    // methods for why they're ungated and how attempted_at doubles as a lease token. staleBefore
-    // is computed from the CALLER's own attemptedAt (not a fresh clock read) so this stays a pure
-    // function of its inputs, consistent with every other repo method here.
-    //
-    // The returned count comes from the winning UPDATE, not the drain's potentially stale list
-    // snapshot, so the tenth execution can never be resolved as an earlier failed attempt.
+    // staleBefore is computed from the caller's own attemptedAt, not a fresh clock read, keeping
+    // this a pure function of its inputs. The returned count comes from the winning UPDATE, not
+    // a stale list snapshot, so the tenth execution can never be resolved as an earlier attempt.
     async claimMutationSideEffectOperation(bookingId, identity, attemptedAt) {
       const staleBefore = new Date(Date.parse(attemptedAt) - MUTATION_SIDE_EFFECT_LEASE_MS).toISOString();
       const result = await db.prepare(
@@ -1855,9 +1632,8 @@ export function createBookingRepository(
         .all<{ attempt_count: number }>();
       return result.results[0]?.attempt_count ?? null;
     },
-    // The admin retry bypass — no next_attempt_at gate, no
-    // attempt-count cap (an 'abandoned' row is claimable), but a LIVE in_flight lease (attempted_at
-    // not yet stale) is still refused, matching every other retry-bypass claim in this file.
+    // Admin retry bypass: no next_attempt_at gate, no attempt-count cap, but a live in_flight
+    // lease (attempted_at not yet stale) is still refused.
     async claimMutationSideEffectOperationForRetry(bookingId, identity, attemptedAt) {
       const staleBefore = new Date(Date.parse(attemptedAt) - MUTATION_SIDE_EFFECT_LEASE_MS).toISOString();
       const result = await db.prepare(
@@ -1912,24 +1688,17 @@ export function createBookingRepository(
       if ((results[1]?.meta.changes ?? 0) === 0) return null;
       return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
     },
-    // transitionReschedule's CAS (status + starts_at) plus the same max-concurrency
-    // capacity guard as insertHoldWithCapacity (see the comment there for the
-    // NOT EXISTS shape and the retained calendar-occupancy limitation), with `id != ?` excluding
-    // this booking's own current row from BOTH the candidate points and the covering-sum
-    // subqueries — otherwise a move within/into a window this booking already occupies would
-    // count itself against its own request (see the "excludes its own occupancy" test).
+    // transitionReschedule's CAS plus the same max-concurrency capacity guard as
+    // insertHoldWithCapacity, with `id != ?` excluding this booking's own current row from both
+    // the candidate points and the covering-sum subqueries — otherwise a move into a window this
+    // booking already occupies would count itself against its own request.
     //
-    // occupancy_units is re-asserted on every reschedule (computed from
-    // occupancyFor(service, quantity) at the call site — party size doesn't change on a reschedule).
-    // This opportunistically self-heals a legacy NULL row (see migrations/0008) the first time it
-    // is ever moved, instead of leaving it undercounted as 1 unit forever.
+    // occupancy_units is re-asserted on every reschedule, opportunistically self-healing a
+    // legacy NULL row the first time it's moved instead of leaving it undercounted as 1 unit.
     async rescheduleWithCapacity(id, input) {
-      // Factored out (not inlined in the UPDATE below) so the
-      // batched outbox INSERT can re-check the EXACT SAME condition — including the capacity
-      // guard, not just status/starts_at — via WHERE EXISTS, evaluated before the UPDATE runs (see
-      // mutationSideEffectInsert's comment). Duplicating just the WHERE text this way (one source
-      // of truth for the params too) is cheaper to keep in sync than re-deriving a simplified
-      // guard that could silently drift from what actually gates the write.
+      // Factored out so the batched outbox INSERT can re-check this exact condition (capacity
+      // guard included, not just status/starts_at) via WHERE EXISTS before the UPDATE runs.
+      // One source of truth for both the WHERE text and its params.
       const casPredicate = `id = ? AND status = ? AND starts_at = ?
            AND NOT EXISTS (
              SELECT 1 FROM (
@@ -1958,8 +1727,8 @@ export function createBookingRepository(
            )`;
       const casParams = [
         id, input.expectedStatus, input.expectedStartsAt,
-        // NOT EXISTS candidate points (self-excluded): the request's own start, then every other
-        // active overlapping booking's own starts_at.
+        // Candidate points, self-excluded: the request's own start plus each other active
+        // overlapping booking's start.
         input.startsAt,
         id, input.now, input.startsAt, input.occupancyEndsAt, input.startsAt,
         // sum-at-point (b2, self-excluded) + requestedUnits > capacity resolution.
@@ -1967,7 +1736,6 @@ export function createBookingRepository(
         input.occupancyUnits,
         input.localDate, input.localDate, input.defaultCapacity,
       ];
-      // Same COALESCE(?, tokens_expire_at) as transitionReschedule above.
       const updateStmt = db.prepare(
         `UPDATE bookings
          SET starts_at = ?, ends_at = ?, rescheduled_from = ?, occupancy_units = ?, occupancy_ends_at = ?, updated_at = ?,
@@ -1989,10 +1757,8 @@ export function createBookingRepository(
       if ((results[1]?.meta.changes ?? 0) === 0) return null;
       return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
     },
-    // Deliberately NOT hydrated (plain mapBooking): purely internal occupancy math
-    // (src/core/occupancy.ts via availabilityForDay/checkSlot), can return many rows for a wide
-    // date range, and never renders/emails a token — hydrating here would be a real per-row
-    // AES-GCM cost for values nothing reads.
+    // Not hydrated (plain mapBooking): internal occupancy math that can span many rows and never
+    // renders/emails a token — hydrating would cost a per-row AES-GCM decrypt for nothing.
     async listOccupancyBookings(from, to) {
       const result = await db.prepare(
         `SELECT ${bookingColumns} FROM bookings
@@ -2001,8 +1767,7 @@ export function createBookingRepository(
       ).bind(to, from).all<BookingRow>();
       return result.results.map(mapBooking);
     },
-    // Hydrated: the admin dashboard (src/handlers/admin.ts handleAdminGet) renders each row's
-    // operatorToken as a manage-link href straight off this list.
+    // Hydrated: the admin dashboard renders each row's operatorToken as a manage-link href.
     async listUpcoming(now) {
       const result = await db.prepare(
         `SELECT ${bookingColumns} FROM bookings
@@ -2037,9 +1802,8 @@ export function createBookingRepository(
     async deleteDayOverride(date) {
       await db.prepare('DELETE FROM day_overrides WHERE date = ?').bind(date).run();
     },
-    // Bounded by handleAdminPost's 366-day cap (a year of daily overrides), so a single
-    // db.batch() call here never risks exceeding D1's per-batch statement limit. One history row
-    // per date rides the same batch as its override write.
+    // Bounded by a 366-day cap so a single db.batch() call never risks exceeding D1's per-batch
+    // statement limit. One history row per date rides the same batch as its override write.
     async upsertDayOverrides(dates, capacity, reason, audit) {
       if (dates.length === 0) return;
       const value = JSON.stringify({ capacity, reason });
@@ -2126,9 +1890,8 @@ export function createBookingRepository(
       }));
     },
     async claimRefundOperation(input) {
-      // Same conditional-insert idiom as insertHold's per-IP cap: the WHERE NOT EXISTS makes this
-      // a single-statement compare-and-set, backed by the UNIQUE(booking_id) constraint as the
-      // real safety net under concurrent writers.
+      // WHERE NOT EXISTS makes this a single-statement compare-and-set, backed by the
+      // UNIQUE(booking_id) constraint as the real safety net under concurrent writers.
       const result = await db.prepare(
         `INSERT INTO refund_operations (id, booking_id, payment_intent, choice, status, requested_at)
          SELECT ?, ?, ?, ?, 'requested', ?
@@ -2143,12 +1906,9 @@ export function createBookingRepository(
       return row ? mapRefundOperation(row) : null;
     },
     async resolveRefundOperation(id, input) {
-      // WHERE status != 'succeeded' is the CAS guard: once a row has succeeded (recorded either
-      // here or by the charge.refunded webhook's upsert), it is terminal — no later resolve call
-      // can regress its status or overwrite its stripe_refund_id/amount_cents. Always clears any
-      // execution lease (harmless no-op if none was held — the 'none'/missing-payment-intent
-      // branches in src/refund-executor.ts resolve without ever claiming one) and, plan 020,
-      // writes the backoff fields exactly like resolveSideEffectOperation above.
+      // WHERE status != 'succeeded' is the CAS guard: once a row succeeds, it's terminal, so no
+      // later resolve call can regress its status or overwrite its refund id/amount. Always
+      // clears any execution lease, harmless no-op if none was held.
       await db.prepare(
         `UPDATE refund_operations SET status = ?, stripe_refund_id = ?, amount_cents = ?, error = ?, resolved_at = ?,
            execution_claim_token = NULL, execution_claim_until = NULL,
@@ -2312,9 +2072,8 @@ export function createBookingRepository(
            attempt_count = excluded.attempt_count,
            last_detected_at = excluded.last_detected_at,
            source_updated_at = excluded.source_updated_at,
-           -- Plan 020 (design decision 9): a reopen (was resolved) or an explicit escalation always
-           -- bumps the alert revision so the technical operator is re-notified; a plain repeated
-           -- detection on an already-open, non-escalated incident does not re-alert.
+           -- A reopen or explicit escalation bumps the alert revision so the operator is
+           -- re-notified; a repeated detection on an already-open incident does not re-alert.
            alert_revision = CASE WHEN operational_incidents.status = 'resolved' OR ? THEN operational_incidents.alert_revision + 1 ELSE operational_incidents.alert_revision END,
            resolved_at = NULL, resolution_kind = NULL, resolved_by = NULL, resolution_note = NULL`,
       ).bind(
@@ -2373,8 +2132,8 @@ export function createBookingRepository(
       return Number(row?.count ?? 0);
     },
     async countSideEffectDebtByFamily() {
-      // One statement: the WHERE drops the settled rows, so the aggregate only ever scans debt, and
-      // families with none simply don't come back (the empty-collection rule at the API edge).
+      // The WHERE drops settled rows so the aggregate only scans debt; families with none
+      // simply don't come back.
       const result = await db.prepare(
         `SELECT family,
                 SUM(CASE WHEN status = 'abandoned' THEN 0 ELSE 1 END) AS pending,

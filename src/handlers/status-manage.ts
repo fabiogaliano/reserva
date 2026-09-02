@@ -16,21 +16,15 @@ import { nowIso } from '../context.js';
 import { HttpError, json } from '../http.js';
 import { run, withSensitiveHeaders } from './shared.js';
 
-// Both summaries below are built from `toWireBooking` — the one
-// public booking projection — and their exported types are `Pick`ed from `WireBooking`, so a
-// change to that projection breaks these at compile time instead of letting a pushed booking and a
-// pulled booking describe the same row differently. What they add on top is presentation only:
-// business-local start/end (the projection's are UTC), the meeting point resolved against the
-// booking's own stored id, and locale-resolved metadata labels.
+// Both summaries are built from `toWireBooking` and typed via `Pick<WireBooking>`, so a projection
+// change breaks these at compile time instead of letting pushed and pulled bookings diverge. They
+// add only presentation: local start/end, the resolved meeting point, and locale-resolved labels.
 function manageBookingPayload(context: ReservaContext, booking: Booking): ManageBooking {
   const service = resolveService(context.config, booking.serviceSlug);
   const wire = toWireBooking(booking);
-  // Read surfaces gate on the booking ROW's data, not config — a
-  // location-less booking (pickupType null) has no pickup presentation at all, and an older
-  // booking of a service that later drops its location module still renders (pickupType stays
-  // non-null on that row even though the service config no longer declares any options). The
-  // fields stay present as `null` rather than vanishing, so a consumer never branches on key
-  // presence.
+  // Gates on the booking ROW's data, not config — a location-less booking has no pickup presentation,
+  // and an older booking whose service later drops its location module still renders correctly. The
+  // fields stay present as `null` rather than vanishing, so a consumer never branches on key presence.
   const presentation = pickupPresentationFor(service, booking);
   return {
     reference: wire.reference,
@@ -42,9 +36,9 @@ function manageBookingPayload(context: ReservaContext, booking: Booking): Manage
     pickupAddress: wire.pickupAddress,
     pickupRequiresAddress: presentation ? presentation.requiresAddress : null,
     pickupUsesMeetingPoint: presentation ? presentation.usesMeetingPoint : null,
-    // Resolved per booking, not read live off the service — a stored
-    // id no longer declared in config falls back to the booking's own label snapshot instead of
-    // silently pointing the customer at whatever point happens to be first today.
+    // Resolved per booking, not read live off the service — a stored id no longer declared in config
+    // falls back to the booking's own label snapshot instead of silently pointing the customer
+    // at whatever point happens to be first today.
     meetingPoint: presentation ? meetingPointForBooking(service, wire.meetingPointId, wire.meetingPointLabel) : null,
     customerName: wire.customerName,
     customerEmail: wire.customerEmail,
@@ -54,9 +48,8 @@ function manageBookingPayload(context: ReservaContext, booking: Booking): Manage
     priceMinor: wire.priceMinor,
     currency: wire.currency,
     metadata: wire.metadata,
-    // Labeled rows for rendering; the raw values stay on `metadata`
-    // above. This payload doubles as the admin operator's view of the same booking (role toggles
-    // inside manage-page.ts, not a separate render path).
+    // Labeled rows for rendering; the raw values stay on `metadata` above. This payload doubles as
+    // the admin operator's view of the same booking (a role toggle, not a separate render path).
     metadataRows: metadataRowsForBooking(service, booking.metadata, wire.locale, context.config.locales.default),
   };
 }
@@ -64,10 +57,8 @@ function manageBookingPayload(context: ReservaContext, booking: Booking): Manage
 function confirmationBookingPayload(context: ReservaContext, booking: Booking): ConfirmationBooking {
   const service = resolveService(context.config, booking.serviceSlug);
   const wire = toWireBooking(booking);
-  // Gate the meeting
-  // point on the row's own presentation — no location data at all (pickupType null) or a selected
-  // option that never used a meeting point (custom_both) must not tell the customer to meet
-  // anywhere.
+  // Gate the meeting point on the row's own presentation — no location data, or an option that
+  // never used a meeting point, must not tell the customer to meet anywhere.
   const presentation = pickupPresentationFor(service, booking);
   return {
     reference: wire.reference,
@@ -123,24 +114,14 @@ export function handleStatus(request: Request, context: ReservaContext): Promise
           ?? current;
       }
     } else if (current.status === 'confirmed') {
-      // Unfiltered (not just isConfirmationSideEffectOperation) so the booking.confirmed
-      // subscriber rows are visible below too — that helper deliberately excludes them (see its
-      // doc comment in src/confirmation.ts).
+      // Unfiltered (not just isConfirmationSideEffectOperation) so the booking.confirmed subscriber
+      // rows are visible below too — that helper excludes them.
       const allOperations = await context.repo.listSideEffectOperations(current.id);
       const confirmationOperations = allOperations.filter(isConfirmationSideEffectOperation);
-      // Also runs the confirmation-lease-
-      // guarded repair path when a registered durable subscriber has no row at all — the only way a
-      // legacy booking (subscriber registered after it was originally confirmed) gets one lazily
-      // created (ensureConfirmationSideEffectOperations). runOwedMutationSideEffects below is what
-      // actually delivers it.
-      //
-      // isActionableSideEffectStatus excludes 'abandoned' (not just
-      // 'succeeded'), so a permanently-failed delivery cannot keep tripping needsFulfillment (and
-      // re-entering confirmBookingFromPayment) on every future request forever, even though the
-      // claim predicate itself would just no-op every time.
-      // No confirmation rows at all is the whole legacy signal. Migration 0018 converted every
-      // "already delivered" flag into the succeeded row it described — so a booking that reaches
-      // this branch with zero rows genuinely has no delivery record and needs the repair path.
+      // needsFulfillment also covers legacy repair: a registered subscriber with no row at all
+      // (created lazily via ensureConfirmationSideEffectOperations), or zero rows at all (no delivery
+      // record). Excluding only 'abandoned' (not just 'succeeded') stops a permanently-failed
+      // delivery from re-entering confirmBookingFromPayment forever.
       const needsFulfillment = confirmationOperations.some((operation) => isActionableSideEffectStatus(operation.status))
         || confirmationOperations.length === 0
         || missingConfirmationEventOperations(context, allOperations);
@@ -153,10 +134,9 @@ export function handleStatus(request: Request, context: ReservaContext): Promise
         }
       }
     }
-    // A booking-touching request — drain any mutation-path side effects
-    // (per-recipient email, subscriber delivery) still owed from a prior cancel/reschedule/no-show whose
-    // delivery attempt didn't finish. Confirmed/cancelled/no_show are the only statuses a mutation
-    // event ever fires for; hold/expired never have rows here.
+    // A booking-touching request — drain any mutation-path side effects still owed from a prior
+    // cancel/reschedule/no-show whose delivery attempt didn't finish. Confirmed/cancelled/no_show are
+    // the only statuses a mutation event ever fires for; hold/expired never have rows here.
     if (current.status === 'confirmed' || current.status === 'cancelled' || current.status === 'no_show') {
       await runOwedMutationSideEffects(context, current);
     }
@@ -171,10 +151,9 @@ export function handleStatus(request: Request, context: ReservaContext): Promise
   }).then(withSensitiveHeaders);
 }
 
-// getBookingByCancelToken/getBookingByOperatorToken enforce expiry (tokens_expire_at)
-// and, for the cancel token, revocation (cancel_token_revoked_at) as part of the same lookup
-// query (src/repo.ts) — an expired or revoked token comes back as a plain null here, identical to
-// an unknown one, so this stays a single `if (!booking) throw 403` with no separate check needed.
+// getBookingByCancelToken/getBookingByOperatorToken enforce expiry and, for the cancel token,
+// revocation as part of the same lookup query — an expired or revoked token comes back as a plain
+// null here, identical to an unknown one, so this stays a single `if (!booking) throw 403`.
 export async function tokenBooking(context: ReservaContext, token: string, operator = false, refundRecovery = false): Promise<Booking> {
   const now = nowIso(context);
   const booking = operator
@@ -183,11 +162,9 @@ export async function tokenBooking(context: ReservaContext, token: string, opera
       : context.repo.getBookingByOperatorToken(token, now))
     : await context.repo.getBookingByCancelToken(token, now);
   if (!booking) throw new HttpError(403, 'forbidden', 'Invalid booking token');
-  // Every caller of tokenBooking is a mutation-adjacent request
-  // (customer cancel/reschedule, and — via operatorBooking below — operator cancel/reschedule/
-  // no-show) touching this exact booking, so this is one of the places a later request must drain
-  // rows a prior mutation's delivery attempt left owed. Draining here doesn't affect the booking
-  // object itself (it only ever touches side_effect_operations, never `bookings`).
+  // Every caller of tokenBooking is a mutation-adjacent request touching this exact booking, so this
+  // is one of the places a later request must drain rows a prior mutation left owed. Draining here
+  // never touches `bookings`, only side_effect_operations.
   await runOwedMutationSideEffects(context, booking);
   return booking;
 }

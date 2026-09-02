@@ -1,15 +1,12 @@
-// Outbound webhook delivery. Deliberately an internal module rather
-// than a provider subpath — a webhook endpoint is declared in `ClientConfig.webhooks`, not wired as
-// a provider, so there is nothing for a consumer to construct or import here.
+// Outbound webhook delivery — an internal module, not a provider subpath, since a webhook endpoint
+// is declared in `ClientConfig.webhooks`, not wired as a provider.
 //
-// Signing follows the Standard Webhooks spec (https://www.standardwebhooks.com): the receiver
-// verifies with any off-the-shelf implementation of that spec instead of a recipe documented only
-// here. Implemented on WebCrypto so the library keeps zero runtime dependencies for it; the spec's
-// own library is used in the tests as the independent verifier.
+// Signing follows the Standard Webhooks spec: the receiver verifies with any off-the-shelf
+// implementation instead of a recipe documented only here. Implemented on WebCrypto for zero runtime dependencies.
 import { ProviderFailure } from './provider-failure.js';
 
 // Brand visibility rides the User-Agent, never a second signature header — the spec's three
-// webhook-* headers stay the only signing surface (one truth per fact).
+// webhook-* headers stay the only signing surface.
 export const WEBHOOK_USER_AGENT = 'Reserva-Webhooks/1';
 
 // Standard Webhooks symmetric keys are conventionally prefixed; the bytes are the base64 body.
@@ -17,8 +14,8 @@ const WEBHOOK_SECRET_PREFIX = 'whsec_';
 const SIGNATURE_SCHEME = 'v1';
 const MAX_ERROR_BODY_CHARS = 200;
 
-// Mirrors BrevoResponseError: a bounded body in the message and a
-// structured `status`, so provider-failure classification (src/provider-failure.ts) decides retryable vs. permanent.
+// Mirrors BrevoResponseError: a bounded body in the message and a structured `status`, so
+// provider-failure classification decides retryable vs. permanent.
 export class WebhookResponseError extends ProviderFailure {
   constructor(name: string, status: number, body: string) {
     super({ status, message: `Webhook "${name}" request failed (${status}): ${body.slice(0, MAX_ERROR_BODY_CHARS)}` });

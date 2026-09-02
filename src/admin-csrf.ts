@@ -1,20 +1,15 @@
-// Admin mutations (src/handlers/admin.ts handleAdminPost) are gated on
-// Cloudflare Access (WHO), which alone is no defense against a cross-origin page auto-submitting a
-// mutation using an operator's live Access session — practical exploitability there depends entirely on the
-// Access application cookie's SameSite setting, which is a Cloudflare dashboard setting this repo
-// cannot enforce (see README "Admin access and booking tokens" for the recommendation to set it to
-// Lax/Strict). Two independent layers, belt and braces:
+// Admin mutations are gated on Cloudflare Access (WHO), which alone is no defense against a
+// cross-origin page auto-submitting a mutation using an operator's live Access session — that
+// depends on the Access application cookie's SameSite setting, which this repo cannot enforce.
+// Two independent layers:
 //   1. adminOriginAllowed — Fetch-Metadata / Origin enforcement. Stops the attack in every modern
 //      browser regardless of the cookie's SameSite value. Unconditional — never fails open.
 //   2. mintAdminCsrfToken / verifyAdminCsrfToken — a signed, expiring, per-user token embedded in
 //      every rendered admin form and required on every admin POST. Covers the case where
-//      Sec-Fetch-Site/Origin don't survive whatever sits between the browser and this Worker (that
-//      Cloudflare Access preserves them unmodified is not documented as a guarantee — UNVERIFIED).
-//      Requires a real secret (RESERVA_CSRF_SECRET) to be active at all — see csrfSecret below for
-//      why, and for what happens when one isn't configured.
-// Both are wired only into the admin mutation route — never the public booking API
-// (checkout/status), which is intentionally cross-origin-embeddable (the widget can be embedded on
-// a marketing site).
+//      Sec-Fetch-Site/Origin don't survive whatever sits between the browser and this Worker.
+//      Requires a real secret (RESERVA_CSRF_SECRET) to be active at all — see csrfSecret below.
+// Both are wired only into the admin mutation route — never the public booking API, which is
+// cross-origin-embeddable by design.
 
 import { constantTimeEqual } from './http.js';
 
@@ -27,8 +22,8 @@ export const ADMIN_CSRF_TOKEN_TTL_MS = CSRF_TOKEN_TTL_MS;
 
 export type AdminCsrfSecretLookup = (name: string) => string | undefined | Promise<string | undefined>;
 
-// Deliberately narrower than ReservaContext (just the two fields this module actually reads) so it
-// stays independently testable and has no dependency on ./context.
+// Narrower than ReservaContext (just the two fields this module actually reads) so it stays
+// independently testable and has no dependency on ./context.
 export interface AdminCsrfContext {
   config: { admin: { access?: { aud: string } } };
   secrets?: AdminCsrfSecretLookup;
@@ -52,33 +47,22 @@ async function hmacSign(secret: string, message: string): Promise<string> {
   return base64UrlEncode(new Uint8Array(signature));
 }
 
-// The domain-separation input is a stable derivation of whichever admin auth strategy is actually
-// configured — the Access application's Audience tag when `config.admin.access` is set, or the
-// literal 'custom' otherwise, so a deployment using a custom `adminAuth` still gets a distinct key
-// from an Access deployment sharing the same RESERVA_CSRF_SECRET. Neither value is secret: `aud`
-// appears in the `aud` claim of every Access-issued JWT and in checked-in config, and 'custom' is a
-// fixed literal — an attacker does not need to compromise anything to learn either. Using accessAud
-// as the HMAC key on its own whenever RESERVA_CSRF_SECRET is unset would make the "signed" token
-// forgeable by anyone who knew the deployment's accessAud (i.e. effectively everyone), defeating
-// layer 2 while looking like a defense. This derivation is only ever mixed into the key alongside a
-// real secret below, for cheap extra domain separation — never as a substitute for one.
+// A stable derivation of whichever admin auth strategy is configured — the Access Audience tag, or
+// 'custom' otherwise — so a custom-adminAuth deployment gets a distinct key from an Access
+// deployment sharing the same RESERVA_CSRF_SECRET. Neither value is secret (aud is in every Access
+// JWT and in checked-in config), so this is only ever mixed into the key alongside a real secret
+// below, for cheap extra domain separation — never as a substitute for one. Using it alone as the
+// HMAC key would make the "signed" token forgeable by anyone who knows the deployment's accessAud.
 function csrfDomainSeparator(context: AdminCsrfContext): string {
   return context.config.admin.access?.aud ?? 'custom';
 }
 
-// No other genuinely-secret value is reachable here. Checked at the mint/verify call sites
-// (handleAdminGet/handleAdminPost in src/handlers/admin.ts, both fed by ReservaContext):
-//   - Stripe's secretKey/webhookSecret are constructor options passed straight into StripeProvider
-//     (src/providers/stripe.ts) — they never surface on ReservaContext or ClientConfig, so they are
-//     not reachable from here without reaching into a specific payment provider's internals (which
-//     would break for any non-Stripe or fake PaymentProvider).
-//   - context.secrets can read RESERVA_OPERATOR_SECRET, but it's optional (unset for any deployment
-//     that doesn't use the operator endpoints) and mixing an unrelated feature's secret into CSRF signing
-//     crosses trust domains for no real gain (see docs/decisions.md #4).
-// So the only fit-for-purpose secret is RESERVA_CSRF_SECRET itself. When it isn't configured, there
-// is no secret to sign with — this returns undefined and mint/verify below take the token layer
-// fully offline (see their comments) rather than emit or accept a token that only *looks* signed.
-// Layer 1 (adminOriginAllowed) is unconditional and keeps blocking the attack on its own either way.
+// No other genuinely-secret value is reachable here: Stripe's keys never surface on ReservaContext
+// or ClientConfig, and context.secrets's optional RESERVA_OPERATOR_SECRET would cross trust domains
+// for no real gain. So the only fit-for-purpose secret is RESERVA_CSRF_SECRET itself. When it isn't
+// configured, there is no secret to sign with — this returns undefined and mint/verify below take
+// the token layer fully offline rather than emit or accept a token that only *looks* signed. Layer 1
+// (adminOriginAllowed) keeps blocking the attack on its own either way.
 async function csrfSecret(context: AdminCsrfContext): Promise<string | undefined> {
   const configured = context.secrets ? await context.secrets(CSRF_SECRET_ENV_NAME) : undefined;
   return configured ? `${configured}:${csrfDomainSeparator(context)}` : undefined;
@@ -92,14 +76,12 @@ function isCsrfPayload(value: unknown): value is CsrfPayload {
     && typeof (value as { exp?: unknown }).exp === 'number';
 }
 
-// `sub` binds the token to the admin-authorized caller it was minted for (AdminIdentity.subject,
-// empty string when a custom adminAuth has no per-user identity to bind — see accessAllowed in
-// src/admin-access.ts) so a token captured from one operator's rendered page cannot be replayed
-// against a different operator's session.
+// `sub` binds the token to the admin-authorized caller it was minted for (empty string when a
+// custom adminAuth has no per-user identity to bind) so a token captured from one operator's page
+// cannot be replayed against a different operator's session.
 //
-// Returns undefined when no real secret is configured (see csrfSecret above) — the token layer is
-// then inert: handleAdminGet still renders the form (with no/empty token field, see
-// src/handlers/admin.ts) and relies on layer 1 (adminOriginAllowed) alone. RESERVA_CSRF_SECRET must
+// Returns undefined when no real secret is configured — the token layer is then inert: the form
+// still renders (with no/empty token field) and relies on layer 1 alone. RESERVA_CSRF_SECRET must
 // be set for layer 2 to actually run.
 export async function mintAdminCsrfToken(context: AdminCsrfContext, sub: string, now: number): Promise<string | undefined> {
   const secret = await csrfSecret(context);
@@ -110,12 +92,11 @@ export async function mintAdminCsrfToken(context: AdminCsrfContext, sub: string,
   return `${payloadPart}.${signature}`;
 }
 
-// Mirrors mintAdminCsrfToken's "no secret configured" case by returning true unconditionally (i.e.
-// not blocking on the token at all) rather than false: with no secret, there is nothing a real token
-// could prove that a forged one couldn't also claim, so treating a missing/wrong token as a failure
-// would be a fake sense of security, not a real one. This is a deliberate fail-open of layer 2 only
-// — handleAdminPost always runs the layer 1 origin check first and unconditionally, so a cross-origin
-// request is still rejected with or without a configured CSRF secret.
+// Mirrors mintAdminCsrfToken's "no secret configured" case by returning true unconditionally rather
+// than false: with no secret, there is nothing a real token could prove that a forged one couldn't
+// also claim, so treating a missing token as a failure would be a fake sense of security. This is a
+// fail-open of layer 2 only — layer 1's origin check always runs first, so a cross-origin request is
+// still rejected either way.
 export async function verifyAdminCsrfToken(context: AdminCsrfContext, token: string | null | undefined, sub: string, now: number): Promise<boolean> {
   const secret = await csrfSecret(context);
   if (!secret) return true;
@@ -144,10 +125,9 @@ export function adminOriginAllowed(request: Request): boolean {
   const secFetchSite = request.headers.get('sec-fetch-site');
   if (secFetchSite !== null) {
     // Sec-Fetch-Site is set by the browser itself and cannot be influenced by page script, so once
-    // present it is authoritative and Origin is not consulted. `same-site` is deliberately treated
-    // as untrusted, not just `cross-site`: a same-site sibling/subdomain can still host a hostile
-    // auto-submitting form, and Cloudflare Access's own session cookie is commonly scoped to the
-    // whole apex domain — so "same site" is not this admin surface's real trust boundary.
+    // present it is authoritative and Origin is not consulted. `same-site` is treated as untrusted,
+    // not just `cross-site`: a same-site sibling/subdomain can still host a hostile auto-submitting
+    // form, and Access's session cookie is commonly scoped to the whole apex domain.
     return secFetchSite === 'same-origin';
   }
   // No Sec-Fetch-Site (older browser, or something between the browser and this Worker stripped

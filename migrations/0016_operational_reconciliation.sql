@@ -1,27 +1,19 @@
--- Plan 020 (design decisions 5, 7, 8): schema for autonomous reconciliation — retry backoff on
--- side_effect_operations, a rebuilt refund_operations table with an execution lease/backoff/attempt
--- count so refund execution can be resumed by a scheduled reconciler (not just a live HTTP request),
--- and a new operational_incidents ledger keyed by (source_type, source_key) so a repeated scan or a
--- retried alert never duplicates a debt item's history.
+-- Adds retry backoff to side_effect_operations, rebuilds refund_operations with an execution
+-- lease/backoff/attempt count so a scheduled reconciler can resume refund execution (not just a
+-- live HTTP request), and adds an operational_incidents ledger keyed by (source_type, source_key)
+-- so a repeated scan never duplicates a debt item's history.
 --
--- Additive except for refund_operations, which SQLite/D1 cannot widen a CHECK on in place (no
--- ALTER TABLE ADD CONSTRAINT) — same rename -> create -> copy -> drop rebuild pattern as migrations
--- 0011/0012/0013/0015 (see 0011's header for why this is crash-safe without an explicit
--- transaction). Every existing refund_operations column, row, and the UNIQUE(booking_id) constraint
--- are carried across byte-for-byte; only the status domain widens and new columns are appended.
+-- refund_operations is the only non-additive part (SQLite/D1 can't widen a CHECK in place) --
+-- same rename -> create -> copy -> drop rebuild pattern as 0011. Every existing column, row, and
+-- the UNIQUE(booking_id) constraint carry across byte-for-byte; only the status domain widens.
 
--- side_effect_operations: nullable, additive columns only — the existing CHECK/index/FK are
--- untouched. failure_started_at is the first uninterrupted-failure timestamp of the row's CURRENT
--- failure streak (cleared back to NULL by a resolved success); next_attempt_at is when a 'failed'
--- row next becomes claimable by an ordinary (non-admin-retry) claim. Both stay NULL for a row that
--- has never failed.
+-- Nullable, additive columns: failure_started_at marks the start of the row's current failure
+-- streak (cleared on success); next_attempt_at is when a failed row becomes claimable again.
 ALTER TABLE side_effect_operations ADD COLUMN failure_started_at TEXT;
 ALTER TABLE side_effect_operations ADD COLUMN next_attempt_at TEXT;
 
--- Supports the scheduled reconciler's global candidate query: status narrows to
--- pending/failed/in_flight, next_attempt_at sorts claimable-now rows first, attempted_at breaks
--- ties FIFO. Does not replace idx_side_effect_operations_pending (still used by existing
--- status/updated_at-keyed reads).
+-- Supports the scheduled reconciler's candidate query (claimable-now rows first, FIFO tiebreak);
+-- does not replace idx_side_effect_operations_pending.
 CREATE INDEX idx_side_effect_operations_reconciliation ON side_effect_operations (status, next_attempt_at, attempted_at);
 
 ALTER TABLE refund_operations RENAME TO refund_operations_pre_0016;
@@ -37,11 +29,8 @@ CREATE TABLE refund_operations (
   requested_at           TEXT NOT NULL,
   resolved_at            TEXT,
   error                  TEXT,
-  -- Plan 020 (design decision 7): the scheduled reconciler's execution claim, mirroring the
-  -- confirmation-lease pattern (src/confirmation.ts) — a claimant holds execution_claim_token until
-  -- execution_claim_until, so a stale (crashed) claim is reclaimable and a live one is not. The
-  -- operator HTTP path and the scheduled reconciler both claim through this same pair before ever
-  -- calling Stripe, closing the race a bare status/attempt-count check alone could not.
+  -- Execution claim (mirrors the confirmation-lease pattern): a claimant holds the token until
+  -- execution_claim_until, so the HTTP path and the scheduled reconciler can't both call Stripe.
   execution_claim_token  TEXT,
   execution_claim_until  TEXT,
   attempt_count          INTEGER NOT NULL DEFAULT 0,
@@ -66,11 +55,8 @@ CREATE INDEX idx_refund_operations_status ON refund_operations (status);
 -- Mirrors idx_side_effect_operations_reconciliation above for the same candidate-query shape.
 CREATE INDEX idx_refund_operations_reconciliation ON refund_operations (status, next_attempt_at, attempted_at);
 
--- Plan 020 (design decision 8): one durable history row per debt item, deduplicated by
--- (source_type, source_key) so a repeated scan updates the same row instead of minting a new one.
--- No customer PII or bearer token is ever stored here — only reference/operation metadata (booking
--- id is an opaque internal id, not itself customer-identifying, and is used solely to join back to
--- the owning booking for the admin card and FK integrity).
+-- One durable history row per debt item, deduplicated by (source_type, source_key). No customer
+-- PII or bearer token is stored -- only reference/operation metadata.
 CREATE TABLE operational_incidents (
   id                     TEXT PRIMARY KEY,
   booking_id             TEXT NOT NULL,
@@ -98,8 +84,7 @@ CREATE TABLE operational_incidents (
   FOREIGN KEY (booking_id) REFERENCES bookings(id)
 );
 
--- Admin "Attention required" read model: open cards sort action-required before delayed, then
--- oldest first (design decision 14).
+-- Admin "Attention required" read model: open cards sort action-required before delayed, then oldest first.
 CREATE INDEX idx_operational_incidents_open ON operational_incidents (status, severity, first_detected_at);
 -- The alert drain's candidate query: undelivered revisions (alerted_revision < alert_revision),
 -- ordered by alert_next_attempt_at.

@@ -8,11 +8,9 @@ import type { SideEffectDebtByFamily } from '../repo.js';
 import { HttpError, json } from '../http.js';
 import { run, withSensitiveHeaders } from './shared.js';
 
-// The ops group's read surface. One read-only answer to "is this deployment healthy and current?"
-// for an operator — or an agent debugging a deployment — who would otherwise need raw SQL.
-//
-// It takes no parameters, returns no booking data, and mutates nothing. If it ever needs to, the
-// design is wrong: this is a health check, not a query API.
+// The ops group's read surface — a read-only answer to "is this deployment healthy and current?"
+// It takes no parameters, returns no booking data, and mutates nothing; if it ever needs to, the
+// design is wrong.
 
 function outboxSummary(debt: readonly SideEffectDebtByFamily[], now: string): OpsHealthOutbox {
   let pending = 0;
@@ -39,8 +37,8 @@ function outboxSummary(debt: readonly SideEffectDebtByFamily[], now: string): Op
 export function handleOpsHealth(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
-    // The ops group's shared, fail-closed gate — this route inherits admin auth by
-    // consuming it, exactly like every operator endpoint, with no per-route wiring of its own.
+    // The ops group's shared, fail-closed gate: inherits admin auth by consuming it, like every
+    // operator endpoint, with no per-route wiring of its own.
     if (!(await accessAllowed(request, context))) throw new HttpError(403, 'forbidden', 'Admin authorization required');
     const now = nowIso(context);
     const [schema, debt, openIncidents] = await Promise.all([

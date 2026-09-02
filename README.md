@@ -206,10 +206,8 @@ Prices always come from Reserva's pricing module. An adapter never computes one.
 ## Other providers
 
 Import each provider from its own subpath: `@reservajs/astro/providers/email-brevo`,
-`@reservajs/astro/providers/email-none`, `@reservajs/astro/providers/calendar-google`. Avoid
-the bare `@reservajs/astro/providers` barrel — it re-exports every provider, so importing it
-pulls every bundled provider's code into the module graph. The narrow subpaths import only
-the provider you construct.
+`@reservajs/astro/providers/email-none`, `@reservajs/astro/providers/calendar-google`. Each
+subpath imports only the provider you construct.
 
 ## Email templates
 

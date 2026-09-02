@@ -1,11 +1,6 @@
--- Plan 016 (finding #12, scoped): side_effect_operations gains a terminal 'abandoned' status, so a
--- provider failure classified as permanent (see src/provider-failure.ts), or a retryable failure's
--- tenth attempt against a booking's outbox row, stops being retried forever instead of polling an
--- unreachable/rejecting provider on every future request.
---
--- Any pre-existing nonterminal row already at or over the new attempt cap (attempt_count >= 10)
--- is converted to 'abandoned' by this migration itself. This includes stale in_flight rows: the
--- claim predicates reject a row at the cap, so preserving one would strand it permanently.
+-- Adds a terminal 'abandoned' status so a permanently-failed or capped-retry row (>= 10 attempts)
+-- stops being polled forever. Any pre-existing nonterminal row already at or over that cap,
+-- including stale in_flight ones, is converted to 'abandoned' by this migration.
 ALTER TABLE side_effect_operations RENAME TO side_effect_operations_pre_0013;
 
 CREATE TABLE side_effect_operations (

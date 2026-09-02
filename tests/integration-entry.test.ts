@@ -49,11 +49,8 @@ describe('Astro integration entry', () => {
     for (const route of routes) expect(existsSync(String(route.entrypoint))).toBe(true);
   });
 
-  // tests/workers/webhook.test.ts proves handlePaymentWebhook's own behavior against a
-  // hand-written worker entrypoint, honestly, without pretending that worker IS the generated
-  // Astro route -- this pins the other half, that the generated route's entrypoint really is the
-  // exact one-line handlePaymentWebhook delegation src/routes/api/booking/webhooks/payment.ts
-  // contains (not just that some file exists at that path, which the assertion above already checks).
+  // Pins the generated route's entrypoint to the exact one-line handlePaymentWebhook delegation,
+  // not just that some file exists at that path.
   it('pins the generated Stripe webhook route to its one-line handlePaymentWebhook delegation', () => {
     const { routes } = setup();
     const webhookRoute = routes.find((route) => route.pattern === '/api/booking/webhooks/payment');

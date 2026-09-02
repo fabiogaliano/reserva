@@ -6,9 +6,8 @@ import { formatDateParts, formatDateTime, formatPrice, googleCalendarUrl, icsDat
 import { factList, pageShell, themeToggle } from '../layout.js';
 import { formatMessage, resolveMessages, type ReservaMessages } from '../messages.js';
 
-// This page renders whatever GET /api/booking/status answers, so it
-// takes that exported response type rather than a hand-kept copy — a change to the contract breaks
-// here at compile time instead of silently dropping a row from the ticket.
+// This page renders whatever GET /api/booking/status answers, so it takes that exported response
+// type rather than a hand-kept copy — a contract change breaks here at compile time.
 type ConfirmedBooking = NonNullable<StatusResponse['booking']>;
 
 function brandLine(context: Pick<ReservaContext, 'config'>): string {
@@ -24,8 +23,8 @@ function confirmedBody(context: Pick<ReservaContext, 'config'>, messages: Reserv
   const quantityLabel = typeof booking.quantity === 'number'
     ? formatMessage(messages[booking.quantity === 1 ? 'widget.person' : 'widget.quantityCount'], { n: booking.quantity })
     : String(booking.quantity ?? '');
-  // The textual date fact stays alongside the decorative date block (which is aria-hidden), so
-  // screen readers and copy-paste get the full spelled-out datetime.
+  // Stays alongside the decorative date block (aria-hidden) so screen readers and copy-paste get
+  // the full spelled-out datetime.
   const facts: Array<[string, string]> = [
     [messages['common.date'], escapeHtml(start ? formatDateTime(start, locale, timezone) : '')],
     [messages['common.quantity'], escapeHtml(quantityLabel)],
@@ -37,8 +36,7 @@ function confirmedBody(context: Pick<ReservaContext, 'config'>, messages: Reserv
     const maps = mapsUrl ? ` <a href="${escapeHtml(mapsUrl)}" rel="noopener" target="_blank">${escapeHtml(messages['common.openInMaps'])}</a>` : '';
     facts.push([messages['common.meetingPoint'], `${escapeHtml(meetingLabel)}${maps}`]);
   }
-  // See the identical block in src/ui/pages/manage-page.ts renderManagePage —
-  // boolean -> the existing yes/no copy pair, everything else its plain string form, escaped.
+  // Boolean -> the existing yes/no copy pair; everything else its plain string form, escaped.
   for (const row of booking.metadataRows ?? []) {
     const displayValue = typeof row.value === 'boolean'
       ? (row.value ? messages['admin.on'] : messages['admin.off'])

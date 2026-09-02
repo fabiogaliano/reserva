@@ -28,7 +28,7 @@ function paidWebhookProviders(bookingId: string, sessionRef: string, overrides: 
 // Per-recipient confirmation email operations. Complements confirmation-outbox.test.ts
 // (which covers the plain-send/combined shape) with coverage for a split-capable provider's
 // per-recipient email rows (family 'email', name 'customer'/'owner', event 'booking.confirmed').
-describe('confirmation-path per-recipient email outbox (plan 012)', () => {
+describe('confirmation-path per-recipient email outbox', () => {
   it('sends only the owner recipient on retry after an owner-recipient failure, never resending the already-delivered customer message', async () => {
     const seeded = booking({ id: 'b-email-split-owner-fails', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', paymentSessionRef: 'cs_email_owner_fails' });
     const repo = fakeRepository([seeded]);

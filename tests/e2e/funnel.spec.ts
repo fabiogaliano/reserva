@@ -18,13 +18,9 @@ test('Full happy path: book and manage as customer', async ({ page }) => {
   await expect(page.locator('h1')).toContainText(reference);
 });
 
-// Regression coverage for BookingWidget.astro's dateKey() switch from local to UTC Date getters:
-// the vendored cally calendar builds the Date objects it hands to isDateDisallowed via
-// `new Date(Date.UTC(...))` (node_modules/cally/dist/cally.js), so local getters read back the
-// previous calendar day in any timezone behind UTC — every day would key to the wrong date and the
-// calendar would show every open day as disallowed. The dev machine this suite was written on is
-// UTC+1, where local and UTC getters happen to agree, so nothing exercises this without pinning a
-// negative-offset timezone here.
+// Regression: BookingWidget's dateKey() must use UTC getters, since cally hands isDateDisallowed
+// dates built via Date.UTC — local getters read the previous day in any timezone behind UTC,
+// marking every open day disallowed. Needs a pinned negative-offset timezone to catch.
 test.describe('booking funnel in a timezone behind UTC (regression: BookingWidget dateKey)', () => {
   test.use({ timezoneId: 'America/New_York' });
 

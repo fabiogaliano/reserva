@@ -1,26 +1,18 @@
 import { ZodError } from 'astro/zod';
 import { validateConfig, type ClientConfig } from './config.js';
 
-// Operator-editable settings: the runtime-safe scalar dials of ClientConfig, stored as JSON in the
-// `settings` table and merged over the file config per request (see routes/route-context.ts).
-// Anything structural (services, locales), code (occupancyFor), or infrastructure (timezone, Access)
-// deliberately stays file-only — those need a review and a deploy, not a form.
-//
-// A row is only written when the submitted value differs from the file config; a value equal to
-// the config default deletes the row instead. That keeps "follow the config file" the resting
-// state, so config edits in a later deploy still take effect for anything the operator never
-// touched.
+// Operator-editable settings: the runtime-safe scalar dials of ClientConfig, stored as JSON and
+// merged over the file config per request. A row equal to the file value is deleted, so a later
+// config-file edit still takes effect for anything the operator never touched.
 
 export type SettingValue = string | number | boolean | null;
 
 export type SettingSection = 'policy' | 'capacity' | 'contact' | 'legal';
 
 export type SettingKind =
-  // `optional: true` allows clearing the field: an empty submission stores an explicit null,
-  // which merges as `undefined` (e.g. maxHoldsPerIp = unlimited, no WhatsApp number).
-  // `max` is optional because most int settings have no validateConfig-side upper bound; set it
-  // wherever one exists (see holdMinutes below) so the form/parse/decode layers fail as fast as
-  // the merge-then-validate backstop would anyway.
+  // `optional: true` lets an empty submission clear the field to null, merged as `undefined`.
+  // `max` is set only where validateConfig enforces an upper bound, so parsing fails as fast as
+  // the merge-then-validate backstop would.
   | { type: 'int'; min: number; max?: number; optional?: boolean }
   | { type: 'number'; min: number }
   | { type: 'boolean' }
@@ -81,11 +73,10 @@ export const settingDefinitions: readonly SettingDefinition[] = [
   {
     key: 'booking.holdMinutes', section: 'policy', labelKey: 'setting.holdMinutes',
     groupKey: 'settingGroup.holds',
-    // The floor mirrors validateConfig's (core/config.ts): below 35, the D1 hold can expire while
-    // the payment session it guards is still payable (oversell). The ceiling is the tightest bound
-    // any shipped payment adapter imposes on how long a checkout session may stay open — an
-    // operator's form submission never reaches PaymentProvider.validateConfig, which only sees the
-    // file config at runtime-definition time, so it is enforced here too.
+    // Floor mirrors validateConfig: below 35, a hold can expire while the payment session it
+    // guards is still payable (oversell). Ceiling is the tightest session-open limit any shipped
+    // payment adapter imposes, enforced here since an operator's submission never reaches
+    // PaymentProvider.validateConfig.
     kind: { type: 'int', min: 35, max: 1440 },
     get: (config) => config.booking.holdMinutes,
     set: (config, value) => { config.booking.holdMinutes = value as number; },
@@ -183,13 +174,10 @@ function decodeStoredValue(definition: SettingDefinition, raw: unknown): Setting
   }
 }
 
-// Merges stored overrides (key -> JSON string, as returned by repo.listSettings) over the file
-// config. Clones only the branches settings can touch — a deep clone is off the table because
-// services carry the occupancyFor function.
-// `onInvalidRow` is called for a row that fails to decode (bad JSON or fails its SettingKind
-// bounds) — optional because the save path already validates freshly-submitted values up front
-// and has nothing useful to report, while the load path (loadMergedConfig below) uses it to
-// attribute a warning to the row it's about to silently drop.
+// Merges stored overrides over the file config. Clones only the branches settings can touch — a
+// deep clone is off the table because services carry the occupancyFor function.
+// `onInvalidRow` is optional: the save path already validates fresh values and has nothing to
+// report, while the load path uses it to attribute a warning to the row it's about to drop.
 export function applySettingOverrides(
   config: ClientConfig,
   rows: Record<string, string>,
@@ -236,12 +224,9 @@ export class SettingsMergeError extends Error {
   }
 }
 
-// Save-path backstop: a SettingDefinition's kind bounds a field on its own, but
-// only validateConfig knows the cross-field and service-level rules (e.g. locales.default must be in
-// locales.supported), so the section being saved is merged over every OTHER currently stored
-// override plus the file config and re-validated as a whole before anything is written. Throws
-// SettingsMergeError (same {path, message} shape as validateConfig's own issues) so the handler
-// can reject the save with field-attributed errors instead of silently corrupting the config.
+// Save-path backstop: a definition's kind bounds a field alone, but only validateConfig knows
+// cross-field rules (e.g. locales.default must be in locales.supported). The section being saved
+// is merged over every other stored override and the file config, then re-validated as a whole.
 export function mergeAndValidateSettings(config: ClientConfig, rows: Record<string, string>): ClientConfig {
   const merged = applySettingOverrides(config, rows);
   try {
@@ -256,15 +241,9 @@ export interface SettingsLoadWarning {
   reason: string;
 }
 
-// Load-path counterpart of mergeAndValidateSettings (routes/route-context.ts, on every request):
-// stored rows are never re-checked against today's rules once written, so a row saved before a
-// SettingKind bound was tightened — or, in principle, one that individually passes its kind but
-// breaks a cross-field validateConfig rule the way locales.default/supported can — must not be
-// allowed to serve an invalid config or fail every request. Offending rows are dropped and
-// reported via `onWarn` instead: applySettingOverrides already drops rows that fail their own
-// kind; this additionally re-validates the merged result and, if that still fails, isolates and
-// drops whichever stored keys map to the failing paths (falling back to the pristine file config
-// if a failure can't be attributed to a specific key) and retries.
+// Load-path counterpart of mergeAndValidateSettings, run on every request: a stored row saved
+// under looser rules may now fail validation. Offending rows are dropped and reported via
+// `onWarn`, falling back to the pristine file config if a failure can't be attributed to one key.
 export function loadMergedConfig(
   config: ClientConfig,
   rows: Record<string, string>,

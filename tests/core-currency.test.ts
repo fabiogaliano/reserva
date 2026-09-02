@@ -11,9 +11,8 @@ import { config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
 // Prices are stored in a currency's MINOR unit. For a zero-decimal currency like JPY the minor
-// unit IS the major unit, so dividing by a hard-coded 100 shows ¥12,000 as ¥120 — the whole
-// point of routing every division through minorUnitFactor. These tests follow one non-EUR,
-// zero-decimal price all the way from config validation to what the customer actually reads.
+// unit IS the major unit, so dividing by a hard-coded 100 would show ¥12,000 as ¥120 — the point
+// of routing every division through minorUnitFactor.
 function configIn(currency: string) {
   return validateConfig({ ...config, business: { ...config.business, currency } });
 }
@@ -35,7 +34,7 @@ function stripeClient() {
   };
 }
 
-describe('currency plumbing (plan 022 design decision 2)', () => {
+describe('currency plumbing', () => {
   it('accepts any lowercase ISO 4217 code and rejects anything that is not one', () => {
     for (const currency of ['eur', 'jpy', 'usd', 'kwd']) {
       expect(configIn(currency).business.currency).toBe(currency);

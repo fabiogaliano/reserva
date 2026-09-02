@@ -3,10 +3,8 @@ import { addDays, format } from 'date-fns';
 
 const TOUR = 'oldTown';
 
-// The admin calendar renders the whole booking horizon (up to config.booking.maxHorizonDays), but
-// the enhancer's month pager shows only one month at a time — clicking a day outside the initially
-// active month first needs a "Next month" click or two. Cheap and current-date-independent, unlike
-// hardcoding how many clicks are needed.
+// The month pager shows one month at a time, so a day outside the active month needs a
+// "Next month" click or two first — cheaper than hardcoding a click count.
 async function revealDay(page: Page, date: string): Promise<Locator> {
   const cell = page.locator(`.bk-day[data-date="${date}"]`);
   for (let attempt = 0; attempt < 4 && !(await cell.isVisible()); attempt += 1) {
@@ -24,14 +22,9 @@ async function closedOn(page: Page, date: string): Promise<boolean> {
   return day?.status === 'closed' && day?.slots.length === 0;
 }
 
-// The enhanced admin day calendar replaced the no-JS "To date" range field with undocumented
-// Shift/Ctrl/Cmd-click selection, hid the always-native range input, and gave selected cells only
-// a CSS class — no aria-pressed/role, no live-region announcement, and single-selection-only
-// aria-current. This proves the accessible replacement: button semantics + aria-pressed on cells,
-// a role="status" title announcing the count, the visible "To date" field staying in sync with a
-// contiguous pointer selection, and a scattered selection correctly avoiding the "To date" shape
-// (the actual bug this guards against: a scattered selection must never be describable as a
-// contiguous range).
+// Proves the accessible day-selection replacement: button semantics + aria-pressed on cells, a
+// role="status" count announcement, the visible "To date" field staying in sync with a contiguous
+// selection, and a scattered selection never being describable as a "To date" range.
 
 test('a contiguous 3-day pointer selection gets button semantics, aria-pressed, live-region copy, and matching visible inputs, and closes all three days', async ({ page }) => {
   const day1 = format(addDays(new Date(), 60), 'yyyy-MM-dd');
@@ -78,10 +71,8 @@ test('a scattered ctrl/cmd-click selection keeps repeated hidden date fields, bl
   const cell1 = await revealDay(page, day1);
   await cell1.click();
   const cell3 = await revealDay(page, day3);
-  // Meta (Cmd), not Control: on a macOS test runner, a simulated Control+click is delivered as a
-  // context-menu gesture at the OS/Accessibility layer and never reaches the page as a 'click'
-  // event at all — a Playwright/macOS quirk, not a bug in the app (which checks
-  // `metaKey || ctrlKey` and so treats a real Ctrl-click, e.g. on Windows/Linux, identically).
+  // Meta (Cmd), not Control: a simulated Control+click never reaches the page as a 'click' on
+  // macOS — a Playwright/OS quirk, not a bug (the app treats metaKey/ctrlKey identically).
   await cell3.click({ modifiers: ['Meta'] });
 
   const gapCell = page.locator(`.bk-day[data-date="${gap}"]`);

@@ -1,14 +1,6 @@
-// Locale negotiation belongs to the library, not to every consumer.
-// The first consumer shipped its own `'pt'` -> `'pt-PT'` shim because a bare language tag — which
-// is what a browser's `navigator.language`, an `Accept-Language` header, or a URL segment usually
-// carries — matched nothing in `locales.supported` and was rejected outright.
-//
-// The rule is longest-prefix matching over BCP 47 subtags, case-insensitively: the supported tag
-// sharing the most leading subtags with the request wins, ties go to the earlier-declared tag (so
-// `locales.supported` order is the deployment's preference order), and a request sharing not even
-// a primary language subtag falls back to `locales.default`. The value returned is always one of
-// the declared supported tags, verbatim, so downstream storage and copy lookups see a canonical
-// value and never a client-supplied one.
+// A bare language tag (from `navigator.language`, `Accept-Language`, or a URL segment) resolves
+// against `locales.supported` via longest-prefix BCP 47 subtag matching, ties to declaration
+// order — always a canonical supported tag, never a client-supplied one.
 
 export interface LocaleNegotiationConfig {
   supported: readonly string[];

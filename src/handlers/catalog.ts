@@ -16,19 +16,11 @@ import { HttpError, json } from '../http.js';
 import { resolveMessages, type ReservaMessages } from '../ui/messages.js';
 import { run } from './shared.js';
 
-// The rendering contract — everything a consumer needs to build a
-// booking flow before a date is chosen, read from the deployment instead of duplicated in its own
-// code. This is what lets a widget delete its hardcoded service and pickup-option tables the same
-// way the quote endpoint lets it delete its price math.
-//
-// What this must NEVER expose: turnaroundMin, the raw schedule, pricing
-// rules, capacity, occupancyFor, or any occupancy number. Exact money is the quote endpoint's
-// answer; bookable times and scarcity are availability's, gated by limitedThreshold. Adding a field
-// here is a deliberate act: it means declaring it customer-facing.
+// Customer-facing catalog contract. Must never expose turnaroundMin, the raw schedule, pricing
+// rules, capacity, or any occupancy number — adding a field here declares it customer-facing.
 
-// `label`/`hint` stay optional on a declared pickup option, falling back to the message
-// catalog for the historical `default`/`custom` ids. That fallback chain lived in the widget; it
-// belongs here, so every consumer resolves the same copy from one place.
+// `label`/`hint` stay optional, falling back to the message catalog for `default`/`custom` ids,
+// so every consumer resolves the same copy from one place.
 function pickupCopy(option: PickupOption, messages: ReservaMessages): { label: string; hint: string | null } {
   if (option.id === 'default') {
     return { label: option.label ?? messages['widget.pickupDefault'], hint: option.hint ?? messages['widget.pickupDefaultHint'] };
@@ -90,12 +82,11 @@ export function handleCatalog(request: Request, context: ReservaContext): Promis
   return run(async () => {
     if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const locale = resolveLocale(context.config.locales, new URL(request.url).searchParams.get('locale'));
-    // `context.config` is the MERGED config — operator settings edits (createRouteContext,
-    // src/routes/route-context.ts) are already applied, so an edited maxHorizonDays or capacity
-    // policy is reflected here rather than serving the pristine file config forever.
+    // `context.config` is the MERGED config: operator settings edits are already applied, so an
+    // edited maxHorizonDays or capacity policy is reflected here, not the pristine file config.
     const payload = catalogPayload(context.config, locale, resolveMessages(context.config, locale));
-    // "Cacheable" is HTTP-only by design: the projection is cheap, so there is no library-side cache
-    // entry to invalidate, and the short TTL bounds staleness after a settings edit.
+    // Cacheable via HTTP only: the projection is cheap, so there's no library-side cache entry to
+    // invalidate, and the short TTL bounds staleness after a settings edit.
     return json(payload, 200, { 'cache-control': 'public, max-age=60' });
   });
 }

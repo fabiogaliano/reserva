@@ -53,22 +53,20 @@ export interface StripeOptions {
   getProductName?: BookingCallback<string>;
   productName?: BookingCallback<string>;
   getLineItemName?: BookingCallback<string>;
-  // Shown under the name on Stripe's hosted checkout line item. Omitted when
-  // unset so the checkout stays name-only, matching prior behaviour.
+  // Shown under the name on Stripe's hosted checkout line item. Omitted when unset so the
+  // checkout stays name-only.
   productDescription?: string | BookingCallback<string>;
   pickupFieldLabel?: string | BookingCallback<string>;
   // Payment methods are adapter configuration, not a Reserva setting — the accepted set is
   // Stripe's, changing it needs a Stripe dashboard capability, and no other provider shares the
   // vocabulary. Defaults to card-only.
   paymentMethods?: StripePaymentMethod[];
-  // Stripe rejects consent collection unless the account has a Terms of Service
-  // URL in its public business details, which a not-yet-activated test account
-  // lacks. Defaults to 'required' so operators keep the chargeback-defense
-  // consent record; set 'none' to run against such an account.
+  // Stripe rejects consent collection unless the account has a Terms of Service URL in its
+  // public business details, which a not-yet-activated test account lacks. Defaults to
+  // 'required' to keep the chargeback-defense consent record; set 'none' for such an account.
   termsOfService?: 'required' | 'none';
 }
 
-// The Stripe payment method types this adapter is tested against.
 export type StripePaymentMethod = 'card' | 'mb_way';
 
 const DEFAULT_PAYMENT_METHODS: readonly StripePaymentMethod[] = ['card'];
@@ -84,8 +82,8 @@ export const STRIPE_SUPPORTED_LOCALES = new Set([
 ]);
 
 // The currencies Stripe can present at Checkout (docs.stripe.com/currencies, "Presentment
-// currencies", 2026-09). Reserva's own core accepts any ISO 4217 code (core/currency.ts); this is
-// the narrower set THIS adapter can actually charge in, which is exactly why it lives here.
+// currencies"). Reserva's core accepts any ISO 4217 code; this is the narrower set this
+// adapter can actually charge in, which is why it lives here rather than in core.
 export const STRIPE_SUPPORTED_CURRENCIES = new Set([
   'aed', 'afn', 'all', 'amd', 'ang', 'aoa', 'ars', 'aud', 'awg', 'azn', 'bam', 'bbd', 'bdt', 'bgn',
   'bif', 'bmd', 'bnd', 'bob', 'brl', 'bsd', 'bwp', 'byn', 'bzd', 'cad', 'cdf', 'chf', 'clp', 'cny',
@@ -99,10 +97,9 @@ export const STRIPE_SUPPORTED_CURRENCIES = new Set([
   'vuv', 'wst', 'xaf', 'xcd', 'xof', 'xpf', 'yer', 'zar', 'zmw',
 ]);
 
-// 1440 (not Stripe's exact 1445min cap) keeps expires_at 5 minutes under Stripe's 24h-from-creation
-// limit, since expires_at is computed from Reserva's clock, not Stripe's — a holdMinutes=1445
-// session would sit exactly on the edge and fail intermittently under clock skew (see
-// expiresInMinutes in createCheckout below).
+// 1440, not Stripe's exact 1445min cap, keeps expires_at 5 minutes under Stripe's 24h limit:
+// expires_at is computed from Reserva's clock, not Stripe's, so a holdMinutes=1445 session would
+// sit exactly on the edge and fail intermittently under clock skew.
 export const STRIPE_MAX_HOLD_MINUTES = 1440;
 
 // Stripe names European Portuguese `pt`, while the rest of Reserva uses the precise BCP 47 tag.
@@ -152,8 +149,8 @@ function currencyOf(value: unknown): string | undefined {
 }
 
 // The charge.refunded payload's `refunds` list has the actual Refund objects; its most recent
-// entry is the refund this event is about. Absent in older API versions/partial payloads, hence
-// optional chaining throughout — the operation record just falls back to no refund id then.
+// entry is the refund this event is about. Absent in some API versions/payloads, hence the
+// optional chaining — falls back to no refund id rather than throwing.
 function refundIdOf(value: unknown): string | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const refunds = (value as { refunds?: { data?: Array<{ id?: string }> } }).refunds;
@@ -202,18 +199,10 @@ function nowMs(now: () => Date | number): number {
   return value instanceof Date ? value.getTime() : value;
 }
 
-// Errors that mean the request was rejected on its merits (bad params/card/auth/permission) —
-// Stripe's idempotency layer caches and replays error responses too (see refund()'s comment
-// below), so retrying one of these with the same key would just reproduce the same rejection
-// rather than ever succeeding. Everything else (network failures, 5xx, unrecognized errors) is
-// treated as ambiguous — the request may have actually gone through — and is worth one retry.
-// StripeIdempotencyError (409, same key + conflicting params) is also definitive: this provider
-// always resends the identical params object on retry, so a same-key conflict can only mean a
-// different request already used this key — retrying with the same params would 409 again.
-// One definitive error still gets a reconciliation check in refund() before it's rethrown: a
-// StripeInvalidRequestError with code charge_already_refunded, which Stripe returns as a 400 when
-// the refund actually succeeded earlier (e.g. the response was lost, and the idempotency key
-// later aged out of Stripe's ~24h cache) — see the dedicated check at the refund() call site.
+// Definitive errors were rejected on their merits, so retrying the same idempotency key would
+// just replay the rejection — a 409 conflict counts too, since this provider always resends
+// identical params, meaning another request already used that key. Everything else is ambiguous
+// and worth one retry.
 function isDefinitiveStripeError(error: unknown): boolean {
   return error instanceof Stripe.errors.StripeCardError
     || error instanceof Stripe.errors.StripeInvalidRequestError
@@ -222,11 +211,10 @@ function isDefinitiveStripeError(error: unknown): boolean {
     || error instanceof Stripe.errors.StripeIdempotencyError;
 }
 
-// Narrow definitive-error carve-out: `charge_already_refunded` is what Stripe returns when the
-// idempotency key that would have replayed the original success has already been pruned (~24h)
-// and the retry lands as a fresh request against an already-fully-refunded charge. The money
-// moved on the earlier attempt; only reconciliation (exact amount + this request's marker) proves
-// it, so this is the one case worth checking before rethrowing a "definitive" error.
+// `charge_already_refunded` happens when the idempotency key that would have replayed the
+// original success has aged out (~24h) and the retry lands as a fresh request against an
+// already-refunded charge — the money moved on the earlier attempt, so this is worth
+// reconciling (exact amount + this request's marker) before rethrowing as definitive.
 function isChargeAlreadyRefundedError(error: unknown): boolean {
   return error instanceof Stripe.errors.StripeInvalidRequestError && error.code === 'charge_already_refunded';
 }
@@ -261,8 +249,7 @@ export function sessionStatusFromStripe(session: Stripe.Checkout.Session): Sessi
 }
 
 
-// Maps Stripe's own event names onto Reserva's PAYMENT_EVENTS vocabulary (core/events.ts). An event
-// Reserva has no name for keeps Stripe's string and is ignored downstream.
+// An event Reserva has no name for keeps Stripe's own string and is ignored downstream.
 const PAYMENT_EVENT_BY_STRIPE_TYPE: Record<string, PaymentEventParsed['type']> = {
   'checkout.session.completed': 'checkout_completed',
   'checkout.session.expired': 'checkout_expired',
@@ -313,8 +300,8 @@ export function stripeEventToParsed(event: Stripe.Event): PaymentEventParsed {
 }
 
 
-// Internal: consumers construct the provider through the `stripe(options)` factory in index.ts,
-// so the class itself is never part of the published surface.
+// Constructed only through the `stripe(options)` factory; the class itself is never part of
+// the published surface.
 export class StripeProvider implements PaymentProvider {
   readonly stripe: StripeClient;
   readonly webhookSecret: string;
@@ -366,12 +353,9 @@ export class StripeProvider implements PaymentProvider {
       success_url: successUrl,
       cancel_url: cancelUrl,
     };
-    // Keyed off the service's declared option instead of a fixed 'custom' id, so any option a
-    // service marks requiresAddress collects the field, not just the id literally named 'custom'.
-    // An undeclared stored pickupType (the service's pickupOptions changed
-    // after this booking's hold was created) resolves option to undefined, and `undefined?.` is
-    // falsy — the safe degrade is to skip the field rather than guess, since Stripe would otherwise
-    // collect an address label for an option the operator no longer recognizes.
+    // Keyed off the service's declared option instead of a fixed 'custom' id, so any option
+    // marked requiresAddress collects the field. A stored pickupType the service no longer
+    // declares resolves to undefined, safely skipping the field rather than guessing.
     if (pickupOptionFor(service, booking.pickupType)?.requiresAddress) params.custom_fields = [{
       key: 'pickup_address', label: { type: 'custom', custom: pickupLabel }, type: 'text',
     }];
@@ -386,12 +370,9 @@ export class StripeProvider implements PaymentProvider {
     return { url: session.url, sessionRef: session.id };
   }
 
-  // Stripe only replays the cached response for a reused idempotency key when the retried request
-  // carries byte-identical params (otherwise it 409s with idempotency_error) — passing the exact
-  // same `params` object reference to both attempts (never rebuilt in between) guarantees that.
-  // A retry is only useful when the first attempt was ambiguous (the response was lost, but the
-  // session may already exist); isDefinitiveStripeError skips the pointless retry-then-rethrow
-  // round trip for a request that was actually rejected.
+  // Stripe only replays the cached response for a reused idempotency key when the retry carries
+  // byte-identical params (otherwise it 409s) — reusing the same `params` object reference
+  // guarantees that. A retry is skipped for errors that were actually rejected, not ambiguous.
   private async createSession(
     params: Stripe.Checkout.SessionCreateParams,
     idempotencyKey: string,
@@ -407,10 +388,9 @@ export class StripeProvider implements PaymentProvider {
   async parseWebhook(request: Request): Promise<PaymentEventParsed> {
     const signature = request.headers.get('stripe-signature');
     if (!signature) throw new StripeWebhookVerificationError();
-    // Read outside the try below: an oversized body must surface as HttpError(413), not get
-    // collapsed into a generic StripeWebhookVerificationError — and the decoded text is passed to
-    // constructEventAsync completely unchanged, since Stripe's signature was computed over these
-    // exact bytes and any re-serialization would break verification.
+    // Read outside the try: an oversized body must surface as HttpError(413), not collapse into
+    // a generic verification error. The text is passed to constructEventAsync unchanged, since
+    // Stripe's signature was computed over these exact bytes — re-serializing would break it.
     const payload = await requestText(request, PAYMENT_WEBHOOK_BODY_LIMIT_BYTES);
     try {
       const event = await this.stripe.webhooks.constructEventAsync(
@@ -426,10 +406,9 @@ export class StripeProvider implements PaymentProvider {
     return sessionStatusFromStripe(await this.stripe.checkout.sessions.retrieve(sessionRef));
   }
 
-  // Stripe's own limits, checked once while the runtime definition initializes
-  // (runtime-context.ts) instead of leaking into ClientConfig's schema. Every message
-  // names the config path and the fix, so a misconfigured deployment fails to start with something
-  // actionable rather than 500ing on the first checkout.
+  // Stripe's own limits, checked once at runtime init instead of leaking into ClientConfig's
+  // schema. Every message names the config path and the fix, so a misconfigured deployment
+  // fails to start with something actionable rather than 500ing on the first checkout.
   validateConfig(config: ClientConfig): void {
     if (config.booking.holdMinutes > STRIPE_MAX_HOLD_MINUTES) {
       throw new Error(
@@ -455,9 +434,9 @@ export class StripeProvider implements PaymentProvider {
 
   async refund(paymentRef: string, expectedAmountMinor: number): Promise<{ refundRef: string; amountMinor: number }> {
     // This marker is persisted on the Stripe Refund object and is the only evidence
-    // findExistingRefund can match after a crash mid-create, so its shape is an external contract:
-    // a refund created under a previous marker shape stays unmatchable and surfaces as an operator
-    // incident instead of a silent double refund (Stripe refuses to over-refund a charge).
+    // findExistingRefund can match after a crash mid-create — its shape is an external contract.
+    // A refund under a changed marker shape surfaces as an operator incident, not a silent
+    // double refund.
     const idempotencyKey = `reserva-refund-${paymentRef}`;
     let created: Stripe.Refund;
     try {

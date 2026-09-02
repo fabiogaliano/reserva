@@ -1,8 +1,5 @@
-// Proves the whole admin surface — the admin dashboard (GET/POST) and the operator action
-// endpoints — works end to end against real D1 with a fully custom, non-Access `adminAuth`. Done
-// criteria: "a workers test proves the whole admin surface works with no cloudflareaccess.com
-// string anywhere in its config" — configWithoutAccess below drops `admin.access` entirely, and
-// the header-token fake never references Cloudflare Access at all.
+// Proves the whole admin surface — dashboard and operator actions — works end to end against
+// real D1 with a fully custom, non-Access `adminAuth`; nothing here references Cloudflare Access.
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { AdminIdentity } from '../../src/access';
@@ -77,10 +74,9 @@ beforeEach(async () => {
   await db.prepare('DELETE FROM day_overrides').run();
 });
 
-// Confirmed, well in the past — no-show requires now > startsAt, and the admin table's search/
-// status-filter path (handleAdminGet) only widens its lookback to 365 days, not an unbounded
-// history — so this booking must be in the past AND less than a year old at the real wall-clock
-// time this suite runs, not a fixed calendar date that would eventually age out of that window.
+// Must be in the past (no-show requires now > startsAt) but less than a year old, since
+// handleAdminGet's search only widens its lookback to 365 days — computed off wall-clock time,
+// not a fixed date that would eventually fall out of that window.
 const PAST_BOOKING_ID = 'admin-auth-port-past';
 const PAST_STARTS_AT = new Date(Date.now() - 30 * 86_400_000).toISOString();
 const PAST_ENDS_AT = new Date(Date.now() - 30 * 86_400_000 + 3_600_000).toISOString();

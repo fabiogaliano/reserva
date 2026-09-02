@@ -1,23 +1,19 @@
-// The one refund executor both the operator HTTP path (src/handlers/booking-actions.ts's
-// resolvePendingRefund) and the scheduled reconciler (src/reconciliation.ts, step 5) call — the
-// Stripe-call-then-resolve core is identical either way, so a fix or a new safeguard here protects
-// both callers at once.
+// The one refund executor both the operator HTTP path and the scheduled reconciler call — the
+// Stripe-call-then-resolve core is identical either way, so a fix or safeguard here protects both
+// callers at once.
 //
 // The two callers differ only in HOW they got permission to attempt: the HTTP path relies on the
-// refund-operation's own decision claim (claimRefundOperation, already unique per booking_id) plus
-// an immediate re-read guard against a same-choice loser; the scheduled path additionally holds a
-// claimRefundExecution/claimRefundExecutionForRetry execution lease before ever calling this
+// refund-operation's own decision claim plus an immediate re-read guard against a same-choice
+// loser; the scheduled path additionally holds an execution lease before ever calling this
 // function, and passes that claim's attempt number in so a retryable failure gets a backoff
-// next_attempt_at and a permanent/exhausted failure becomes 'abandoned' (mirroring
-// src/confirmation.ts's classifyAttemptOutcome for side-effect operations). Passing no `attempt`
-// preserves the HTTP path's original behavior byte-for-byte, including the re-read guard —
-// deliberately NOT gated behind a fresh execution claim there: a crash-recovery case (a Stripe
-// success whose D1 write then throws) requires an immediate retry — even on the same clock tick —
-// to re-enter and call Stripe again, which a claim (even a bypass one) with a staleness-gated lease
-// cannot support at zero elapsed time. That is safe only because StripeProvider.refund()'s own
-// idempotency key (not this D1 claim) is what actually prevents a double refund on a repeated
-// Stripe call — the D1 claim exists to avoid redundant/observable double-attempts from the
-// scheduled path, not to gate correctness.
+// next_attempt_at and a permanent/exhausted failure becomes 'abandoned'. Passing no `attempt`
+// preserves the HTTP path's original behavior, including the re-read guard — not gated behind a
+// fresh execution claim there because a crash-recovery case (a Stripe success whose D1 write then
+// throws) requires an immediate retry, even on the same clock tick, which a staleness-gated lease
+// can't support at zero elapsed time. That's safe only because StripeProvider.refund()'s own
+// idempotency key, not this D1 claim, is what actually prevents a double refund on a repeated
+// Stripe call — the D1 claim exists to avoid redundant double-attempts from the scheduled path,
+// not to gate correctness.
 import { classifyAttemptOutcome } from './confirmation.js';
 import type { Booking } from './core/booking.js';
 import type { ReservaContext } from './context.js';
@@ -29,21 +25,18 @@ export type RefundAttemptOutcome =
   // Stripe succeeded (or choice === 'none', which never touches Stripe) and the outcome is recorded.
   | { kind: 'succeeded' }
   // A same-choice loser's stale snapshot lost the re-read race to an already-resolved winner —
-  // never called the provider. HTTP-path-only (attempt undefined); the scheduled path never sees
-  // this because its claim already excludes a 'succeeded' row.
+  // never called the provider. HTTP-path-only; the scheduled path never sees this because its
+  // claim already excludes a 'succeeded' row.
   | { kind: 'skipped' }
-  // 'full' was requested but the booking has no payment reference (a free booking, or legacy
-  // data) — recorded as a permanent 'failed' row; retrying without one could never
-  // succeed, so the scheduled path should treat this the same as an unrecoverable failure.
+  // 'full' was requested but the booking has no payment reference — recorded as a permanent
+  // 'failed' row; retrying without one could never succeed.
   | { kind: 'payment_ref_missing' }
   // The provider's refund() call itself failed. `retryable`/`statusCode` are classifyProviderError's
-  // verdict — the scheduled path already used these to decide 'failed' vs 'abandoned' before
-  // calling resolveRefundOperation; the HTTP caller only needs to know to report a 502.
+  // verdict; the HTTP caller only needs to know to report a 502.
   | { kind: 'failed'; message: string; retryable: boolean; statusCode: number | undefined };
 
-// Present only when the caller already holds an execution claim (claimRefundExecution /
-// claimRefundExecutionForRetry) — i.e., the scheduled reconciler, never the HTTP path. attemptNumber
-// is the 1-based count that claim call just returned.
+// Present only when the caller already holds an execution claim — the scheduled reconciler, never
+// the HTTP path. attemptNumber is the 1-based count that claim call just returned.
 export interface RefundExecutionClaim {
   attemptNumber: number;
 }
@@ -97,12 +90,9 @@ export async function attemptRefund(
     return { kind: 'failed', message, retryable: true, statusCode: undefined };
   }
   // The provider has already moved the money by this point — a failure recording that outcome to
-  // D1 must never be classified as a provider failure (that would misreport a completed refund as
-  // failed, or mark it 'failed' forever). Let a write failure here propagate as a plain error
-  // instead: the row stays 'requested'/'in_flight', and a retry recovers the same result via the
-  // provider's own idempotency guarantees (for Stripe: its idempotency key, or once that key's
-  // ~24h window has lapsed, refunds.list reconciliation in StripeProvider.refund) rather than ever
-  // double-refunding or losing the outcome.
+  // D1 must never be classified as a provider failure. Let a write failure here propagate as a
+  // plain error instead: the row stays 'requested'/'in_flight', and a retry recovers the same
+  // result via the provider's own idempotency guarantees rather than ever double-refunding.
   await context.repo.resolveRefundOperation(operationId, {
     status: 'succeeded', stripeRefundId: result.refundRef, amountCents: result.amountMinor, resolvedAt: nowIso(context),
   });

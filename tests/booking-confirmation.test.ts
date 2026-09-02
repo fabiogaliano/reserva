@@ -32,7 +32,7 @@ describe('booking confirmation page', () => {
     expect(html).toContain('Praça do Comércio');
   });
 
-  it('omits the meeting-point fact and calendar location when the payload has no meetingPoint (plan 019 decision 2)', () => {
+  it('omits the meeting-point fact and calendar location when the payload has no meetingPoint', () => {
     const html = confirmationPage(
       { config, routeConfig: resolveRouteConfig() },
       {

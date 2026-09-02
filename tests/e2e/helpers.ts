@@ -5,9 +5,7 @@ export interface BookingOpts {
   service: string;
   quantity: number;
   // Selects a non-default meeting point when the service declares 2+ (the widget pre-checks the
-  // first one, which is why every other caller omits this and still books that first point
-  // unchanged). No-op when the service has 0-1 points, since the widget then renders no such
-  // group to select from.
+  // first one). No-op when the service has 0-1 points.
   meetingPointId?: string;
   // The page hosting `opts.service`'s widget — defaults to the homepage (oldTown). A
   // location-less service is demoed from its own page (see river-cruise.astro).
@@ -83,11 +81,9 @@ export async function createBooking(page: Page, opts: BookingOpts) {
   return { reference, outboxEntry: entry };
 }
 
-// Drives the manage page's reschedule form into an available slot different from `currentStart`
-// (a local ISO-with-offset instant, as returned by the manage API's `booking.start`). Exercises the
-// served enhancer's calendar + slot picker (src/ui/manage-enhancer.ts) — the manage page always
-// ships it when a reschedule is possible, so the native datetime-local fallback is not reachable
-// from a JS-enabled browser and isn't exercised here.
+// Drives the manage page's reschedule form into a slot different from `currentStart`, via the
+// served enhancer's calendar + slot picker — the native datetime-local fallback is never reachable
+// from a JS-enabled browser, so it isn't exercised here.
 export async function rescheduleViaManagePage(page: Page, currentStart: string): Promise<{ newStart: string }> {
   const form = page.locator('[data-reserva-reschedule]');
   const service = await form.getAttribute('data-service');

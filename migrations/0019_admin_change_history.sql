@@ -1,8 +1,6 @@
--- Plan 005 (re-anchored after the v2 rename wave, plans 021-022): a durable, actor-attributed
--- record of every admin-surface write. History INSERTs ride the same db.batch() as the change
--- they record (src/repo.ts) -- never a second, separate write that could be lost if the first
--- half of a save succeeded and the second didn't. INTEGER PRIMARY KEY = SQLite rowid, monotonic
--- per insert, so ORDER BY id DESC is "most recent first" without a secondary timestamp tiebreak.
+-- Durable, actor-attributed record of every admin-surface write. History INSERTs ride the same
+-- db.batch() as the change they record (src/repo.ts), never a second write that could be lost if
+-- only half a save succeeded. INTEGER PRIMARY KEY (rowid) makes ORDER BY id DESC "most recent first".
 CREATE TABLE admin_change_history (
   id          INTEGER PRIMARY KEY,
   domain      TEXT NOT NULL CHECK (domain IN ('setting', 'day_override', 'capacity_default')),

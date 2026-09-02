@@ -73,17 +73,15 @@ async function rescheduleWithToken(context: ReservaContext, booking: Booking, ne
     await calendarPatch(context, booking);
     return booking;
   }
-  // checkSlot above is only a fast-path pre-check (read-then-write TOCTOU — two
-  // concurrent reschedules into the same last unit can both pass it). rescheduleWithCapacity is
-  // the authority: it re-evaluates the CAS (status + starts_at) and occupied-units-in-interval +
-  // requested <= capacity inside the same atomic UPDATE ... WHERE as the write itself.
+  // checkSlot above is only a fast-path pre-check (TOCTOU — two concurrent reschedules into the
+  // same last unit can both pass it). rescheduleWithCapacity is the authority: it re-evaluates the
+  // CAS and occupancy inside the same atomic UPDATE ... WHERE as the write itself.
   const occupancyUnits = occupancyFor(candidate.service, booking.quantity);
   const occupancyEndsAt = new Date(parseUtcInstant(next.endsAt).getTime() + candidate.service.turnaroundMin * 60_000).toISOString();
   const localDate = localDateKey(next.startsAt, context.config.business.timezone);
-  // Recompute from the NEW endsAt, exactly like checkout does
-  // from the original endsAt (see handleCheckout in src/handlers/checkout.ts) — otherwise a booking moved later could
-  // have its manage link expire before the rescheduled service happens, and one moved earlier would
-  // keep an over-long window relative to its new end.
+  // Recompute from the NEW endsAt, exactly like checkout does from the original — otherwise a
+  // booking moved later could have its manage link expire before the service happens, and one moved
+  // earlier would keep an over-long window relative to its new end.
   const tokenExpiryDays = context.config.booking.tokenExpiryDays ?? DEFAULT_TOKEN_EXPIRY_DAYS;
   const tokensExpireAt = new Date(parseUtcInstant(next.endsAt).getTime() + tokenExpiryDays * 86_400_000).toISOString();
   const updated = await context.repo.rescheduleWithCapacity(next.id, {
@@ -101,10 +99,9 @@ async function rescheduleWithToken(context: ReservaContext, booking: Booking, ne
   if (!updated) {
     const fresh = await context.repo.getBookingById(next.id);
     if (!fresh || fresh.status !== 'confirmed') throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be rescheduled');
-    // Status is still confirmed but the write lost the atomic guard — either a concurrent
-    // reschedule moved starts_at, or no capacity remained (someone else took the last unit, or
-    // an admin day-override shrank capacity concurrently). Both surface identically: the slot
-    // this request computed availability against is gone.
+    // Status is still confirmed but the write lost the atomic guard — either a concurrent reschedule
+    // moved starts_at, or capacity shrank concurrently. Both surface identically: the slot this
+    // request computed availability against is gone.
     throw new HttpError(409, 'slot_unavailable', 'The selected slot is no longer available');
   }
   await calendarPatch(context, updated);
@@ -136,19 +133,16 @@ async function operatorBooking(
   const bookingId = requireString(body.bookingId, 'bookingId');
   const booking = await context.repo.getBookingById(bookingId);
   if (!booking) throw new HttpError(404, 'not_found', 'Booking not found');
-  // The operator-token branch above already drains via tokenBooking —
-  // this bearer-token branch is the other way an operator-adjacent request loads a booking, so it
-  // needs the same drain call.
+  // The operator-token branch above already drains via tokenBooking — this bearer-token branch is
+  // the other way an operator-adjacent request loads a booking, so it needs the same drain call.
   await runOwedMutationSideEffects(context, booking);
   return booking;
 }
 
 // Executes (or resumes) the Stripe side of a claimed refund operation and records the outcome.
-// Safe to call more than once for the same operation id: refund() carries
-// Stripe's own idempotency key, so a resumed/retried call cannot double-refund even when a
-// previous attempt's D1 write never landed (crash between Stripe success and recording it).
-// A thin HTTP-facing wrapper around the shared attemptRefund executor (src/refund-executor.ts)
-// — see that module's header comment for why the HTTP path calls it with no execution claim.
+// Safe to call more than once for the same operation id: refund() carries Stripe's own idempotency
+// key, so a resumed/retried call cannot double-refund even when a previous attempt's D1 write never
+// landed (crash between Stripe success and recording it).
 async function resolvePendingRefund(
   context: ReservaContext,
   booking: Booking,
@@ -165,12 +159,10 @@ async function resolvePendingRefund(
   }
 }
 
-// Reconciles a request against the refund-operation row for an already-cancelled booking.
-// Used both when the booking was already cancelled on entry and when this
-// request's own CAS cancel attempt lost to a concurrent same-choice winner. In both cases Stripe
-// may only be touched for the operation that actually won the claim, and only once its choice
-// matches this request's own — a different-choice request must never drive (or silently agree
-// with) another request's Stripe call.
+// Reconciles a request against the refund-operation row for an already-cancelled booking. Used both
+// when the booking was already cancelled on entry and when this request's own CAS cancel attempt
+// lost to a concurrent same-choice winner. Stripe may only be touched for the operation that
+// actually won the claim, and only once its choice matches this request's own.
 async function reconcileCancelledRefund(
   context: ReservaContext,
   booking: Booking,
@@ -244,10 +236,9 @@ export function handleOperatorCancel(request: Request, context: ReservaContext):
     if (!refund) throw new HttpError(400, 'validation_failed', 'refund must be full or none');
 
     if (booking.status === 'cancelled') {
-      // Already cancelled, but the refund claimed for it might not have finished (a crash
-      // between the Stripe call and recording it, or an earlier Stripe failure never retried).
-      // Resume it instead of silently reporting ok while the money side is unresolved — but only
-      // when this request's own choice is the one that actually won the claim.
+      // Already cancelled, but the refund claimed for it might not have finished. Resume it instead
+      // of silently reporting ok while the money side is unresolved — only when this request's own
+      // choice is the one that actually won the claim.
       return reconcileCancelledRefund(context, booking, refund);
     }
     if (booking.status !== 'confirmed') throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
@@ -257,11 +248,9 @@ export function handleOperatorCancel(request: Request, context: ReservaContext):
       throw new HttpError(409, 'refund_payment_ref_missing', 'Cannot refund a booking without a payment reference');
     }
 
-    // Claim-then-act: the refund decision is durably recorded before Stripe is
-    // ever touched, so a refund=full and refund=none request racing on this booking can never
-    // both call Stripe. Winning this claim only earns the right to attempt the CAS cancel below —
-    // it is that CAS transition, not the claim, that is the authoritative gate: Stripe is only
-    // ever reached once the booking is confirmed durably cancelled.
+    // Claim-then-act: the refund decision is durably recorded before Stripe is ever touched, so a
+    // refund=full and refund=none request racing on this booking can never both call Stripe. The CAS
+    // cancel below, not the claim, is the authoritative gate on when Stripe is reached.
     const operationId = crypto.randomUUID();
     const claimed = await context.repo.claimRefundOperation({
       id: operationId, bookingId: booking.id, paymentIntent: booking.paymentRef ?? null,
@@ -269,8 +258,7 @@ export function handleOperatorCancel(request: Request, context: ReservaContext):
     });
     if (!claimed) {
       // Lost the claim to a concurrent request for this booking. Same choice = treat as the same
-      // logical operation and resume it; a different choice already won = surface the conflict
-      // rather than silently agreeing with (or fighting) a decision this request didn't make.
+      // logical operation and resume it; a different choice already won = surface the conflict.
       const existing = await context.repo.getRefundOperationByBookingId(booking.id);
       if (!existing || existing.choice !== refund) {
         throw new HttpError(409, 'refund_conflict', 'A different refund decision already won for this booking');
@@ -282,8 +270,7 @@ export function handleOperatorCancel(request: Request, context: ReservaContext):
         // whole operation, not only Stripe: the CAS remains the gate that makes a refund safe.
         return completeClaimedOperatorCancellation(context, booking, existing.id, refund);
       }
-      // The claim-holder may have won its CAS but not resolved Stripe yet. Never resume its
-      // refund until the booking is durably cancelled.
+      // Never resume the claim-holder's refund until the booking is durably cancelled.
       if (fresh?.status !== 'cancelled') throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
       await resolvePendingRefund(context, booking, existing.id, existing.choice, existing.paymentIntent ?? booking.paymentRef ?? null);
       return json<ManageActionResponse>({ ok: true });
@@ -315,8 +302,7 @@ export function handleOperatorNoShow(request: Request, context: ReservaContext):
         expectedStatusIn: ['confirmed'], updatedAt: next.updatedAt,
         mutationSideEffects: mutationSideEffectSeeds(context, 'booking.no_show', next, next.updatedAt),
       });
-      // CAS loss is always a conflict here, not an idempotent 200 — the caught error below
-      // converts it to the same 409 invalid_transition the wrong-state check already uses.
+      // CAS loss is always a conflict here, not an idempotent 200.
       if (!updated) throw new Error('Booking cannot be marked no-show');
       await dispatchMutation(context, 'booking.no_show', updated);
       return json<ManageActionResponse>({ ok: true });

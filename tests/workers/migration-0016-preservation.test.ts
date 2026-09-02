@@ -1,11 +1,6 @@
-// migrations/0016_operational_reconciliation.sql is additive
-// for side_effect_operations (two nullable columns + a new index) and for the brand-new
-// operational_incidents table, but rebuilds refund_operations the same rename -> create ->
-// INSERT...SELECT -> drop pattern as 0011/0012/0013/0015 (see 0011's header) to widen its `status`
-// CHECK. This proves every existing refund_operations row/column/constraint survives that rebuild
-// byte-for-byte, that the additive side_effect_operations columns/index land without disturbing
-// its existing CHECK/index/FK, and that operational_incidents enforces its CHECKs and unique
-// constraint.
+// migrations/0016_operational_reconciliation.sql is additive for side_effect_operations and adds
+// operational_incidents, but rebuilds refund_operations to widen its status CHECK. Proves the
+// rebuild is lossless and the additive columns/table land without disturbing existing constraints.
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';

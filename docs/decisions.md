@@ -80,8 +80,7 @@ would make "at most one hold" the intended behavior after all.
 
 ## 4. Admin CSRF guard: rejecting `Sec-Fetch-Site: same-site`, and the token's key material
 
-**Context.** BK-SEC-001 (2026-07-22 audit remediation, finding 09-admin-csrf; the
-handoff document was removed from `docs/tmp/` in commit `64d4702`):
+**Context.** From the 2026-07 security review:
 `handleAdminPost` previously gated only on Cloudflare Access (WHO), with no defense
 against a cross-origin request riding an operator's live Access session. The spec calls
 for two independent layers — Fetch-Metadata/Origin enforcement and a per-session CSRF
@@ -102,12 +101,12 @@ store to mint a per-session secret from (see "Why not Astro sessions?" below), a
 existing secret in `ClientConfig`/`SecretLookup` is purpose-fit for CSRF signing
 (reaching into a specific `PaymentProvider` implementation for Stripe's secret/webhook
 key would couple this to one provider and never surfaces on `ReservaContext` anyway;
-reusing the optional Tourflow shared secret would mix unrelated trust domains for no
+reusing the (since removed) operations-feed shared secret would mix unrelated trust domains for no
 real gain). The first version of this decision keyed the token from
 `config.admin.accessAud` alone whenever the optional `RESERVA_CSRF_SECRET` Worker
 secret was unset, reasoning that accessAud is "never observable outside an
 already-Access-authenticated session." **That reasoning was wrong and a subsequent
-review of this handoff caught it (BK-SEC-001, P1 finding 1):** accessAud is the Access
+review caught it:** accessAud is the Access
 application's Audience tag, which appears in the `aud` claim of every Access-issued
 JWT — an attacker only needs to have completed an Access login once (or seen the value
 in checked-in config) to read it, so a key derived from it alone is not secret and
@@ -123,7 +122,7 @@ unset, `mintAdminCsrfToken`/`verifyAdminCsrfToken` take layer 2 offline entirely
 no token is minted, and verification is a no-op — rather than emit a token that only
 looks signed. **`RESERVA_CSRF_SECRET` must be set (`wrangler secret put
 RESERVA_CSRF_SECRET`, added to `secretBindings`) for layer 2 to actually run.** This
-fail-open is acceptable, and does not reopen BK-SEC-001, only because layer 1
+fail-open is acceptable only because layer 1
 (Fetch-Metadata/Origin) is unconditional and independently stops the attack in every
 modern browser with or without a configured secret — layer 1 itself never fails open.
 

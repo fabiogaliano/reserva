@@ -14,10 +14,9 @@ function requestWith(headers: HeadersInit): Request {
   return new Request(ADMIN_URL, { method: 'POST', headers });
 }
 
-// Mirrors admin-csrf.ts's private base64url + HMAC-SHA256 signing, only so this file can forge a
-// token exactly the way an attacker who knows a piece of key material (but not the real secret)
-// would, to prove verifyAdminCsrfToken rejects it. Not exported from src/admin-csrf.ts on purpose —
-// signing is an implementation detail, not part of its public surface.
+// Mirrors admin-csrf.ts's private base64url + HMAC-SHA256 signing, so this file can forge a token
+// the way an attacker with partial key material would, to prove verifyAdminCsrfToken rejects it —
+// not exported since signing is an implementation detail, not public surface.
 function base64UrlEncode(bytes: Uint8Array): string {
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -31,7 +30,7 @@ async function forgeToken(key: string, sub: string, exp: number): Promise<string
   return `${payloadPart}.${base64UrlEncode(new Uint8Array(signature))}`;
 }
 
-describe('adminOriginAllowed (BK-SEC-001 layer 1: Fetch-Metadata / Origin enforcement)', () => {
+describe('adminOriginAllowed (layer 1: Fetch-Metadata / Origin enforcement)', () => {
   it('accepts Sec-Fetch-Site: same-origin', () => {
     expect(adminOriginAllowed(requestWith({ 'sec-fetch-site': 'same-origin' }))).toBe(true);
   });
@@ -72,7 +71,7 @@ describe('adminOriginAllowed (BK-SEC-001 layer 1: Fetch-Metadata / Origin enforc
   });
 });
 
-describe('mintAdminCsrfToken / verifyAdminCsrfToken (BK-SEC-001 layer 2: per-session CSRF token, RESERVA_CSRF_SECRET configured)', () => {
+describe('mintAdminCsrfToken / verifyAdminCsrfToken (layer 2: per-session CSRF token, RESERVA_CSRF_SECRET configured)', () => {
   it('verifies a freshly minted token for the same subject', async () => {
     const token = await mintAdminCsrfToken(context, 'ops@example.test', now);
     await expect(verifyAdminCsrfToken(context, token, 'ops@example.test', now)).resolves.toBe(true);
@@ -106,10 +105,9 @@ describe('mintAdminCsrfToken / verifyAdminCsrfToken (BK-SEC-001 layer 2: per-ses
     await expect(verifyAdminCsrfToken(context, token, 'ops@example.test', now)).resolves.toBe(false);
   });
 
-  // A deployment with no `config.admin.access` at all (a custom `adminAuth`) derives the literal
-  // 'custom' instead of an aud — proves it gets genuinely distinct key material from an Access
-  // deployment sharing the same RESERVA_CSRF_SECRET, not an accidental collision (e.g. both
-  // resolving to the empty string).
+  // A deployment with no `config.admin.access` derives the literal 'custom' instead of an aud —
+  // proves distinct key material from an Access deployment sharing the same secret, not an
+  // accidental collision.
   it('derives a distinct key for a custom (no admin.access) deployment than for an Access deployment sharing the same secret', async () => {
     const customContext = { config: { admin: {} }, secrets };
     const token = await mintAdminCsrfToken(customContext, 'ops@example.test', now);
@@ -132,19 +130,16 @@ describe('mintAdminCsrfToken / verifyAdminCsrfToken (BK-SEC-001 layer 2: per-ses
     await expect(verifyAdminCsrfToken(context, undefined, 'ops@example.test', now)).resolves.toBe(false);
   });
 
-  // The token used to be HMAC'd with accessAud alone whenever RESERVA_CSRF_SECRET was unset.
-  // accessAud is not secret (it's the Access JWT `aud` claim, visible to anyone who has ever
-  // completed an Access login), so that key was forgeable by any attacker who could read a JWT.
-  // This proves a token forged that way — signed using ONLY the (public) accessAud as the HMAC
-  // key — is rejected once a real secret is configured, i.e. the real verifier's key material is
-  // never reducible to public information alone.
+  // accessAud is not secret (it's the Access JWT `aud` claim), so a token HMAC'd with it alone is
+  // forgeable by anyone who's completed an Access login. Proves such a forged token is rejected
+  // once a real secret is configured — key material is never reducible to public info alone.
   it('is unforgeable from accessAud alone: a token HMAC-signed with only the public accessAud as key is rejected', async () => {
     const forged = await forgeToken(context.config.admin.access.aud, 'ops@example.test', now + ADMIN_CSRF_TOKEN_TTL_MS);
     await expect(verifyAdminCsrfToken(context, forged, 'ops@example.test', now)).resolves.toBe(false);
   });
 });
 
-describe('mintAdminCsrfToken / verifyAdminCsrfToken without RESERVA_CSRF_SECRET (BK-SEC-001 finding 1 fix: layer 2 fails open, layer 1 does not)', () => {
+describe('mintAdminCsrfToken / verifyAdminCsrfToken without RESERVA_CSRF_SECRET (layer 2 fails open, layer 1 does not)', () => {
   const noSecretContext = { config: { admin: { access: { aud: 'test-audience' } } } };
 
   it('mintAdminCsrfToken returns undefined — no real secret means no token is emitted', async () => {

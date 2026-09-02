@@ -1,9 +1,7 @@
 #!/usr/bin/env bun
-// Produces the complete publish artifact in dist/: compiled JS + declarations + source maps from
-// tsc, plus the raw files tsc has no notion of. The `.astro` components are copied, never
-// precompiled — Astro compiles them inside the consumer's own build — and they are copied to the
-// path that mirrors their position under src/, so their relative imports (`../routes-manifest`,
-// `../ui/components.css`) land on the corresponding emitted files without any path rewriting.
+// `.astro` components are copied, never precompiled — Astro compiles them inside the consumer's
+// own build — into the path that mirrors their position under src/, so their relative imports land
+// on the corresponding emitted files without any path rewriting.
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -11,11 +9,8 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-// The non-TypeScript files no TypeScript source *imports*, as `src/` path -> `dist/` path. A JSON
-// file reached by a real import (src/ui/locales/*.json, via messages.ts) is already resolved and
-// emitted into dist/ by tsc under resolveJsonModule — adding a new locale needs nothing here; only
-// a file tsc never sees in the module graph (an `.astro` component the consumer compiles, a
-// stylesheet linked by URL) belongs in this list.
+// Only files no TypeScript source *imports* belong here: anything tsc resolves through the module
+// graph (e.g. JSON via resolveJsonModule) is already emitted into dist/ on its own.
 const RAW_ASSETS = [
   'components/ManageBooking.astro',
   'components/AdminDashboard.astro',

@@ -7,11 +7,9 @@ import type { Booking } from '../../src/core/booking';
 import { createBookingRepository, sideEffectOperationKey, type SideEffectOperationRecord } from '../../src/repo';
 import worker, { WEBHOOK_SECRET, calendarEvents, emailOutbox, hookOutbox, resetWebhookWorkerOutboxes } from './worker';
 
-// The money path -- a signed checkout.session.completed reaching
-// the webhook route and confirming a booking with durable side effects -- was never proven
-// assembled. Every request below goes through the real worker (./worker.ts): real
-// defineCloudflareReservaRuntime, the real Stripe adapter doing real HMAC signature verification
-// (no mocked constructEventAsync anywhere in this file), the real handlePaymentWebhook, and real D1.
+// The money path — a signed checkout.session.completed confirming a booking with durable side
+// effects — proven assembled: real worker, real Stripe HMAC verification, real
+// handlePaymentWebhook, and real D1.
 
 const db = (env as unknown as { RESERVA_DB: D1Database }).RESERVA_DB;
 const repo = createBookingRepository(db);
@@ -92,10 +90,8 @@ function webhookRequest(payload: string, signature: string | null): Request {
 }
 
 // The documented integration-test pattern for a modules-format worker's ctx.waitUntil() side
-// effects (see tests/workers/worker.ts's fetch signature comment): createExecutionContext() plus
-// waitOnExecutionContext() deterministically settles the detached first attempt of the durable
-// subscriber delivery before assertions run, rather than relying on incidental promise-scheduling
-// timing.
+// effects: createExecutionContext()/waitOnExecutionContext() deterministically settle the
+// detached delivery before assertions run.
 async function dispatch(request: Request): Promise<Response> {
   const ctx = createExecutionContext();
   const response = await worker.fetch(request, env, ctx);
@@ -214,10 +210,9 @@ describe('signed Stripe webhook through the assembled worker + real D1', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ received: true });
 
-    // src/handlers/index.ts handlePaymentWebhook: confirmBookingFromPayment is a no-op for a
-    // booking that isn't hold/expired (it returns the booking unchanged, never re-confirming a
-    // cancelled booking), but the unconditional session-id backfill below it still runs -- Stripe's
-    // session id is recorded either way, without moving the booking off 'cancelled'.
+    // confirmBookingFromPayment is a no-op for a booking that isn't hold/expired, but the
+    // unconditional session-id backfill still runs — Stripe's session id is recorded either way,
+    // without moving the booking off 'cancelled'.
     const stillCancelled = await repo.getBookingById(id);
     expect(stillCancelled).toMatchObject({ status: 'cancelled', paymentSessionRef: fixture.sessionId });
     expect(await repo.listSideEffectOperations(id)).toEqual([]);

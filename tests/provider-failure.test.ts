@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { classifyProviderError, isRetryableStatus, ProviderFailure } from '../src/provider-failure';
 
-describe('isRetryableStatus (plan 016 decision 1)', () => {
+describe('isRetryableStatus', () => {
   it('treats 408/425/429 and every 5xx as retryable', () => {
     for (const status of [408, 425, 429, 500, 502, 503, 504, 599]) {
       expect(isRetryableStatus(status)).toBe(true);

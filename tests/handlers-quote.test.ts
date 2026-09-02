@@ -1,9 +1,6 @@
-// The anti-drift guarantee. The quote endpoint exists
-// because the first consumer had to reimplement the pricing matrix client-side; the only thing
-// that makes it safe is that it prices through the SAME code path checkout charges through. These
-// tests assert that over a real (service x quantity x pickup) matrix by running both endpoints and
-// comparing the quote against the amount actually persisted on the booking row — not by inspecting
-// the shared function, which would prove nothing about the endpoints.
+// The anti-drift guarantee: quote is safe only because it prices through the SAME code path
+// checkout charges through. Asserted over a real matrix by comparing the quote against the amount
+// actually persisted on the booking row, not by inspecting the shared function directly.
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createReservaContext, type ReservaContext } from '../src/context';
@@ -65,7 +62,7 @@ async function chargedPriceMinor(body: Record<string, unknown>): Promise<number 
   return [...repo.rows.values()][0]?.priceMinor;
 }
 
-describe('POST /api/booking/quote (plan 027 design decision 1)', () => {
+describe('POST /api/booking/quote', () => {
   it('quotes exactly what checkout charges for every (service, quantity, pickup) combination', async () => {
     const cases: Array<{ serviceSlug: string; quantity: number; pickup?: string }> = [];
     for (const quantity of [1, 2, 4, 5, 8]) {

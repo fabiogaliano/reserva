@@ -3,13 +3,9 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import packageJson from '../package.json';
 
-// Guards the tree-shake story documented in README's "Providers" section: `@reservajs/astro/providers`
-// is a convenience barrel (it pulls every provider's module into the graph), so the real
-// narrow-import contract is the per-provider subpaths in the exports map. Two structural checks
-// stand in for "narrow subpaths are actually narrow": `sideEffects: false` licenses bundlers to
-// drop unused exports at all, and no provider entrypoint may either run code on import or reach
-// sideways into another provider's directory — the two ways importing one provider could still
-// drag another provider's SDK-facing code into a consumer's bundle.
+// Guards the tree-shake contract (README's "Other providers"): `sideEffects: false` licenses
+// bundlers to drop unused exports, and no provider entrypoint may run code on import or reach into
+// another provider's directory -- the two ways one provider could drag another's SDK into a bundle.
 
 // The exports map names the emitted file; tsc mirrors src/ into dist/, so each target is read back
 // through that mapping.

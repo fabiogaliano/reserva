@@ -195,7 +195,7 @@ describe('core occupancy', () => {
     expect(intervals).toHaveLength(1);
   });
 
-  it('remainingBookings converts remaining capacity units into bookings for a given party size (BK-CAP-002)', () => {
+  it('remainingBookings converts remaining capacity units into bookings for a given party size', () => {
     // Fixture service: occupancyFor(5) = 2 units (parties >4 need a second vehicle).
     expect(remainingBookings(3, service, 5)).toBe(1); // 3 units / 2-unit party = 1 more booking fits
     expect(remainingBookings(4, service, 5)).toBe(2);

@@ -1,10 +1,8 @@
 import { test, expect } from '@playwright/test';
 import { createBooking } from './helpers';
 
-// riverCruise (examples/smoke-site/src/config.ts) declares
-// no location module at all — quantity-tier pricing only. Proves the whole funnel (widget ->
-// checkout -> D1 -> confirmation -> admin) never surfaces a pickup/meeting-point axis for it, and
-// that checkout still rejects a client that tries to send one anyway.
+// riverCruise declares no location module — quantity-tier pricing only. Proves the whole funnel
+// never surfaces a pickup/meeting-point axis for it, and checkout still rejects one anyway.
 
 test('booking a service with no location module carries no pickup/meeting-point fields through checkout, confirmation, or admin', async ({ page }) => {
   let checkoutBody: Record<string, unknown> | undefined;
@@ -13,10 +11,8 @@ test('booking a service with no location module carries no pickup/meeting-point 
       checkoutBody = JSON.parse(request.postData() ?? '{}');
     }
   });
-  // riverCruise also declares a required text metadata field — the
-  // widget renders no input for it (no editing surface beyond checkout), so this test satisfies that
-  // requirement the same way every other test that isn't specifically about metadata does: inject a
-  // minimal valid value onto the request the widget already sends, rather than growing the widget itself.
+  // riverCruise also declares a required text metadata field the widget renders no input for, so
+  // this injects a minimal valid value onto the request rather than growing the widget.
   await page.route('**/api/booking/checkout', async (route) => {
     const body = JSON.parse(route.request().postData() ?? '{}');
     body.metadata = { dietary_notes: 'n/a' };

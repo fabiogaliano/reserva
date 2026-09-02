@@ -1,60 +1,42 @@
-// The HTTP contract, in one place. Every handler response type and
-// the error envelope live here and are exported from `@reservajs/astro/core`, so a consumer types
-// its client against the same declarations the handlers return instead of re-declaring them (the
-// first consumer's ReservaClient.ts re-declared all of them, which is what let them drift).
-//
-// Rules this file follows:
-// - one truth per fact: booking-bearing payloads are expressed in terms of `WireBooking`, the one
-//   public booking projection (core/booking.ts), never as a parallel field list;
-// - closed exported vocabularies: `API_ERROR_CODES` is a runtime array, and every other closed set
-//   here derives from an existing one;
-// - the empty-value rule: a collection is `[]`/`{}` and an absent optional module is `null`, so a
-//   caller never branches on key presence.
+// The HTTP contract in one place: every handler response type and error envelope, exported from
+// `@reservajs/astro/core` so a consumer's client types match the handlers exactly.
 import type { WireBooking } from './booking.js';
 import type { MetadataField } from './config.js';
-// Type-only (erased at build time): the ops-health payload reports outbox debt per operation
-// family, and that family set is `SIDE_EFFECT_FAMILIES` in src/repo.ts. Importing the
-// derived type keeps the catalog single-sourced there rather than restating it here; nothing in
-// this module depends on the repository at runtime.
+// Type-only import: no runtime dependency on the repository. Keeps the outbox family union
+// single-sourced from `SIDE_EFFECT_FAMILIES` instead of restating it here.
 import type { SideEffectFamily } from '../repo.js';
 
-// The closed set of `error.code` values every Reserva API failure
-// can carry — one runtime array, with the union derived from it and `HttpError` (src/http.ts)
-// typed against that union, so an unlisted code is a compile error rather than a surprise string
-// a consumer's switch never handles. Growing it is deliberate: add one member here and the union,
-// the throw sites, and the generated docs follow. Do not add an enum, a parallel union, a
-// description map, or a schema for the same set.
+// The closed set of `error.code` values, as a runtime array so the union type derives from it and
+// an unlisted code fails to compile. Add new codes only here — never a separate enum or schema.
 export const API_ERROR_CODES = [
-  // Request shape: the body/query failed validation, exceeded a body limit, or used a method the
-  // route doesn't serve. `validation_failed` messages always name the offending field and the rule.
+  // Request shape rejected: invalid body/query, oversized payload, or wrong method.
+  // `validation_failed` messages always name the offending field and rule.
   'validation_failed',
   'method_not_allowed',
   'payload_too_large',
-  // Authorization: a missing/expired/invalid booking token, operator secret, or admin identity.
+  // Missing, expired, or invalid credential: booking token, operator secret, or admin identity.
   'forbidden',
   'not_found',
-  // Booking rules: the action is understood but the booking's state or the clock forbids it.
+  // Understood action that the booking's state or the clock forbids.
   'past_cutoff',
   'invalid_transition',
   'slot_unavailable',
   'too_many_holds',
-  // Payment verification: the provider's session disagrees with the booking it claims to pay for,
-  // its webhook signature didn't verify, or its payment reference already confirmed another
-  // booking.
+  // Payment verification failures: session doesn't match the booking, webhook signature invalid,
+  // or payment reference already confirmed a different booking.
   'payment_session_mismatch',
   'payment_amount_mismatch',
   'invalid_payment_signature',
   'duplicate_payment_ref',
-  // Concurrency: another request holds this booking's confirmation lease; retry.
+  // Another request holds this booking's confirmation lease; retry.
   'confirmation_in_progress',
-  // Refunds: a competing refund decision, a booking with no payment reference to refund against,
-  // or a provider that rejected the refund itself.
+  // Refund failures: conflicting decision, no payment reference to refund, or provider rejection.
   'refund_conflict',
   'refund_payment_ref_missing',
   'refund_failed',
-  // Dependencies: an upstream the request needed is temporarily unavailable.
+  // An upstream the request needed is temporarily unavailable.
   'calendar_unavailable',
-  // The catch-all for an unclassified server fault (src/http.ts errorResponse).
+  // Catch-all for an unclassified server fault.
   'internal_error',
 ] as const;
 
@@ -73,12 +55,8 @@ export interface ApiErrorEnvelope {
 // GET /api/booking/availability
 // ---------------------------------------------------------------------------
 
-// Scarcity is structured, never a rendered string. `remaining` is how
-// many further bookings of the requested quantity still fit, and it is `null` whenever that number
-// is above `limitedThreshold` — exact capacity is deployment-private, so only the scarce end of the
-// range is published. Slots that fit nothing are omitted entirely (bookable-slots-only semantics),
-// so `remaining` is never 0. Consumers that want Reserva's own copy read the message keys in
-// SLOT_STATUS_MESSAGE_KEYS (src/ui/messages.ts).
+// `remaining` counts further bookings of the requested quantity that fit; `null` above
+// `limitedThreshold` (exact capacity stays private). Full slots are omitted, so never 0.
 export interface AvailabilitySlot {
   start: string;
   remaining: number | null;
@@ -96,8 +74,7 @@ export interface AvailabilityDay {
 
 export interface AvailabilityResponse {
   timezone: string;
-  // The scarcity policy behind `AvailabilitySlot.remaining` and the `limited` day status, published
-  // so a consumer can explain the threshold rather than guess it.
+  // Threshold behind `remaining` and the `limited` status, published so consumers don't guess it.
   limitedThreshold: number;
   days: AvailabilityDay[];
 }
@@ -106,15 +83,13 @@ export interface AvailabilityResponse {
 // POST /api/booking/quote
 // ---------------------------------------------------------------------------
 
-// The pricing authority. `pickup` is required for a service that
-// declares a location module and rejected for one that doesn't — the same rule (and the same code
-// path) checkout applies to its own `pickupType` field.
+// The pricing authority. `pickup` is required exactly when the service declares a location
+// module — the same rule checkout applies to `pickupType`.
 export interface QuoteRequest {
   serviceSlug: string;
   quantity: number;
   pickup?: string;
-  // Accepted so a consumer can quote with the same payload builder it uses for checkout; validated
-  // as a string but otherwise unused, because a price never varies by locale.
+  // Accepted for payload-builder parity with checkout; unused because price never varies by locale.
   locale?: string;
 }
 
@@ -150,11 +125,8 @@ export interface CheckoutResponse {
 // Booking-bearing payloads (GET /api/booking/status, GET /api/booking/manage)
 // ---------------------------------------------------------------------------
 
-// The presentation fields a rendered booking carries on top of the canonical projection: business-
-// local start/end (the wire projection's `startsAt`/`endsAt` are UTC), the meeting point resolved
-// against the booking's own stored id/label, and metadata rows already resolved to this booking's
-// locale. `metadataRows` is deliberately NOT named `metadata`: the raw record on `WireBooking` is
-// the value truth, these are display labels derived from it.
+// Presentation fields layered on the canonical projection: local start/end (vs `WireBooking`'s
+// UTC), and metadata rows resolved to display labels — `WireBooking.metadata` stays the raw truth.
 export interface WireMeetingPoint {
   label: string;
   mapsUrl: string | null;
@@ -166,9 +138,8 @@ export interface WireMetadataRow {
   value: string | number | boolean;
 }
 
-// Picked from WireBooking rather than restated, so a change to the one projection breaks these at
-// compile time. The status payload is addressable by anyone holding the payment session id, so it
-// stays a strict subset: no customer contact details, no ids, no tokens.
+// Picked from `WireBooking` so a projection change breaks this at compile time. Reachable by
+// anyone holding the payment session id, so it excludes contact details, ids, and tokens.
 export interface ConfirmationBooking extends Pick<WireBooking, 'reference' | 'serviceSlug' | 'quantity' | 'priceMinor' | 'currency' | 'locale'> {
   start: string;
   end: string;
@@ -183,8 +154,7 @@ export interface StatusResponse {
   booking: ConfirmationBooking | null;
 }
 
-// The manage payload is reached only with a booking's own cancel/operator token, so it carries the
-// full customer-facing record plus the presentation fields above.
+// Reached only with the booking's cancel/operator token, so it can carry the full customer record.
 export interface ManageBooking extends Pick<
   WireBooking,
   'reference' | 'serviceSlug' | 'quantity' | 'priceMinor' | 'currency' | 'locale' | 'status'
@@ -212,9 +182,8 @@ export interface ManageResponse {
   deadline: string;
 }
 
-// Every manage/cancel/reschedule/no-show mutation answers with the same acknowledgement: the
-// booking's new state is read back from GET /api/booking/manage (or pushed as a booking event), so
-// the mutation response never becomes a second source for it.
+// Every mutation answers with the same ack; the new state is read back via GET .../manage (or a
+// booking event), so this response never becomes a second source of truth.
 export interface ManageActionResponse {
   ok: true;
 }
@@ -265,10 +234,8 @@ export interface CatalogMetadataField {
   maxLength: number | null;
 }
 
-// The rendering contract — everything a consumer must know before a
-// date is chosen. Deliberately absent: `turnaroundMin`, the raw schedule, pricing rules, capacity,
-// and occupancy. Exact money is the quote endpoint's answer; bookable times and scarcity are
-// availability's, behind `limitedThreshold`.
+// Everything a consumer needs before a date is chosen. Excludes schedule, pricing, capacity, and
+// occupancy — those live in the quote and availability endpoints.
 export interface CatalogService {
   slug: string;
   title: string;
@@ -292,8 +259,8 @@ export interface OpsHealthSchema {
   ok: boolean;
   // Bundled migrations whose filenames are absent from the D1 migrations ledger.
   missingMigrations: string[];
-  // Whether the live schema matches what Reserva's migrations produce — false with no missing
-  // migration means a filename collision with the consumer's own migrations.
+  // Whether live schema matches Reserva's migrations; false with none missing means a filename
+  // collision with the consumer's own migrations.
   fingerprintOk: boolean;
   // The remediating message when `ok` is false; `null` when healthy.
   detail: string | null;

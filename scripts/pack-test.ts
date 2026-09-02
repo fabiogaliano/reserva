@@ -1,22 +1,12 @@
-// Verifies the *published artifact*, not the repository: everything else (unit tests, workers
-// tests, the smoke-site build, e2e) exercises `../../src/index.ts` or a spawned repo-root script
+// Verifies the *published artifact*, not the repository: everything else exercises the source
 // directly, so a `files`/`exports`/`bin` mistake in package.json would ship silently.
 //
-// This packs the real tarball (`bun pm pack`), installs it into a throwaway copy of
-// `tests/pack-fixture/` outside the repo (so nothing here can leak in via hoisted node_modules or
-// a shared lockfile), then proves every subpath a consumer can reach actually resolves, typechecks,
-// builds, and runs the way README.md documents:
-//   1. every non-`.astro` `exports` subpath resolves and typechecks under `tsc --noEmit`
-//   2. every `.astro` export resolves and compiles under `astro build` (plain tsc can't parse it)
-//   3. `astro build` succeeds and every injected route pattern appears in the built worker
-//   4. the installed `reserva-migrate` bin applies reserva's packaged migrations
+// Packs the real tarball and installs it into a throwaway copy outside the repo (so nothing here
+// can leak in via hoisted node_modules or a shared lockfile), then proves every subpath a consumer
+// can reach resolves, typechecks, builds, and runs.
 //
-// Two consumers are built from one shared fixture base: `core-only` installs @reservajs/astro
-// alone and pays through a provider it wrote itself, with the `stripe` SDK absent from its
-// node_modules entirely; `with-stripe` installs both tarballs and wires the official adapter's
-// `stripe(options)` factory.
-//
-// Run: `bun run test:pack` (also folded into `bun run verify` and CI's `pack` job).
+// Two consumers share one fixture base: `core-only` pays through a provider it wrote itself, with
+// the `stripe` SDK absent from its node_modules entirely; `with-stripe` wires the official adapter.
 
 import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -41,8 +31,8 @@ function run(command: string, args: string[], options: { cwd: string; env?: Node
   return spawnSync(command, args, { cwd: options.cwd, env: options.env ?? process.env, encoding: 'utf8' });
 }
 
-// Explicit, not relying on whichever lifecycle hooks the packing tool happens to honour: the
-// tarball must contain a dist/ built from the tree under test, never a stale one.
+// Explicit, not relying on the packing tool's own lifecycle hooks, so the tarball always contains
+// a dist/ built from the tree under test, never a stale one.
 function buildDist(): void {
   const astro = run('bun', ['run', 'build'], { cwd: repoRoot });
   if (astro.status !== 0) fail('build', `\`bun run build\` failed:\n${astro.stdout}\n${astro.stderr}`);
@@ -67,14 +57,11 @@ function bunInstall(consumerDir: string): void {
   if (result.status !== 0) fail('install', `\`bun install\` in the consumer fixture failed:\n${result.stdout}\n${result.stderr}`);
 }
 
-// Real consumer flow: `bun add <tarball path>`, not a workspace/link — proves the tarball is a
-// self-sufficient installable unit, not something that only works via this repo's own node_modules.
-// Until release day @reservajs/astro does not exist on the registry, and bun resolves an installed
-// package's peerDependencies against the registry rather than against what the very same command
-// just installed — so adding the adapter tarball reports a 404 for its peer even though both
-// packages land correctly. Tolerate exactly that one error, and prove the outcome on disk instead
-// of trusting the exit code; once the package is published the install is clean and this branch
-// stops being taken.
+// `bun add <tarball path>`, not a workspace/link, proves the tarball is self-sufficient. Until
+// release day @reservajs/astro doesn't exist on the registry, and bun resolves an installed
+// package's peerDependencies against the registry rather than what the same command just
+// installed — so adding the adapter tarball 404s on its peer even though both packages land
+// correctly. Tolerate exactly that error and prove the outcome on disk instead of the exit code.
 const UNPUBLISHED_PEER_ERROR = 'https://registry.npmjs.org/@reservajs%2fastro - 404';
 
 function bunAddTarballs(consumerDir: string, tarballPaths: string[], expectInstalled: string[]): void {
@@ -87,21 +74,19 @@ function bunAddTarballs(consumerDir: string, tarballPaths: string[], expectInsta
   }
 }
 
-// `.astro` subpaths point straight at the copied raw file; every compiled subpath carries the
-// types/default condition pair.
+// `.astro` subpaths point at the raw copied file; every compiled subpath carries a types/default pair.
 type ExportTarget = string | { types: string; default: string };
 
 interface PackageJsonExports {
   exports: Record<string, ExportTarget>;
 }
 
-// This inventory is intentionally independent of package.json: deriving the test only from the
-// live map would let an accidentally deleted public subpath disappear from the test as well.
+// Independent of package.json: deriving this only from the live map would let an accidentally
+// deleted public subpath disappear from the test too.
 const EXPECTED_EXPORT_SUBPATHS = [
   '.',
   './core',
   './email',
-  './providers',
   './providers/calendar-google',
   './providers/email-brevo',
   './providers/email-none',
@@ -141,9 +126,8 @@ function assertScheduledTemplatePackaged(consumerDir: string): void {
   }
 }
 
-// dist/ is the whole artifact: the raw `.astro` components and the CSS their relative imports
-// reach must sit inside it, mirroring their source layout, and no TypeScript source may ship
-// beside it — a consumer compiling our sources is exactly what the build removes.
+// dist/ is the whole artifact: raw `.astro` components and their CSS must mirror the source
+// layout, and no TypeScript source may ship beside it.
 function assertPackagedLayout(consumerDir: string): void {
   const installedRoot = resolve(consumerDir, 'node_modules/@reservajs/astro');
   for (const relativePath of [
@@ -198,9 +182,8 @@ function typecheck(consumerDir: string, subpaths: string[]): void {
   }
 }
 
-// `astro build` both compiles the `.astro` exports (via the fixture's own pages, one per exported
-// component) and proves the injected routes are actually mounted — the built worker entry contains
-// every enabled route's pattern.
+// `astro build` compiles the `.astro` exports via the fixture's own pages, and proves the injected
+// routes are actually mounted in the built worker entry.
 function scheduledWorkerBuild(consumerDir: string): void {
   const result = run('bunx', ['wrangler', 'deploy', '--dry-run', '--config', 'wrangler.scheduled.jsonc', '--outdir', 'dist-scheduled'], { cwd: consumerDir });
   if (result.status !== 0) fail('scheduled-build', `packed consumer scheduled Worker build failed:\n${result.stdout}\n${result.stderr}`);
@@ -227,10 +210,9 @@ function astroBuild(consumerDir: string): void {
   if (!existsSync(entryPath)) fail('build', `expected server build output missing: ${entryPath}`);
 
   // Which `.mjs` file under dist/server carries the serialized SSR manifest is a bundler-layout
-  // detail, not part of the contract: under rolldown >= 1.2 the manifest is hoisted out of
-  // entry.mjs into a shared chunk (e.g. chunks/entrypoints_<hash>.mjs), while other bundlers inline
-  // it into entry.mjs itself. Find whichever file actually calls `deserializeManifest(` — that's
-  // the real injection payload — instead of assuming a fixed file layout.
+  // detail, not part of the contract: some bundlers hoist it into a shared chunk, others inline it
+  // into entry.mjs. Find whichever file actually calls `deserializeManifest(` instead of assuming
+  // a fixed layout.
   const serverDir = resolve(consumerDir, 'dist/server');
   const mjsFiles = findMjsFilesRecursive(serverDir);
   const manifestFiles = mjsFiles
@@ -245,10 +227,9 @@ function astroBuild(consumerDir: string): void {
   }
 
   // Assert the manifest's JSON field form, not a whole-dist grep: the compiled
-  // `virtual:reserva/config` chunk (chunks/config_*.mjs) contains every route path regardless of
-  // whether it was actually injected, so a tree-wide grep would false-pass a missing route. The
-  // `deserializeManifest(` payload is the injection truth, and this form matches the old inlined
-  // layout too, so it's layout-independent and strictly stronger than the old check.
+  // `virtual:reserva/config` chunk contains every route path regardless of whether it was actually
+  // injected, so a tree-wide grep would false-pass a missing route. The `deserializeManifest(`
+  // payload is the injection truth.
   for (const route of routeManifest) {
     const needle = `"route":"${route.pattern}"`;
     const found = manifestFiles.some(({ text }) => text.includes(needle));
@@ -312,7 +293,7 @@ function buildConsumer(workDir: string, spec: ConsumerSpec): void {
   console.log(`pack-test: [${spec.name}] astro build (compiles .astro exports, mounts injected routes)`);
   astroBuild(consumerDir);
 
-  console.log(`pack-test: [${spec.name}] bunx reserva-migrate --local (packaged migrations, plan 008)`);
+  console.log(`pack-test: [${spec.name}] bunx reserva-migrate --local (packaged migrations)`);
   reservaMigrate(consumerDir);
 }
 

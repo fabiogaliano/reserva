@@ -38,9 +38,9 @@ interface CachedToken {
 }
 
 const tokenCache = new Map<string, CachedToken>();
-// Coalesces concurrent cache-miss callers onto one in-flight mint: without this, two requests
-// racing on the same cache key each sign a JWT and POST to Google's token endpoint, which is
-// redundant (not incorrect) and needlessly burns Google's per-service-account token-issuance rate.
+// Coalesces concurrent cache-miss callers onto one in-flight mint. Without this, two requests
+// racing on the same cache key each sign a JWT and burn Google's per-service-account
+// token-issuance rate.
 const tokenRequestsInFlight = new Map<string, Promise<string>>();
 
 function required(options: GoogleAuthOptions, names: string[], value: string | undefined): string {
@@ -159,10 +159,8 @@ function cacheKeyFor(options: GoogleAuthOptions, values: ReturnType<typeof crede
   return options.cacheKey ?? `${tokenUrl}|${scope}|${values.serviceAccountEmail}|${values.impersonateEmail}|${values.serviceAccountPrivateKey}`;
 }
 
-// A structured ProviderFailure (status in hand, from the response
-// itself) rather than a plain Error whose status only ever lived in the message text — a bad
-// service-account credential (401) must classify as permanent, not retry forever through the
-// outbox attempt cap (src/confirmation.ts).
+// Structured ProviderFailure, not a plain Error, so a bad service-account credential (401)
+// classifies as permanent instead of retrying forever.
 async function responseError(response: Response, operation: string): Promise<Error> {
   const body = await response.text();
   return new ProviderFailure({ status: response.status, message: `${operation} failed (${response.status})${body ? `: ${body}` : ''}` });

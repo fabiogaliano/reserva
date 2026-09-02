@@ -55,10 +55,9 @@ describe('runReconciliation', () => {
       providers: providers({ calendar: { listEvents: async () => [], createEvent: async () => { calendarCalls += 1; if (shouldFail) throw new Error('calendar still down'); return 'cal_recon'; }, deleteEvent: async () => undefined, patchEvent: async () => undefined } }),
     });
 
-    // First pass: incident PROJECTION isn't gated by the retry backoff — failure_started_at
-    // (09:49) is already eleven minutes old at 10:00, past the ten-minute threshold, so an
-    // incident opens even though attempt 2's own 10-minute backoff window (09:59 -> 10:09) means
-    // the scheduled-side retry gate correctly skips a re-attempt this pass (calendarCalls stays 0).
+    // Incident projection isn't gated by the retry backoff -- failure_started_at is already past
+    // the ten-minute threshold, so an incident opens even though the retry gate correctly skips a
+    // re-attempt this pass (calendarCalls stays 0).
     const first = await runReconciliation(context);
     expect(first.incidentsOpened).toBe(1);
     expect(calendarCalls).toBe(0);

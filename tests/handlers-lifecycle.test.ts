@@ -281,12 +281,9 @@ describe('Reserva handlers', () => {
     // this still exercises the real retry loop instead of silently no-op-ing.
     const realInsertHold = repo.insertHoldWithCapacity;
     let insertAttempts = 0;
-    // 11 forced collisions exceeds the old retry cap (8, i.e. attempts 0-7 with an unconditional
-    // rethrow on attempt 7): this proves the cap was actually raised to 12, not just that some
-    // small number of collisions still fits under the old ceiling. Marking whatever reference
-    // was just attempted as taken (rather than pre-computing a fixed sequence range) keeps this
-    // deterministic regardless of the now-random 1-5 jump: each attempt is failed and blocked by
-    // reacting to its actual generated reference, not by guessing where the jump landed.
+    // 11 forced collisions exceeds the old retry cap of 8, proving the cap was actually raised to
+    // 12. Marking whatever reference was just attempted as taken (rather than a fixed sequence
+    // range) keeps this deterministic despite the random 1-5 jump.
     repo.insertHoldWithCapacity = async (input) => {
       insertAttempts += 1;
       if (insertAttempts <= 11) {
@@ -368,7 +365,7 @@ describe('Reserva handlers', () => {
 // checkout's meetingPointId field — required only for a
 // multi-point service's default (free) pickup; validated against the declared set whenever supplied
 // (including for a custom pickup); the resolved id is always what gets stored.
-describe('checkout meetingPointId (plan 017 design decision 2)', () => {
+describe('checkout meetingPointId', () => {
   const points = [
     { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
     { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
@@ -439,12 +436,10 @@ describe('checkout meetingPointId (plan 017 design decision 2)', () => {
   });
 });
 
-// parsePickup validates pickupType against the service's own declared
-// option ids (via pickupOptionFor) instead of a fixed 'default'/'custom' enum, and the
-// meetingPointId requirement re-keys onto the chosen option's usesMeetingPoint instead of
-// `pickupType === 'default'` — Maze's "custom drop-off" still starts at a meeting point even though
-// it also collects an address.
-describe('checkout pickupType (plan 018 design decision 6)', () => {
+// parsePickup validates pickupType against the service's own declared option ids instead of a
+// fixed 'default'/'custom' enum; meetingPointId re-keys onto usesMeetingPoint, since a "custom
+// drop-off" can still start at a meeting point even though it also collects an address.
+describe('checkout pickupType', () => {
   const points = [
     { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
     { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },

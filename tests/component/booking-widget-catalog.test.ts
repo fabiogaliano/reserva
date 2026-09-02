@@ -1,15 +1,9 @@
-// The widget stopped being configured with copies of the deployment's own facts. It used to
-// take `pricing`, `pickupOptions`, `pickupTypes`,
-// `meetingPoints`, `currency` and `limitedThreshold` props and render a price table into its data
-// island; it now reads the service's location axes from the catalog endpoint and every price from
-// the quote endpoint. What this file pins is the half of that a server render can prove: nothing
-// the deployment owns is baked into the HTML any more, and the endpoints that replace it are wired
-// to the resolved route table. The client half (rendering those axes, fetching quotes) is browser
-// behavior and is covered by tests/e2e/maze-pickup-options.spec.ts, meeting-points.spec.ts and
-// location-less.spec.ts against a real deployment.
-//
-// Rendered through Astro's real Vite pipeline (see vitest.component.config.ts) because the widget
-// is a compiled `.astro` SFC, not a text file.
+// The widget reads the service's location axes from the catalog endpoint and every price from
+// the quote endpoint, instead of taking deployment facts as props. Pins the server half: nothing
+// the deployment owns is baked into the HTML, and the endpoints are wired to the resolved route
+// table. The client half (rendering axes, fetching quotes) is covered by the e2e specs against a
+// real deployment. Rendered through Astro's real Vite pipeline since the widget is a compiled
+// `.astro` SFC, not a text file.
 import { experimental_AstroContainer as AstroContainer } from 'astro/container';
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error -- resolved by vitest.component.config.ts's Astro Vite pipeline, not by tsc.
@@ -28,7 +22,7 @@ function island(html: string): Record<string, any> {
   return JSON.parse(match[1]);
 }
 
-describe('BookingWidget.astro is catalog- and quote-driven (plan 027)', () => {
+describe('BookingWidget.astro is catalog- and quote-driven', () => {
   it('ships no price table, currency, or scarcity threshold in its data island', async () => {
     const data = island(await render());
     expect(Object.keys(data).sort()).toEqual(['i18n', 'locale']);

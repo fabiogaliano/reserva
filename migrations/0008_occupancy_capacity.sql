@@ -1,37 +1,6 @@
--- BK-CAP-001 / AR-001 (handoff 05): atomic capacity allocation needs occupancy computable in
--- pure SQL (see src/core/occupancy.ts) so the conditional INSERT/UPDATE guards in src/repo.ts
--- (insertHoldWithCapacity / rescheduleWithCapacity) can require "occupied + requested <=
--- capacity" as part of a single atomic statement, instead of the old read-then-write race.
---
--- occupancy_units mirrors occupancyFor(tour, people) at write time (the per-tour unit weight a
--- party consumes). occupancy_ends_at mirrors the occupancy interval end occupancy.ts computes
--- for overlap purposes: ends_at + that booking's tour turnaroundMin.
---
--- Both columns are additive and nullable. Backfilling existing rows from the JS tour config
--- (occupancyFor can be an arbitrary function; turnaroundMin lives in the deployed config, not
--- the DB) is impossible in pure SQL, so pre-migration rows keep NULL here. The capacity guard
--- reads them via COALESCE(occupancy_units, 1) / COALESCE(occupancy_ends_at, ends_at) — i.e. a
--- NULL row is treated as a single default-turnaround unit. This under-counts a NULL row that was
--- actually a multi-unit party, which is a one-time, documented approximation for rows written
--- before this migration; oversell detection/repair for historical data is out of scope (handoff
--- 05). Every row written by insertHoldWithCapacity / rescheduleWithCapacity going forward always
--- sets both columns, so the approximation only ever applies to pre-existing rows (and even those
--- opportunistically self-heal the next time rescheduleWithCapacity moves them — see patch-05-r1
--- Fix 3).
---
--- patch-05-r1 Fix 4 (documented, NOT executed here — no data migration, just the intended shape
--- for a future one-off repair script/ops task): a real backfill can't run in pure SQL because
--- occupancyFor is an arbitrary JS function and turnaroundMin lives in the deployed tour config,
--- not the DB. The shape is one UPDATE per NULL row (or, when a tour's occupancyFor/turnaroundMin
--- are both constants, one UPDATE per tour_slug), driven from a script that reads each row's
--- tour_slug + people, resolves the matching tour config, and writes back the values
--- src/core/occupancy.ts would compute:
---   -- for each legacy row (occupancy_units IS NULL), computed in JS from that row's tour config:
---   UPDATE bookings
---   SET occupancy_units = ?,                              -- occupancyFor(tour, people)
---       occupancy_ends_at = ?                              -- ends_at + tour.turnaroundMin
---   WHERE id = ? AND occupancy_units IS NULL;
--- Out of scope for this task (BK-CAP-001 / handoff 05): oversell detection/repair for historical
--- data that was already written before this migration.
+-- Adds occupancy_units / occupancy_ends_at so capacity allocation can be checked in pure SQL
+-- (see src/core/occupancy.ts). Both are nullable: backfilling existing rows needs the JS tour
+-- config, which isn't available to SQL, so pre-migration rows stay NULL and are treated as a
+-- single default-turnaround unit by the capacity guard (COALESCE fallback in src/repo.ts).
 ALTER TABLE bookings ADD COLUMN occupancy_units INTEGER;
 ALTER TABLE bookings ADD COLUMN occupancy_ends_at TEXT;

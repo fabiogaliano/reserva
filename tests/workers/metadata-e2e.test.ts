@@ -3,14 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import smokeRuntime from '../../examples/smoke-site/src/runtime';
 import { handleCheckout, handleManage, handleStatus } from '../../src/handlers';
 
-// The workers-level end-to-end proof — real D1, the real smoke runtime, and
-// riverCruise's real declared metadata fields (examples/smoke-site/src/config.ts: a required
-// `text` field and a `select` field) — that consumer-declared metadata
-// survives checkout -> D1 -> confirmation (self-healed through /status) -> both manage-page roles.
-// The webhook envelope's raw passthrough and the email renderer's labeled rows are proven at unit
-// level (tests/booking-events.test.ts, tests/providers-email.test.ts) against real signing/
-// rendering, which this fixture's dev-only providers don't do (see examples/smoke-site/src/
-// runtime.ts's email provider: it records an outbox entry, not real rendered HTML).
+// The workers-level end-to-end proof — real D1, the real smoke runtime, and riverCruise's real
+// declared metadata fields — that consumer-declared metadata survives checkout -> D1 ->
+// confirmation -> both manage-page roles (webhook/email rendering are proven separately at unit level).
 
 function isD1Database(value: unknown): value is D1Database {
   return typeof value === 'object' && value !== null && typeof Reflect.get(value, 'prepare') === 'function';
@@ -42,7 +37,7 @@ beforeEach(async () => {
   await db.prepare('DELETE FROM day_overrides').run();
 });
 
-describe('consumer-declared metadata through the real smoke runtime + D1 (plan 024)', () => {
+describe('consumer-declared metadata through the real smoke runtime + D1', () => {
   it('survives checkout -> D1 -> self-healed confirmation -> both manage-page roles, labeled and typed', async () => {
     const request = new Request('http://localhost:4321/api/booking/checkout');
     const context = await smokeRuntime.createContext({

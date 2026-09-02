@@ -1,8 +1,6 @@
 // Two instances of any exported component used to render duplicate `id`/`aria-labelledby` pairs
-// (a hardcoded literal id). Renders each exported component twice and
-// proves each instance's label id is unique and its own `aria-labelledby` resolves to its own id,
-// not the sibling's — the actual defect a duplicate hardcoded id produces (ambiguous labelling,
-// and a shared `id` is invalid HTML).
+// (a hardcoded literal id). Renders each twice and proves each instance's label id is unique and
+// its `aria-labelledby` resolves to its own id, not the sibling's.
 import { experimental_AstroContainer as AstroContainer } from 'astro/container';
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error -- resolved by vitest.component.config.ts's Astro Vite pipeline, not by tsc.
@@ -21,7 +19,7 @@ function labelPair(html: string, prefix: string): { id: string; labelledby: stri
   return { id: idMatch[1]!, labelledby: labelledbyMatch[1]! };
 }
 
-describe('per-instance element IDs (plan 014 item A)', () => {
+describe('per-instance element IDs', () => {
   it('BookingWidget: two instances get distinct label ids, each aria-labelledby resolving to its own instance', async () => {
     const container = await AstroContainer.create();
     const props = { serviceSlug: 'oldTown', availabilityFrom: '2026-01-01', availabilityTo: '2026-01-02' };

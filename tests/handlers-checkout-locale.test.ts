@@ -1,7 +1,6 @@
-// Checkout is a locale-bearing entrypoint, so it negotiates
-// the requested tag instead of rejecting anything that isn't declared verbatim. What matters is
-// what gets STORED on the booking: every later surface (emails, manage page, confirmation) resolves
-// its copy from that value, so it must always be one of the deployment's supported locales.
+// Checkout negotiates the requested locale tag rather than rejecting anything not declared
+// verbatim — what's STORED on the booking must always be one of the deployment's supported locales,
+// since every later surface (emails, manage page, confirmation) resolves its copy from it.
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createReservaContext } from '../src/context';
@@ -32,7 +31,7 @@ async function storedLocaleFor(locale: string): Promise<string | undefined> {
   return [...repo.rows.values()][0]?.locale;
 }
 
-describe('checkout locale negotiation (plan 027 design decision 5)', () => {
+describe('checkout locale negotiation', () => {
   it('stores the negotiated regional variant for a bare language tag', async () => {
     await expect(storedLocaleFor('pt')).resolves.toBe('pt-BR');
   });

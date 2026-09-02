@@ -46,13 +46,9 @@ function migrationsErrorMessage(missing: readonly string[]): string {
     + '/ `bunx reserva-migrate` from the project that owns wrangler.jsonc.';
 }
 
-// The filename ledger alone is fooled by a consumer migration that
-// happens to reuse one of reserva's filenames without ever running reserva's SQL — d1_migrations
-// only records names, never checksums or content. This is cheap, read-only detection (not a fix —
-// a fully namespaced ledger would need more), spanning the migrations that
-// introduced reserva's current shape: required `bookings` columns, migration 0018's v2 domain
-// CHECKs and partial unique payment-ref index, plus the `side_effect_operations` table/index and
-// its current identity/`status` CHECKs.
+// The filename ledger alone is fooled by a consumer migration that reuses one of reserva's
+// filenames without running reserva's SQL — d1_migrations only records names, never content. This
+// is cheap, read-only detection (not a fix), spanning the columns/CHECKs/indexes reserva's current schema requires.
 const REQUIRED_BOOKINGS_COLUMNS = [
   'occupancy_units', // 0008
   'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at', // 0009
@@ -61,11 +57,9 @@ const REQUIRED_BOOKINGS_COLUMNS = [
   'currency', 'metadata', // 0018
 ] as const;
 
-// The v2 rebuild renamed or dropped these. A consumer migration that
-// collides with '0018_v2_domain_rename.sql' without running its SQL keeps them, and every repo
-// query would then fail against a schema the ledger reports as current.
-// Pre-v2 column names on purpose: this list is the "the old shape is still here" probe, so it must
-// not follow the rename.
+// A consumer migration that collides with reserva's own rename migration without running its SQL
+// keeps these columns, and every repo query would then fail against a schema the ledger reports as
+// current. Pre-v2 names: this list probes "the old shape is still here," so it must not follow the rename.
 const REMOVED_BOOKINGS_COLUMNS = [
   'tour_slug', 'people', 'price_cents', 'stripe_session_id', 'stripe_payment_intent',
   'calendar_synced', 'email_synced', 'tourflow_synced', 'reminded_at', 'review_requested_at',
@@ -93,12 +87,9 @@ async function bookingsSchemaPresent(db: MigrationsQueryable): Promise<boolean> 
     "check(cancelled_byin('customer','operator')orcancelled_byisnull)",
   ];
   const paymentIndexSql = 'createuniqueindexidx_bookings_payment_refonbookings(payment_ref)wherepayment_refisnotnull';
-  // pickup_type's domain moved from a fixed SQL CHECK to
-  // config-declared option ids (ServiceConfig.pickupOptions), which the DB can't enumerate.
-  // It also stopped being NOT NULL, so a service with no location module can store NULL
-  // instead of a sentinel id. Both are NEGATIVE assertions — a colliding consumer migration leaves
-  // the old CHECK (rejecting every declared id) or the old NOT NULL (rejecting the location-less
-  // row), and neither shows up as a missing column.
+  // pickup_type's domain moved from a fixed SQL CHECK to config-declared option ids, which the DB
+  // can't enumerate, and stopped being NOT NULL so a location-less service can store NULL. Both are
+  // NEGATIVE assertions: a colliding migration leaves the old CHECK/NOT NULL, and neither shows up as a missing column.
   const hasPickupTypeCheck = tableSql.includes("check(pickup_typein(");
   const hasPickupTypeNotNull = tableSql.includes('pickup_typetextnotnull');
   return requiredChecks.every((check) => tableSql.includes(check))
@@ -113,15 +104,13 @@ async function sideEffectOperationsSchemaPresent(db: MigrationsQueryable): Promi
   ]);
   const table = result.results.find((row) => row.type === 'table' && row.name === 'side_effect_operations');
   const index = result.results.find((row) => row.type === 'index' && row.name === 'idx_side_effect_operations_pending');
-  // The reconciliation index and the two nullable backoff columns it
-  // supports are additive-only, but a consumer migration colliding with '0016_...sql' without ever
-  // running reserva's ALTER TABLE would still satisfy the ledger while leaving both absent — same
-  // collision class REQUIRED_BOOKINGS_COLUMNS already guards for `bookings`.
+  // The reconciliation index and the two nullable backoff columns it supports are additive-only, but
+  // a colliding consumer migration without running reserva's ALTER TABLE would still satisfy the
+  // ledger while leaving both absent — the same collision class REQUIRED_BOOKINGS_COLUMNS guards for `bookings`.
   const reconciliationIndex = result.results.find((row) => row.type === 'index' && row.name === 'idx_side_effect_operations_reconciliation');
-  // Identity moved from the single `kind` string to family/name/event/discriminator, and
-  // dedupe now depends on the COALESCE expression index (SQLite treats NULLs in a plain UNIQUE as
-  // distinct, so without this exact index every enqueue would insert a duplicate row instead of
-  // hitting ON CONFLICT DO NOTHING) — a 0017 filename collision has to fail loudly here.
+  // Identity moved from a single `kind` string to family/name/event/discriminator, and dedupe now
+  // depends on the COALESCE expression index (SQLite treats NULLs in a plain UNIQUE as distinct, so
+  // without this exact index every enqueue would insert a duplicate instead of hitting ON CONFLICT DO NOTHING).
   const identityIndex = result.results.find((row) => row.type === 'index' && row.name === 'idx_side_effect_operations_identity');
   const tableSql = table?.sql?.toLowerCase().replace(/\s+/g, '') ?? '';
   const columns = new Set(columnsResult.results.map((row) => row.name));
@@ -133,10 +122,8 @@ async function sideEffectOperationsSchemaPresent(db: MigrationsQueryable): Promi
     && columns.has('failure_started_at') && columns.has('next_attempt_at');
 }
 
-// refund_operations previously had no fingerprint check
-// (only the filename ledger guarded it) — migration 0016 is the first rebuild of this table, so it
-// needs the same "does the schema actually match, not just the ledger" guard every other rebuilt
-// table already has.
+// refund_operations needs the same "does the schema actually match, not just the ledger" guard
+// every other rebuilt table already has.
 async function refundOperationsSchemaPresent(db: MigrationsQueryable): Promise<boolean> {
   const [result, columnsResult] = await Promise.all([
     db.prepare(`SELECT type, name, sql FROM sqlite_master WHERE name IN ('refund_operations', 'idx_refund_operations_status', 'idx_refund_operations_reconciliation')`)
@@ -181,10 +168,9 @@ function migrationCollisionErrorMessage(): string {
     + 'sharing one with your own migrations.';
 }
 
-// Runs once per isolate (the caller memoizes this), never per request: a raw D1 SQL error from a
-// missing column/table is the single most confusing failure mode for a new consumer, so this turns
-// it into a named list of missing migrations and the exact command to fix it. Tolerant of extra,
-// consumer-owned migrations — only reserva's own filenames are asserted present.
+// Runs once per isolate, never per request: a raw D1 SQL error from a missing column/table is the
+// most confusing failure mode for a new consumer, so this turns it into a named list of missing
+// migrations and the exact fix. Tolerant of extra, consumer-owned migrations.
 export async function checkReservaMigrationsApplied(
   db: MigrationsQueryable,
   migrationsTable = D1_MIGRATIONS_TABLE,

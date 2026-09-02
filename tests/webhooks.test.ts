@@ -1,7 +1,5 @@
-// The signature contract is verified with the Standard Webhooks
-// spec's own library as an INDEPENDENT implementation — this suite never re-derives the HMAC with
-// the same code under test, so a drift in either direction (wrong signing string, wrong header
-// names, wrong key decoding) fails here.
+// The signature contract is verified against the Standard Webhooks spec's own library, an
+// independent implementation, so a drift in signing string, headers, or key decoding fails here.
 import { Webhook, WebhookVerificationError } from 'standardwebhooks';
 import { describe, expect, it, vi } from 'vitest';
 import { WEBHOOK_USER_AGENT, WebhookResponseError, deliverWebhook } from '../src/webhooks';

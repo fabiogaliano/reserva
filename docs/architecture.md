@@ -79,9 +79,6 @@ Reserva treats them as a first-class audience.
 - **`src/repo.ts` split** (~59 methods): real debt, deliberately deferred —
   the surface is CAS/transaction-sensitive. Revisit once the concurrency
   patterns have been stable for a few months.
-- **`@reservajs/astro/providers` barrel**: zero consumers anywhere; README
-  steers readers to the narrow subpaths. Frozen exports key — remove at the
-  next major.
 - **Enhancer DOM test harness** (manage/admin/settings enhancers have no
   executed-behavior tests): revisit when that UI next changes materially.
 - **Per-route path overrides** (beyond the prefix): open; revisit when a
@@ -93,14 +90,5 @@ Reserva treats them as a first-class audience.
   acceptable at the documented deployment scale; revisit at an order of
   magnitude more bookings.
 - **Pre-0008 occupancy backfill**: pre-upgrade rows' occupancy columns are
-  NULL by design; the config-aware repair belongs to the tuk-tuk D1 data
-  migration (see below), not to a library migration.
-
-## Pending release actions (owner)
-
-- Reconciliation engine exit criteria: a remote Worker staging drill and the
-  first-client pilot are still required — the code-complete state is not the
-  finish line.
-- Rollout order: migrate consumer-a (validating consumer), then v1-consumer with
-  its D1 data migration (including the pre-0008 occupancy repair), then the
-  npm publish cut for both packages.
+  NULL by design; a config-aware repair belongs to a deployment's own data
+  migration, not to a library migration.

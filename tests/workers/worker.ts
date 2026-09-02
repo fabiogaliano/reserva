@@ -6,20 +6,14 @@ import { stripe } from '@reservajs/stripe';
 import { defineCloudflareReservaRuntime, type ReservaProviders } from '../../src/runtime';
 import config from '../../examples/minimal/client-config';
 
-// This is `main` in wrangler.test.jsonc -- a real worker entrypoint that assembles the
-// production stack (defineCloudflareReservaRuntime against the real D1 binding, a real
-// the real Stripe adapter doing real HMAC signature verification) and dispatches the exact production route
-// to handlePaymentWebhook, so tests/workers/webhook.test.ts exercises runtime + handler + D1
-// together instead of any one layer in isolation. Never contacts Stripe's API: parseWebhook only
-// verifies a signature against WEBHOOK_SECRET locally, and this worker never calls
-// createCheckout/getSession/refund, so a fixed, non-secret test key is fine here.
+// `main` in wrangler.test.jsonc: a real worker entrypoint assembling the production stack and
+// dispatching the real route to handlePaymentWebhook, so webhook.test.ts exercises runtime +
+// handler + D1 together. Never contacts Stripe's API — signature verification is local.
 export const WEBHOOK_SECRET = 'whsec_test_reserva_worker_stripe';
 const STRIPE_TEST_SECRET_KEY = 'sk_test_reserva_worker';
 
-// In-memory outboxes the test file asserts against and resets between cases -- module-scoped
-// (rather than per-request) because this worker's provider instances are constructed once, same as
-// examples/minimal/runtime.ts's documented pattern (README "Runtime module": per-request construction is a
-// consumer choice, not a requirement).
+// In-memory outboxes the test file asserts against — module-scoped because this worker's
+// provider instances are constructed once, per examples/minimal/runtime.ts's pattern.
 export const calendarEvents = new Map<string, CalEvent>();
 export const emailOutbox: Array<{ event: string; bookingId: string }> = [];
 export const hookOutbox: Array<{ event: string; bookingId: string }> = [];
@@ -68,13 +62,8 @@ const hooks: BookingEventHook[] = [{
 const runtime = defineCloudflareReservaRuntime(config, { providers, hooks });
 
 export default {
-  // Standard modules-format signature (env/ctx unused: getWorkerEnv/getWorkerWaitUntil in
-  // src/runtime-context.ts resolve both from the `cloudflare:workers` globals instead) -- kept so
-  // tests/workers/webhook.test.ts can dispatch through `createExecutionContext()` +
-  // `waitOnExecutionContext()` exactly like a real modules-format worker, per cloudflare:test's
-  // documented integration-test pattern (this is also why the test avoids the `SELF` service
-  // binding, whose waitUntil-draining has a known gap with isolatedStorage -- see
-  // https://github.com/cloudflare/workers-sdk/issues/6887).
+  // Standard modules-format signature (env/ctx unused) — kept so webhook.test.ts can dispatch
+  // through createExecutionContext()/waitOnExecutionContext() like a real modules-format worker.
   async fetch(request: Request, _env: unknown, _ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     // The one route this worker exists to exercise end to end (src/routes-manifest.ts

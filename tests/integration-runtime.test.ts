@@ -13,10 +13,8 @@ const payments = {
 
 describe('Cloudflare runtime helpers', () => {
   it('reads injected test bindings without exposing env on context', async () => {
-    // Needs a `prepare` function so it passes the D1 shape check `defineCloudflareReservaRuntime` runs at
-    // context-creation time, and `.all()` must resolve reserva's own migrations (ledger) plus a
-    // matching schema fingerprint so the isolate-time schema check (also run at context creation)
-    // doesn't reject this fake as an unmigrated/colliding database.
+    // Needs `prepare` to pass the D1 shape check, and `.all()` must resolve reserva's migrations
+    // plus a matching schema fingerprint so context creation doesn't reject this fake as unmigrated.
     const db = {
       prepare: (query: string) => ({
         all: async () => {

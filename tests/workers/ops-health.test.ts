@@ -1,7 +1,5 @@
-// Tests the ops-health endpoint against real D1 — a migrated
-// schema, real outbox debt, and a real open incident, read through the same runtime a deployment
-// uses. The aggregate is SQL (a GROUP BY over the `family` column), so a fake repository
-// would prove nothing about it.
+// Tests the ops-health endpoint against real D1 — the aggregate is SQL (a GROUP BY over the
+// `family` column), so a fake repository would prove nothing about it.
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { AdminIdentity } from '../../src/access';
@@ -109,7 +107,7 @@ beforeEach(async () => {
   await db.prepare('DELETE FROM bookings').run();
 });
 
-describe('GET /api/booking/ops/health (plan 027 design decision 7)', () => {
+describe('GET /api/booking/ops/health', () => {
   it('403s without admin auth, and answers nothing about the deployment', async () => {
     const context = await buildContext(healthRequest());
     await seedDebt(context);

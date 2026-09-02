@@ -1,7 +1,6 @@
-// Booking events leave the library through exactly two primitives —
-// in-process hooks a consumer registers on the runtime, and signed outbound webhooks declared in
-// config. Both are the same thing to the outbox: a named subscriber whose delivery debt is one row
-// carrying the identity `family`/`name`/`event` and the serialized envelope.
+// Booking events leave the library through exactly two primitives — in-process hooks and signed
+// outbound webhooks. Both are the same thing to the outbox: a named subscriber whose delivery debt
+// is one row carrying the identity `family`/`name`/`event` and the serialized envelope.
 import { toWireBooking, type Booking } from './core/booking.js';
 import type { WebhookEndpointConfig } from './core/config.js';
 import {
@@ -56,10 +55,9 @@ export function buildBookingEventEnvelope(
   };
 }
 
-// The snapshot is taken here, once, from the booking as it will exist
-// AFTER the transition this seed rides — not re-read at delivery time. `eventIdPrefix` carries the
-// discriminator-free id so the repository can complete it inside the batch that assigns a
-// reschedule version (see mutationSideEffectInsert).
+// The snapshot is taken here, once, from the booking as it will exist AFTER the transition this
+// seed rides — not re-read at delivery time. `eventIdPrefix` carries the discriminator-free id so
+// the repository can complete it inside the batch that assigns a reschedule version.
 export function bookingEventSeeds(
   context: ReservaContext,
   event: BookingEvent,
@@ -71,14 +69,13 @@ export function bookingEventSeeds(
     ...base,
     discriminator,
     eventPayloadJson: JSON.stringify(buildBookingEventEnvelope({ ...base, discriminator }, booking, occurredAt)),
-    // Discriminator-free on purpose: only the reschedule path leaves the discriminator to SQL, and
-    // that is the one case where this prefix is used to finish the stored id.
+    // Discriminator-free: only the reschedule path leaves the discriminator to SQL, and that is the
+    // one case where this prefix is used to finish the stored id.
     eventIdPrefix: bookingEventId(booking.id, base),
   }));
 }
 
-// Non-durable hooks fire post-commit and are never retried: one warning per failure, nothing
-// persisted. This is what v1's ops/analytics sinks actually were.
+// Non-durable hooks fire post-commit and are never retried: one warning per failure, nothing persisted.
 export function dispatchNonDurableBookingEvent(
   context: ReservaContext,
   event: BookingEvent,
@@ -108,10 +105,9 @@ export function dispatchNonDurableBookingEvent(
   else void task;
 }
 
-// The unregistered-name rule: a durable row whose subscriber is no
-// longer (or not yet) registered is a PERMANENT failure, so provider-failure classification
-// (src/provider-failure.ts) abandons it on the spot instead of leaving it pending forever — and
-// the abandonment log says exactly what to register to make it deliver.
+// The unregistered-name rule: a durable row whose subscriber is no longer (or not yet) registered
+// is a PERMANENT failure, abandoned on the spot instead of left pending forever — the abandonment
+// log says exactly what to register to make it deliver.
 function unregisteredSubscriber(identity: SideEffectOperationIdentity): ProviderFailure {
   const what = identity.family === 'hook'
     ? `register a durable booking-event hook named "${identity.name}" on the runtime`
@@ -123,8 +119,7 @@ function unregisteredSubscriber(identity: SideEffectOperationIdentity): Provider
 }
 
 // The delivery of one durable hook/webhook row. The stored envelope is authoritative and is sent
-// byte-for-byte; only rows migration 0017 converted from the retired ops-sync provider have no
-// snapshot, and they fall back to v1's behavior of describing the booking's current state.
+// byte-for-byte; a row with no snapshot falls back to describing the booking's current state.
 export async function deliverBookingEventOperation(
   context: ReservaContext,
   booking: Booking,

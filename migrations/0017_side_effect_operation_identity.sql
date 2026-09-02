@@ -1,44 +1,14 @@
--- Plan 021 (design decision 5): side_effect_operations trades its colon-string `kind` for a
--- structured operation identity. The old grammar forced every consumer of a row to *parse* it back
--- ("segment 1 is the event, a trailing numeric segment is a discriminator, 'customer'/'owner' can
--- never collide with one"), and those positional rules do not survive into v2's open-ended hook and
--- webhook names. The identity now lives in columns and display strings are only ever *built* from
--- them.
---
---   family             the closed operation-kind set (CHECK below)
---   name               hook/webhook subscriber name, or the email recipient role
---   event              the booking event this row delivers, for event-carrying families
---   discriminator      per-occurrence uniqueness for a repeatable event (the reschedule transition
---                      version today)
---   event_payload_json the serialized event envelope, written atomically with the booking mutation
---                      that produced it, and re-sent byte-for-byte on every retry so a stable event
---                      id can never carry changing booking data
---
--- Rebuild (rename -> create -> copy -> drop), the same pattern as 0011/0012/0013/0015/0016; see
--- 0011's header for why this is crash-safe without an explicit transaction.
---
--- Legacy kind -> identity mapping, one row per shape that ever existed:
---
---   calendar_create | calendar_delete | email_confirmation | oversell
---       -> family = the kind itself; name/event/discriminator NULL.
---   email:<event>                            -> family 'email', event, no name (unsplit send).
---   email:<event>:<recipient>                -> family 'email', name 'customer'|'owner'.
---   email:<event>:<discriminator>            -> family 'email', discriminator (reschedule version).
---   email:<event>:<recipient>:<discriminator>-> family 'email', both.
---   tourflow:<event>[:<discriminator>]       -> family 'hook', name 'ops'.
---
--- The tourflow -> hook/'ops' conversion is deliberate: the bespoke Tourflow provider is gone, and a
--- deployment that had one registers an equivalent durable hook named `ops`. These migrated rows are
--- the SOLE event-carrying rows allowed a NULL event_payload_json — their original occurrence
--- snapshot no longer exists, so they keep v1's "reconstruct from current booking state" behavior.
--- They can only ever feed that internal compatibility hook, never a public webhook. A row whose
--- name is not registered in the running config is abandoned at claim time with a remediating log,
--- so nothing here can sit pending forever.
+-- side_effect_operations trades its colon-string `kind` for structured identity columns
+-- (family/name/event/discriminator/event_payload_json): the old grammar's positional parsing
+-- rules don't survive v2's open-ended hook/webhook names. Legacy kind values are mapped to
+-- identities by the CASE logic below; tourflow:* becomes family 'hook' name 'ops' (the bespoke
+-- provider is gone) and is the only case allowed a NULL event_payload_json, since its original
+-- event snapshot no longer exists. Same rebuild pattern as 0011 (rename/create/copy/drop).
 
 ALTER TABLE side_effect_operations RENAME TO side_effect_operations_pre_0017;
 
--- Decomposition staged in its own table so the rebuild INSERT and the operational_incidents
--- source-key rewrite below both read ONE definition of the mapping instead of two copies.
+-- Staged in its own table so the rebuild INSERT and the operational_incidents source-key rewrite
+-- below both read one definition of the mapping instead of two copies.
 CREATE TABLE side_effect_identity_0017 AS
 WITH split1 AS (
   SELECT *,
@@ -109,10 +79,8 @@ FROM side_effect_operations_pre_0017 o
 JOIN side_effect_identity_0017 i ON i.legacy_kind = o.kind;
 
 
--- operational_incidents keys a side-effect incident by "<booking id>:<operation display string>".
--- The display string is now built from the identity columns, so every existing side_effect incident
--- must be re-keyed here — otherwise its debt would look unreported forever (a duplicate incident
--- opens under the new key while the old row can never auto-resolve).
+-- Existing incidents are keyed by the old colon-string kind; re-key them to the new identity
+-- string here, or their debt would look unreported forever under the new key.
 UPDATE operational_incidents
 SET source_key = booking_id || ':' || (
   SELECT i.family
@@ -131,12 +99,9 @@ WHERE source_type = 'side_effect'
 DROP TABLE side_effect_identity_0017;
 DROP TABLE side_effect_operations_pre_0017;
 
--- After the drop, not before: ALTER TABLE RENAME carries the original's indexes over under their
--- original names, so recreating them here is the only point at which those names are free again.
---
--- The old PRIMARY KEY (booking_id, kind) becomes this: NULL is not a value SQLite's PRIMARY KEY or
--- UNIQUE treats as equal, so the coalesced expression index is what actually keeps one row per
--- identity (and what the outbox's ON CONFLICT DO NOTHING inserts rely on).
+-- Recreated after the drop, once the old names are free again. The old PRIMARY KEY (booking_id,
+-- kind) becomes this expression index: NULL isn't treated as equal by UNIQUE, so COALESCE keeps
+-- one row per identity (relied on by the outbox's ON CONFLICT DO NOTHING inserts).
 CREATE UNIQUE INDEX idx_side_effect_operations_identity ON side_effect_operations (
   booking_id, family, COALESCE(name, ''), COALESCE(event, ''), COALESCE(discriminator, '')
 );

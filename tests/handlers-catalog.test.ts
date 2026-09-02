@@ -1,7 +1,5 @@
-// The catalog endpoint is the deployment describing itself.
-// Two properties matter and both are asserted here: the shape is always-present-nullable (so a
-// consumer never branches on key presence), and it never leaks the operational facts that belong
-// to the quote and availability endpoints.
+// The catalog endpoint is the deployment describing itself: the shape is always-present-nullable
+// (no branching on key presence), and it never leaks facts that belong to quote/availability.
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createReservaContext, type ReservaContext } from '../src/context';
@@ -63,7 +61,7 @@ function allKeys(value: unknown, into = new Set<string>()): Set<string> {
   return into;
 }
 
-describe('GET /api/booking/catalog (plan 027 design decision 6)', () => {
+describe('GET /api/booking/catalog', () => {
   it('projects a location-ful service with its resolved pickup copy and an empty metadata collection', async () => {
     const { payload } = await catalog();
     expect(payload.services.find((entry: any) => entry.slug === 'vintage')).toEqual({

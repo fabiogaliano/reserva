@@ -13,12 +13,9 @@ import { booking, config } from './fixtures';
 import { sideEffectOperationKey, type SideEffectOperationIdentity } from '../src/repo';
 import { fakeRepository, providers, sideEffectOperation } from './fakes';
 
-// Every status-changing handler now writes through a compare-and-set repo
-// method. These tests force the exact race the CAS closes — a concurrent transition lands
-// between the handler's in-memory read and its DB write — by hooking the fake repo's
-// transition method to mutate the row (as if a racing request won) right before the real
-// CAS runs. The stale caller must lose (409, row untouched by it) instead of corrupting the
-// row with a mix of both transitions' fields.
+// Every status-changing handler writes through a compare-and-set repo method. These tests force
+// the exact race the CAS closes: a concurrent transition lands between the handler's in-memory
+// read and its DB write, and the stale caller must lose (409) instead of corrupting the row.
 
 const clock = () => new Date('2026-06-14T08:00:00.000Z');
 const validNewStart = '2026-06-15T08:00:00.000Z';
@@ -198,10 +195,9 @@ describe('stale compare-and-set transitions', () => {
   });
 
   it('a charge.refunded cancellation that loses a race to a concurrent customer cancel drains only the winner’s retryable outbox', async () => {
-    // calendarEventId: the winning customer-cancel transition below carries 'calendar_delete' in
-    // its own mutationSideEffects (mirroring cancellationSideEffectSeeds in src/confirmation.ts),
-    // so this also pins that the stale webhook's re-read-and-drain path picks up and resolves the
-    // winner's calendar debt, not just its email/hook rows.
+    // calendarEventId: the winning cancel carries 'calendar_delete' in its own mutationSideEffects,
+    // so this also pins that the stale webhook's re-read-and-drain path resolves the winner's
+    // calendar debt, not just its email/hook rows.
     const seeded = booking({ id: 'b-refund-vs-cancel', paymentRef: 'pi_refund_stale', calendarEventId: 'cal-refund-vs-cancel' });
     const repo = fakeRepository([seeded]);
     const realRefundTransition = repo.upsertRefundOperationAndTransitionToCancelled;

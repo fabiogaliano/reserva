@@ -14,10 +14,8 @@ export interface ReservaRouteEntry {
 }
 
 // `satisfies` (not a `readonly ReservaRouteEntry[]` annotation) so the literal `id`/`group` values
-// survive into `typeof routeManifest` — an explicit interface-typed annotation would widen `id` to
-// `string`, which under `noUncheckedIndexedAccess` turns every `Record<ReservaRouteId, string>`
-// property read (e.g. `routeConfig.paths.checkout`) into `string | undefined` throughout the
-// codebase, forcing every call site to re-null-check a value that can never actually be missing.
+// survive into `typeof routeManifest` — an interface-typed annotation would widen `id` to `string`,
+// turning every `Record<ReservaRouteId, string>` read into `string | undefined` under noUncheckedIndexedAccess.
 export const routeManifest = [
   { id: 'availability', group: 'customer', pattern: '/api/booking/availability', entrypoint: './routes/api/booking/availability.ts' },
   { id: 'checkout', group: 'customer', pattern: '/api/booking/checkout', entrypoint: './routes/api/booking/checkout.ts' },
@@ -41,14 +39,9 @@ export const routeManifest = [
 
 export type ReservaRouteId = (typeof routeManifest)[number]['id'];
 
-// Feature groups a consumer can turn off via `config.routes: { admin, ops, manage }` — lives here
-// (not the Astro-only ReservaIntegrationOptions.routes) since admin-auth selection needs
-// the same declared intent. `customer` and `webhook` are absent here on purpose: the booking API
-// is load-bearing, so it is never disableable.
-//
-// `manage` holds exactly ONE entry — Reserva's server-rendered
-// /booking/manage page. The manage, cancel and reschedule APIs stay in `customer` precisely so a
-// headless consumer can switch the built-in page off and build its own UI on the same endpoints.
+// Feature groups a consumer can turn off via `config.routes`. `customer` and `webhook` are absent
+// here: the booking API is load-bearing, never disableable. `manage` holds only the server-rendered
+// /booking/manage page — cancel/reschedule APIs stay in `customer` so a headless consumer can swap the built-in page.
 export interface ReservaRouteGroupFlags {
   admin: boolean;
   ops: boolean;
@@ -66,9 +59,8 @@ export function enabledRouteManifest(groups: ReservaRouteGroupFlags): readonly R
   return routeManifest.filter((entry) => isRouteEnabled(entry, groups));
 }
 
-// The seam a `routePrefix` option rewrites through: `prefix` must already be normalized (see
-// normalizeRoutePrefix below) so every call site produces a consistently-prefixed pattern instead
-// of half-prefixed strings assembled ad hoc at each URL-producing site.
+// The seam a `routePrefix` option rewrites through: `prefix` must already be normalized so every
+// call site produces a consistently-prefixed pattern instead of assembling one ad hoc.
 export function routePath(entry: ReservaRouteEntry, prefix = ''): string {
   return prefix + entry.pattern;
 }
@@ -83,9 +75,8 @@ export function resolvedRoutePaths(prefix = ''): Record<ReservaRouteId, string> 
 }
 
 // The single object threaded through `virtual:reserva/config` (and, at request time, onto
-// `ReservaContext.routeConfig` — see context.ts) so every URL-producing site (components, the
-// server-rendered manage/admin HTML, route redirects) reads the same resolved paths *and* the
-// same group flags, instead of some sites seeing a prefix and others not.
+// `ReservaContext.routeConfig`) so every URL-producing site reads the same resolved paths and the
+// same group flags, instead of some seeing a prefix and others not.
 export interface ReservaResolvedRouteConfig {
   paths: Record<ReservaRouteId, string>;
   groups: ReservaRouteGroupFlags;
@@ -104,9 +95,8 @@ export function requireEnabledRoutePath(routeConfig: ReservaResolvedRouteConfig,
 }
 
 // Pure normalization only (leading slash, no trailing slash, ''/'/' => no prefix). Rejecting
-// malformed input (whitespace, "..") is integration.ts's job via Zod, mirroring how
-// `validateConfig` validates `options.config` — this function assumes it already received a
-// value that passed that check.
+// malformed input (whitespace, "..") is the caller's job via Zod — this function assumes it
+// already received a value that passed that check.
 export function normalizeRoutePrefix(prefix: string): string {
   if (!prefix || prefix === '/') return '';
   const withLeadingSlash = prefix.startsWith('/') ? prefix : `/${prefix}`;
@@ -114,10 +104,9 @@ export function normalizeRoutePrefix(prefix: string): string {
   return withoutTrailingSlash === '' ? '' : withoutTrailingSlash;
 }
 
-// Mirrors `validateConfig`'s style (core/config.ts): a Zod schema, `safeParse`, and rethrowing the
-// raw `ZodError` on failure so integration.ts can report it the same way it reports a bad
-// `options.config`. It rejects whitespace/traversal plus URL and network-path syntax before
-// normalization can turn an unsafe value into a generated route.
+// Mirrors `validateConfig`'s style: a Zod schema, `safeParse`, and rethrowing the raw `ZodError`
+// so the caller reports it the same way it reports a bad `options.config`. Rejects whitespace/
+// traversal/URL syntax before normalization can turn an unsafe value into a generated route.
 const routePrefixSchema = z
   .string()
   .refine((value) => !/\s/.test(value), { message: 'routePrefix must not contain whitespace' })
@@ -128,8 +117,8 @@ const routePrefixSchema = z
   .refine((value) => !value.includes(':'), { message: 'routePrefix must not contain a URL scheme' })
   .refine((value) => !value.includes('//'), { message: 'routePrefix must not contain consecutive slashes' });
 
-// `routes` lives on ClientConfig (core/config.ts) — this schema
-// validates only `routePrefix`, the one remaining Astro-only mounting-detail option.
+// `routes` lives on ClientConfig — this schema validates only `routePrefix`, the one remaining
+// Astro-only mounting-detail option.
 const routeOptionsSchema = z.object({
   routePrefix: routePrefixSchema.optional(),
 });

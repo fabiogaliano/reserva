@@ -2,9 +2,8 @@ import type { Booking } from '../core/booking.js';
 import { meetingPointForBooking, metadataRowsForBooking, pickupPresentationFor, type ClientConfig } from '../core/config.js';
 import { toMajorUnits } from '../core/currency.js';
 import type { EmailBookingEvent, EmailRecipientRole } from '../core/events.js';
-// Boolean metadata reuses the app's one existing yes/no copy pair
-// (admin.on/off) instead of inventing a second one in this renderer's own English/Portuguese
-// catalogs, the only cross-import from src/ui/ in this module, kept to that single pair.
+// Boolean metadata reuses the app's one existing yes/no copy pair (admin.on/off) instead of a
+// second one here — the only cross-import from src/ui/ in this module.
 import { resolveMessages } from '../ui/messages.js';
 import { emailString, eventCopyKey } from './copy.js';
 
@@ -35,9 +34,8 @@ function interpolate(template: string, values: Record<string, string>): string {
 function stripTags(html: string): string { return html.replace(/<[^>]+>/g, ''); }
 
 // Bare 'en' resolves to en-US date ordering (Oct 15); European operators expect 15 Oct, so
-// formatting (not copy) upgrades it to en-GB. Exported (not re-exported from index.ts) so a
-// transport building an EmailTemplateContext can format `startsAtLocal` consistently with the
-// renderer's own date formatting.
+// formatting (not copy) upgrades it to en-GB. Exported so a transport building an
+// `EmailTemplateContext` can format `startsAtLocal` consistently.
 export function formatLocaleFor(locale: string): string { return locale === 'en' ? 'en-GB' : locale; }
 
 function digitsOf(value: string): string { return value.replace(/\D/g, ''); }
@@ -81,18 +79,15 @@ function buildModel(context: EmailTemplateContext): EmailModel {
   const rawValues: Record<string, string> = {
     serviceTitle, when, customerName, reference: booking.reference,
     quantity: String(booking.quantity), guestsWord, startsAtLocal: context.startsAtLocal,
-    // The refund-timing sentence is a copy key so a consumer can
-    // override it with a concrete promise; interpolated like every other placeholder rather than
-    // hardcoded into the cancellation leads themselves.
+    // Copy key so a consumer can override with a concrete promise, interpolated like every
+    // other placeholder.
     refundTiming: copy('refund.timing'),
   };
   const htmlValues = Object.fromEntries(Object.entries(rawValues).map(([key, value]) => [key, escapeHtml(value)]));
 
-  // Per-booking meeting-point resolution — a removed id falls back
-  // to the booking's stored label snapshot with no maps link. The
-  // requiresAddress/usesMeetingPoint gates are independent, so an option declaring both renders
-  // both the collected address and the meeting-point row. Gated on
-  // the row's own data first — a location-less booking gets neither row at all.
+  // A removed meeting-point id falls back to the booking's stored label snapshot with no maps
+  // link. requiresAddress/usesMeetingPoint are independent, so an option declaring both renders
+  // both rows; a location-less booking gets neither.
   const presentation = service ? pickupPresentationFor(service, booking) : null;
   const resolvedPoint = service && presentation ? meetingPointForBooking(service, booking.meetingPointId ?? null, booking.meetingPointLabel ?? null) : null;
   const requiresAddress = presentation?.requiresAddress ?? false;
@@ -114,11 +109,9 @@ function buildModel(context: EmailTemplateContext): EmailModel {
     });
   }
 
-  // The same metadataRowsForBooking projection the manage/
-  // confirmation payloads use, turned into card rows here since this renderer builds its own HTML
-  // rather than delegating to a shared page renderer. Boolean -> the app's one existing yes/no
-  // copy pair; everything else its plain string form. Every value is attacker-controlled free text
-  // for `text` fields, so it's escaped exactly like every other card row above.
+  // Same `metadataRowsForBooking` projection the manage/confirmation payloads use, built into
+  // card rows here since this renderer builds its own HTML. Every value is attacker-controlled
+  // free text, escaped like every other card row.
   const metadataRows = service ? metadataRowsForBooking(service, booking.metadata, locale, config.locales.default) : [];
   const onOffMessages = metadataRows.length > 0 ? resolveMessages(config, locale) : null;
   const metadataCardRows: EmailCardRow[] = metadataRows.map((row) => {
@@ -230,9 +223,8 @@ function renderText(model: EmailModel, config: ClientConfig): string {
   return lines.join('\n').trimEnd();
 }
 
-// The one default template, exported so a transport constructs it automatically (no second
-// opt-in switch beyond choosing a provider) and so a custom EmailRenderer can delegate every
-// event it doesn't want to replace instead of copying the template.
+// The one default template, exported so a transport constructs it automatically and a custom
+// EmailRenderer can delegate events it doesn't want to replace.
 export function renderDefaultEmail(context: EmailTemplateContext): RenderedEmail {
   const model = buildModel(context);
   return { subject: model.subject, html: renderHtml(model, context.config), text: renderText(model, context.config) };

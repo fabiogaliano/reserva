@@ -101,7 +101,7 @@ describe('core settings', () => {
     expect(() => parseSettingForm(definition('legal.termsUrl'), form({ 'legal.termsUrl': 'ftp://example.test' }))).toThrow(SettingParseError);
   });
 
-  it('rejects holdMinutes form values outside [35, 1440] and accepts the boundary values (BK-CONFIG-001)', () => {
+  it('rejects holdMinutes form values outside [35, 1440] and accepts the boundary values', () => {
     for (const bad of ['0', '34', '1441']) {
       expect(() => parseSettingForm(definition('booking.holdMinutes'), form({ 'booking.holdMinutes': bad }))).toThrow(SettingParseError);
     }
@@ -111,16 +111,11 @@ describe('core settings', () => {
   });
 });
 
-describe('merge-then-validate backstop (BK-CONFIG-001)', () => {
-  // A row that fails its own SettingKind bound (e.g. holdMinutes=0) never reaches
-  // mergeAndValidateSettings's validateConfig call in the first place — applySettingOverrides
-  // silently drops it first (decodeStoredValue), same as the load path. Because the holdMinutes
-  // kind is now aligned exactly with validateConfig's rule, there's no gap left for
-  // mergeAndValidateSettings itself to catch on a single field — its own throw path is only
-  // reachable via a genuine cross-field rule (see the 'cross-field' cases below), which is exactly
-  // the class of bug it's a backstop against. Save-time rejection of a bad holdMinutes therefore
-  // happens one layer up, at parseSettingForm (tested above) — mirroring the real admin handler,
-  // where parseSettingForm runs before mergeAndValidateSettings is ever called.
+describe('merge-then-validate backstop', () => {
+  // A row failing its own SettingKind bound (e.g. holdMinutes=0) never reaches
+  // mergeAndValidateSettings's validateConfig call — applySettingOverrides drops it first. Its
+  // own throw path is only reachable via a genuine cross-field rule (see below); single-field
+  // rejection happens one layer up, at parseSettingForm.
   it('save path (mergeAndValidateSettings): accepts a stored holdMinutes exactly at the [35, 1440] boundary', () => {
     expect(mergeAndValidateSettings(config, { 'booking.holdMinutes': JSON.stringify(35) }).booking.holdMinutes).toBe(35);
     expect(mergeAndValidateSettings(config, { 'booking.holdMinutes': JSON.stringify(1440) }).booking.holdMinutes).toBe(1440);
@@ -145,19 +140,10 @@ describe('merge-then-validate backstop (BK-CONFIG-001)', () => {
   });
 
   it('cross-field: an individually valid setting submission is still rejected when the full merged config violates a real validateConfig rule, with SettingsMergeError carrying validateConfig\'s {path, message} issue shape', () => {
-    // WHY start from an already-inconsistent base instead of two editable settings that combine
-    // into a violation: audited every `add(...)` call in validateConfig (core/config.ts) against
-    // settingDefinitions (core/settings.ts). The only true cross-field rule is locales.default must
-    // be in locales.supported; the rest are single-field (timezone, holdMinutes bounds, per-locale
-    // Stripe support) or service-level (schedule ordering, pricing coverage, occupancyFor). Neither
-    // locales nor services is an editable SettingDefinition — both are deliberately file-only (see the
-    // header comment atop core/settings.ts) — so no combination of two *currently-editable*
-    // settings can produce a cross-field validateConfig violation on its own; the per-field
-    // SettingKind bound is already the strongest backstop reachable from the settings page. Hand-
-    // breaking locales here is therefore not a shortcut around a missing real case — it's the only
-    // way to exercise mergeAndValidateSettings's cross-field path at all, which is exactly the
-    // point: it proves the backstop validates the WHOLE merged config, not just the branches
-    // settings can touch. booking.minNoticeHours=2 is, on its own, a perfectly valid override.
+    // Starts from an already-inconsistent base because no two *editable* settings can combine
+    // into a cross-field violation — the only true cross-field rule is locales.default must be in
+    // locales.supported, and locales isn't an editable SettingDefinition. Hand-breaking locales is
+    // the only way to exercise mergeAndValidateSettings's cross-field path at all.
     const brokenLocalesConfig: ClientConfig = { ...config, locales: { supported: ['pt-BR'], default: 'en' } };
     try {
       mergeAndValidateSettings(brokenLocalesConfig, { 'booking.minNoticeHours': '2' });

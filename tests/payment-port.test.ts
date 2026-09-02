@@ -7,11 +7,9 @@ import { defineReservaRuntime, defineCloudflareReservaRuntime } from '../src/run
 import { booking, config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
-// The payment port has to be implementable by someone who has never read src/providers/stripe.ts.
-// This adapter is built ONLY from what @reservajs/astro/core exports (the `PaymentProvider`
-// interface and the PAYMENT_EVENTS catalog) and mentions no Stripe identifier anywhere — if a
-// vendor concept leaked back into the port's types, this file would stop compiling, and the
-// assertions below prove Reserva actually drives a booking through it.
+// The payment port must be implementable by someone who has never read src/providers/stripe.ts --
+// built only from what @reservajs/astro/core exports, with no Stripe identifier anywhere, so a
+// leaked vendor concept would fail to compile.
 const vendorNeutralPayments: PaymentProvider = {
   async createCheckout(pending) {
     return { url: `https://pay.example/${pending.id}`, sessionRef: `sess_${pending.id}` };
@@ -39,7 +37,7 @@ const vendorNeutralPayments: PaymentProvider = {
   },
 };
 
-describe('the payment port is implementable without any vendor knowledge (plan 022)', () => {
+describe('the payment port is implementable without any vendor knowledge', () => {
   it('drives a checkout and a webhook confirmation through an adapter built only from the core seam', async () => {
     const repo = fakeRepository();
     const context = createReservaContext({

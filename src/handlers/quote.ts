@@ -5,13 +5,9 @@ import { HttpError, json, requestJson, requireInteger, requireString } from '../
 import { quotedPriceMinor, resolvePickupAxis } from './checkout.js';
 import { run } from './shared.js';
 
-// The pricing authority a headless consumer renders from.
-//
-// It cannot drift by construction: the pickup axis is validated by the same `resolvePickupAxis` and
-// the amount comes from the same `quotedPriceMinor` that `handleCheckout` charges through (see
-// src/handlers/checkout.ts). This endpoint adds no pricing logic of its own — only the parts of
-// checkout that have nothing to do with money (slot availability, capacity, holds, payment session)
-// are absent.
+// The pricing authority a headless consumer renders from. It can't drift: the pickup axis is
+// validated by the same resolvePickupAxis and the amount by the same quotedPriceMinor that
+// handleCheckout charges through — this endpoint adds no pricing logic of its own.
 export function handleQuote(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');

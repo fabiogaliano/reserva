@@ -160,11 +160,9 @@ describe('email providers', () => {
     expect(caught.retryable).toBe(false);
   });
 
-  // A `nohash:`-prefixed token (src/repo.ts placeholderToken) is what a DB-loaded booking's
-  // cancelToken/operatorToken looks like when there's no decryptable blob to regenerate the real
-  // link from (no RESERVA_TOKEN_ENC_KEY, or a not-yet-backfilled legacy row). Rendering it into a
-  // link would produce an href that 403s the instant it's clicked; the manage-link paragraph
-  // should be omitted instead.
+  // A `nohash:`-prefixed token (placeholderToken) means there's no decryptable blob to regenerate
+  // the real link from -- rendering it would produce a link that 403s instantly, so the manage-link
+  // paragraph should be omitted instead.
   it('omits the manage-link paragraph entirely (never renders a dead href) when a token is not presentable', async () => {
     const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
     const provider = brevoEmail({ apiKey: 'key', fetch: request });

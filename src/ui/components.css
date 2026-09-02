@@ -1,12 +1,9 @@
-/* Single source for the embeddable components' styling (ManageBooking, AdminDashboard). Imported
-   from each component's frontmatter so the consumer's Astro build bundles (and CSP-hashes) it once,
-   however many reserva components a page mounts. The server-rendered pages use src/ui/theme.ts
-   served from the assetsCss route instead — they never pass through a consumer build. Rebrand by
-   overriding the --bk-* tokens in site CSS. */
+/* Single source for the embeddable components' styling, imported from each component's frontmatter
+   so the consumer's Astro build bundles (and CSP-hashes) it once, however many components a page
+   mounts. Rebrand by overriding the --bk-* tokens in site CSS. */
 
 .bk-embed {
-  /* Linear-style tokens: indigo accent, cool neutrals, hairline borders. Prefers Inter when the
-     host page ships it; falls back to the system sans without any external font request. */
+  /* Falls back to the system sans without any external font request. */
   --bk-font: "Inter", "Inter Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --bk-surface: #ffffff;
   --bk-surface-2: #eceef1;
@@ -24,8 +21,8 @@
   --bk-focus: 0 0 0 3px color-mix(in srgb, var(--bk-accent) 50%, transparent);
   --bk-ease: cubic-bezier(0.16, 1, 0.3, 1);
 
-  /* Scoped to the embed: keeps its native control chrome (selects, pickers) in step with the
-     dark-token flip below even when the host page is light-only. */
+  /* Keeps native control chrome (selects, pickers) in step with the dark-token flip below even
+     when the host page is light-only. */
   color-scheme: light dark;
   display: block;
   max-width: 26rem;

@@ -1,8 +1,6 @@
-// migrations/0015_pickup_options.sql rebuilds `bookings` the same way 0011/0013 already do (rename -> create -> INSERT...SELECT with an explicit column list ->
-// drop -> rename — see tests/workers/schema-constraints.test.ts's 0011 lossless test and
-// tests/workers/migration-0013-preservation.test.ts, which this mirrors), removing ONLY the
-// pickup_type CHECK while every other 0011 CHECK and the partial unique payment-intent index
-// survive byte-for-byte, and 0014's meeting_point_id/meeting_point_label columns carry through.
+// Proves migrations/0015_pickup_options.sql's rebuild of `bookings` against real D1: removes ONLY
+// the pickup_type CHECK, while every other 0011 CHECK, the partial payment-intent index, and
+// 0014's meeting-point columns survive byte-for-byte.
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
@@ -46,10 +44,9 @@ describe('migration 0015 rebuild removes the pickup_type CHECK, preserving every
     // pre-upgrade production database looks like.
     await applyD1Migrations(db, bindings.TEST_MIGRATIONS.slice(0, migrationIndex), 'd1_migrations_0015_test');
 
-    // Row 1: every one of the 44 columns set to a distinctive, non-default, non-NULL-where-possible
-    // value, including meeting-point columns SET (post-0014 write) -- pickup_type is still
-    // constrained to 'default'/'custom' at this point in the migration chain, so it can't yet hold
-    // a non-enum id; that's exactly what 0015 unblocks, proven by the post-migration insert below.
+    // Every column set to a distinctive, non-NULL-where-possible value, including meeting-point
+    // columns — pickup_type is still enum-constrained at this point in the chain, which is exactly
+    // what 0015 unblocks, proven by the post-migration insert below.
     const withMeetingPoint: Record<typeof ALL_BOOKING_COLUMNS[number], string | number | null> = {
       id: 'mp-1', reference: 'BKT-0015-MP1', tour_slug: 'vintage', people: 3,
       pickup_type: 'custom', pickup_address: '123 Distinctive Ave',
@@ -107,10 +104,8 @@ describe('migration 0015 rebuild removes the pickup_type CHECK, preserving every
          booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
        ) VALUES (?, 'calendar_create', 'pending', NULL, 0, NULL, NULL, NULL, ?, ?)`,
     ).bind('mp-1', '2026-07-20T00:00:00.000Z', '2026-07-20T00:00:00.000Z').run();
-    // A nonterminal row already at the attempt cap -- what a skipped 0013 (consumer filename
-    // collision) leaves behind. 0015's copy must re-apply 0013's abandon-at-cap conversion, or
-    // this row stays claimable-by-nobody forever (both claim predicates in src/repo.ts reject
-    // attempt_count >= 10) while the rebuilt schema satisfies the runtime fingerprint.
+    // A nonterminal row already at the attempt cap, as a skipped 0013 would leave behind. 0015's
+    // copy must re-apply 0013's abandon-at-cap conversion, or this row stays claimable-by-nobody forever.
     await db.prepare(
       `INSERT INTO side_effect_operations (
          booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
@@ -131,10 +126,8 @@ describe('migration 0015 rebuild removes the pickup_type CHECK, preserving every
     // The actual production migration, run for real -- not a hand-copied approximation of it.
     await applyD1Migrations(db, [migration0015], 'd1_migrations_0015_test');
 
-    // Direct proof of "removes ONLY the pickup_type CHECK": the rebuilt bookings schema equals the
-    // pre-0015 schema with exactly that CHECK deleted -- every other CHECK and column definition
-    // byte-for-byte (modulo whitespace), not just the behaviorally sampled subset below. The
-    // side_effect_operations table and the partial payment-intent index must come back unchanged.
+    // Direct proof of "removes ONLY the pickup_type CHECK": the rebuilt schema equals the pre-0015
+    // schema with exactly that CHECK deleted, byte-for-byte — not just the sampled subset below.
     const removedCheck = "check(pickup_typein('default','custom'))";
     expect(bookingsSqlBefore).toContain(removedCheck);
     expect(await normalizedSql('table', 'bookings')).toBe(bookingsSqlBefore.replace(removedCheck, ''));

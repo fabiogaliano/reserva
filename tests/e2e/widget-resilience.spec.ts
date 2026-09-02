@@ -1,9 +1,7 @@
 import { test, expect } from '@playwright/test';
 
-// BookingWidget.astro rendered its form `hidden` with only a <noscript> fallback,
-// and `form.hidden = false` ran *before* readData(form) (a JSON.parse that can throw) inside an
-// uncaught top-level loop. JavaScript enabled but blocked or throwing meant the visitor saw neither
-// the form nor a contact fallback — a widget that silently vanished.
+// `form.hidden = false` ran before readData(form)'s JSON.parse could throw, uncaught — JS enabled
+// but blocked or throwing meant the visitor saw neither the form nor the fallback.
 
 test('aborting the widget module load keeps the default fallback visible instead of a dead hidden form', async ({ page }) => {
   // JS stays "enabled" (unlike a BrowserContext with javaScriptEnabled: false) — only the specific
@@ -18,10 +16,8 @@ test('aborting the widget module load keeps the default fallback visible instead
   await expect(form).toBeHidden();
 });
 
-// Initialization now awaits the catalog before binding listeners, so
-// the "reveal only after every step succeeded" guarantee above has a new way to fail — a
-// deployment that can't answer for itself must leave the contact fallback up, not a form whose
-// pickup options were never rendered.
+// Initialization awaits the catalog before binding listeners — a deployment that can't answer for
+// itself must leave the fallback up, not reveal a form whose pickup options never rendered.
 test('a failing catalog request keeps the fallback visible instead of a form with no pickup options', async ({ page }) => {
   await page.route('**/api/booking/catalog*', (route) => route.abort());
   await page.goto('/');

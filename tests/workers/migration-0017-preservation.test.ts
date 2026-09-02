@@ -1,11 +1,6 @@
-// migrations/0017_side_effect_operation_identity.sql rebuilds
-// side_effect_operations to replace the colon-string `kind` with the family/name/event/discriminator
-// identity columns. This proves the decomposition is lossless for every legacy kind shape that ever
-// existed (0007's four literals, 0010's email grammar with and without a recipient/discriminator,
-// and the tourflow rows converted to the 'hook'/'ops' compatibility identity), that every other
-// column survives byte-for-byte, that the new expression unique index actually dedupes rows whose
-// identity contains NULLs, and that open incidents are re-keyed to the display string the new
-// columns build (an incident whose source_key still pointed at the old kind could never resolve).
+// Proves migrations/0017_side_effect_operation_identity.sql's decomposition of the colon-string
+// `kind` into family/name/event/discriminator columns is lossless for every legacy kind shape, the
+// new unique index dedupes rows with NULLs, and open incidents are re-keyed correctly.
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';

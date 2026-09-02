@@ -1,9 +1,6 @@
-// Focused unit coverage for accessAllowed's fail-closed gate (extracted from src/handlers/index.ts
-// into src/admin-access.ts, promoted from a Cloudflare-Access-specific boolean/claims hook to the
-// generic `adminAuth` port, so AdminDashboard.astro can share it without duplicating this logic).
-// handlers-admin.test.ts already covers the absent/null/throws -> null cases end to end through
-// handleAdminGet/handleAdminPost; this file adds the identity-passthrough behavior neither of
-// those exercise directly.
+// Unit coverage for accessAllowed's fail-closed gate. handlers-admin.test.ts covers the
+// absent/null/throws -> null cases end to end; this file adds the identity-passthrough behavior
+// neither of those exercise directly.
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { accessAllowed } from '../src/admin-access';

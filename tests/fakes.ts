@@ -136,12 +136,9 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       failureStartedAt: null, nextAttemptAt: null, ...overrides,
     });
   };
-  // Mirrors src/repo.ts's mutationSideEffectInsert — called
-  // by transitionToCancelled/transitionToNoShow/rescheduleWithCapacity below ONLY after each has
-  // already confirmed its own CAS won (the real repo's atomicity guarantee, reproduced here by
-  // simple call ordering rather than SQL, since the fake has no concurrent writers to race), and
-  // ON CONFLICT DO NOTHING (never overwrites an existing row) so a retried dispatch of the same
-  // mutation instance resumes its row instead of duplicating or clobbering it.
+  // Mirrors src/repo.ts's mutationSideEffectInsert: called only after the caller's own CAS
+  // has won, and ON CONFLICT DO NOTHING so a retried dispatch resumes its row instead of
+  // duplicating or clobbering it.
   const recordMutationSeeds = (bookingId: string, seeds: SideEffectOperationSeed[] | undefined, now: string, rescheduleVersion?: number) => {
     for (const seed of seeds ?? []) {
       // Mirrors the repository's json_set of '$.id' inside the winning batch — the
@@ -154,10 +151,9 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       insertOperation(bookingId, identity, now, { eventPayloadJson: payload });
     }
   };
-  // Mirrors the occupancy_units / occupancy_ends_at columns migration 0008 adds (see
-  // src/repo.ts insertHoldWithCapacity / rescheduleWithCapacity): rows seeded directly via the
-  // `booking()` fixture (bypassing these methods) have no entry here, matching a pre-migration
-  // NULL row, so the same COALESCE(units, 1) / COALESCE(endsAt, row.endsAt) fallback applies.
+  // Mirrors src/repo.ts's occupancy_units/occupancy_ends_at columns: rows seeded via the
+  // `booking()` fixture have no entry, matching a pre-migration NULL row, so the same
+  // COALESCE(units, 1) / COALESCE(endsAt, row.endsAt) fallback applies.
   const occupancyMeta = new Map<string, { units: number; endsAt: string }>();
   const find = (predicate: (item: Booking) => boolean) => [...rows.values()].find(predicate) ?? null;
   const hydrateBooking = (item: Booking): Booking => {
@@ -171,14 +167,10 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       throw new DuplicatePaymentRefError(paymentIntent);
     }
   };
-  // Reuses the REAL getOccupancyIntervals/maxConcurrentOccupancy (src/core/
-  // occupancy.ts) instead of a hand-rolled SUM-of-overlaps calc that could silently drift from
-  // src/repo.ts's own NOT-EXISTS max-concurrency guard (see the Fix 1 comment there). Each row's
-  // already-resolved occupancy_ends_at/occupancy_units (tracked in `occupancyMeta`, falling back
-  // to COALESCE(_, endsAt)/COALESCE(_, 1) for rows seeded outside these methods, matching a
-  // pre-migration-0008 NULL row) is smuggled through a trivial zero-turnaround service whose
-  // occupancyFor is the identity on a synthetic `quantity` count — that lets getOccupancyIntervals
-  // do the real active/overlap bookkeeping instead of a second, parallel implementation of it.
+  // Reuses the REAL getOccupancyIntervals/maxConcurrentOccupancy instead of a hand-rolled
+  // overlap calc that could drift from src/repo.ts's own guard. occupancyMeta's per-row units/
+  // endsAt are smuggled through a trivial zero-turnaround service so getOccupancyIntervals does
+  // the real bookkeeping instead of a second, parallel implementation of it.
   const zeroTurnaroundTour: OccupancyService = { turnaroundMin: 0, occupancyFor: (units) => units };
   const toOccupancyBooking = (item: Booking): OccupancyBooking => {
     const meta = occupancyMeta.get(item.id);
@@ -202,11 +194,9 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     });
     return maxConcurrentOccupancy(intervals, targetStart, targetEnd);
   };
-  // Mirrors capacityForDate/defaultCapacityForDate (core/occupancy.ts): a day override for
-  // localDate wins outright; otherwise the capacity_defaults row with the latest from_date <=
-  // localDate applies; otherwise defaultCapacity. Calls through `repository` (not a
-  // captured local) so a test overriding repo.getDayOverride/listCapacityDefaults (same pattern
-  // as overriding repo.listOccupancyBookings elsewhere in these tests) is honored here too.
+  // Mirrors capacityForDate/defaultCapacityForDate: day override wins, else the latest
+  // applicable capacity_defaults row, else defaultCapacity. Calls through `repository` (not a
+  // captured local) so a test overriding repo.getDayOverride/listCapacityDefaults is honored here.
   const resolveCapacityFake = async (localDate: string, defaultCapacity: number): Promise<number> => {
     const override = await repository.getDayOverride(localDate);
     if (override) return resolveCapacity(override.capacity);
@@ -261,10 +251,9 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       const item = find((candidate) => candidate.paymentRef === paymentRef);
       return item ? hydrateBooking(item) : null;
     },
-    // Mirrors src/repo.ts's hash-first lookup with a guarded legacy-plaintext
-    // fallback + lazy backfill. now gates tokensExpireAt, and (cancel token only) presence of
-    // cancelTokenRevokedAt, exactly the same way the real repo's WHERE clause does — an expired
-    // or revoked token returns null, indistinguishable from an unknown one.
+    // Mirrors src/repo.ts's hash-first lookup with a guarded legacy-plaintext fallback +
+    // lazy backfill. An expired or revoked token returns null, indistinguishable from an
+    // unknown one.
     getBookingByCancelToken: async (token, now) => {
       const hash = await sha256Base64Url(token);
       for (const item of rows.values()) {
@@ -340,15 +329,10 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       if (input.holdIp) holdIps.set(stored.id, input.holdIp);
       return hydrateBooking(stored);
     },
-    // Mirrors src/repo.ts's insertHoldWithCapacity: the hold-ip cap still throws
-    // HoldLimitExceededError, but a capacity loss returns null instead.
-    //
-    // The async capacity resolution runs FIRST (its own await is fine — no
-    // reader has touched `rows`/`holdIps` yet, so nothing here is order-sensitive to it). Every
-    // read of `rows`/`holdIps`/`occupancyMeta` that the decision depends on, the decision itself,
-    // and the write are then one synchronous block with NO await in between, so a concurrent call
-    // can never interleave between "decide" and "write" (mirrors D1 evaluating hold-limit +
-    // capacity in the single WHERE of one INSERT statement).
+    // Mirrors src/repo.ts's insertHoldWithCapacity: hold-ip cap still throws
+    // HoldLimitExceededError, but a capacity loss returns null. Capacity resolves first (await),
+    // then decide+write run as one synchronous block with no await between them, so a concurrent
+    // call can't interleave (mirrors D1's single-statement WHERE).
     insertHoldWithCapacity: async (input) => {
       // Computed alongside capacity (both awaits, both independent of rows/holdIps/occupancyMeta)
       // so the decide+write block below stays the single synchronous block the comment above requires.
@@ -445,10 +429,8 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       const updated: Booking = { ...current, ...defined, status: 'confirmed', holdExpiresAt: null, updatedAt };
       rows.set(id, updated);
       insertOperation(id, { family: 'calendar_create' }, updatedAt);
-      // Split rows (one per recipient) when the caller resolved a
-      // split-capable provider; otherwise the single legacy combined row, unchanged from before.
-      // This is a brand-new confirmation, so no row of either shape can already exist
-      // (mirrors src/repo.ts's confirmWithSideEffectOperations comment).
+      // Split rows (one per recipient) for a split-capable provider, otherwise the single
+      // legacy combined row. Brand-new confirmation, so no row of either shape can already exist.
       const emailIdentities: SideEffectOperationIdentity[] = emailRecipients && emailRecipients.length > 0
         ? emailRecipients.map((recipient) => ({ family: 'email', name: recipient, event: 'booking.confirmed' }))
         : [{ family: 'email_confirmation' }];
@@ -492,11 +474,9 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         providerResultId: booking.calendarEventId,
         resolvedAt: calendarSucceeded ? now : null,
       });
-      // Same split-vs-combined choice
-      // confirmWithSideEffectOperations makes for a brand-new confirmation, applied here for
-      // legacy repair. A split row is only ever inserted when no legacy combined
-      // email_confirmation row already exists for this booking — mirrors src/repo.ts's
-      // NOT EXISTS guard.
+      // Same split-vs-combined choice as confirmWithSideEffectOperations, applied here for
+      // legacy repair: a split row is only inserted when no legacy combined email_confirmation
+      // row already exists — mirrors src/repo.ts's NOT EXISTS guard.
       const emailIdentities: SideEffectOperationIdentity[] = emailRecipients && emailRecipients.length > 0
         ? emailRecipients.map((recipient) => ({ family: 'email', name: recipient, event: 'booking.confirmed' }))
         : [{ family: 'email_confirmation' }];
@@ -524,10 +504,9 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     recordMutationSideEffectOperations: async (bookingId, seeds, now) => {
       recordMutationSeeds(bookingId, seeds, now);
     },
-    // 'abandoned' is terminal (never reclaimed, mirroring
-    // src/repo.ts's status NOT IN ('succeeded', 'abandoned')), and attempt_count is capped the
-    // same way src/repo.ts's claim SQL binds SIDE_EFFECT_MAX_ATTEMPTS.
-    // Additionally requires next_attempt_at to be null or <= now.
+    // 'abandoned' is terminal (never reclaimed), and attempt_count is capped the same way
+    // src/repo.ts's claim SQL binds SIDE_EFFECT_MAX_ATTEMPTS. Also requires next_attempt_at
+    // to be null or <= now.
     claimSideEffectOperation: async (bookingId, identity, leaseToken, attemptedAt) => {
       const key = sideEffectKey(bookingId, identity);
       const current = sideEffectOperations.get(key);
@@ -554,11 +533,9 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       });
       return attemptNumber;
     },
-    // Mirrors src/repo.ts's aggregate resolve — calendar_synced
-    // still flips directly off this resolve's own outcome (calendar_create is always exactly one
-    // row), but email_synced is recomputed from the CURRENT (post-write) applicable set: the
-    // legacy combined row when one exists for this booking, otherwise every split row. Becomes
-    // true only when every row in that set is 'succeeded'.
+    // Mirrors src/repo.ts's aggregate resolve: calendar_synced flips off this resolve's own
+    // outcome, but email_synced is recomputed from the current applicable row set (legacy
+    // combined or every split row), true only once all are 'succeeded'.
     resolveSideEffectOperation: async (input) => {
       const key = sideEffectKey(input.bookingId, input.identity);
       const operation = sideEffectOperations.get(key);
@@ -580,10 +557,9 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       rows.set(input.bookingId, { ...current, updatedAt: input.resolvedAt });
       return true;
     },
-    // 'abandoned' already falls outside pending/failed/reclaimable-
-    // in_flight above, unchanged — attempt_count >= SIDE_EFFECT_MAX_ATTEMPTS is the explicit
-    // belt-and-braces guard, mirroring src/repo.ts's claim SQL.
-    // Additionally requires next_attempt_at to be null or <= now.
+    // 'abandoned' already falls outside pending/failed/reclaimable-in_flight; the
+    // attempt_count cap is a belt-and-braces guard mirroring src/repo.ts's claim SQL.
+    // Also requires next_attempt_at to be null or <= now.
     claimMutationSideEffectOperation: async (bookingId, identity, attemptedAt) => {
       const key = sideEffectKey(bookingId, identity);
       const current = sideEffectOperations.get(key);
@@ -647,18 +623,10 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       return hydrateBooking(updated);
     },
     // Mirrors src/repo.ts's rescheduleWithCapacity: transitionReschedule's CAS plus the same
-    // max-concurrency capacity guard as insertHoldWithCapacity, excluding this booking's own id
-    // from the occupancy calc so a move within a window it already occupies isn't counted
-    // against itself. occupancy_units is now re-asserted (self-healing a
-    // legacy NULL row), matching src/repo.ts.
-    //
-    // Atomicity: the CAS pre-check used to read `current` BEFORE the
-    // `await resolveCapacityFake`, so two concurrent reschedules of the SAME booking could both
-    // capture the pre-write row, both pass the stale CAS check, and the loser would then
-    // unconditionally clobber the winner's write once its own await resumed. Resolving capacity
-    // FIRST (before touching `rows` at all) and doing CAS + occupancy decision + write as one
-    // synchronous block after it closes that gap — no concurrent call can observe `rows` between
-    // this call's decide and its write (mirrors D1's single UPDATE ... WHERE transaction).
+    // max-concurrency guard as insertHoldWithCapacity, excluding this booking's own id so a move
+    // within a window it already occupies isn't counted against itself. Capacity resolves first,
+    // then CAS + decision + write run as one synchronous block, closing the race where two
+    // concurrent reschedules of the same booking could both pass a stale CAS check.
     rescheduleWithCapacity: async (id, input) => {
       const capacity = await resolveCapacityFake(input.localDate, input.defaultCapacity);
       const current = rows.get(id);
@@ -1061,11 +1029,10 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
   return repository;
 }
 
-// Records the idempotency key and expected amount each refund() call would carry (mirroring
-// the Stripe adapter's own deterministic `reserva-refund-<paymentRef>` derivation) so tests can
-// assert a retried refund reuses the same key instead of minting a fresh one per attempt,
-// and that callers forward the booking's full expected amount. `resultFor`
-// lets a test control the returned refund ref/amount, or throw to simulate a provider-side failure.
+// Tracks the idempotency key and expected amount each refund() call carries (mirroring the
+// Stripe adapter's deterministic `reserva-refund-<paymentRef>` derivation) so tests can assert
+// a retry reuses the same key. `resultFor` lets a test control the result or throw to simulate
+// a provider-side failure.
 export function fakeRefundTracker(
   resultFor: (paymentRef: string, callNumber: number) => { refundRef: string; amountMinor: number } = (paymentRef) => ({ refundRef: `re_${paymentRef}`, amountMinor: 0 }),
 ): { refund: PaymentProvider['refund']; idempotencyKeys: string[]; expectedAmounts: number[] } {
@@ -1116,10 +1083,9 @@ export function seedSideEffectOperation(
   return row;
 }
 
-// The retired calendarSynced/emailSynced flags were how a fixture said "this booking's
-// confirmation was already delivered". Migration 0018 turned every such flag into the succeeded
-// outbox row it described, so a fixture says it the same way now — and the repair path in
-// handlers/status-manage.ts sees a booking with nothing left owed instead of a legacy row to heal.
+// Says "this booking's confirmation was already delivered" via succeeded outbox rows (what
+// the retired calendarSynced/emailSynced flags used to mean), so the repair path in
+// handlers/status-manage.ts sees nothing left owed instead of a legacy row to heal.
 export function seedSettledConfirmation(
   repo: FakeRepository,
   bookingId: string,

@@ -174,10 +174,9 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
     expect(sideEffectOperation(repo, seeded.id, identity)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
   });
 
-  // Mirrors the checkout-side calendar_create/email redelivery tests above, but for the
-  // charge.refunded cancellation path: cancellationSideEffectKinds (src/handlers/index.ts) records
-  // a calendar_delete row alongside the transition to cancelled whenever the booking still carries
-  // a calendarEventId, and that row is owed/retryable exactly like calendar_create is.
+  // Mirrors the checkout-side redelivery tests above, but for charge.refunded: cancelling a booking
+  // that still carries a calendarEventId records a calendar_delete row, owed/retryable like
+  // calendar_create is.
   it('a charge.refunded full-refund webhook creates a calendar_delete debt when the delete fails, and Stripe redelivery drains it', async () => {
     const paymentRef = 'pi_redelivery_refund_calendar';
     const seeded = booking({
@@ -321,12 +320,9 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
     expect(warnings.some(([message]) => message === 'reserva booking event hook failed')).toBe(true);
   });
 
-  // The already-cancelled branch of the charge.refunded handler (src/handlers/index.ts ~550-556)
-  // only calls reconcileStripeRefundOperation then runOwedMutationSideEffects — it never runs a
-  // second transition on the booking row. A standalone redelivery (not incidental to a CAS race,
-  // like the other already-cancelled coverage in tests/handlers-operator.test.ts) must leave the
-  // row byte-identical to how the ordinary cancellation left it, converging only the refund
-  // operation and minting no new side-effect debt.
+  // The already-cancelled branch of the charge.refunded handler never runs a second transition on
+  // the booking row — a standalone redelivery must leave the row byte-identical, converging only
+  // the refund operation and minting no new side-effect debt.
   it('two redeliveries of the same charge.refunded webhook against an already-cancelled booking never touch the booking row again', async () => {
     const paymentRef = 'pi_redelivery_already_cancelled';
     const seeded = booking({ id: 'b-redelivery-already-cancelled', paymentRef: paymentRef });

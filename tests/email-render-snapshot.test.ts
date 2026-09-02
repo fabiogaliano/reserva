@@ -45,7 +45,7 @@ async function renderAll(overrides: Partial<Booking>): Promise<Record<string, Ca
   return rendered;
 }
 
-describe('email renderer output (plan 026 snapshot discipline)', () => {
+describe('email renderer output', () => {
   it('location-ful booking, English', async () => {
     expect(await renderAll({ serviceSlug: 'vintage', locale: 'en', pickupType: 'default', pickupAddress: null, meetingPointId: null, meetingPointLabel: null })).toMatchSnapshot();
   });

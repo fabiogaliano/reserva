@@ -1,22 +1,16 @@
 #!/usr/bin/env bun
-// Proves the *real* scheduled() dispatch path — not a direct runReconciliation() function call —
-// recovers owed side-effect debt and resolves an already-open operator incident, against the
-// standalone cron Worker template (examples/smoke-site/worker/) and its isolated D1, the same way
-// `bun run cron:dev`+`bun run cron:trigger` do interactively.
+// Proves the *real* scheduled() dispatch path — not a direct runReconciliation() call — recovers
+// owed side-effect debt and resolves an open incident, against the standalone cron Worker template.
 //
-// Mechanism: `wrangler dev --test-scheduled` exposes `GET /__scheduled`, Wrangler's own local
-// route for triggering a Worker's scheduled() handler (see
-// node_modules/wrangler/wrangler-dist/cli.js's `testScheduled` wiring) — this is the boundary
-// local workerd actually supports for scheduled events; there is no Astro-preview equivalent,
-// which is why this exercises the cron Worker directly with `wrangler dev` rather than trying to
-// route the trigger through `astro preview`.
+// `wrangler dev --test-scheduled` exposing `GET /__scheduled` is the only boundary local workerd
+// supports for scheduled events; there is no Astro-preview equivalent, hence driving the cron
+// Worker directly instead of through `astro preview`.
 //
-// Fixture shape: a confirmed booking with one calendar_create row already recorded as `failed`
-// (attempt 2, past both its backoff window and the ten-minute delayed-incident threshold) and an
-// already-open `delayed` incident for it — the state two consecutive 5-minute cron ticks would
-// leave behind in production (tick 1 opens the incident; tick 2 is the one under test). The smoke
-// site's calendar provider (examples/smoke-site/src/runtime.ts) never fails, so the real scheduled
-// dispatch is expected to redrive the row to `succeeded` and auto-resolve the incident.
+// Fixture: a confirmed booking with a `failed` calendar_create row (attempt 2, past both its
+// backoff window and the delayed-incident threshold) and an already-open incident — the state two
+// consecutive 5-minute cron ticks leave behind in production (tick 1 opens it, tick 2 is under
+// test). The smoke site's calendar provider never fails, so dispatch should redrive the row to
+// `succeeded` and auto-resolve the incident.
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, rmSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -28,14 +22,12 @@ import type { ReservaProviders } from '../src/context';
 
 const smokeSiteRoot = fileURLToPath(new URL('../examples/smoke-site/', import.meta.url));
 const workerConfigPath = fileURLToPath(new URL('../examples/smoke-site/worker/wrangler.jsonc', import.meta.url));
-// Isolated from the interactive demo (.wrangler/state), the Playwright e2e suite (.wrangler-e2e),
-// and scripts/smoke-preview-test.ts (.wrangler-preview-test) -- this probe's D1 state must never
-// leak into, or be polluted by, any of those.
+// This probe's own persist dir; its D1 state must never leak into or be polluted by another
+// probe's.
 const PERSIST_DIR = '.wrangler-scheduled-test';
 const persistPath = fileURLToPath(new URL(PERSIST_DIR, `file://${smokeSiteRoot}`));
-// getPlatformProxy's own persist root does NOT auto-append 'v3' the way wrangler's CLI
-// --persist-to (used by reserva-migrate.ts and 'wrangler dev' below) does -- append it by hand so
-// both tools agree on the same on-disk D1 file.
+// getPlatformProxy's persist root does NOT auto-append 'v3' the way wrangler's CLI --persist-to
+// does; append it by hand so both agree on the same on-disk D1 file.
 const apiPersistPath = `${persistPath}/v3`;
 const HOST = '127.0.0.1';
 const PORT = 4397;
@@ -51,9 +43,8 @@ function run(command: string, args: string[]): void {
 rmSync(persistPath, { recursive: true, force: true });
 run('bun', ['../../scripts/reserva-migrate.ts', '--local', '--persist-to', PERSIST_DIR]);
 
-// Never actually called: seeding uses only repo methods that don't dispatch to providers
-// (insertHold/transitionToConfirmed), and the recovery itself runs inside the separately spawned
-// cron Worker process, with its own real provider wiring (examples/smoke-site/src/runtime.ts).
+// Never actually called: seeding uses only repo methods that don't dispatch to providers, and
+// recovery runs inside the separately spawned cron Worker process, with its own real providers.
 const unusedProviders: ReservaProviders = {
   payments: {
     createCheckout: async () => { throw new Error('unused'); },
@@ -81,9 +72,8 @@ async function seedAndAssert(): Promise<void> {
     });
     await context.repo.transitionToConfirmed(id, { expectedStatusIn: ['hold'], paymentRef: `pi_${id}`, updatedAt: '2026-08-14T08:01:00.000Z' });
 
-    // A failed attempt from ~11 minutes ago: past attempt 2's 10-minute backoff window
-    // (RETRY_BACKOFF_MINUTES, src/reconciliation-helpers.ts) and past the 10-minute delayed-
-    // incident threshold, so both the retry gate and the incident-already-open precondition hold.
+    // ~11 minutes ago: past attempt 2's 10-minute backoff window and the delayed-incident
+    // threshold, so both the retry gate and the incident-already-open precondition hold.
     await db.prepare(
       `INSERT INTO side_effect_operations (booking_id, family, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at, failure_started_at, next_attempt_at)
        VALUES (?, 'calendar_create', 'failed', NULL, 2, ?, NULL, 'calendar unavailable', ?, ?, ?, NULL)`,

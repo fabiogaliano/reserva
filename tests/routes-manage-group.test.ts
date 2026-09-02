@@ -1,7 +1,6 @@
-// `config.routes.manage` switches off Reserva's server-rendered /booking/manage page and NOTHING
-// else. The property under test is a negative one — with the page gone, no library-owned surface
-// may still link to it — so each of the three link producers (email, admin dashboard, the manage
-// entry component) is exercised for real here rather than asserted on the flag alone.
+// config.routes.manage switches off the server-rendered /booking/manage page and nothing else --
+// the property under test is negative, so each link producer (email, admin dashboard, manage
+// entry) is exercised for real rather than asserted on the flag alone.
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it, vi } from 'vitest';
 import { createReservaContext } from '../src/context';
@@ -57,7 +56,7 @@ async function emailBodies(manage: boolean): Promise<string> {
   return request.mock.calls.map((call) => String(call[1]?.body)).join('\n');
 }
 
-describe('config.routes.manage (plan 027 design decision 8)', () => {
+describe('config.routes.manage', () => {
   it('omits only the built-in page, keeping every manage/cancel/reschedule API mounted', () => {
     const patterns = injectedPatterns({ manage: false });
     expect(patterns).not.toContain('/booking/manage');

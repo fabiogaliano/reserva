@@ -1,9 +1,7 @@
-// Covers the events layer's behavior through its public entry points — the Stripe webhook and
-// /status handlers, config validation, and the runtime factory — against the shared in-memory
-// repository fake. Signature mechanics live in tests/webhooks.test.ts (verified there with the
-// Standard Webhooks library); this file covers what the library promises ABOUT an event: who
-// receives it, that a durable delivery is retried from a stored snapshot, and that the snapshot
-// never changes between attempts.
+// Covers the events layer through its public entry points — Stripe webhook/status handlers,
+// config validation, runtime factory — against the in-memory repo fake. Signature mechanics live
+// in tests/webhooks.test.ts; this covers who receives an event and that durable delivery retries
+// from an unchanging stored snapshot.
 import type { D1Database } from '@cloudflare/workers-types';
 import { Webhook } from 'standardwebhooks';
 import { describe, expect, it, vi } from 'vitest';

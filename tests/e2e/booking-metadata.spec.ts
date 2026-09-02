@@ -1,13 +1,9 @@
 import { test, expect } from '@playwright/test';
 import { createBooking } from './helpers';
 
-// riverCruise (examples/smoke-site/src/config.ts) declares two metadata
-// fields — a required `text` field and a `select` field. The widget renders no input for either
-// (no editing surface beyond checkout), so this spec injects the field onto
-// the checkout request the widget already sends, the same way any non-widget checkout consumer
-// would. Proves the whole funnel: checkout validation -> D1 -> confirmation page -> both manage-
-// page roles (customer and operator, the same renderer), with every value
-// HTML-escaped.
+// riverCruise declares metadata fields the widget renders no input for, so this injects them onto
+// the checkout request directly. Proves the whole funnel: validation -> D1 -> confirmation ->
+// both manage-page roles, with every value HTML-escaped.
 
 const XSS_PAYLOAD = '<script>window.__bkMetadataXss = true;</script>"><img src=x onerror=alert(1)>';
 
