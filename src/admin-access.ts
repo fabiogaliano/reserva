@@ -1,6 +1,5 @@
-// So `AdminDashboard.astro` can run the same admin auth check the built-in admin route uses,
-// instead of duplicating it. This is the one shared, fail-closed gate every admin/ops handler
-// consumes, never per-route wiring, so a later route in either protected group inherits it automatically.
+// The one shared, fail-closed admin auth gate every admin/ops handler consumes, never per-route
+// wiring, so a later route in either protected group inherits it automatically.
 import type { AdminIdentity } from './access.js';
 import type { ReservaContext } from './context.js';
 

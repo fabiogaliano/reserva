@@ -3,12 +3,10 @@
 // its `aria-labelledby` resolves to its own id, not the sibling's.
 import { experimental_AstroContainer as AstroContainer } from 'astro/container';
 import { describe, expect, it } from 'vitest';
-// @ts-expect-error -- resolved by vitest.component.config.ts's Astro Vite pipeline, not by tsc.
+// @ts-expect-error -- resolved by the 'component' project's Astro Vite pipeline, not by tsc.
 import BookingWidget from '../../examples/smoke-site/src/components/BookingWidget.astro';
-// @ts-expect-error -- resolved by vitest.component.config.ts's Astro Vite pipeline, not by tsc.
+// @ts-expect-error -- resolved by the 'component' project's Astro Vite pipeline, not by tsc.
 import ManageBooking from '../../src/components/ManageBooking.astro';
-// @ts-expect-error -- resolved by vitest.component.config.ts's Astro Vite pipeline, not by tsc.
-import AdminDashboard from '../../src/components/AdminDashboard.astro';
 
 // Extracts the (id, aria-labelledby) pair for a given id prefix out of one render's HTML. Every
 // component under test renders exactly one labelled element whose id starts with `prefix`.
@@ -38,20 +36,6 @@ describe('per-instance element IDs', () => {
     const htmlB = await container.renderToString(ManageBooking, {});
     const a = labelPair(htmlA, 'reserva-manage-title');
     const b = labelPair(htmlB, 'reserva-manage-title');
-    expect(a.id).not.toBe(b.id);
-    expect(a.labelledby).toBe(a.id);
-    expect(b.labelledby).toBe(b.id);
-  });
-
-  it('AdminDashboard: two instances get distinct title ids, each aria-labelledby resolving to its own instance', async () => {
-    // No Access headers wired: the h2/aria-labelledby pair renders unconditionally regardless of
-    // whether the access-required notice or the form is shown (see AdminDashboard.astro).
-    const container = await AstroContainer.create();
-    const request = new Request('https://example.test/');
-    const htmlA = await container.renderToString(AdminDashboard, { request });
-    const htmlB = await container.renderToString(AdminDashboard, { request });
-    const a = labelPair(htmlA, 'reserva-admin-title');
-    const b = labelPair(htmlB, 'reserva-admin-title');
     expect(a.id).not.toBe(b.id);
     expect(a.labelledby).toBe(a.id);
     expect(b.labelledby).toBe(b.id);

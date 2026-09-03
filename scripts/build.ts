@@ -13,7 +13,6 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // graph (e.g. JSON via resolveJsonModule) is already emitted into dist/ on its own.
 const RAW_ASSETS = [
   'components/ManageBooking.astro',
-  'components/AdminDashboard.astro',
   'ui/components.css',
 ];
 

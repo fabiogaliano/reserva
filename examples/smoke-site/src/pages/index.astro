@@ -1,7 +1,6 @@
 ---
 import BookingWidget from '../components/BookingWidget.astro';
 import ManageBooking from '../../../../src/components/ManageBooking.astro';
-import AdminDashboard from '../../../../src/components/AdminDashboard.astro';
 import config from '../config';
 
 const title = 'Reserva local demo';
@@ -48,7 +47,10 @@ const availabilityUrl = `/api/booking/availability?service=oldTown&quantity=2&fr
       <section>
         <h2>Embeddable fragments</h2>
         <ManageBooking locale={config.locales.default} />
-        <AdminDashboard />
+        <p>Day capacity and closures are managed on the server-rendered dashboard.</p>
+        <nav>
+          <a href="/booking/admin">Adjust a day</a>
+        </nav>
       </section>
 
       <section>

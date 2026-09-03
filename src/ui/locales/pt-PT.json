@@ -171,7 +171,6 @@
   "admin.on": "Ativado",
   "admin.off": "Desativado",
   "admin.none": "Nenhum",
-  "admin.accessRequired": "É necessária autorização do Cloudflare Access para gerir esta reserva.",
   "settingGroup.window": "Período de reserva",
   "settingGroup.changes": "Cancelamento e alterações",
   "settingGroup.holds": "Reservas temporárias e disponibilidade",

@@ -93,7 +93,6 @@ const EXPECTED_EXPORT_SUBPATHS = [
   './runtime',
   './ui',
   './components/ManageBooking.astro',
-  './components/AdminDashboard.astro',
 ] as const;
 
 function writeImportAll(consumerDir: string, extraSpecifiers: string[]): string[] {
@@ -135,7 +134,6 @@ function assertPackagedLayout(consumerDir: string): void {
     'dist/index.d.ts',
     'dist/reserva-migrate.js',
     'dist/components/ManageBooking.astro',
-    'dist/components/AdminDashboard.astro',
     'dist/ui/components.css',
   ]) {
     if (!existsSync(resolve(installedRoot, relativePath))) fail('layout', `missing from packed package: ${relativePath}`);

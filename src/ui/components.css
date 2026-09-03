@@ -112,6 +112,3 @@
 }
 .bk-embed .bke-submit:focus-visible { outline: none; box-shadow: var(--bk-focus); }
 .bk-embed .bke-submit[disabled] { opacity: 0.55; cursor: not-allowed; }
-.bk-embed .bke-submit--secondary { background: var(--bk-surface); color: var(--bk-text); border-color: var(--bk-border); }
-.bk-embed--admin .bke-actions { display: flex; gap: 0.75rem; }
-.bk-embed--admin .bke-submit { flex: 1; }

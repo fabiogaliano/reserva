@@ -191,9 +191,6 @@ export const defaultMessages = {
   'admin.on': 'On',
   'admin.off': 'Off',
   'admin.none': 'None',
-  // Shown by the embeddable AdminDashboard component when the viewing request isn't Cloudflare
-  // Access-authenticated — a form that could only ever 403 on submit is worse than saying so.
-  'admin.accessRequired': 'Cloudflare Access authorization required to manage this booking.',
   'settingGroup.window': 'Booking window',
   'settingGroup.changes': 'Cancellation & rescheduling',
   'settingGroup.holds': 'Checkout holds & availability',
