@@ -1,15 +1,24 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+## 0.3.0
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+### Added
 
-## [Unreleased]
+- `scheduledHandler`, a ready-to-use cron Worker handler for reconciliation.
+- Packaged API, configuration, customization, deployment, and development guides.
+
+### Changed
+
+- The optional booking, locale, legal, and admin config blocks now receive defaults.
+- Cloudflare runtimes read Reserva's own secrets without requiring consumers to restate them.
+- Fresh databases initialize from one consolidated migration; databases upgraded through the
+  previous migration chain remain compatible.
+- The root and core barrels expose only the supported integration contract.
 
 ### Removed
 
 - The `@reservajs/astro/providers` barrel subpath. Import each provider from its own subpath.
+- The embeddable `AdminDashboard.astro` component. Use Reserva's injected admin route.
 
 ## [0.2.0]
 

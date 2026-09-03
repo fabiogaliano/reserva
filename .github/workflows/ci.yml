@@ -57,9 +57,9 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run docs:contract:check
 
-  # Both tarballs are assembled exactly as the registry would, so a `files`, bin, or exports
-  # mistake fails here instead of after a version is permanently published. Pins the npm CLI:
-  # the version bundled with Node has accepted package shapes the live registry rejects.
+  # Unpublished versions are checked against the registry; published versions fall back to packing
+  # because npm refuses even a dry-run over an immutable version. Both paths use the pinned npm CLI
+  # so package-shape validation does not vary with the runner's bundled version.
   publish-dry-run:
     runs-on: ubuntu-latest
     permissions:
@@ -74,11 +74,29 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
       - run: bun install --frozen-lockfile
-      - name: '@reservajs/astro'
-        run: bunx npm@12.0.2 publish --dry-run --provenance=false
-      - name: '@reservajs/stripe'
-        run: bunx npm@12.0.2 publish --dry-run --provenance=false
-        working-directory: packages/stripe
+      - name: Check publish artifacts
+        shell: bash
+        run: |
+          status=0
+
+          check_package() {
+            local package_name="$1"
+            local package_dir="$2"
+            local version
+            version="$(cd "$package_dir" && node -p "require('./package.json').version")"
+
+            if npm view "$package_name@$version" version >/dev/null 2>&1; then
+              echo "$package_name@$version is already published; checking its tarball instead."
+              (cd "$package_dir" && bunx npm@12.0.2 pack --dry-run) || status=1
+            else
+              echo "$package_name@$version is unpublished; checking it against the registry."
+              (cd "$package_dir" && bunx npm@12.0.2 publish --dry-run --provenance=false) || status=1
+            fi
+          }
+
+          check_package '@reservajs/astro' .
+          check_package '@reservajs/stripe' packages/stripe
+          exit "$status"
 
   # The four checks that consume a built or packed artifact rather than the source tree, in one
   # runner: they share a single checkout and install, and each failure names which step broke.

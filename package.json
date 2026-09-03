@@ -1,6 +1,6 @@
 {
   "name": "@reservajs/astro",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A booking engine for fixed-capacity time slots, built as an Astro integration — runs in your own Cloudflare account on Workers + D1, no per-booking fees.",
   "publishConfig": {
     "access": "public",

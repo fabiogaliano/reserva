@@ -1,6 +1,6 @@
 {
   "name": "@reservajs/stripe",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Stripe Checkout adapter for Reserva, the Astro booking engine for Cloudflare Workers + D1.",
   "publishConfig": {
     "access": "public",
@@ -31,7 +31,7 @@
     "node": ">=20"
   },
   "peerDependencies": {
-    "@reservajs/astro": "^0.2.0"
+    "@reservajs/astro": "^0.3.0"
   },
   "dependencies": {
     "stripe": "^22.5.0"
