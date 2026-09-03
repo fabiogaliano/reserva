@@ -103,6 +103,7 @@ jobs:
   # Ordered cheapest-first so a broken build fails before the slower tarball installs run.
   packaged:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -114,4 +115,11 @@ jobs:
       # throwaway consumer projects, so a `files`, bin, or exports mistake fails here instead of
       # after a version is published. `test:quickstart` treats the README's own blocks as
       # executable, so a broken quickstart is a red build rather than a support thread.
-      - run: bun run verify:packaged
+      - name: Built-site preview
+        run: bun run test:preview
+      - name: Scheduled Worker
+        run: bun run test:scheduled
+      - name: Packed consumers
+        run: bun run test:pack
+      - name: README quickstart
+        run: bun run test:quickstart
