@@ -20,80 +20,14 @@ bun add @reservajs/astro
 bun add @reservajs/stripe   # the official payment adapter; optional, see "Payments"
 ```
 
-Four files, then migrations:
-
-```ts
-// reserva.config.ts — plain data, shared by the integration and the runtime module
-import type { ClientConfig } from '@reservajs/astro';
-
-export default {
-  business: {
-    name: 'Lisbon Tuk Tours', shortCode: 'LTT', url: 'https://lisbontuktours.example',
-    timezone: 'Europe/Lisbon', currency: 'eur',
-    contact: { email: 'bookings@lisbontuktours.example', phone: '+351 210 000 000' },
-  },
-  capacity: { default: 3 },              // seats per tuk-tuk, per slot
-  admin: { access: { teamDomain: 'https://lisbontuktours.cloudflareaccess.com', aud: '<AUD>' } },
-  services: {
-    alfama: {
-      title: 'Alfama Discovery', durationMin: 60, turnaroundMin: 15,
-      schedule: [{ days: [1, 2, 3, 4, 5, 6], firstStart: '09:00', lastStart: '17:00', intervalMin: 60 }],
-      pricing: [{ maxQuantity: 3, pickup: 'meeting_point', priceMinor: 4500 }],
-      location: {
-        meetingPoints: [{ id: 'se', label: 'Sé Cathedral', mapsUrl: 'https://maps.google.com/?q=Se+Lisboa' }],
-        pickupOptions: [{ id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true }],
-      },
-    },
-  },
-  booking: {
-    minNoticeHours: 2, maxHorizonDays: 90, holdMinutes: 35, cancelCutoffHours: 24,
-    reschedule: { enabled: true, cutoffHours: 24 },
-    limitedThreshold: 2, calendarMaxStaleSeconds: 900,
-  },
-  locales: { supported: ['en', 'pt-PT'], default: 'en' },
-  legal: { termsUrl: 'https://lisbontuktours.example/terms' },
-} satisfies ClientConfig;
-```
-
-```ts
-// astro.config.ts
-import { defineConfig } from 'astro/config';
-import cloudflare from '@astrojs/cloudflare';
-import reserva from '@reservajs/astro';
-import config from './reserva.config';
-
-export default defineConfig({
-  output: 'server',
-  adapter: cloudflare(),
-  integrations: [reserva({ config, runtimeEntrypoint: './src/reserva-runtime.ts' })],
-});
-```
-
-```ts
-// src/reserva-runtime.ts — the only place provider instances and secrets exist
-import { defineCloudflareReservaRuntime } from '@reservajs/astro/runtime';
-import { stripe } from '@reservajs/stripe';
-import config from '../reserva.config';
-import type { Env } from '../worker-configuration'; // `wrangler types`
-
-export default defineCloudflareReservaRuntime<Env>(config, {
-  providers: ({ env }) => ({
-    payments: stripe({ secretKey: env.STRIPE_SECRET_KEY, webhookSecret: env.STRIPE_WEBHOOK_SECRET }),
-  }),
-  secretBindings: ['RESERVA_CSRF_SECRET'],
-});
-```
-
-```jsonc
-// wrangler.jsonc — the D1 binding Reserva reads
-{
-  "name": "lisbon-tuk-tours",
-  "compatibility_date": "2026-07-21",
-  "d1_databases": [
-    { "binding": "RESERVA_DB", "database_name": "reserva", "database_id": "<wrangler d1 create reserva>" }
-  ]
-}
-```
+Four files, then migrations: `reserva.config.ts` (plain data, shared by the integration
+and the runtime module), `astro.config.ts` (which passes that config to
+`reserva({ config, runtimeEntrypoint })` alongside the `@astrojs/cloudflare` adapter),
+`src/reserva-runtime.ts` (the runtime module, the only place provider instances and secrets
+exist), and `wrangler.jsonc` (the `RESERVA_DB` D1 binding). `README.md`, shipped beside this
+file, carries all four verbatim under its Quickstart heading, and the repository builds a real
+site out of exactly those blocks on every run of its test suite — read them there rather than
+from a copy that can drift.
 
 ```bash
 bunx reserva-migrate --local   # dev database
@@ -108,17 +42,19 @@ time through `virtual:reserva/runtime`.
 ## Config schema outline
 
 `ClientConfig` (exported from `@reservajs/astro`) is validated by Zod at build time.
-Every failure names the key path and the rule that rejected it.
+Every failure names the key path and the rule that rejected it. `ClientConfig` is what you
+write; `ResolvedClientConfig` (same module) is what the runtime and a provider adapter
+receive once the defaults below have been applied.
 
 | Key | Required | Shape |
 |---|---|---|
 | `business` | yes | `{ name, shortCode, url, timezone (IANA), currency (ISO 4217, lowercase), contact: { email, phone, phoneSecondary?, whatsapp? } }` |
 | `capacity` | yes | `{ default: number }` — units available per slot |
-| `admin` | yes | `{ access?: { teamDomain, aud }, locale? }` — `access` present selects Cloudflare Access; absent requires a custom `adminAuth` |
+| `admin` | no | `{ access?: { teamDomain, aud }, locale? }` — defaults to `{}`. `access` present selects Cloudflare Access; absent requires a custom `adminAuth` while the `admin`/`ops` routes are on |
 | `services` | yes | `Record<slug, ServiceConfig>` |
-| `booking` | yes | `{ minNoticeHours, maxHorizonDays, holdMinutes (≥35), cancelCutoffHours, reschedule: { enabled, cutoffHours }, limitedThreshold, calendarMaxStaleSeconds, maxHoldsPerIp?, tokenExpiryDays? }` |
-| `locales` | yes | `{ supported: string[], default: string }` |
-| `legal` | yes | `{ termsUrl }` |
+| `booking` | no | `{ minNoticeHours, maxHorizonDays, holdMinutes (≥35), cancelCutoffHours, reschedule: { enabled, cutoffHours }, limitedThreshold, calendarMaxStaleSeconds, maxHoldsPerIp?, tokenExpiryDays? }` — the whole key defaults, as does each of its own: `0`, `90`, `35`, `24`, `{ enabled: true }` with `cutoffHours` inheriting `cancelCutoffHours`, `2`, `900` |
+| `locales` | no | `{ supported: string[], default: string }` — defaults to `{ supported: ['en'], default: 'en' }` |
+| `legal` | no | `{ termsUrl? }` — defaults to `{}`; `termsUrl` itself is optional |
 | `webhooks` | no | `Array<{ name, url, secretBinding, events? }>` |
 | `routes` | no | `{ admin?, ops?, manage? }` — all default `true` |
 | `ui` | no | `{ messages?: Record<locale, Partial<messages>> }` |
@@ -131,9 +67,9 @@ Every failure names the key path and the rule that rejected it.
 | `title` | no | display name; falls back to the slug |
 | `durationMin` / `turnaroundMin` | yes | slot length and the gap Reserva keeps after it |
 | `schedule` | yes | `Array<{ from?, to?, days: number[], firstStart, lastStart, intervalMin }>` (`days`: 0 = Sunday) |
-| `pricing` | yes | `Array<{ maxQuantity, pickup?, priceMinor }>` — first row whose `maxQuantity` covers the request wins; `pickup` is required exactly when `location` is declared |
+| `pricing` | yes | `Array<{ maxQuantity, pickup?, priceMinor }>` — first row whose `maxQuantity` covers the request wins. `pickup` names one of the service's pickup options; it may be omitted when the service resolves to exactly one, and must be absent when the service declares no `location` |
 | `occupancyFor` | no | `(quantity) => number` — how many capacity units a booking of N consumes |
-| `location` | no | `{ meetingPoints?: Array<{ id, label, mapsUrl }>, pickupOptions: Array<{ id, label?, hint?, requiresAddress, usesMeetingPoint }> }`. Omit for a service with no pickup axis at all |
+| `location` | no | `{ meetingPoints?: Array<{ id, label, mapsUrl }>, pickupOptions?: Array<{ id, label?, hint?, requiresAddress, usesMeetingPoint }> }` — declare at least one of the two. `meetingPoints` on its own implies the single option `{ id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true }`. Omit `location` for a service with no pickup axis at all |
 | `metadataFields` | no | `Array<{ key, label, type: 'text' \| 'number' \| 'boolean' \| 'select', options?, required?, maxLength? }>` — the entire declarable DSL; there are no conditional fields or custom validators |
 
 `label` on a metadata field or option is a plain string or a `Record<locale, string>`.
@@ -313,7 +249,7 @@ SQL error.
 | `503 confirmation_in_progress` | another caller holds the confirmation lease | retry; the payment webhook's retry is the intended path |
 | `429 too_many_holds` | `booking.maxHoldsPerIp` reached | expected under abuse; raise the cap or leave it |
 | `400 validation_failed: pickup …` | service has no `location`, or the id is not declared | omit `pickupType` for a location-less service; otherwise use a declared id |
-| `<AdminDashboard />` / `<ManageBooking />` throws about a missing endpoint | its route group is disabled in `config.routes` | pass an explicit `endpoint`, or re-enable the group |
+| `<ManageBooking />` throws about a missing endpoint | its route group is disabled in `config.routes` | pass an explicit `endpoint`, or re-enable the group |
 | Consumer build cannot resolve `virtual:reserva/runtime` | `reserva()` missing from `integrations`, or types not synced | add the integration; run `astro sync` |
 
 ## Boundaries
