@@ -17,7 +17,7 @@
       "@reservajs/stripe": ["./packages/stripe/src/index.ts"]
     }
   },
-  "include": ["src", "tests", "examples", "scripts", "packages", "vitest.config.ts", "vitest.workers.config.ts", "vitest.component.config.ts"],
+  "include": ["src", "tests", "examples", "scripts", "packages", "vitest.config.ts"],
   // tests/pack-fixture is a standalone consumer project that imports the bare `@reservajs/astro`
   // specifier, to exercise real package resolution — that doesn't resolve under this repo's own
   // tsconfig.

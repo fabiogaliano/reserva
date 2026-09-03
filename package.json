@@ -26,6 +26,12 @@
     "examples/smoke-site/worker",
     "README.md",
     "AGENTS.md",
+    "docs/api.md",
+    "docs/configuration.md",
+    "docs/customization.md",
+    "docs/deployment.md",
+    "docs/development.md",
+    "docs/MIGRATING-v2.md",
     "LICENSE"
   ],
   "bin": {
@@ -69,14 +75,14 @@
   "scripts": {
     "build": "bun scripts/build.ts",
     "prepack": "bun run build",
-    "test": "vitest run && vitest run --config vitest.component.config.ts",
-    "test:workers": "vitest run --config vitest.workers.config.ts",
+    "test": "vitest run --project unit --project component",
+    "test:workers": "vitest run --project workers",
     "test:pack": "bun scripts/pack-test.ts",
     "test:quickstart": "bun scripts/quickstart-test.ts",
     "test:preview": "bun scripts/smoke-preview-test.ts",
     "test:scheduled": "bun scripts/smoke-scheduled-test.ts",
     "test:e2e": "playwright test",
-    "test:watch": "vitest",
+    "test:watch": "vitest --project unit --project component",
     "typecheck": "tsc --noEmit",
     "audit": "bun audit",
     "docs:contract": "bun scripts/contract-docs.ts",
@@ -84,8 +90,9 @@
     "changeset": "changeset",
     "release:version": "changeset version",
     "release:publish": "changeset publish",
-    "verify": "bun run typecheck && bun run docs:contract:check && bun run test && bun run test:workers && bun run test:scheduled && bun run test:pack",
-    "check": "bun run audit && bun run verify"
+    "verify": "bun run typecheck && bun run docs:contract:check && bun run test && bun run test:workers",
+    "verify:packaged": "bun run test:preview && bun run test:scheduled && bun run test:pack && bun run test:quickstart",
+    "check": "bun run audit && bun run verify && bun run verify:packaged"
   },
   "engines": {
     "node": ">=20"
