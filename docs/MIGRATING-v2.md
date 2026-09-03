@@ -6,8 +6,10 @@ public cut. This file maps every rename in one place.
 
 Order of operations for an existing deployment:
 
-1. Apply the migrations (`bunx reserva-migrate`) — `0018_v2_domain_rename.sql` rebuilds
-   `bookings`. Do this before deploying the new Worker.
+1. Apply the migrations (`bunx reserva-migrate`). The published package now ships its schema as
+   a single `0001_init.sql`, so it can only initialize a fresh database — it carries no upgrade
+   path off the 0.1.x shape. A database still on 0.1.x has to run the incremental chain from an
+   earlier 0.2.x tag first, then upgrade. Do this before deploying the new Worker.
 2. Rename the Worker bindings and secrets.
 3. Update the config, the integration call, and the runtime module.
 4. Install `@reservajs/stripe` and replace the payment provider construction.
@@ -127,7 +129,7 @@ rather than hardcoding.
 
 ## Database columns
 
-`migrations/0018_v2_domain_rename.sql` performs these; you do not edit them by hand:
+The rename migration in the earlier 0.2.x chain performs these; you do not edit them by hand:
 
 | 0.1.x column | 0.2.0 column |
 |---|---|
@@ -151,10 +153,10 @@ break already-delivered data:
 - **`refund_operations.stripe_refund_id` and `refund_operations.payment_intent`.** Vendor-named
   persisted columns holding vendor-issued identifiers. Renaming them is a schema migration with
   no behavioral benefit, and this release does not touch refund history.
-- **Migration filenames.** `0001_init.sql` … `0019_admin_change_history.sql` are recorded in
-  Wrangler's `d1_migrations` ledger by name. Renaming an applied migration would make the
-  ledger re-apply it. Comments inside already-applied files (for example `0009`'s mention of the
-  old token-encryption secret name) are historical text and stay as written.
+- **Migration filenames.** Reserva ships its schema as a single `0001_init.sql`, recorded in
+  Wrangler's `d1_migrations` ledger by name. A database that applied the earlier incremental
+  chain already carries that name, so it needs nothing; renaming an applied migration would
+  make the ledger re-apply it.
 - **`--bk-*` CSS custom properties and `.bk-*` class names.** Public theming API; renaming them
   would break every consumer's override stylesheet for no functional gain.
 

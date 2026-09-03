@@ -1,5 +1,4 @@
 import { env } from 'cloudflare:workers';
-import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { runOwedMutationSideEffects } from '../../src/confirmation';
 import { createReservaContext } from '../../src/context';
@@ -9,7 +8,6 @@ import { providers } from '../fakes';
 
 interface TestEnv {
   RESERVA_DB: D1Database;
-  TEST_MIGRATIONS: D1Migration[];
 }
 
 const bindings = env as unknown as TestEnv;
@@ -745,84 +743,4 @@ describe('mutation side-effect outbox on real D1', () => {
     await db.prepare('DROP TRIGGER fail_mutation_outbox').run();
   });
 
-  // repo.insertHold now always writes meeting_point_id/-label (migration 0014), so it cannot seed
-  // these FK-parent rows against this deliberately pre-0010 schema — a raw INSERT of just the
-  // 0001_init.sql NOT NULL columns decouples this historical-schema test from repo.ts's current columns.
-  async function seedRawBookingForFk(id: string): Promise<void> {
-    await db.prepare(
-      `INSERT INTO bookings (id, reference, tour_slug, people, pickup_type, starts_at, ends_at, locale, price_cents, status, cancel_token, operator_token, created_at, updated_at)
-       VALUES (?, ?, 'vintage', 2, 'default', '2026-08-01T09:00:00.000Z', '2026-08-01T10:00:00.000Z', 'en', 12000, 'hold', ?, ?, '2026-07-21T10:00:00.000Z', '2026-07-21T10:00:00.000Z')`,
-    ).bind(id, `BKT-2026-${id}`, `cancel-${id}`, `operator-${id}`).run();
-  }
-
-  it('applies the actual 0010 migration while preserving every legacy outbox row', async () => {
-    for (const table of [
-      'side_effect_operations', 'refund_operations', 'settings', 'capacity_defaults', 'day_overrides', 'bookings',
-      'd1_migrations_0010_test', 'd1_migrations',
-    ]) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
-    const migrationIndex = bindings.TEST_MIGRATIONS.findIndex((migration) => migration.name === '0010_mutation_side_effect_outbox.sql');
-    if (migrationIndex < 0) throw new Error('0010 migration missing from TEST_MIGRATIONS');
-    const migration0010 = bindings.TEST_MIGRATIONS[migrationIndex];
-    if (!migration0010) throw new Error('0010 migration missing from TEST_MIGRATIONS');
-    await applyD1Migrations(db, bindings.TEST_MIGRATIONS.slice(0, migrationIndex), 'd1_migrations_0010_test');
-
-    const legacyKinds = ['calendar_create', 'email_confirmation', 'oversell'];
-    const statuses = ['pending', 'in_flight', 'succeeded', 'failed'];
-    const seeded: Array<{ bookingId: string; kind: string; status: string; providerResultId: string | null; attemptCount: number; attemptedAt: string | null; resolvedAt: string | null; error: string | null; createdAt: string; updatedAt: string }> = [];
-    for (const [kindIndex, kind] of legacyKinds.entries()) {
-      for (const [statusIndex, status] of statuses.entries()) {
-        const bookingId = `migration-${kindIndex}-${statusIndex}`;
-        const stamp = `2026-07-21T10:0${kindIndex}${statusIndex}:00.000Z`;
-        await seedRawBookingForFk(bookingId);
-        const row = {
-          bookingId, kind, status,
-          providerResultId: status === 'succeeded' ? `provider-${kindIndex}-${statusIndex}` : null,
-          attemptCount: statusIndex,
-          attemptedAt: status === 'pending' ? null : stamp,
-          resolvedAt: status === 'succeeded' || status === 'failed' ? stamp : null,
-          error: status === 'failed' ? `error-${kindIndex}-${statusIndex}` : null,
-          createdAt: stamp,
-          updatedAt: stamp,
-        };
-        seeded.push(row);
-        await db.prepare(
-          `INSERT INTO side_effect_operations (
-             booking_id, kind, status, provider_result_id, attempt_count, attempted_at, resolved_at, error, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).bind(
-          row.bookingId, row.kind, row.status, row.providerResultId, row.attemptCount, row.attemptedAt,
-          row.resolvedAt, row.error, row.createdAt, row.updatedAt,
-        ).run();
-      }
-    }
-
-    await applyD1Migrations(db, [migration0010], 'd1_migrations_0010_test');
-
-    const preserved = await db.prepare(
-      `SELECT booking_id AS bookingId, kind, status, provider_result_id AS providerResultId, attempt_count AS attemptCount,
-         attempted_at AS attemptedAt, resolved_at AS resolvedAt, error, created_at AS createdAt, updated_at AS updatedAt
-       FROM side_effect_operations WHERE booking_id LIKE 'migration-%' ORDER BY booking_id, kind`,
-    ).all<typeof seeded[number]>();
-    expect(preserved.results).toEqual([...seeded].sort((a, b) => a.bookingId.localeCompare(b.bookingId) || a.kind.localeCompare(b.kind)));
-
-    await expect(db.prepare(
-      `INSERT INTO side_effect_operations (booking_id, kind, status, attempt_count, created_at, updated_at)
-       VALUES (?, ?, 'pending', 0, ?, ?)`,
-    ).bind('migration-0-0', 'email:booking.no_show:customer', '2026-07-21T11:00:00.000Z', '2026-07-21T11:00:00.000Z').run()).resolves.toBeDefined();
-    await expect(db.prepare(
-      `INSERT INTO side_effect_operations (booking_id, kind, status, attempt_count, created_at, updated_at)
-       VALUES (?, ?, 'pending', 0, ?, ?)`,
-    ).bind('migration-0-1', 'tourflow:booking.rescheduled:123-456', '2026-07-21T11:00:00.000Z', '2026-07-21T11:00:00.000Z').run()).resolves.toBeDefined();
-    await expect(db.prepare(
-      `INSERT INTO side_effect_operations (booking_id, kind, status, attempt_count, created_at, updated_at)
-       VALUES (?, ?, 'pending', 0, ?, ?)`,
-    ).bind('migration-0-2', 'not-an-operation', '2026-07-21T11:00:00.000Z', '2026-07-21T11:00:00.000Z').run()).rejects.toThrow();
-    await expect(db.prepare(
-      `INSERT INTO side_effect_operations (booking_id, kind, status, attempt_count, created_at, updated_at)
-       VALUES (?, ?, 'pending', 0, ?, ?)`,
-    ).bind('migration-0-0', 'email:booking.no_show:customer', '2026-07-21T11:00:00.000Z', '2026-07-21T11:00:00.000Z').run()).rejects.toThrow();
-    await expect(db.prepare(
-      `SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_side_effect_operations_pending'`,
-    ).all<{ name: string }>()).resolves.toMatchObject({ results: [{ name: 'idx_side_effect_operations_pending' }] });
-  });
 });

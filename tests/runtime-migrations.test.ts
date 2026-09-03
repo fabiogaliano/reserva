@@ -161,9 +161,9 @@ describe('checkReservaMigrationsApplied', () => {
   });
 
   it('names the missing migration and the apply command when one is unapplied', async () => {
-    const applied = RESERVA_MIGRATIONS.filter((name) => name !== '0003_hold_ip.sql');
+    const applied = RESERVA_MIGRATIONS.filter((name) => name !== '0001_init.sql');
     await expect(checkReservaMigrationsApplied(fakeD1(applied))).rejects.toThrow(
-      /0003_hold_ip\.sql.*wrangler d1 migrations apply <database_name> --local.*wrangler d1 migrations apply <database_name>.*reserva-migrate/s,
+      /0001_init\.sql.*wrangler d1 migrations apply <database_name> --local.*wrangler d1 migrations apply <database_name>.*reserva-migrate/s,
     );
   });
 
