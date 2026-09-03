@@ -1,7 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { cloudflareAccessAdminAuth } from './access.js';
 import { createReservaContext, OPERATOR_SECRET_NAME, type AdminAuth, type ReservaCache, type ReservaContext, type ReservaContextInput, type ReservaProviders, type ReservaLogger } from './context.js';
-import { validateConfig, type ClientConfig } from './core/config.js';
+import { validateConfig, type ResolvedClientConfig } from './core/config.js';
 import { validateBookingEventHooks, type BookingEventHook } from './core/events.js';
 import { checkReservaMigrationsApplied, D1_MIGRATIONS_TABLE, requireMigrationsTableName } from './schema-check.js';
 
@@ -11,7 +11,7 @@ export interface ReservaRuntimeRequest {
 }
 
 export interface ReservaRuntimeDefinition {
-  readonly config: ClientConfig;
+  readonly config: ResolvedClientConfig;
   createContext(input: ReservaRuntimeRequest): ReservaContext | Promise<ReservaContext>;
 }
 
@@ -20,7 +20,7 @@ export type ReservaRuntime = ReservaRuntimeDefinition;
 
 export interface ReservaRuntimeFactoryOptions {
   config: unknown;
-  createContext(input: ReservaRuntimeRequest & { config: ClientConfig }): ReservaContextInput | Promise<ReservaContextInput>;
+  createContext(input: ReservaRuntimeRequest & { config: ResolvedClientConfig }): ReservaContextInput | Promise<ReservaContextInput>;
 }
 
 // The minimal env surface reserva reads. Consumers pass their wrangler-generated Env as TEnv for
@@ -38,7 +38,7 @@ export interface CloudflareRuntimeBindings<TEnv extends object = UntypedReservaE
   env: TEnv;
   request: Request;
   locals?: unknown;
-  config: ClientConfig;
+  config: ResolvedClientConfig;
 }
 
 export type CloudflareBinding<T, TEnv extends object = UntypedReservaEnv> =
@@ -119,14 +119,14 @@ function isD1Like(value: unknown): value is D1Database {
 // A payment provider's own limits are checked ONCE, before the deployment serves anything — never
 // as a surprise on the first real checkout. When `providers` is a plain object the check runs at
 // build time; when it's a factory, the first context creation is the earliest it can run.
-function validatePaymentProvider(providers: ReservaProviders, config: ClientConfig): void {
+function validatePaymentProvider(providers: ReservaProviders, config: ResolvedClientConfig): void {
   providers.payments.validateConfig?.(config);
 }
 
 // Resolves the one admin auth path a deployment uses and validates the combination synchronously.
 // When neither protected route group (admin/ops) is enabled, whichever path is configured is still
 // wired for defense in depth, but the combination itself is not validated.
-function resolveAdminAuth(config: ClientConfig, custom: AdminAuth | undefined): AdminAuth | undefined {
+function resolveAdminAuth(config: ResolvedClientConfig, custom: AdminAuth | undefined): AdminAuth | undefined {
   const access = config.admin.access;
   const resolved: AdminAuth | undefined = access ? cloudflareAccessAdminAuth(access.teamDomain, access.aud) : custom;
   const protectedGroupEnabled = (config.routes?.admin ?? true) || (config.routes?.ops ?? true);

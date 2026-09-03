@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { runOwedMutationSideEffects } from '../src/confirmation';
 import { createReservaContext, type ReservaProviders } from '../src/context';
 import type { BookingEventEnvelope, BookingEventHook } from '../src/core/events';
-import { validateConfig, type ClientConfig } from '../src/core/config';
+import { validateConfig, type ResolvedClientConfig } from '../src/core/config';
 import { defineCloudflareReservaRuntime } from '../src/runtime-context';
 import { handleCustomerReschedule, handleStatus, handlePaymentWebhook } from '../src/handlers';
 import { booking, config } from './fixtures';
@@ -17,7 +17,7 @@ import { fakeRepository, providers, sideEffectOperation, type FakeRepository } f
 const WEBHOOK_SECRET = 'whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw';
 const clock = () => new Date('2026-06-14T08:00:00.000Z');
 
-function webhookConfig(events?: string[]): ClientConfig {
+function webhookConfig(events?: string[]): ResolvedClientConfig {
   return validateConfig({
     ...config,
     webhooks: [{

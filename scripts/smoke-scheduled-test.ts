@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import type { D1Database } from '@cloudflare/workers-types';
 import { getPlatformProxy } from 'wrangler';
 import { createReservaContext } from '../src/context';
+import { validateConfig } from '../src/core/config';
 import type { ReservaProviders } from '../src/context';
 
 const smokeSiteRoot = fileURLToPath(new URL('../examples/smoke-site/', import.meta.url));
@@ -58,7 +59,7 @@ async function seedAndAssert(): Promise<void> {
   const proxy = await getPlatformProxy({ configPath: workerConfigPath, persist: { path: apiPersistPath } });
   try {
     const db = proxy.env.RESERVA_DB as unknown as D1Database;
-    const config = (await import('../examples/smoke-site/src/config')).default;
+    const config = validateConfig((await import('../examples/smoke-site/src/config')).default);
     const now = '2026-08-14T10:00:00.000Z';
     const context = createReservaContext({ config, db, providers: unusedProviders, clock: () => new Date(now) });
     const id = 'smoke-scheduled-recovery';

@@ -1,7 +1,7 @@
 import type { Booking } from '../src/core/booking';
-import type { ClientConfig, ServiceConfig } from '../src/core/config';
+import type { ResolvedClientConfig, ResolvedServiceConfig } from '../src/core/config';
 
-export const service: ServiceConfig = {
+export const service: ResolvedServiceConfig = {
   durationMin: 60,
   turnaroundMin: 30,
   schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], firstStart: '09:00', lastStart: '12:00', intervalMin: 30 }],
@@ -24,7 +24,7 @@ export const service: ServiceConfig = {
   },
 };
 
-export const config: ClientConfig = {
+export const config: ResolvedClientConfig = {
   business: {
     name: 'Example City Tours',
     shortCode: 'LVT',

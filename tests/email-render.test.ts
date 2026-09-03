@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ClientConfig } from '../src/core/config';
+import type { ResolvedClientConfig } from '../src/core/config';
 // Imported the same way an external transport author reaches it: the package's own
 // @reservajs/astro/email subpath (src/email/index.ts) resolves to this path.
 import { renderDefaultEmail, type EmailRenderer, type EmailTemplateContext } from '../src/email';
@@ -25,7 +25,7 @@ function context(overrides: Partial<EmailTemplateContext> = {}): EmailTemplateCo
 
 describe('renderDefaultEmail (@reservajs/astro/email)', () => {
   it('applies emails.branding overrides to the rendered HTML shell', () => {
-    const brandedConfig: ClientConfig = {
+    const brandedConfig: ResolvedClientConfig = {
       ...config,
       emails: { branding: { headerBackground: '#003366', accentColor: '#ff9900', logoUrl: 'https://example.test/logo.png', logoWidth: 120, logoHeight: 32 } },
     };
@@ -42,7 +42,7 @@ describe('renderDefaultEmail (@reservajs/astro/email)', () => {
   });
 
   it('overrides refund.timing in English via config.emails.messages', () => {
-    const overriddenConfig: ClientConfig = {
+    const overriddenConfig: ResolvedClientConfig = {
       ...config,
       emails: { messages: { en: { 'refund.timing': 'Refunds arrive within 5 business days.' } } },
     };
@@ -52,7 +52,7 @@ describe('renderDefaultEmail (@reservajs/astro/email)', () => {
   });
 
   it('overrides refund.timing in European Portuguese via config.emails.messages', () => {
-    const overriddenConfig: ClientConfig = {
+    const overriddenConfig: ResolvedClientConfig = {
       ...config,
       locales: { supported: ['en', 'pt-PT'], default: 'en' },
       emails: { messages: { 'pt-PT': { 'refund.timing': 'O reembolso chega em 5 dias úteis.' } } },

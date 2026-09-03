@@ -35,12 +35,8 @@ export default {
   booking: {
     minNoticeHours: 1,
     maxHorizonDays: 30,
-    holdMinutes: 35,
     cancelCutoffHours: 12,
-    reschedule: { enabled: true, cutoffHours: 12 },
     limitedThreshold: 3,
-    calendarMaxStaleSeconds: 900,
   },
-  locales: { supported: ['en'], default: 'en' },
   legal: { termsUrl: 'https://northyoga.example/terms' },
 } satisfies ClientConfig;

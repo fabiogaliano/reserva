@@ -1,7 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createReservaContext } from '../src/context';
-import { PAYMENT_EVENTS, type ClientConfig, type PaymentProvider } from '../src/core';
+import { PAYMENT_EVENTS, type ResolvedClientConfig, type PaymentProvider } from '../src/core';
 import { handleCheckout, handlePaymentWebhook, handleStatus } from '../src/handlers';
 import { defineReservaRuntime, defineCloudflareReservaRuntime } from '../src/runtime-context';
 import { booking, config } from './fixtures';
@@ -99,7 +99,7 @@ describe('a payment provider rejects an incompatible config at runtime-definitio
   function providerRejecting(currency: string): PaymentProvider {
     return {
       ...vendorNeutralPayments,
-      validateConfig(candidate: ClientConfig) {
+      validateConfig(candidate: ResolvedClientConfig) {
         if (candidate.business.currency !== currency) {
           throw new Error(`business.currency "${candidate.business.currency}" is not supported by this provider; use "${currency}".`);
         }

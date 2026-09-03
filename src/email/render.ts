@@ -1,5 +1,5 @@
 import type { Booking } from '../core/booking.js';
-import { meetingPointForBooking, metadataRowsForBooking, pickupPresentationFor, type ClientConfig } from '../core/config.js';
+import { meetingPointForBooking, metadataRowsForBooking, pickupPresentationFor, type ResolvedClientConfig } from '../core/config.js';
 import { toMajorUnits } from '../core/currency.js';
 import type { EmailBookingEvent, EmailRecipientRole } from '../core/events.js';
 // Boolean metadata reuses the app's one existing yes/no copy pair (admin.on/off) instead of a
@@ -14,7 +14,7 @@ import { emailString, eventCopyKey } from './copy.js';
 export interface EmailTemplateContext {
   event: EmailBookingEvent;
   booking: Booking;
-  config: ClientConfig;
+  config: ResolvedClientConfig;
   locale: string;
   recipient: EmailRecipientRole;
   customerManageUrl: string;
@@ -57,8 +57,16 @@ export const NEUTRAL_BRANDING = {
   headerBackground: '#1a1a1a', accentColor: '#e0b64a', cardBackground: '#f7f7f5',
 };
 
-function resolvedBranding(config: ClientConfig): typeof NEUTRAL_BRANDING {
-  return { ...NEUTRAL_BRANDING, ...config.emails?.branding };
+function resolvedBranding(config: ResolvedClientConfig): typeof NEUTRAL_BRANDING {
+  const branding = config.emails?.branding;
+  return {
+    logoUrl: branding?.logoUrl ?? NEUTRAL_BRANDING.logoUrl,
+    logoWidth: branding?.logoWidth ?? NEUTRAL_BRANDING.logoWidth,
+    logoHeight: branding?.logoHeight ?? NEUTRAL_BRANDING.logoHeight,
+    headerBackground: branding?.headerBackground ?? NEUTRAL_BRANDING.headerBackground,
+    accentColor: branding?.accentColor ?? NEUTRAL_BRANDING.accentColor,
+    cardBackground: branding?.cardBackground ?? NEUTRAL_BRANDING.cardBackground,
+  };
 }
 
 function buildModel(context: EmailTemplateContext): EmailModel {
@@ -182,7 +190,7 @@ function buildModel(context: EmailTemplateContext): EmailModel {
 const BODY_FONT = "-apple-system,'Segoe UI',Helvetica,Arial,sans-serif";
 const SERIF_FONT = "Georgia,'Times New Roman',serif";
 
-function renderHtml(model: EmailModel, config: ClientConfig): string {
+function renderHtml(model: EmailModel, config: ResolvedClientConfig): string {
   const branding = resolvedBranding(config);
   const header = branding.logoUrl
     ? `<a href="${escapeHtml(config.business.url)}" style="text-decoration:none;"><img src="${escapeHtml(branding.logoUrl)}" alt="${escapeHtml(config.business.name)}" width="${branding.logoWidth}" height="${branding.logoHeight}" style="display:block;width:${branding.logoWidth}px;height:${branding.logoHeight}px;border:0;color:${branding.accentColor};font-family:${SERIF_FONT};font-size:20px;"></a>`
@@ -207,7 +215,7 @@ function renderHtml(model: EmailModel, config: ClientConfig): string {
   return `<!doctype html><html><body style="margin:0;padding:0;background-color:#e9e9e9;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#e9e9e9;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;"><tr><td style="background-color:${branding.headerBackground};padding:22px 32px;" align="left">${header}</td></tr><tr><td style="padding:36px 32px 8px;font-family:${SERIF_FONT};color:#191919;">${model.greetingHtml ?? ''}${model.leadHtml}</td></tr>${cardHtml}${buttonHtml}${contactHtml}${footerHtml}</table></td></tr></table></body></html>`;
 }
 
-function renderText(model: EmailModel, config: ClientConfig): string {
+function renderText(model: EmailModel, config: ResolvedClientConfig): string {
   const lines: string[] = [config.business.name.toUpperCase(), ''];
   if (model.greetingHtml) lines.push(stripTags(model.greetingHtml), '');
   lines.push(stripTags(model.leadHtml), '');

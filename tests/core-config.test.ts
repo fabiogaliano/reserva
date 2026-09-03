@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { MetadataField, ServiceConfig } from '../src/core/config';
+import type { MetadataField, ResolvedServiceConfig } from '../src/core/config';
 import { meetingPointForBooking, metadataRowsForBooking, quantityValuesForService, pickupOptionFor, pickupPresentationFor, resolveMeetingPoint, resolveMetadataFieldLabel, validateConfig } from '../src/core/config';
 import { priceFor } from '../src/core/pricing';
 import { config, service } from './fixtures';
@@ -404,12 +404,121 @@ describe('core config and pricing validation', () => {
   });
 });
 
+describe('booking, locales, legal, and admin defaults', () => {
+  // Every top-level optional block omitted at once — the case a minimal client config hits.
+  const minimal = { business: config.business, capacity: config.capacity, services: { vintage: service } };
+
+  it('defaults booking, locales, legal, and admin when all four are omitted', () => {
+    const validated = validateConfig(minimal);
+    expect(validated.booking).toEqual({
+      minNoticeHours: 0,
+      maxHorizonDays: 90,
+      holdMinutes: 35,
+      cancelCutoffHours: 24,
+      reschedule: { enabled: true, cutoffHours: 24 },
+      limitedThreshold: 2,
+      calendarMaxStaleSeconds: 900,
+    });
+    expect(validated.locales).toEqual({ supported: ['en'], default: 'en' });
+    expect(validated.legal).toEqual({});
+    expect(validated.admin).toEqual({});
+  });
+
+  it('resolves reschedule.cutoffHours to cancelCutoffHours when reschedule is omitted', () => {
+    const validated = validateConfig({ ...config, booking: { cancelCutoffHours: 6 } });
+    expect(validated.booking.reschedule.cutoffHours).toBe(6);
+  });
+
+  it('does not let cancelCutoffHours overwrite an explicitly declared reschedule.cutoffHours', () => {
+    const validated = validateConfig({ ...config, booking: { cancelCutoffHours: 6, reschedule: { cutoffHours: 10 } } });
+    expect(validated.booking.reschedule.cutoffHours).toBe(10);
+  });
+
+  it('leaves unspecified booking dials at their defaults for a partial booking block', () => {
+    const validated = validateConfig({ ...config, booking: { minNoticeHours: 12 } });
+    expect(validated.booking).toEqual({
+      minNoticeHours: 12,
+      maxHorizonDays: 90,
+      holdMinutes: 35,
+      cancelCutoffHours: 24,
+      reschedule: { enabled: true, cutoffHours: 24 },
+      limitedThreshold: 2,
+      calendarMaxStaleSeconds: 900,
+    });
+  });
+
+  it('accepts holdMinutes explicitly set to the 35-minute floor', () => {
+    expect(() => validateConfig({ ...config, booking: { ...config.booking, holdMinutes: 35 } })).not.toThrow();
+  });
+
+  // `default` itself falls back to 'en' here, and that fallback is not exempt from the
+  // supported-list check — an explicit `supported` that excludes 'en' still fails.
+  it('rejects locales.supported explicitly set to a list that excludes the defaulted locales.default', () => {
+    expect(() => validateConfig({ ...config, locales: { supported: ['pt-PT'] } })).toThrow(/must be included in locales\.supported/);
+  });
+});
+
+describe('meeting-point-only location shorthand', () => {
+  it('implies a single meeting_point pickup option and fills it onto pricing rows that omit pickup', () => {
+    const meetingPointOnly = {
+      ...config,
+      services: {
+        vintage: {
+          durationMin: service.durationMin,
+          turnaroundMin: service.turnaroundMin,
+          schedule: service.schedule,
+          location: {
+            meetingPoints: [{ id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' }],
+          },
+          pricing: [
+            { maxQuantity: 4, priceMinor: 10000 },
+            { maxQuantity: 8, priceMinor: 18000 },
+          ],
+        },
+      },
+    };
+    const validated = validateConfig(meetingPointOnly);
+    const vintage = validated.services.vintage!;
+    expect(vintage.location!.pickupOptions).toEqual([{ id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true }]);
+    expect(vintage.pricing.every((row) => row.pickup === 'meeting_point')).toBe(true);
+  });
+
+  it('fills an omitted pricing pickup with the single explicitly declared pickup option id', () => {
+    const singleOption = {
+      ...config,
+      services: {
+        vintage: {
+          ...service,
+          location: { pickupOptions: [{ id: 'hotel_pickup', requiresAddress: true, usesMeetingPoint: false }] },
+          pricing: [
+            { maxQuantity: 4, priceMinor: 10000 },
+            { maxQuantity: 8, priceMinor: 18000 },
+          ],
+        },
+      },
+    };
+    const validated = validateConfig(singleOption);
+    expect(validated.services.vintage!.pricing).toEqual([
+      { maxQuantity: 4, pickup: 'hotel_pickup', priceMinor: 10000 },
+      { maxQuantity: 8, pickup: 'hotel_pickup', priceMinor: 18000 },
+    ]);
+  });
+
+  // Two-option case (omitted pickup still rejected) is already covered by
+  // 'rejects a location-ful service pricing rule that omits pickup (mixed config)' above.
+
+  it('rejects location: {} — neither pickupOptions nor meetingPoints declared', () => {
+    const invalid = { ...config, services: { vintage: { ...service, location: {} } } };
+    expect(() => validateConfig(invalid)).toThrow(/pickupOptions.*meetingPoints/);
+  });
+});
+
 describe('resolveMeetingPoint', () => {
   const points = [
     { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
     { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
   ];
-  const multiPointTour: ServiceConfig = { ...service, location: { ...service.location!, meetingPoints: points } };
+  const multiPointTour: ResolvedServiceConfig = { ...service, location: { ...service.location!, meetingPoints: points } };
 
   it('returns the point matching the given id', () => {
     expect(resolveMeetingPoint(multiPointTour, 'station')).toEqual(points[1]);
@@ -424,7 +533,7 @@ describe('resolveMeetingPoint', () => {
   });
 
   it('throws for a service that declares no meeting points at all', () => {
-    const noPoints: ServiceConfig = { ...service, location: { pickupOptions: [{ id: 'hotel', requiresAddress: true, usesMeetingPoint: false }] } };
+    const noPoints: ResolvedServiceConfig = { ...service, location: { pickupOptions: [{ id: 'hotel', requiresAddress: true, usesMeetingPoint: false }] } };
     expect(() => resolveMeetingPoint(noPoints)).toThrow(/declares no meeting points/);
   });
 });
@@ -434,7 +543,7 @@ describe('meetingPointForBooking', () => {
     { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
     { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
   ];
-  const multiPointTour: ServiceConfig = { ...service, location: { ...service.location!, meetingPoints: points } };
+  const multiPointTour: ResolvedServiceConfig = { ...service, location: { ...service.location!, meetingPoints: points } };
 
   it('resolves a declared id to its live label and maps link', () => {
     expect(meetingPointForBooking(multiPointTour, 'station', 'stale stored label')).toEqual({
@@ -472,7 +581,7 @@ describe('meetingPointForBooking', () => {
   // A service that has since dropped its location module entirely must still degrade gracefully
   // (never throw) for a pre-v2 row that still references one.
   it('degrades gracefully, never throwing, for a service that no longer declares any location at all', () => {
-    const { location: _location, ...noLocation }: ServiceConfig = service;
+    const { location: _location, ...noLocation }: ResolvedServiceConfig = service;
     expect(meetingPointForBooking(noLocation, null, null)).toEqual({ label: '', mapsUrl: null });
     expect(meetingPointForBooking(noLocation, 'square', 'Stored Label')).toEqual({ label: 'Stored Label', mapsUrl: null });
   });
@@ -497,7 +606,7 @@ describe('pickupOptionFor', () => {
   });
 
   it('returns undefined for any id on a service with no location module', () => {
-    const { location: _location, ...noLocation }: ServiceConfig = service;
+    const { location: _location, ...noLocation }: ResolvedServiceConfig = service;
     expect(pickupOptionFor(noLocation, 'default')).toBeUndefined();
   });
 });

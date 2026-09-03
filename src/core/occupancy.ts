@@ -1,4 +1,4 @@
-import type { ServiceConfig } from './config.js';
+import type { ResolvedServiceConfig } from './config.js';
 import type { Booking } from './booking.js';
 import type { GeneratedSlot } from './slots.js';
 import { addMinutes, compareInstants, parseUtcInstant } from './time.js';
@@ -38,7 +38,7 @@ export interface OccupancyInterval {
   eventId?: string;
 }
 
-export type OccupancyService = Pick<ServiceConfig, 'turnaroundMin' | 'occupancyFor'>;
+export type OccupancyService = Pick<ResolvedServiceConfig, 'turnaroundMin' | 'occupancyFor'>;
 export type OccupancyServiceResolver = (serviceSlug: string) => OccupancyService | undefined;
 export type OccupancyServiceMap = ReadonlyMap<string, OccupancyService> | Readonly<Record<string, OccupancyService>>;
 
@@ -70,7 +70,7 @@ export interface SlotAvailabilityOptions {
 export interface DayAvailabilityOptions {
   date: string;
   timezone: string;
-  service: ServiceConfig;
+  service: ResolvedServiceConfig;
   capacity: number;
   bookings: readonly OccupancyBooking[];
   calendarEvents?: readonly CalEvent[];
@@ -129,7 +129,7 @@ function overlaps(start: string, end: string, windowStart?: string | Date, windo
   return true;
 }
 
-export function occupancyFor(service: Pick<ServiceConfig, 'occupancyFor'>, quantity: number): number {
+export function occupancyFor(service: Pick<ResolvedServiceConfig, 'occupancyFor'>, quantity: number): number {
   const units = service.occupancyFor ? service.occupancyFor(quantity) : 1;
   if (!Number.isInteger(units) || units < 1) throw new RangeError('occupancyFor must return a positive integer');
   return units;
@@ -307,7 +307,7 @@ export function slotRemaining(
 // How many more bookings of this party size fit in the remaining capacity units — 3 units left
 // and a 2-unit party means room for 1 more, not 3. `occupancyFor` always returns a positive
 // integer, so this never divides by zero.
-export function remainingBookings(remainingUnits: number, service: Pick<ServiceConfig, 'occupancyFor'>, quantity: number): number {
+export function remainingBookings(remainingUnits: number, service: Pick<ResolvedServiceConfig, 'occupancyFor'>, quantity: number): number {
   return Math.floor(remainingUnits / occupancyFor(service, quantity));
 }
 

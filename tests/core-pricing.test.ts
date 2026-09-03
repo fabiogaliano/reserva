@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validateConfig, type PricingRule, type ServiceConfig } from '../src/core/config';
+import { validateConfig, type PricingRule, type ResolvedServiceConfig } from '../src/core/config';
 import { PricingError, pricingCombinations, priceFor, priceForService, resolvedPriceTableFor } from '../src/core/pricing';
 import { config, service } from './fixtures';
 
@@ -100,7 +100,7 @@ describe('location-less pricing (tiers only)', () => {
     { maxQuantity: 4, priceMinor: 10000 },
     { maxQuantity: 8, priceMinor: 18000 },
   ];
-  const tieredService: ServiceConfig = {
+  const tieredService: ResolvedServiceConfig = {
     durationMin: service.durationMin,
     turnaroundMin: service.turnaroundMin,
     schedule: service.schedule,

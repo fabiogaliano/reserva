@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ClientConfig, ServiceConfig } from '../src/core/config';
+import type { ResolvedClientConfig, ResolvedServiceConfig } from '../src/core/config';
 import type { Booking } from '../src/core/booking';
 import type { EmailBookingEvent } from '../src/core/events';
 import { brevoEmail } from '../src/providers/email-brevo/index';
@@ -8,14 +8,14 @@ import { booking, config } from './fixtures';
 // Captured BEFORE the mechanical extraction of
 // the template system into src/email/, then left untouched by that move -- proving it
 // byte-identical -- and only updated deliberately, never as an accidental side effect of a refactor.
-const locationLessService: ServiceConfig = {
+const locationLessService: ResolvedServiceConfig = {
   durationMin: 90,
   turnaroundMin: 15,
   schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], firstStart: '10:00', lastStart: '16:00', intervalMin: 60 }],
   pricing: [{ maxQuantity: 6, priceMinor: 4200 }],
 };
 
-const snapshotConfig: ClientConfig = {
+const snapshotConfig: ResolvedClientConfig = {
   ...config,
   locales: { supported: ['en', 'pt-PT'], default: 'en' },
   services: { ...config.services, cruise: locationLessService },

@@ -7,7 +7,7 @@ import {
   PAYMENT_WEBHOOK_BODY_LIMIT_BYTES,
   type ApiErrorCode,
   type Booking,
-  type ClientConfig,
+  type ResolvedClientConfig,
   type PaymentEventParsed,
   type PaymentProvider,
   type SessionStatus,
@@ -33,7 +33,7 @@ export interface StripeClient {
   ): Promise<Stripe.Event> };
 }
 
-type BookingCallback<T> = (booking: Booking, config: ClientConfig) => T;
+type BookingCallback<T> = (booking: Booking, config: ResolvedClientConfig) => T;
 type UrlOption = string | BookingCallback<string>;
 
 export interface StripeOptions {
@@ -190,7 +190,7 @@ function customerDetailsOf(session: Stripe.Checkout.Session): {
   return details;
 }
 
-function resolveOption<T>(option: T | BookingCallback<T> | undefined, booking: Booking, config: ClientConfig, fallback: T): T {
+function resolveOption<T>(option: T | BookingCallback<T> | undefined, booking: Booking, config: ResolvedClientConfig, fallback: T): T {
   return typeof option === 'function' ? (option as BookingCallback<T>)(booking, config) : option ?? fallback;
 }
 
@@ -219,11 +219,11 @@ function isChargeAlreadyRefundedError(error: unknown): boolean {
   return error instanceof Stripe.errors.StripeInvalidRequestError && error.code === 'charge_already_refunded';
 }
 
-function defaultSuccessUrl(config: ClientConfig, routePaths?: ReservaResolvedRouteConfig['paths']): string {
+function defaultSuccessUrl(config: ResolvedClientConfig, routePaths?: ReservaResolvedRouteConfig['paths']): string {
   return `${config.business.url.replace(/\/$/, '')}${routePaths?.confirmationPage ?? '/booking-confirmation'}?session_id=${checkoutSessionPlaceholder}`;
 }
 
-function defaultCancelUrl(booking: Booking, config: ClientConfig): string {
+function defaultCancelUrl(booking: Booking, config: ResolvedClientConfig): string {
   return `${config.business.url.replace(/\/$/, '')}/services/${booking.serviceSlug}`;
 }
 
@@ -320,7 +320,7 @@ export class StripeProvider implements PaymentProvider {
 
   async createCheckout(
     booking: Booking,
-    config: ClientConfig,
+    config: ResolvedClientConfig,
     routePaths?: ReservaResolvedRouteConfig['paths'],
   ): Promise<{ url: string; sessionRef: string }> {
     const service = resolveService(config, booking.serviceSlug);
@@ -359,7 +359,9 @@ export class StripeProvider implements PaymentProvider {
     if (pickupOptionFor(service, booking.pickupType)?.requiresAddress) params.custom_fields = [{
       key: 'pickup_address', label: { type: 'custom', custom: pickupLabel }, type: 'text',
     }];
-    if ((this.options.termsOfService ?? 'required') === 'required') {
+    // With no `legal.termsUrl` there is nothing for the payer to consent to, so absence degrades
+    // to the same 'none' an unactivated Stripe account needs rather than a consent step pointing nowhere.
+    if ((this.options.termsOfService ?? 'required') === 'required' && config.legal.termsUrl) {
       params.consent_collection = { terms_of_service: 'required' };
     }
     // A deterministic key per hold (not per call) so a lost response and a retried call both
@@ -409,7 +411,7 @@ export class StripeProvider implements PaymentProvider {
   // Stripe's own limits, checked once at runtime init instead of leaking into ClientConfig's
   // schema. Every message names the config path and the fix, so a misconfigured deployment
   // fails to start with something actionable rather than 500ing on the first checkout.
-  validateConfig(config: ClientConfig): void {
+  validateConfig(config: ResolvedClientConfig): void {
     if (config.booking.holdMinutes > STRIPE_MAX_HOLD_MINUTES) {
       throw new Error(
         `booking.holdMinutes is ${config.booking.holdMinutes}; Stripe Checkout sessions cannot stay open longer `

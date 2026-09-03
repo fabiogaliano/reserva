@@ -21,7 +21,6 @@ export default {
       teamDomain: 'https://example.cloudflareaccess.com',
       aud: 'example-reserva',
     },
-    locale: 'en',
   },
   services: {
     oldTown: {
@@ -35,37 +34,11 @@ export default {
           intervalMin: 60,
         },
       ],
-      pricing: [
-        { maxQuantity: 4, pickup: 'default', priceMinor: 2500 },
-        { maxQuantity: 4, pickup: 'custom', priceMinor: 3500 },
-      ],
+      // A single meeting point implies one pickup option, so pricing carries no `pickup` column.
+      pricing: [{ maxQuantity: 4, priceMinor: 2500 }],
       location: {
         meetingPoints: [{ id: 'default', label: 'Main square fountain', mapsUrl: 'https://maps.google.com/?q=Main+square' }],
-        pickupOptions: [
-          { id: 'default', requiresAddress: false, usesMeetingPoint: true },
-          { id: 'custom', requiresAddress: true, usesMeetingPoint: false },
-        ],
       },
     },
-  },
-  booking: {
-    minNoticeHours: 2,
-    maxHorizonDays: 90,
-    holdMinutes: 35,
-    cancelCutoffHours: 24,
-    reschedule: {
-      enabled: true,
-      cutoffHours: 24,
-    },
-    limitedThreshold: 2,
-    calendarMaxStaleSeconds: 15 * 60,
-    maxHoldsPerIp: 4,
-  },
-  locales: {
-    supported: ['pt-PT', 'en'],
-    default: 'en',
-  },
-  legal: {
-    termsUrl: 'https://example.test/terms',
   },
 } satisfies ClientConfig;

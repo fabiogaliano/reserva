@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ClientConfig } from '../src/core/config';
+import type { ResolvedClientConfig } from '../src/core/config';
 import {
   SettingParseError,
   SettingsMergeError,
@@ -144,7 +144,7 @@ describe('merge-then-validate backstop', () => {
     // into a cross-field violation — the only true cross-field rule is locales.default must be in
     // locales.supported, and locales isn't an editable SettingDefinition. Hand-breaking locales is
     // the only way to exercise mergeAndValidateSettings's cross-field path at all.
-    const brokenLocalesConfig: ClientConfig = { ...config, locales: { supported: ['pt-BR'], default: 'en' } };
+    const brokenLocalesConfig: ResolvedClientConfig = { ...config, locales: { supported: ['pt-BR'], default: 'en' } };
     try {
       mergeAndValidateSettings(brokenLocalesConfig, { 'booking.minNoticeHours': '2' });
       throw new Error('expected mergeAndValidateSettings to throw');
@@ -157,7 +157,7 @@ describe('merge-then-validate backstop', () => {
   });
 
   it('cross-field: the load path falls back to the pristine config when the offending path cannot be attributed to a stored setting key', () => {
-    const brokenLocalesConfig: ClientConfig = { ...config, locales: { supported: ['pt-BR'], default: 'en' } };
+    const brokenLocalesConfig: ResolvedClientConfig = { ...config, locales: { supported: ['pt-BR'], default: 'en' } };
     const warnings: SettingsLoadWarning[] = [];
     const merged = loadMergedConfig(brokenLocalesConfig, { 'booking.minNoticeHours': '2' }, (warning) => warnings.push(warning));
     expect(merged).toBe(brokenLocalesConfig);

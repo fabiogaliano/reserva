@@ -2,7 +2,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { ADMIN_CSRF_TOKEN_TTL_MS, mintAdminCsrfToken } from '../src/admin-csrf';
 import { createReservaContext } from '../src/context';
-import type { ClientConfig, ServiceConfig } from '../src/core/config';
+import type { ResolvedClientConfig, ResolvedServiceConfig } from '../src/core/config';
 import { handleAdminGet, handleAdminPost } from '../src/handlers';
 import { booking, config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
@@ -150,7 +150,7 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
   });
 
   it('uses an operator locale without changing the customer default', async () => {
-    const localizedConfig: ClientConfig = {
+    const localizedConfig: ResolvedClientConfig = {
       ...config,
       admin: { ...config.admin, locale: 'pt-PT' },
       locales: { supported: ['en'], default: 'en' },
@@ -244,7 +244,7 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
       { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
       { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
     ];
-    const multiPointConfig: ClientConfig = { ...config, services: { ...config.services, vintage: { ...config.services.vintage!, location: { ...config.services.vintage!.location!, meetingPoints: points } } } };
+    const multiPointConfig: ResolvedClientConfig = { ...config, services: { ...config.services, vintage: { ...config.services.vintage!, location: { ...config.services.vintage!.location!, meetingPoints: points } } } };
 
     it('renders the resolved meeting-point label as a sub-line for a multi-point service, and is absent for a single-point service', async () => {
       const chosen = booking({
@@ -290,7 +290,7 @@ describe('pickup option label + sub-lines', () => {
     { id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
     { id: 'station', label: 'The Station', mapsUrl: 'https://maps.google.com/?q=station' },
   ];
-  const mazeTour: ServiceConfig = {
+  const mazeTour: ResolvedServiceConfig = {
     ...config.services.vintage!,
     location: {
       meetingPoints: points,
@@ -306,7 +306,7 @@ describe('pickup option label + sub-lines', () => {
       { maxQuantity: 8, pickup: 'meet_elsewhere', priceMinor: 19000 },
     ],
   };
-  const mazeConfig: ClientConfig = { ...config, services: { ...config.services, vintage: mazeTour } };
+  const mazeConfig: ResolvedClientConfig = { ...config, services: { ...config.services, vintage: mazeTour } };
 
   it('renders a declared option\'s own label', async () => {
     const seeded = booking({
@@ -357,7 +357,7 @@ describe('pickup option label + sub-lines', () => {
   });
 
   it('search cannot match a meeting-point label the row does not display (usesMeetingPoint: false)', async () => {
-    const noMeetTour: ServiceConfig = {
+    const noMeetTour: ResolvedServiceConfig = {
       ...mazeTour,
       location: {
         meetingPoints: mazeTour.location!.meetingPoints!,
@@ -371,7 +371,7 @@ describe('pickup option label + sub-lines', () => {
         { maxQuantity: 8, pickup: 'hotel_pickup', priceMinor: 20000 },
       ],
     };
-    const noMeetConfig: ClientConfig = { ...config, services: { ...config.services, vintage: noMeetTour } };
+    const noMeetConfig: ResolvedClientConfig = { ...config, services: { ...config.services, vintage: noMeetTour } };
     const seeded = booking({
       id: 'b-admin-hidden-point', reference: 'LVT-2026-504', startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
       operatorToken: 'op-hidden-point', cancelToken: 'cancel-hidden-point',
@@ -643,7 +643,7 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     // `config` is validated by createReservaContext, but `baseConfig` (the pristine file config the
     // handler merges over) isn't — setting it directly is the most direct way to exercise the
     // handler's SettingsMergeError branch.
-    const brokenLocalesConfig: ClientConfig = { ...config, locales: { supported: ['pt-BR'], default: 'en' } };
+    const brokenLocalesConfig: ResolvedClientConfig = { ...config, locales: { supported: ['pt-BR'], default: 'en' } };
     context.baseConfig = brokenLocalesConfig;
 
     const response = await handleAdminPost(adminPostRequest({ action: 'settings-save', section: 'legal', 'legal.termsUrl': 'https://example.test/terms' }), context);

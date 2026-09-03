@@ -1,5 +1,5 @@
 import { ZodError } from 'astro/zod';
-import { validateConfig, type ClientConfig } from './config.js';
+import { validateConfig, type ResolvedClientConfig } from './config.js';
 
 // Operator-editable settings: the runtime-safe scalar dials of ClientConfig, stored as JSON and
 // merged over the file config per request. A row equal to the file value is deleted, so a later
@@ -18,7 +18,7 @@ export type SettingKind =
   | { type: 'boolean' }
   | { type: 'text'; optional?: boolean }
   | { type: 'email' }
-  | { type: 'url' };
+  | { type: 'url'; optional?: boolean };
 
 export interface SettingDefinition {
   key: string;
@@ -30,8 +30,8 @@ export interface SettingDefinition {
   // group; definitions in a section must keep grouped keys adjacent.
   groupKey?: string;
   kind: SettingKind;
-  get(config: ClientConfig): SettingValue;
-  set(config: ClientConfig, value: SettingValue): void;
+  get(config: ResolvedClientConfig): SettingValue;
+  set(config: ResolvedClientConfig, value: SettingValue): void;
 }
 
 export const settingDefinitions: readonly SettingDefinition[] = [
@@ -133,9 +133,12 @@ export const settingDefinitions: readonly SettingDefinition[] = [
   },
   {
     key: 'legal.termsUrl', section: 'legal', labelKey: 'setting.termsUrl',
-    kind: { type: 'url' },
-    get: (config) => config.legal.termsUrl,
-    set: (config, value) => { config.legal.termsUrl = value as string; },
+    kind: { type: 'url', optional: true },
+    get: (config) => config.legal.termsUrl ?? null,
+    set: (config, value) => {
+      if (value === null) delete config.legal.termsUrl;
+      else config.legal.termsUrl = value as string;
+    },
   },
 ];
 
@@ -170,6 +173,7 @@ function decodeStoredValue(definition: SettingDefinition, raw: unknown): Setting
     case 'email':
       return typeof raw === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw) ? raw : undefined;
     case 'url':
+      if (raw === null) return kind.optional ? null : undefined;
       return typeof raw === 'string' && isValidHttpUrl(raw) ? raw : undefined;
   }
 }
@@ -179,13 +183,13 @@ function decodeStoredValue(definition: SettingDefinition, raw: unknown): Setting
 // `onInvalidRow` is optional: the save path already validates fresh values and has nothing to
 // report, while the load path uses it to attribute a warning to the row it's about to drop.
 export function applySettingOverrides(
-  config: ClientConfig,
+  config: ResolvedClientConfig,
   rows: Record<string, string>,
   onInvalidRow?: (key: string, reason: string) => void,
-): ClientConfig {
+): ResolvedClientConfig {
   const keys = Object.keys(rows);
   if (keys.length === 0) return config;
-  const next: ClientConfig = {
+  const next: ResolvedClientConfig = {
     ...config,
     capacity: { ...config.capacity },
     business: { ...config.business, contact: { ...config.business.contact } },
@@ -227,7 +231,7 @@ export class SettingsMergeError extends Error {
 // Save-path backstop: a definition's kind bounds a field alone, but only validateConfig knows
 // cross-field rules (e.g. locales.default must be in locales.supported). The section being saved
 // is merged over every other stored override and the file config, then re-validated as a whole.
-export function mergeAndValidateSettings(config: ClientConfig, rows: Record<string, string>): ClientConfig {
+export function mergeAndValidateSettings(config: ResolvedClientConfig, rows: Record<string, string>): ResolvedClientConfig {
   const merged = applySettingOverrides(config, rows);
   try {
     return validateConfig(merged);
@@ -245,10 +249,10 @@ export interface SettingsLoadWarning {
 // under looser rules may now fail validation. Offending rows are dropped and reported via
 // `onWarn`, falling back to the pristine file config if a failure can't be attributed to one key.
 export function loadMergedConfig(
-  config: ClientConfig,
+  config: ResolvedClientConfig,
   rows: Record<string, string>,
   onWarn?: (warning: SettingsLoadWarning) => void,
-): ClientConfig {
+): ResolvedClientConfig {
   if (Object.keys(rows).length === 0) return config;
   let candidateRows = rows;
   for (let guard = 0; guard <= Object.keys(rows).length; guard += 1) {
@@ -287,7 +291,7 @@ export function parseSettingForm(definition: SettingDefinition, form: FormLike):
   const raw = form.get(definition.key);
   const text = typeof raw === 'string' ? raw.trim() : '';
   if (text === '') {
-    if ((kind.type === 'int' || kind.type === 'text') && kind.optional) return null;
+    if ((kind.type === 'int' || kind.type === 'text' || kind.type === 'url') && kind.optional) return null;
     throw new SettingParseError(`${definition.key}: a value is required`);
   }
   switch (kind.type) {

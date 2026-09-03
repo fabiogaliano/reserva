@@ -46,11 +46,8 @@ export default {
   booking: {
     minNoticeHours: 1,
     maxHorizonDays: 60,
-    holdMinutes: 35,
     cancelCutoffHours: 4,
-    reschedule: { enabled: true, cutoffHours: 4 },
     limitedThreshold: 6,
-    calendarMaxStaleSeconds: 900,
   },
   locales: { supported: ['pt-PT', 'en'], default: 'pt-PT' },
   legal: { termsUrl: 'https://tascadorio.example/terms' },

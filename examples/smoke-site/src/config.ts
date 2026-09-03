@@ -8,23 +8,33 @@ export default {
     url: 'http://localhost:4321',
     timezone: 'UTC',
   },
-  admin: { locale: baseConfig.admin.locale },
+  // Declared directly rather than inherited: the minimal example collapses to the schema's
+  // implied defaults, but this fixture deliberately exercises every optional module.
+  admin: { locale: 'en' },
   services: {
     oldTown: {
-      ...baseConfig.services.oldTown,
-      location: {
-        meetingPoints: [
-          { id: 'fountain', label: 'Main square fountain', mapsUrl: 'https://maps.google.com/?q=Main+square' },
-          { id: 'station', label: 'Riverside dock', mapsUrl: 'https://maps.google.com/?q=Riverside+dock' },
-        ],
-        pickupOptions: baseConfig.services.oldTown.location.pickupOptions,
-      },
+      durationMin: 60,
+      turnaroundMin: 15,
       schedule: [{
         days: [0, 1, 2, 3, 4, 5, 6],
         firstStart: '09:00',
         lastStart: '17:00',
         intervalMin: 60,
       }],
+      pricing: [
+        { maxQuantity: 4, pickup: 'default', priceMinor: 2500 },
+        { maxQuantity: 4, pickup: 'custom', priceMinor: 3500 },
+      ],
+      location: {
+        meetingPoints: [
+          { id: 'fountain', label: 'Main square fountain', mapsUrl: 'https://maps.google.com/?q=Main+square' },
+          { id: 'station', label: 'Riverside dock', mapsUrl: 'https://maps.google.com/?q=Riverside+dock' },
+        ],
+        pickupOptions: [
+          { id: 'default', requiresAddress: false, usesMeetingPoint: true },
+          { id: 'custom', requiresAddress: true, usesMeetingPoint: false },
+        ],
+      },
     },
     // Pricing is deliberately non-additive: +20 for either custom leg, but +30 for both.
     mazeRiverside: {
@@ -80,7 +90,6 @@ export default {
     },
   },
   booking: {
-    ...baseConfig.booking,
     minNoticeHours: 0,
     maxHorizonDays: 365,
     cancelCutoffHours: 0,
@@ -90,4 +99,6 @@ export default {
     },
     maxHoldsPerIp: 20,
   },
+  locales: { supported: ['pt-PT', 'en'], default: 'en' },
+  legal: { termsUrl: 'https://example.test/terms' },
 } satisfies ClientConfig;

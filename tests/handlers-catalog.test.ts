@@ -3,13 +3,13 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createReservaContext, type ReservaContext } from '../src/context';
-import type { ClientConfig, ServiceConfig } from '../src/core/config';
+import type { ResolvedClientConfig, ResolvedServiceConfig } from '../src/core/config';
 import { handleCatalog } from '../src/handlers';
 import { config, service } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
 // Location-less, with consumer-declared metadata fields carrying per-locale labels.
-const cruise: ServiceConfig = {
+const cruise: ResolvedServiceConfig = {
   title: 'River Cruise',
   durationMin: 90,
   turnaroundMin: 15,
@@ -29,12 +29,12 @@ const cruise: ServiceConfig = {
   ],
 };
 
-const catalogConfig: ClientConfig = {
+const catalogConfig: ResolvedClientConfig = {
   ...config,
   services: { vintage: { ...service, title: 'Vintage Tour' }, cruise },
 };
 
-function context(overrides: Partial<ClientConfig> = {}): ReservaContext {
+function context(overrides: Partial<ResolvedClientConfig> = {}): ReservaContext {
   return createReservaContext({
     config: { ...catalogConfig, ...overrides },
     db: {} as D1Database,

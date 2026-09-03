@@ -17,7 +17,9 @@ export type {
 // reference `AdminIdentity` directly.
 export { cloudflareAccessAdminAuth } from './access.js';
 export type { AdminIdentity } from './access.js';
-export type { ClientConfig } from './core/config.js';
+// `ClientConfig` is what a consumer writes; `ResolvedClientConfig` is what the runtime and a
+// provider adapter receive once the schema's defaults have been applied.
+export type { ClientConfig, ResolvedClientConfig } from './core/config.js';
 // The UI copy seam lives at its own '@reservajs/astro/ui' subpath, not here: a page or component
 // that only needs message helpers must not pull this barrel's build-time integration (and Astro's
 // config machinery with it) into a browser/Worker bundle.

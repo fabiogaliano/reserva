@@ -4,14 +4,14 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createReservaContext, type ReservaContext } from '../src/context';
-import type { ClientConfig, ServiceConfig } from '../src/core/config';
+import type { ResolvedClientConfig, ResolvedServiceConfig } from '../src/core/config';
 import { handleCheckout, handleQuote } from '../src/handlers';
 import { config, service } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
 // A second, location-less service so the matrix covers both pricing axes: quantity
 // tiers alone, and quantity tiers x declared pickup ids.
-const cruise: ServiceConfig = {
+const cruise: ResolvedServiceConfig = {
   durationMin: 60,
   turnaroundMin: 30,
   schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], firstStart: '09:00', lastStart: '12:00', intervalMin: 30 }],
@@ -21,7 +21,7 @@ const cruise: ServiceConfig = {
   ],
 };
 
-const matrixConfig: ClientConfig = { ...config, services: { vintage: service, cruise } };
+const matrixConfig: ResolvedClientConfig = { ...config, services: { vintage: service, cruise } };
 
 const START = '2026-06-15T08:00:00.000Z';
 

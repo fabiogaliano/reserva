@@ -2,7 +2,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createReservaContext } from '../src/context';
 import type { Booking } from '../src/core/booking';
-import type { ClientConfig, ServiceConfig } from '../src/core/config';
+import type { ResolvedClientConfig, ResolvedServiceConfig } from '../src/core/config';
 import { handleAvailability, handleCheckout, handleOperatorNoShow, handlePaymentWebhook } from '../src/handlers';
 import { booking, config, service } from './fixtures';
 import { fakeRepository, providers, sideEffectOperation } from './fakes';
@@ -446,7 +446,7 @@ describe('checkout pickupType', () => {
   ];
   // A Maze-shaped four-option service, built inline — fixtures.ts stays the two-option default/custom
   // service so every other suite's byte-identical assertions keep holding.
-  const mazeTour: ServiceConfig = {
+  const mazeTour: ResolvedServiceConfig = {
     ...service,
     location: {
       meetingPoints: points,
@@ -464,9 +464,9 @@ describe('checkout pickupType', () => {
       { maxQuantity: 8, pickup: 'meet_elsewhere', priceMinor: 19000 },
     ],
   };
-  const mazeConfig: ClientConfig = { ...config, services: { ...config.services, vintage: mazeTour } };
+  const mazeConfig: ResolvedClientConfig = { ...config, services: { ...config.services, vintage: mazeTour } };
 
-  function checkoutContext(configOverride: ClientConfig = mazeConfig) {
+  function checkoutContext(configOverride: ResolvedClientConfig = mazeConfig) {
     const repo = fakeRepository();
     const context = createReservaContext({
       config: configOverride,

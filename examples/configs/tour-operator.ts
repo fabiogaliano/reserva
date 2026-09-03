@@ -20,10 +20,10 @@ export default {
       durationMin: 60,
       turnaroundMin: 15,
       schedule: [{ days: [1, 2, 3, 4, 5, 6], firstStart: '09:00', lastStart: '17:00', intervalMin: 60 }],
-      pricing: [{ maxQuantity: 3, pickup: 'meeting_point', priceMinor: 4500 }],
+      // A single meeting point implies one pickup option ('meeting_point'), so pricing needs no `pickup` column.
+      pricing: [{ maxQuantity: 3, priceMinor: 4500 }],
       location: {
         meetingPoints: [{ id: 'se', label: 'Sé Cathedral', mapsUrl: 'https://maps.google.com/?q=Se+Lisboa' }],
-        pickupOptions: [{ id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true }],
       },
     },
     riverside: {
@@ -53,12 +53,6 @@ export default {
   },
   booking: {
     minNoticeHours: 2,
-    maxHorizonDays: 90,
-    holdMinutes: 35,
-    cancelCutoffHours: 24,
-    reschedule: { enabled: true, cutoffHours: 24 },
-    limitedThreshold: 2,
-    calendarMaxStaleSeconds: 900,
   },
   locales: { supported: ['en', 'pt-PT'], default: 'en' },
   legal: { termsUrl: 'https://lisbontuktours.example/terms' },

@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import type { AstroIntegration } from 'astro';
 import { envField } from 'astro/config';
 import type { Plugin } from 'vite';
-import { validateConfig, type ClientConfig } from './core/config.js';
+import { validateConfig, type ClientConfig, type ResolvedClientConfig } from './core/config.js';
 import {
   enabledRouteManifest,
   normalizeRoutePrefix,
@@ -117,7 +117,7 @@ export function reserva(options: ReservaIntegrationOptions): AstroIntegration {
         // This hook runs during build/dev config resolution, separate from request-time Worker
         // execution — defineReservaRuntime/defineCloudflareReservaRuntime independently validate the
         // config that actually backs runtime behavior. The value captured here only decides which route groups to inject.
-        let validatedConfig: ClientConfig;
+        let validatedConfig: ResolvedClientConfig;
         try {
           validatedConfig = validateConfig(options.config);
         } catch (error) {
@@ -197,5 +197,5 @@ export function reserva(options: ReservaIntegrationOptions): AstroIntegration {
 }
 
 export { virtualRuntimeId, virtualConfigId };
-export type { ClientConfig };
+export type { ClientConfig, ResolvedClientConfig };
 export default reserva;

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ClientConfig, ServiceConfig } from '../src/core/config';
+import type { ResolvedClientConfig, ResolvedServiceConfig } from '../src/core/config';
 import { BrevoResponseError, brevoEmail, BREVO_TRANSACTIONAL_EMAIL_URL } from '../src/providers/email-brevo/index';
 import { emailNone } from '../src/providers/email-none/index';
 import { booking, config, service } from './fixtures';
@@ -8,7 +8,7 @@ import { resolveRouteConfig } from '../src/routes-manifest';
 // A canonical (post-validateConfig-shaped) multi-point service, built inline per the "don't edit
 // shared fixture files" rule — fixtures.ts stays a single-point service so every other suite's
 // byte-identical assertions keep holding.
-const multiPointTour: ServiceConfig = {
+const multiPointTour: ResolvedServiceConfig = {
   ...service,
   location: {
     ...service.location!,
@@ -18,11 +18,11 @@ const multiPointTour: ServiceConfig = {
     ],
   },
 };
-const multiPointConfig: ClientConfig = { ...config, services: { vintage: multiPointTour } };
+const multiPointConfig: ResolvedClientConfig = { ...config, services: { vintage: multiPointTour } };
 
 // A declared option with BOTH requiresAddress and usesMeetingPoint (Maze's combined custom
 // pickup+drop-off) — built inline per the same "don't touch fixtures.ts" rule.
-const bothFlagsTour: ServiceConfig = {
+const bothFlagsTour: ResolvedServiceConfig = {
   ...multiPointTour,
   location: {
     meetingPoints: multiPointTour.location!.meetingPoints!,
@@ -38,14 +38,14 @@ const bothFlagsTour: ServiceConfig = {
     { maxQuantity: 8, pickup: 'custom_pickup', priceMinor: 20000 },
   ],
 };
-const bothFlagsConfig: ClientConfig = { ...config, services: { vintage: bothFlagsTour } };
+const bothFlagsConfig: ResolvedClientConfig = { ...config, services: { vintage: bothFlagsTour } };
 
 describe('email providers', () => {
   it('posts localized customer and owner messages to Brevo', async () => {
     const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
     const provider = brevoEmail({ apiKey: 'xkeysib-test', fetch: request });
 
-    const portugueseConfig: ClientConfig = { ...config, locales: { supported: ['en', 'pt-PT'], default: 'en' } };
+    const portugueseConfig: ResolvedClientConfig = { ...config, locales: { supported: ['en', 'pt-PT'], default: 'en' } };
     await provider.send('booking.confirmed', booking({ locale: 'pt-PT', pickupType: 'custom', pickupAddress: 'Hotel Avenida' }), portugueseConfig);
 
     expect(request).toHaveBeenCalledTimes(2);

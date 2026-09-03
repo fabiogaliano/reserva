@@ -65,7 +65,7 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
     const inputType = kind.type === 'int' || kind.type === 'number' ? 'number' : kind.type === 'email' ? 'email' : kind.type === 'url' ? 'url' : 'text';
     const constraints = kind.type === 'int' ? ` min="${kind.min}"${kind.max !== undefined ? ` max="${kind.max}"` : ''} step="1"${kind.optional ? '' : ' required'}`
       : kind.type === 'number' ? ` min="${kind.min}" step="any" required`
-      : kind.type === 'text' && kind.optional ? '' : ' required';
+      : (kind.type === 'text' || kind.type === 'url') && kind.optional ? '' : ' required';
     const value = effective === null ? '' : String(effective);
     return `<div class="bk-setting"><label class="bk-field"><span>${escapeHtml(label)}</span><input class="bk-input" type="${inputType}" name="${escapeHtml(definition.key)}" value="${escapeHtml(value)}"${constraints}></label>${help}${modified}</div>`;
   };

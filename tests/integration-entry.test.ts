@@ -73,7 +73,7 @@ describe('Astro integration entry', () => {
 
   it('rejects an invalid config during setup', () => {
     expect(() => setup({
-      config: { ...config, booking: { ...config.booking, holdMinutes: 10 } },
+      config: { ...config, booking: { holdMinutes: 10 } },
       runtimeEntrypoint: './examples/minimal/runtime.ts',
     })).toThrow(/holdMinutes/i);
   });

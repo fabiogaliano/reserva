@@ -1,4 +1,4 @@
-import type { ClientConfig } from '../core/config.js';
+import type { ResolvedClientConfig } from '../core/config.js';
 import type { EmailBookingEvent } from '../core/events.js';
 
 // ---------------------------------------------------------------------------
@@ -119,7 +119,7 @@ function candidates(locale: string, fallback: string): string[] {
   return values.filter((value, index): value is string => Boolean(value) && values.indexOf(value) === index);
 }
 
-export function emailString(config: ClientConfig, locale: string, key: string): string {
+export function emailString(config: ResolvedClientConfig, locale: string, key: string): string {
   for (const candidate of candidates(locale, config.locales.default)) {
     const override = config.emails?.messages?.[candidate]?.[key];
     if (override) return override;

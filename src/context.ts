@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import type { AdminIdentity } from './access.js';
-import { validateConfig, type ClientConfig } from './core/config.js';
+import { validateConfig, type ResolvedClientConfig } from './core/config.js';
 import type {
   BookingEventHook,
   CalendarProvider,
@@ -41,10 +41,10 @@ export interface ReservaLogger {
 export type AdminAuth = (request: Request, context: ReservaContext) => Promise<AdminIdentity | null>;
 
 export interface ReservaContext {
-  config: ClientConfig;
+  config: ResolvedClientConfig;
   // The pristine file config, set when DB-backed setting overrides are merged into `config`. The
   // admin settings page reads it to show what each value falls back to; absent when no overrides exist.
-  baseConfig?: ClientConfig;
+  baseConfig?: ResolvedClientConfig;
   db: D1Database;
   repo: BookingRepository;
   providers: ReservaProviders;

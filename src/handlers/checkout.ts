@@ -1,6 +1,6 @@
 import type { CheckoutResponse } from '../core/api.js';
 import type { Booking } from '../core/booking.js';
-import { DEFAULT_TOKEN_EXPIRY_DAYS, pickupOptionFor, resolveMeetingPoint, resolveService, type MetadataField, type PickupType, type ServiceConfig } from '../core/config.js';
+import { DEFAULT_TOKEN_EXPIRY_DAYS, pickupOptionFor, resolveMeetingPoint, resolveService, type MetadataField, type PickupType, type ResolvedServiceConfig } from '../core/config.js';
 import { availabilityForDay, capacityForDate, defaultCapacityForDate, occupancyFor } from '../core/occupancy.js';
 import { priceFor } from '../core/pricing.js';
 import { resolveLocale } from '../core/locale.js';
@@ -21,7 +21,7 @@ interface CheckoutLocation { pickupType: PickupType | null; meetingPointId: stri
 
 // The one pickup-axis validation, shared by checkout (`pickupType`) and quote (`pickup`) via a
 // parameterized field name, so neither endpoint can grow a divergent rule about valid pickup ids.
-export function resolvePickupAxis(service: ServiceConfig, value: unknown, field: string): PickupType | null {
+export function resolvePickupAxis(service: ResolvedServiceConfig, value: unknown, field: string): PickupType | null {
   if (!service.location) {
     if (value !== undefined) throw new HttpError(400, 'validation_failed', `This service has no location module; do not send ${field}`);
     return null;
@@ -34,7 +34,7 @@ export function resolvePickupAxis(service: ServiceConfig, value: unknown, field:
 
 // The one priced-amount resolution — quote and checkout both call this, so the quoted price and
 // the charged price can never disagree for any (service, quantity, pickup).
-export function quotedPriceMinor(service: ServiceConfig, quantity: number, pickup: PickupType | null): number {
+export function quotedPriceMinor(service: ResolvedServiceConfig, quantity: number, pickup: PickupType | null): number {
   assertSupportedPartySize(service, quantity);
   try {
     return priceFor(service, quantity, pickup);
@@ -46,7 +46,7 @@ export function quotedPriceMinor(service: ServiceConfig, quantity: number, picku
 // meetingPointId is required exactly when the pickup option's usesMeetingPoint flag is set — not
 // merely pickupType === 'default', since e.g. a "custom drop-off" can still use a meeting point.
 // Resolves to null/null rather than throwing when the service declares no meeting points at all.
-function resolveCheckoutMeetingPoint(service: ServiceConfig, pickupType: PickupType, body: Record<string, unknown>): { id: string | null; label: string | null } {
+function resolveCheckoutMeetingPoint(service: ResolvedServiceConfig, pickupType: PickupType, body: Record<string, unknown>): { id: string | null; label: string | null } {
   const points = service.location?.meetingPoints ?? [];
   const raw = body.meetingPointId;
   if (raw !== undefined) {
@@ -66,7 +66,7 @@ function resolveCheckoutMeetingPoint(service: ServiceConfig, pickupType: PickupT
 // Rejects (rather than silently ignores) pickupType/meetingPointId for a location-less service, so
 // a client with stale fields (e.g. after an operator drops the location module) gets an actionable
 // 400 instead of a booking that silently discarded input.
-function resolveCheckoutLocation(service: ServiceConfig, body: Record<string, unknown>): CheckoutLocation {
+function resolveCheckoutLocation(service: ResolvedServiceConfig, body: Record<string, unknown>): CheckoutLocation {
   const pickupType = resolvePickupAxis(service, body.pickupType, 'pickupType');
   if (pickupType === null) {
     if (body.meetingPointId !== undefined) throw new HttpError(400, 'validation_failed', 'This service has no location module; do not send meetingPointId');
@@ -108,7 +108,7 @@ function coerceMetadataValue(field: MetadataField, raw: unknown): string | numbe
 
 // Returns null (not `{}`) for "nothing to store", matching every existing row and
 // serializeBookingMetadata's own symmetry.
-function validateCheckoutMetadata(service: ServiceConfig, serviceSlug: string, raw: unknown): Record<string, unknown> | null {
+function validateCheckoutMetadata(service: ResolvedServiceConfig, serviceSlug: string, raw: unknown): Record<string, unknown> | null {
   const value = raw === undefined ? {} : raw;
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new HttpError(400, 'validation_failed', 'metadata must be an object');

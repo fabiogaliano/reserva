@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ClientConfig, ServiceConfig } from '../src/core/config';
+import type { ResolvedClientConfig, ResolvedServiceConfig } from '../src/core/config';
 import { booking, config, service } from './fixtures';
 import { ProviderFailure } from '../src/provider-failure';
 import { clearGoogleTokenCache, GoogleServiceAccountAuth } from '../src/providers/calendar-google/auth';
@@ -7,7 +7,7 @@ import { GoogleCalendarProvider, mapGoogleCalendarEvent } from '../src/providers
 
 // Canonical (post-validateConfig-shaped) multi-point service, built inline — fixtures.ts stays
 // a single-point service for other suites.
-const multiPointTour: ServiceConfig = {
+const multiPointTour: ResolvedServiceConfig = {
   ...service,
   location: {
     ...service.location!,
@@ -17,11 +17,11 @@ const multiPointTour: ServiceConfig = {
     ],
   },
 };
-const multiPointConfig: ClientConfig = { ...config, services: { vintage: multiPointTour } };
+const multiPointConfig: ResolvedClientConfig = { ...config, services: { vintage: multiPointTour } };
 
 // A declared option with BOTH requiresAddress and usesMeetingPoint (Maze's combined custom
 // pickup+drop-off) — built inline per the same "don't touch fixtures.ts" rule.
-const bothFlagsTour: ServiceConfig = {
+const bothFlagsTour: ResolvedServiceConfig = {
   ...multiPointTour,
   location: {
     meetingPoints: multiPointTour.location!.meetingPoints!,
@@ -37,7 +37,7 @@ const bothFlagsTour: ServiceConfig = {
     { maxQuantity: 8, pickup: 'custom_pickup', priceMinor: 20000 },
   ],
 };
-const bothFlagsConfig: ClientConfig = { ...config, services: { vintage: bothFlagsTour } };
+const bothFlagsConfig: ResolvedClientConfig = { ...config, services: { vintage: bothFlagsTour } };
 
 const fakePem = '-----BEGIN PRIVATE KEY-----\nAQID\n-----END PRIVATE KEY-----';
 const fakeCrypto = {

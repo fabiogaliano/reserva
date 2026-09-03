@@ -6,9 +6,9 @@ import type {
 } from '../core/api.js';
 import {
   resolveMetadataFieldLabel,
-  type ClientConfig,
+  type ResolvedClientConfig,
   type PickupOption,
-  type ServiceConfig,
+  type ResolvedServiceConfig,
 } from '../core/config.js';
 import { resolveLocale } from '../core/locale.js';
 import type { ReservaContext } from '../context.js';
@@ -31,7 +31,7 @@ function pickupCopy(option: PickupOption, messages: ReservaMessages): { label: s
   return { label: option.label ?? option.id, hint: option.hint ?? null };
 }
 
-function catalogLocation(service: ServiceConfig, messages: ReservaMessages): CatalogLocation | null {
+function catalogLocation(service: ResolvedServiceConfig, messages: ReservaMessages): CatalogLocation | null {
   if (!service.location) return null;
   return {
     // Empty (not absent) for a location-ful service that collects only a custom address.
@@ -47,7 +47,7 @@ function catalogLocation(service: ServiceConfig, messages: ReservaMessages): Cat
   };
 }
 
-function catalogMetadataFields(service: ServiceConfig, locale: string, defaultLocale: string): CatalogMetadataField[] {
+function catalogMetadataFields(service: ResolvedServiceConfig, locale: string, defaultLocale: string): CatalogMetadataField[] {
   return (service.metadataFields ?? []).map((field) => ({
     key: field.key,
     label: resolveMetadataFieldLabel(field.label, locale, defaultLocale),
@@ -61,7 +61,7 @@ function catalogMetadataFields(service: ServiceConfig, locale: string, defaultLo
   }));
 }
 
-export function catalogPayload(config: ClientConfig, locale: string, messages: ReservaMessages): CatalogResponse {
+export function catalogPayload(config: ResolvedClientConfig, locale: string, messages: ReservaMessages): CatalogResponse {
   const services: CatalogService[] = Object.entries(config.services).map(([slug, service]) => ({
     slug,
     // A service with no declared title is identified by its slug — the same fallback emails use.

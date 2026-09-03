@@ -1,4 +1,4 @@
-import type { ScheduleRule, ServiceConfig } from './config.js';
+import type { ScheduleRule, ResolvedServiceConfig } from './config.js';
 import { addMinutes, localDateAndTimeToUtc, localDateToWeekday, utcToLocalIso } from './time.js';
 
 export interface GeneratedSlot {
@@ -22,12 +22,12 @@ function matchesSeason(rule: ScheduleRule, date: string): boolean {
   return from <= to ? monthDay >= from && monthDay <= to : monthDay >= from || monthDay <= to;
 }
 
-export function scheduleForDate(service: ServiceConfig, date: string, timezone: string): ScheduleRule | undefined {
+export function scheduleForDate(service: ResolvedServiceConfig, date: string, timezone: string): ScheduleRule | undefined {
   const weekday = localDateToWeekday(date, timezone);
   return service.schedule.find((rule) => rule.days.includes(weekday) && matchesSeason(rule, date));
 }
 
-export function generateSlots(service: ServiceConfig, date: string, timezone: string): GeneratedSlot[] {
+export function generateSlots(service: ResolvedServiceConfig, date: string, timezone: string): GeneratedSlot[] {
   const rule = scheduleForDate(service, date, timezone);
   if (!rule) return [];
   const [firstHour = 0, firstMinute = 0] = rule.firstStart.split(':').map(Number);
@@ -57,5 +57,5 @@ export function generateSlots(service: ServiceConfig, date: string, timezone: st
   return slots;
 }
 
-export const generateSlotStarts = (service: ServiceConfig, date: string, timezone: string): string[] =>
+export const generateSlotStarts = (service: ResolvedServiceConfig, date: string, timezone: string): string[] =>
   generateSlots(service, date, timezone).map((slot) => slot.start);

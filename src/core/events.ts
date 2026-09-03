@@ -1,4 +1,4 @@
-import type { ClientConfig } from './config.js';
+import type { ResolvedClientConfig } from './config.js';
 import type { Booking, WireBooking } from './booking.js';
 import type { CalEvent } from './occupancy.js';
 import type { ReservaResolvedRouteConfig } from '../routes-manifest.js';
@@ -88,7 +88,7 @@ export interface EmailProvider {
   send(
     event: EmailBookingEvent,
     booking: Booking,
-    config: ClientConfig,
+    config: ResolvedClientConfig,
     routeConfig?: ReservaResolvedRouteConfig,
   ): Promise<void>;
   // Optional per-recipient split: implementing both lets the dispatcher retry each recipient as
@@ -99,7 +99,7 @@ export interface EmailProvider {
     recipient: EmailRecipientRole,
     event: EmailBookingEvent,
     booking: Booking,
-    config: ClientConfig,
+    config: ResolvedClientConfig,
     routeConfig?: ReservaResolvedRouteConfig,
   ): Promise<void>;
 }
@@ -108,8 +108,8 @@ export interface CalendarProvider {
   // Distinguishes occupancy cache entries when a deployment can select calendar sources.
   cacheKey?: string;
   listEvents(fromUtc: string, toUtc: string): Promise<CalEvent[]>;
-  createEvent(booking: Booking, config: ClientConfig): Promise<string>;
-  patchEvent(eventId: string, booking: Booking, config?: ClientConfig): Promise<void>;
+  createEvent(booking: Booking, config: ResolvedClientConfig): Promise<string>;
+  patchEvent(eventId: string, booking: Booking, config?: ResolvedClientConfig): Promise<void>;
   deleteEvent(eventId: string): Promise<void>;
 }
 
@@ -119,7 +119,7 @@ export interface CalendarProvider {
 export interface PaymentProvider {
   createCheckout(
     booking: Booking,
-    config: ClientConfig,
+    config: ResolvedClientConfig,
     routePaths?: ReservaResolvedRouteConfig['paths'],
   ): Promise<{ url: string; sessionRef: string }>;
   parseWebhook(request: Request): Promise<PaymentEventParsed>;
@@ -130,7 +130,7 @@ export interface PaymentProvider {
   // Optional synchronous config check, invoked once at runtime-definition init — never per
   // request. This is where a provider's own limits live (currencies, locales, session lifetime),
   // keeping core config validation vendor-neutral. Throw with the offending path and the fix.
-  validateConfig?(config: ClientConfig): void;
+  validateConfig?(config: ResolvedClientConfig): void;
 }
 
 export function isBookingEvent(value: string): value is BookingEvent {
@@ -202,7 +202,7 @@ export interface BookingEventHookContext {
   // hook can deduplicate against the same key an HTTP consumer does.
   id: string;
   occurredAt: string;
-  config: ClientConfig;
+  config: ResolvedClientConfig;
 }
 
 // An in-process listener. `durable: false` (default) fires post-commit and is never retried;

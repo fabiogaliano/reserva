@@ -12,187 +12,7 @@ import {
 // `ServiceConfig.location.pickupOptions`, which no static union can enumerate.
 export type PickupType = string;
 
-export interface ScheduleRule {
-  from?: string;
-  to?: string;
-  days: number[];
-  firstStart: string;
-  lastStart: string;
-  intervalMin: number;
-}
-
-export interface PricingRule {
-  maxQuantity: number;
-  // Optional: a service with no `location` module has no pickup axis, so rules select by quantity
-  // tier alone. A `location` service requires every rule to name a declared pickup option id.
-  pickup?: PickupType;
-  priceMinor: number;
-}
-
-export interface MeetingPoint {
-  id: string;
-  label: string;
-  mapsUrl: string;
-}
-
-// The unit the pricing axis's `pickup` column points at. `requiresAddress` gates address
-// collection at checkout; `usesMeetingPoint` decides the meeting-point requirement instead of a
-// fixed `pickupType === 'default'`. Missing `label`/`hint` fall back to message-catalog copy.
-export interface PickupOption {
-  id: string;
-  label?: string;
-  hint?: string;
-  requiresAddress: boolean;
-  usesMeetingPoint: boolean;
-}
-
-// Either a plain string or a per-locale map, resolved with the same candidate-locale → base
-// language → default-locale fallback as `config.ui.messages` (see `resolveMetadataFieldLabel`).
-export type LocalizedText = string | Record<string, string>;
-
-export interface MetadataFieldOption {
-  value: string;
-  label: LocalizedText;
-}
-
-// The whole consumer-declared metadata DSL: four types, three optional modifiers, no conditional
-// fields, cross-field rules, or custom validators. `maxLength` applies to `text` only (default
-// 500, enforced at checkout).
-export interface MetadataField {
-  key: string;
-  label: LocalizedText;
-  type: 'text' | 'number' | 'boolean' | 'select';
-  options?: MetadataFieldOption[];
-  required?: boolean;
-  maxLength?: number;
-}
-
-export interface ServiceConfig {
-  // Customer-facing display name used in emails ("Your Alfama Discovery is confirmed");
-  // absent falls back to the service slug.
-  title?: string;
-  durationMin: number;
-  turnaroundMin: number;
-  schedule: ScheduleRule[];
-  pricing: PricingRule[];
-  occupancyFor?: (quantity: number) => number;
-  // Opt-in per service; absent means no pickup/meeting-point dimension anywhere (pricing, checkout,
-  // emails, admin, calendar). Requires at least one pickup option; meeting points stay optional.
-  location?: {
-    meetingPoints?: MeetingPoint[];
-    pickupOptions: PickupOption[];
-  };
-  // Extension point for business-specific fields — dietary notes, skill level, etc. Absent means no
-  // metadata; checkout rejects a non-empty `metadata` body for it.
-  metadataFields?: MetadataField[];
-}
-
-export interface WebhookEndpointConfig {
-  name: string;
-  url: string;
-  // Must also be listed in the runtime's `secretBindings` for reserva to be allowed to read it.
-  secretBinding: string;
-  // Defaults to every event in BOOKING_EVENTS.
-  events?: BookingEvent[];
-}
-
-export interface ClientConfig {
-  business: {
-    name: string;
-    shortCode: string;
-    url: string;
-    timezone: string;
-    // Any ISO 4217 alphabetic code, lowercase. Prices are stored in this currency's minor unit;
-    // the payment provider validates its own narrower set.
-    currency: string;
-    contact: {
-      email: string;
-      phone: string;
-      // A second phone line, shown alongside `phone` wherever contact details render.
-      phoneSecondary?: string;
-      whatsapp?: string;
-    };
-  };
-  capacity: {
-    default: number;
-  };
-  admin: {
-    // Present auto-selects Cloudflare Access as the admin/ops auth; absent requires a custom
-    // `adminAuth` callback. Exactly one is required when admin/ops routes are enabled — checked at
-    // runtime init, not here, since this schema can't see a runtime-only callback.
-    access?: {
-      teamDomain: string;
-      aud: string;
-    };
-    // Operator copy can differ from the locale used for customer pages, emails, and checkout.
-    locale?: string;
-  };
-  services: Record<string, ServiceConfig>;
-  booking: {
-    minNoticeHours: number;
-    maxHorizonDays: number;
-    holdMinutes: number;
-    cancelCutoffHours: number;
-    reschedule: {
-      enabled: boolean;
-      cutoffHours: number;
-    };
-    limitedThreshold: number;
-    calendarMaxStaleSeconds: number;
-    maxHoldsPerIp?: number;
-    // Token lifetime counted from booking end, not creation, so links survive reschedules, refund
-    // follow-up, and review requests. Defaults to `DEFAULT_TOKEN_EXPIRY_DAYS` when unset.
-    tokenExpiryDays?: number;
-  };
-  locales: {
-    supported: string[];
-    default: string;
-  };
-  legal: {
-    termsUrl: string;
-  };
-  // `url` is ordinary config; the signing key is a Worker secret referenced by binding name, so it
-  // never lives in a committed config file. A hook and a webhook may share a name — outbox rows
-  // tell them apart by `family`, not a qualified key.
-  webhooks?: WebhookEndpointConfig[];
-  // One shared declaration drives both route injection and admin-auth selection, instead of two
-  // options that could disagree. Both default to `true`; the booking API and manage routes are
-  // load-bearing and never disableable here.
-  routes?: {
-    admin?: boolean;
-    ops?: boolean;
-    // Controls only the built-in server-rendered /booking/manage page; the manage/cancel/reschedule
-    // APIs stay mounted either way. False stops library link producers from pointing at it.
-    manage?: boolean;
-  };
-  ui?: {
-    // Per-locale overrides for Reserva's rendered copy, merged over its bundled catalog and
-    // English fallback. Keys are locale tags ('pt-PT', 'fr', …); values are partial message maps.
-    messages?: Record<string, Record<string, string>>;
-  };
-  emails?: {
-    // Forces every outgoing email into one locale regardless of the language the customer booked
-    // in. Absent keeps the per-booking locale (with the usual supported/default fallback).
-    locale?: string;
-    // Visual identity for the branded email shell. All optional — a client without branding gets
-    // a neutral dark header with the business name as text.
-    branding?: {
-      logoUrl?: string;
-      // Rendered size of the logo <img>; explicit dimensions because some desktop clients
-      // (Outlook) otherwise paint the image at its natural pixel size.
-      logoWidth?: number;
-      logoHeight?: number;
-      headerBackground?: string;
-      accentColor?: string;
-      cardBackground?: string;
-    };
-    // Per-locale overrides for email copy, merged over the bundled catalog exactly like
-    // ui.messages is for widget copy.
-    messages?: Record<string, Record<string, string>>;
-  };
-}
-
-export function adminLocaleFor(config: ClientConfig): string {
+export function adminLocaleFor(config: ResolvedClientConfig): string {
   return config.admin.locale ?? config.locales.default;
 }
 
@@ -216,6 +36,9 @@ const scheduleSchema = z.object({
 // value, a widget radio input's `value`, and a URL-safe checkout body field without escaping.
 const pickupOptionIdPattern = /^[a-z0-9_-]+$/;
 
+// The unit the pricing axis's `pickup` column points at. `requiresAddress` gates address
+// collection at checkout; `usesMeetingPoint` decides the meeting-point requirement instead of a
+// fixed `pickupType === 'default'`. Missing `label`/`hint` fall back to message-catalog copy.
 const pickupOptionSchema = z.object({
   id: z.string().min(1).regex(pickupOptionIdPattern),
   label: z.string().min(1).optional(),
@@ -234,6 +57,8 @@ const meetingPointSchema = z.object({
 // characters so it's safe to use verbatim as a JSON object key and a checkout body field.
 export const METADATA_FIELD_KEY_PATTERN = /^[a-z][a-z0-9_]{0,31}$/;
 
+// Either a plain string or a per-locale map, resolved with the same candidate-locale → base
+// language → default-locale fallback as `config.ui.messages` (see `resolveMetadataFieldLabel`).
 const localizedTextSchema = z.union([z.string().min(1), z.record(z.string(), z.string().min(1))]);
 
 const metadataFieldOptionSchema = z.object({
@@ -241,6 +66,9 @@ const metadataFieldOptionSchema = z.object({
   label: localizedTextSchema,
 });
 
+// The whole consumer-declared metadata DSL: four types, three optional modifiers, no conditional
+// fields, cross-field rules, or custom validators. `maxLength` applies to `text` only (default
+// 500, enforced at checkout).
 const metadataFieldSchema = z.object({
   key: z.string().regex(METADATA_FIELD_KEY_PATTERN),
   label: localizedTextSchema,
@@ -250,28 +78,90 @@ const metadataFieldSchema = z.object({
   maxLength: z.number().int().positive().optional(),
 });
 
-// `pickupOptions` is required (at least one) within a declared location; `meetingPoints` stays
-// optional since a service can collect only a custom address.
+// A location module may declare only `meetingPoints`: the transform implies a single
+// meeting-point pickup option so the resolved shape always carries a pickup axis. `meetingPoints`
+// stays optional for a service that only collects a custom address.
 const locationSchema = z.object({
   meetingPoints: z.array(meetingPointSchema).min(1).optional(),
-  pickupOptions: z.array(pickupOptionSchema).min(1),
+  pickupOptions: z.array(pickupOptionSchema).min(1).optional(),
+}).superRefine((location, ctx) => {
+  if (!location.meetingPoints && !location.pickupOptions) {
+    ctx.addIssue({
+      code: 'custom',
+      path: [],
+      message: "a declared location module must set 'pickupOptions', 'meetingPoints', or both; remove the location key for a service with no pickup dimension",
+    });
+  }
+}).transform((location) => {
+  const pickupOptions: PickupOption[] = location.pickupOptions
+    ?? [{ id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true }];
+  return { ...location, pickupOptions };
+});
+
+const pricingRuleSchema = z.object({
+  maxQuantity: z.number().int().positive(),
+  // A plain zod enum can't express a per-service id set; `validateService` checks each row's
+  // pickup against the service's own declared location options.
+  pickup: z.string().min(1).optional(),
+  priceMinor: z.number().int().nonnegative(),
 });
 
 const serviceSchema = z.object({
+  // Customer-facing display name used in emails ("Your Alfama Discovery is confirmed");
+  // absent falls back to the service slug.
   title: z.string().min(1).optional(),
   durationMin: z.number().int().positive(),
   turnaroundMin: z.number().int().nonnegative(),
   schedule: z.array(scheduleSchema).min(1),
-  pricing: z.array(z.object({
-    maxQuantity: z.number().int().positive(),
-    // A plain zod enum can't express a per-service id set; `validateService` checks each row's
-    // pickup against the service's own declared location options.
-    pickup: z.string().min(1).optional(),
-    priceMinor: z.number().int().nonnegative(),
-  })).min(1),
+  pricing: z.array(pricingRuleSchema).min(1),
   occupancyFor: z.custom<(quantity: number) => number>((value) => typeof value === 'function').optional(),
+  // Opt-in per service; absent means no pickup/meeting-point dimension anywhere (pricing, checkout,
+  // emails, admin, calendar).
   location: locationSchema.optional(),
+  // Extension point for business-specific fields — dietary notes, skill level, etc. Absent means no
+  // metadata; checkout rejects a non-empty `metadata` body for it.
   metadataFields: z.array(metadataFieldSchema).optional(),
+}).transform((service) => {
+  // Normalized in the schema rather than in `validateConfig` so `z.output` is the single source of
+  // truth for the resolved shape: every runtime reader sees `pickupOptions` present, and a
+  // single-option service's pricing rows already carry `pickup`, with no extra narrowing.
+  const options = service.location?.pickupOptions ?? [];
+  const only = options.length === 1 ? options[0]! : undefined;
+  if (!only) return service;
+  const pricing: PricingRule[] = service.pricing.map((rule) => rule.pickup === undefined ? { ...rule, pickup: only.id } : rule);
+  return { ...service, pricing };
+});
+
+const bookingSchema = z.object({
+  minNoticeHours: z.number().nonnegative().default(0),
+  maxHorizonDays: z.number().int().positive().default(90),
+  holdMinutes: z.number().int().nonnegative().default(35),
+  cancelCutoffHours: z.number().nonnegative().default(24),
+  reschedule: z.object({
+    enabled: z.boolean().default(true),
+    // Absent inherits `cancelCutoffHours`: one dial covers both customer-initiated changes unless
+    // a client deliberately splits them.
+    cutoffHours: z.number().nonnegative().optional(),
+  }).prefault({}),
+  limitedThreshold: z.number().int().nonnegative().default(2),
+  calendarMaxStaleSeconds: z.number().int().min(60).default(15 * 60),
+  maxHoldsPerIp: z.number().int().positive().optional(),
+  // Token lifetime counted from booking end, not creation, so links survive reschedules, refund
+  // follow-up, and review requests. Defaults to `DEFAULT_TOKEN_EXPIRY_DAYS` when unset.
+  tokenExpiryDays: z.number().int().positive().optional(),
+}).prefault({}).transform((booking) => ({
+  ...booking,
+  reschedule: { ...booking.reschedule, cutoffHours: booking.reschedule.cutoffHours ?? booking.cancelCutoffHours },
+}));
+
+const webhookEndpointSchema = z.object({
+  name: z.string(),
+  url: z.string().url(),
+  // Must also be listed in the runtime's `secretBindings` for reserva to be allowed to read it.
+  secretBinding: z.string().min(1),
+  // Defaults to every event in BOOKING_EVENTS. Any string parses so `validateConfig` can report a
+  // typo'd name with the valid set, instead of a bare enum mismatch.
+  events: z.array(z.custom<BookingEvent>((value) => typeof value === 'string')).min(1).optional(),
 });
 
 export const clientConfigSchema = z.object({
@@ -280,66 +170,91 @@ export const clientConfigSchema = z.object({
     shortCode: z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,9}$/),
     url: z.string().url(),
     timezone: z.string().min(1),
+    // Any ISO 4217 alphabetic code, lowercase. Prices are stored in this currency's minor unit;
+    // the payment provider validates its own narrower set.
     currency: z.string().regex(CURRENCY_CODE_PATTERN, 'must be a lowercase ISO 4217 alphabetic code (e.g. "eur", "jpy")'),
     contact: z.object({
       email: z.string().email(),
       phone: z.string().min(1),
+      // A second phone line, shown alongside `phone` wherever contact details render.
       phoneSecondary: z.string().min(1).optional(),
       whatsapp: z.string().optional(),
     }),
   }),
   capacity: z.object({ default: z.number().int().nonnegative() }),
   admin: z.object({
+    // Present auto-selects Cloudflare Access as the admin/ops auth; absent requires a custom
+    // `adminAuth` callback. Exactly one is required when admin/ops routes are enabled — checked at
+    // runtime init, not here, since this schema can't see a runtime-only callback.
     access: z.object({
       teamDomain: z.string().refine(isValidAccessTeamDomain, 'must be an HTTPS Cloudflare Access origin'),
       aud: z.string().min(1),
     }).optional(),
+    // Operator copy can differ from the locale used for customer pages, emails, and checkout.
     locale: z.string().min(1).refine(isValidLocale, 'must be a valid BCP 47 locale').optional(),
-  }),
+  }).prefault({}),
   services: z.record(z.string(), serviceSchema).refine((value) => Object.keys(value).length > 0, 'at least one service is required'),
-  booking: z.object({
-    minNoticeHours: z.number().nonnegative(),
-    maxHorizonDays: z.number().int().positive(),
-    holdMinutes: z.number().int().nonnegative(),
-    cancelCutoffHours: z.number().nonnegative(),
-    reschedule: z.object({ enabled: z.boolean(), cutoffHours: z.number().nonnegative() }),
-    limitedThreshold: z.number().int().nonnegative(),
-    calendarMaxStaleSeconds: z.number().int().min(60).default(15 * 60),
-    maxHoldsPerIp: z.number().int().positive().optional(),
-    tokenExpiryDays: z.number().int().positive().optional(),
-  }),
+  booking: bookingSchema,
   locales: z.object({
-    supported: z.array(z.string().min(1)).min(1),
-    default: z.string().min(1),
-  }),
-  legal: z.object({ termsUrl: z.string().url() }),
-  webhooks: z.array(z.object({
-    name: z.string(),
-    url: z.string().url(),
-    secretBinding: z.string().min(1),
-    events: z.array(z.string()).min(1).optional(),
-  })).optional(),
+    supported: z.array(z.string().min(1)).min(1).default(['en']),
+    default: z.string().min(1).default('en'),
+  }).prefault({}),
+  legal: z.object({ termsUrl: z.string().url().optional() }).prefault({}),
+  // `url` is ordinary config; the signing key is a Worker secret referenced by binding name, so it
+  // never lives in a committed config file. A hook and a webhook may share a name — outbox rows
+  // tell them apart by `family`, not a qualified key.
+  webhooks: z.array(webhookEndpointSchema).optional(),
+  // One shared declaration drives both route injection and admin-auth selection, instead of two
+  // options that could disagree. Both default to `true`; the booking API and manage routes are
+  // load-bearing and never disableable here.
   routes: z.object({
     admin: z.boolean().optional(),
     ops: z.boolean().optional(),
+    // Controls only the built-in server-rendered /booking/manage page; the manage/cancel/reschedule
+    // APIs stay mounted either way. False stops library link producers from pointing at it.
     manage: z.boolean().optional(),
   }).optional(),
   ui: z.object({
+    // Per-locale overrides for Reserva's rendered copy, merged over its bundled catalog and
+    // English fallback. Keys are locale tags ('pt-PT', 'fr', …); values are partial message maps.
     messages: z.record(z.string(), z.record(z.string(), z.string())).optional(),
   }).optional(),
   emails: z.object({
+    // Forces every outgoing email into one locale regardless of the language the customer booked
+    // in. Absent keeps the per-booking locale (with the usual supported/default fallback).
     locale: z.string().min(1).refine(isValidLocale, 'must be a valid BCP 47 locale').optional(),
+    // Visual identity for the branded email shell. All optional — a client without branding gets
+    // a neutral dark header with the business name as text.
     branding: z.object({
       logoUrl: z.string().url().optional(),
+      // Rendered size of the logo <img>; explicit dimensions because some desktop clients
+      // (Outlook) otherwise paint the image at its natural pixel size.
       logoWidth: z.number().int().positive().optional(),
       logoHeight: z.number().int().positive().optional(),
       headerBackground: z.string().min(1).optional(),
       accentColor: z.string().min(1).optional(),
       cardBackground: z.string().min(1).optional(),
     }).optional(),
+    // Per-locale overrides for email copy, merged over the bundled catalog exactly like
+    // ui.messages is for widget copy.
     messages: z.record(z.string(), z.record(z.string(), z.string())).optional(),
   }).optional(),
 });
+
+// `ClientConfig` is what a consumer writes (every defaulted field optional); `ResolvedClientConfig`
+// is what the runtime reads once defaults and normalization have been applied.
+export type ClientConfig = z.input<typeof clientConfigSchema>;
+export type ResolvedClientConfig = z.output<typeof clientConfigSchema>;
+export type ServiceConfig = z.input<typeof serviceSchema>;
+export type ResolvedServiceConfig = z.output<typeof serviceSchema>;
+export type ScheduleRule = z.output<typeof scheduleSchema>;
+export type PricingRule = z.output<typeof pricingRuleSchema>;
+export type MeetingPoint = z.output<typeof meetingPointSchema>;
+export type PickupOption = z.output<typeof pickupOptionSchema>;
+export type MetadataField = z.output<typeof metadataFieldSchema>;
+export type MetadataFieldOption = z.output<typeof metadataFieldOptionSchema>;
+export type LocalizedText = z.output<typeof localizedTextSchema>;
+export type WebhookEndpointConfig = z.output<typeof webhookEndpointSchema>;
 
 function addIssue(ctx: { addIssue: (issue: { code: 'custom'; path: (string | number)[]; message: string }) => void }, path: (string | number)[], message: string): void {
   ctx.addIssue({ code: 'custom', path, message });
@@ -385,7 +300,7 @@ function isValidMonthDay(value: string): boolean {
   return probe.getUTCMonth() === month - 1 && probe.getUTCDate() === day;
 }
 
-function validateService(service: ServiceConfig, serviceSlug: string, add: (path: (string | number)[], message: string) => void): void {
+function validateService(service: ResolvedServiceConfig, serviceSlug: string, add: (path: (string | number)[], message: string) => void): void {
   const location = service.location;
   const pickupOptions = location?.pickupOptions ?? [];
   const pickupOptionIds = pickupOptions.map((option) => option.id);
@@ -517,12 +432,12 @@ function validateService(service: ServiceConfig, serviceSlug: string, add: (path
   }
 }
 
-export function validateConfig(input: unknown): ClientConfig {
+export function validateConfig(input: unknown): ResolvedClientConfig {
   const parsed = clientConfigSchema.safeParse(input);
   if (!parsed.success) {
     throw parsed.error;
   }
-  const config = parsed.data as ClientConfig;
+  const config = parsed.data;
   const issues: Array<{ path: (string | number)[]; message: string }> = [];
   const add = (path: (string | number)[], message: string): void => {
     issues.push({ path, message });
@@ -574,12 +489,12 @@ export function validateConfig(input: unknown): ClientConfig {
   return config;
 }
 
-export function quantityValuesForService(service: ServiceConfig): number[] {
+export function quantityValuesForService(service: ResolvedServiceConfig): number[] {
   const highest = Math.max(...service.pricing.map((row) => row.maxQuantity), 0);
   return Array.from({ length: highest }, (_, index) => index + 1);
 }
 
-export function resolveService(config: ClientConfig, serviceSlug: string): ServiceConfig {
+export function resolveService(config: ResolvedClientConfig, serviceSlug: string): ResolvedServiceConfig {
   const service = config.services[serviceSlug];
   if (!service) throw new Error(`Unknown service: ${serviceSlug}`);
   return service;
@@ -587,7 +502,7 @@ export function resolveService(config: ClientConfig, serviceSlug: string): Servi
 
 // Id match wins; no id or unknown id falls back to the first declared point. Throws if the
 // service declares no meeting points — callers must confirm the pickup option uses one first.
-export function resolveMeetingPoint(service: ServiceConfig, meetingPointId?: string): MeetingPoint {
+export function resolveMeetingPoint(service: ResolvedServiceConfig, meetingPointId?: string): MeetingPoint {
   const points = service.location?.meetingPoints ?? [];
   if (points.length === 0) {
     throw new Error('service declares no meeting points');
@@ -601,7 +516,7 @@ export function resolveMeetingPoint(service: ServiceConfig, meetingPointId?: str
 
 // No fixed default/custom fallback: a service with no `location` has no options to match, and a
 // null id is never a real option either way.
-export function pickupOptionFor(service: ServiceConfig, id: string | null): PickupOption | undefined {
+export function pickupOptionFor(service: ResolvedServiceConfig, id: string | null): PickupOption | undefined {
   if (id === null) return undefined;
   return service.location?.pickupOptions.find((option) => option.id === id);
 }
@@ -609,7 +524,7 @@ export function pickupOptionFor(service: ServiceConfig, id: string | null): Pick
 // A booking has location data iff `pickupType` is non-null. Once set, presentation prefers the
 // currently declared option; a stale/removed id falls back to what the row itself recorded.
 export function pickupPresentationFor(
-  service: ServiceConfig,
+  service: ResolvedServiceConfig,
   booking: { pickupType: PickupType | null; pickupAddress: string | null; meetingPointId: string | null },
 ): { requiresAddress: boolean; usesMeetingPoint: boolean } | null {
   if (booking.pickupType === null) return null;
@@ -624,7 +539,7 @@ export function pickupPresentationFor(
 // declared falls back to the booking's stored label with no maps link, since config can't be
 // cross-checked against the DB. Never throws: must degrade for services that dropped location.
 export function meetingPointForBooking(
-  service: ServiceConfig,
+  service: ResolvedServiceConfig,
   meetingPointId: string | null,
   meetingPointLabel: string | null,
 ): { label: string; mapsUrl: string | null } {
@@ -667,7 +582,7 @@ export interface MetadataRow {
 // rendering so labels never resolve two different ways. A key no longer declared is silently
 // omitted, the same stale-config tolerance as `meetingPointForBooking`.
 export function metadataRowsForBooking(
-  service: ServiceConfig,
+  service: ResolvedServiceConfig,
   metadata: Record<string, unknown> | null,
   locale: string,
   defaultLocale: string,

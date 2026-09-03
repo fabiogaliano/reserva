@@ -11,9 +11,12 @@ import {
   routeManifest,
   validateRouteOptions,
 } from '../src/routes-manifest';
-import config from '../examples/minimal/client-config';
+import clientConfig from '../examples/minimal/client-config';
+import { validateConfig } from '../src/core/config';
 import { booking } from './fixtures';
 import { fakeRepository, providers } from './fakes';
+
+const config = validateConfig(clientConfig);
 
 // Mirrors tests/integration-entry.test.ts's harness: invoke the astro:config:setup hook directly
 // (no real Astro build needed to observe injectRoute calls / the registered vite plugins).

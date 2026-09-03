@@ -1,5 +1,5 @@
 import type { Booking } from '../../core/booking.js';
-import { meetingPointForBooking, pickupPresentationFor, type ClientConfig } from '../../core/config.js';
+import { meetingPointForBooking, pickupPresentationFor, type ResolvedClientConfig } from '../../core/config.js';
 import type { CalendarProvider } from '../../core/events.js';
 import type { CalEvent } from '../../core/occupancy.js';
 import { ProviderFailure } from '../../provider-failure.js';
@@ -43,7 +43,7 @@ function eventToCalEvent(event: GoogleEvent): CalEvent {
     ...(event.extendedProperties?.private?.reservaBookingId ? { reservaBookingId: event.extendedProperties.private.reservaBookingId } : {}),
   };
 }
-function eventPayload(booking: Booking, config: ClientConfig | undefined, _timezone: string): GoogleEvent {
+function eventPayload(booking: Booking, config: ResolvedClientConfig | undefined, _timezone: string): GoogleEvent {
   const title = `${booking.reference} — ${booking.serviceSlug} — ${booking.quantity} quantity`;
   const service = config?.services[booking.serviceSlug];
   // Gated on the row's own data first — a location-less booking
@@ -136,7 +136,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
     } while (pageToken);
     return events;
   }
-  async createEvent(booking: Booking, config: ClientConfig): Promise<string> {
+  async createEvent(booking: Booking, config: ResolvedClientConfig): Promise<string> {
     const eventId = booking.id.replaceAll('-', '');
     const response = await this.request(this.url('?sendUpdates=all'), {
       method: 'POST',
@@ -153,7 +153,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
     if (!body.id) throw new Error('Google Calendar create response omitted event id');
     return body.id;
   }
-  async patchEvent(eventId: string, booking: Booking, config?: ClientConfig): Promise<void> {
+  async patchEvent(eventId: string, booking: Booking, config?: ResolvedClientConfig): Promise<void> {
     await this.call(`/${encodeURIComponent(eventId)}?sendUpdates=all`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(eventPayload(booking, config, config?.business.timezone ?? this.timezone)) });
   }
   async deleteEvent(eventId: string): Promise<void> {

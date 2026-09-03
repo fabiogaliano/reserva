@@ -1,5 +1,5 @@
 import type { Booking } from '../../core/booking.js';
-import { adminLocaleFor, meetingPointForBooking, pickupOptionFor, pickupPresentationFor, resolveService, type ServiceConfig } from '../../core/config.js';
+import { adminLocaleFor, meetingPointForBooking, pickupOptionFor, pickupPresentationFor, resolveService, type ResolvedServiceConfig } from '../../core/config.js';
 import { defaultCapacityForDate, occupancyFor, type CapacityDefault } from '../../core/occupancy.js';
 import { enumerateDateKeys, localDateKey, utcToLocalIso } from '../../core/time.js';
 import type { ReservaContext } from '../../context.js';
@@ -200,7 +200,7 @@ export function adminPage(
     const price = formatPrice(booking.priceMinor, locale, context.config.business.currency);
     // resolveService throws for a renamed/removed serviceSlug; degrade to undefined rather than
     // 500 the row — every gate below falls back to the pickupType-keyed check.
-    let rowTour: ServiceConfig | undefined;
+    let rowTour: ResolvedServiceConfig | undefined;
     try {
       rowTour = resolveService(context.config, booking.serviceSlug);
     } catch {

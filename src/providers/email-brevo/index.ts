@@ -1,5 +1,5 @@
 import type { Booking } from '../../core/booking.js';
-import type { ClientConfig } from '../../core/config.js';
+import type { ResolvedClientConfig } from '../../core/config.js';
 import type { EmailBookingEvent, EmailProvider, EmailRecipientRole } from '../../core/events.js';
 import { renderDefaultEmail, type EmailRenderer, type EmailTemplateContext, type RenderedEmail } from '../../email/index.js';
 import { formatLocaleFor } from '../../email/render.js';
@@ -37,19 +37,19 @@ const ownerEvents = new Set<EmailBookingEvent>(['booking.confirmed', 'booking.ca
 
 // Returns '' when `routes.manage` is disabled — the renderer omits the button for an empty
 // URL, so a disabled manage page can't leave a 404 link in a customer's inbox.
-function manageUrl(config: ClientConfig, token: string, routeConfig?: ReservaResolvedRouteConfig): string {
+function manageUrl(config: ResolvedClientConfig, token: string, routeConfig?: ReservaResolvedRouteConfig): string {
   if (routeConfig && !routeConfig.groups.manage) return '';
   return `${config.business.url.replace(/\/$/, '')}${routeConfig?.paths.managePage ?? '/booking/manage'}?token=${encodeURIComponent(token)}`;
 }
 
 // config.emails.locale pins every email to one language, for an operator whose working
 // language differs from the site's customer locales; absent keeps the per-booking language.
-export function emailLocaleFor(booking: Booking, config: ClientConfig): string {
+export function emailLocaleFor(booking: Booking, config: ResolvedClientConfig): string {
   return config.emails?.locale
     ?? (config.locales.supported.includes(booking.locale) ? booking.locale : config.locales.default);
 }
 
-function localStart(booking: Booking, config: ClientConfig): string {
+function localStart(booking: Booking, config: ResolvedClientConfig): string {
   return new Intl.DateTimeFormat(formatLocaleFor(emailLocaleFor(booking, config)), { dateStyle: 'medium', timeStyle: 'short', timeZone: config.business.timezone }).format(new Date(booking.startsAt));
 }
 
@@ -59,7 +59,7 @@ function toBrevoContent(rendered: RenderedEmail): BrevoEmailContent {
   return { subject: rendered.subject, htmlContent: rendered.html, ...(rendered.text !== undefined ? { textContent: rendered.text } : {}) };
 }
 
-function addressFor(recipient: BrevoRecipient, booking: Booking, config: ClientConfig, owner?: BrevoRecipientAddress): BrevoRecipientAddress | null {
+function addressFor(recipient: BrevoRecipient, booking: Booking, config: ResolvedClientConfig, owner?: BrevoRecipientAddress): BrevoRecipientAddress | null {
   if (recipient === 'customer') return booking.customerEmail ? { email: booking.customerEmail, ...(booking.customerName ? { name: booking.customerName } : {}) } : null;
   return owner ?? { email: config.business.contact.email, name: config.business.name };
 }
@@ -86,7 +86,7 @@ export class BrevoEmailProvider implements EmailProvider {
     recipient: BrevoRecipient,
     event: EmailBookingEvent,
     booking: Booking,
-    config: ClientConfig,
+    config: ResolvedClientConfig,
     routeConfig?: ReservaResolvedRouteConfig,
   ): Promise<void> {
     const address = addressFor(recipient, booking, config, this.owner);
@@ -102,7 +102,7 @@ export class BrevoEmailProvider implements EmailProvider {
   async send(
     event: EmailBookingEvent,
     booking: Booking,
-    config: ClientConfig,
+    config: ResolvedClientConfig,
     routeConfig?: ReservaResolvedRouteConfig,
   ): Promise<void> {
     for (const recipient of this.recipientsForEvent(event)) {

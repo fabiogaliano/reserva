@@ -3,7 +3,7 @@ import Stripe from 'stripe';
 import { describe, expect, it, vi } from 'vitest';
 import { stripe, type StripeClient } from '../src/index';
 import { sessionStatusFromStripe, stripeEventToParsed, stripePaymentMethodTypes } from '../src/provider';
-import type { ClientConfig, ServiceConfig } from '@reservajs/astro/core';
+import type { ResolvedClientConfig, ResolvedServiceConfig } from '@reservajs/astro/core';
 
 // This suite additionally drives the library's internal checkout handler (not just the adapter's
 // published entrypoints) because it also pins how core checkout behaves against a failing Stripe.
@@ -15,7 +15,7 @@ import { fakeRepository, providers } from '../../../tests/fakes';
 
 // A Maze-shaped four-option service, built inline — fixtures.ts stays the two-option
 // default/custom service so every other suite's byte-identical assertions keep holding.
-const mazeTour: ServiceConfig = {
+const mazeTour: ResolvedServiceConfig = {
   ...service,
   location: {
     meetingPoints: service.location!.meetingPoints!,
@@ -36,7 +36,7 @@ const mazeTour: ServiceConfig = {
     { maxQuantity: 8, pickup: 'removed_option', priceMinor: 19000 },
   ],
 };
-const mazeConfig: ClientConfig = { ...config, services: { vintage: mazeTour } };
+const mazeConfig: ResolvedClientConfig = { ...config, services: { vintage: mazeTour } };
 
 function stripeRefund(
   id: string,

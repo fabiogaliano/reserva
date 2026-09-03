@@ -1,7 +1,7 @@
 // Single key set for every string reserva renders. English is the default and fallback; European
 // Portuguese ships as a bundled catalog, and both can be overridden per locale via `config.ui.messages`.
 
-import type { ClientConfig } from '../core/config.js';
+import type { ResolvedClientConfig } from '../core/config.js';
 // The import attribute is what makes the published `dist/` loadable by a plain ESM runtime, not
 // only by a bundler: Node refuses a JSON module without it.
 import portuguesePortugalCatalog from './locales/pt-PT.json' with { type: 'json' };
@@ -289,7 +289,7 @@ function catalogFor(catalogs: Record<string, Record<string, string>>, locale: st
 
 // Regional catalogs layer over their base language, and deployment overrides layer over bundled
 // copy so a business can customize wording without maintaining a complete catalog.
-export function resolveMessages(config: ClientConfig | undefined, locale: string | undefined): ReservaMessages {
+export function resolveMessages(config: ResolvedClientConfig | undefined, locale: string | undefined): ReservaMessages {
   const merged: Record<string, string> = { ...defaultMessages };
   const candidates = localeCandidates(locale ?? defaultLocale);
   for (const candidate of candidates) {

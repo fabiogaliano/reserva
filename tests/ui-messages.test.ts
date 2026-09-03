@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ClientConfig } from '../src/core/config';
+import type { ResolvedClientConfig } from '../src/core/config';
 import portuguesePortugalCatalog from '../src/ui/locales/pt-PT.json';
 import { defaultLocale, defaultMessages, resolveMessages } from '../src/ui/messages';
 
@@ -33,7 +33,7 @@ describe('bundled UI messages', () => {
           'pt-PT': { 'widget.submit': 'Pagar agora' },
         },
       },
-    } as unknown as ClientConfig;
+    } as unknown as ResolvedClientConfig;
 
     const messages = resolveMessages(config, 'pt-PT');
     expect(messages['widget.title']).toBe('Reserva base');

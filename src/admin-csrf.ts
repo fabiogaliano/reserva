@@ -25,7 +25,7 @@ export type AdminCsrfSecretLookup = (name: string) => string | undefined | Promi
 // Narrower than ReservaContext (just the two fields this module actually reads) so it stays
 // independently testable and has no dependency on ./context.
 export interface AdminCsrfContext {
-  config: { admin: { access?: { aud: string } } };
+  config: { admin: { access?: { aud: string } | undefined } };
   secrets?: AdminCsrfSecretLookup;
 }
 
