@@ -23,4 +23,4 @@ export type { AdminIdentity } from './access.js';
 // The typed reconciliation function a consumer's own custom Worker entrypoint's `scheduled()`
 // calls — build the ReservaContext with a synthetic same-origin Request, then this runs the bounded
 // sweep/claim/incident/alert pass. Exported without any internal repo record type so a consumer never needs repo.ts's shapes.
-export { runReconciliation, type ReconciliationOptions, type ReconciliationSummary } from './reconciliation.js';
+export { runReconciliation, scheduledHandler, type ReconciliationOptions, type ReconciliationSummary } from './reconciliation.js';

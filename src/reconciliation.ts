@@ -389,3 +389,23 @@ export async function runReconciliation(context: ReservaContext, options: Reconc
   context.logger.info?.('reserva reconciliation completed', { lifecycle: 'completed', ...summary });
   return summary;
 }
+
+
+// The `scheduled()` body every cron Worker would otherwise hand-copy. The synthetic request exists
+// only because `createContext` is request-shaped; nothing reads its URL. Failures rethrow so the
+// platform records a failed cron invocation, which is the detection path independent of the alert sink.
+export function scheduledHandler(
+  runtime: { createContext(input: { request: Request }): ReservaContext | Promise<ReservaContext> },
+  options: ReconciliationOptions = { requireAlertSink: true },
+): (controller: ScheduledController, env: unknown, ctx: ExecutionContext) => Promise<void> {
+  return async () => {
+    try {
+      const context = await runtime.createContext({ request: new Request('https://reserva-scheduled.invalid/') });
+      const summary = await runReconciliation(context, options);
+      context.logger.info?.('reserva scheduled reconciliation summary', { ...summary });
+    } catch (error) {
+      console.error('reserva scheduled reconciliation failed', { lifecycle: 'failed', error: String(error) });
+      throw error;
+    }
+  };
+}
