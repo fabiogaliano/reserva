@@ -149,7 +149,6 @@ const hooks: BookingEventHook[] = [
 export default defineCloudflareReservaRuntime<Env>(config, {
   providers,
   hooks,
-  secretBindings: ['RESERVA_TOKEN_ENC_KEY', 'RESERVA_OPERATOR_SECRET', 'RESERVA_CSRF_SECRET'],
   // Dev-only bypass: admits every request as an anonymous admin. Never do this in production.
   adminAuth: async () => ({ subject: '' }),
 });

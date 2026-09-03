@@ -1,5 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { cloudflareAccessAdminAuth } from './access.js';
+import { CSRF_SECRET_ENV_NAME } from './admin-csrf.js';
+import { TOKEN_ENC_SECRET_NAME } from './repo.js';
 import { createReservaContext, OPERATOR_SECRET_NAME, type AdminAuth, type ReservaCache, type ReservaContext, type ReservaContextInput, type ReservaProviders, type ReservaLogger } from './context.js';
 import { validateConfig, type ResolvedClientConfig } from './core/config.js';
 import { validateBookingEventHooks, type BookingEventHook } from './core/events.js';
@@ -186,7 +188,16 @@ export function defineCloudflareReservaRuntime<TEnv extends object>(
   const migrationsTable = requireMigrationsTableName(options.migrationsTable ?? D1_MIGRATIONS_TABLE);
   if (typeof options.providers !== 'function') validatePaymentProvider(options.providers, config);
   let providerValidated = typeof options.providers !== 'function';
-  const secretBindings = new Set<string>(options.secretBindings ?? [OPERATOR_SECRET_NAME]);
+  // Reserva's own secret names and every `config.webhooks[].secretBinding` are readable without
+  // being restated, so `secretBindings` only has to name secrets a consumer's own provider factory
+  // or hook reads. Still a closed allowlist, never a `RESERVA_*` wildcard over the whole env.
+  const secretBindings = new Set<string>([
+    OPERATOR_SECRET_NAME,
+    CSRF_SECRET_ENV_NAME,
+    TOKEN_ENC_SECRET_NAME,
+    ...(config.webhooks ?? []).map((endpoint) => endpoint.secretBinding),
+    ...(options.secretBindings ?? []),
+  ]);
   const confirmationLocks = new Map<string, Promise<void>>();
   // Memoized across every request this isolate handles: the schema check must run once at first
   // context creation, not on every request.

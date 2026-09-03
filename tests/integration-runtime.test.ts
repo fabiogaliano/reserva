@@ -11,77 +11,81 @@ const payments = {
   refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
 };
 
+// Needs `prepare` to pass the D1 shape check, and `.all()` must resolve reserva's migrations plus
+// a matching schema fingerprint, so context creation doesn't reject the fake as unmigrated.
+function migratedD1(): D1Database {
+  return {
+    prepare: (query: string) => ({
+      all: async () => {
+        if (query.startsWith('PRAGMA table_info(bookings)')) {
+          return { results: ['occupancy_units', 'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at', 'reschedule_transition_version', 'meeting_point_id', 'currency', 'metadata'].map((name) => ({ name })) };
+        }
+        if (query.includes("name IN ('bookings', 'idx_bookings_payment_ref')")) {
+          return {
+            results: [
+              {
+                type: 'table', name: 'bookings',
+                sql: `CREATE TABLE bookings (
+                  quantity INTEGER CHECK (quantity > 0), pickup_type TEXT,
+                  starts_at TEXT, ends_at TEXT CHECK (ends_at > starts_at), price_minor INTEGER CHECK (price_minor >= 0),
+                  currency TEXT NOT NULL, metadata TEXT,
+                  status TEXT CHECK (status IN ('hold','confirmed','cancelled','expired','no_show')),
+                  cancelled_by TEXT CHECK (cancelled_by IN ('customer','operator') OR cancelled_by IS NULL)
+                )`,
+              },
+              {
+                type: 'index', name: 'idx_bookings_payment_ref',
+                sql: 'CREATE UNIQUE INDEX idx_bookings_payment_ref ON bookings (payment_ref) WHERE payment_ref IS NOT NULL',
+              },
+            ],
+          };
+        }
+        if (query.startsWith('PRAGMA table_info(side_effect_operations)')) {
+          return { results: ['family', 'name', 'event', 'discriminator', 'event_payload_json', 'failure_started_at', 'next_attempt_at'].map((name) => ({ name })) };
+        }
+        if (query.startsWith('PRAGMA table_info(refund_operations)')) {
+          return {
+            results: ['execution_claim_token', 'execution_claim_until', 'attempt_count', 'attempted_at', 'failure_started_at', 'next_attempt_at']
+              .map((name) => ({ name })),
+          };
+        }
+        if (query.includes('idx_side_effect_operations_reconciliation')) {
+          return {
+            results: [
+              { type: 'table', name: 'side_effect_operations', sql: "CHECK (family IN ('calendar_create','calendar_delete','email_confirmation','oversell','email','hook','webhook')), status TEXT CHECK (status IN ('pending','in_flight','succeeded','failed','abandoned'))" },
+              { type: 'index', name: 'idx_side_effect_operations_pending', sql: null },
+              { type: 'index', name: 'idx_side_effect_operations_reconciliation', sql: null },
+              { type: 'index', name: 'idx_side_effect_operations_identity', sql: null },
+            ],
+          };
+        }
+        if (query.includes('idx_refund_operations_reconciliation')) {
+          return {
+            results: [
+              { type: 'table', name: 'refund_operations', sql: "CHECK (status IN ('requested','in_flight','succeeded','failed','abandoned'))" },
+              { type: 'index', name: 'idx_refund_operations_status', sql: null },
+              { type: 'index', name: 'idx_refund_operations_reconciliation', sql: null },
+            ],
+          };
+        }
+        if (query.includes('operational_incidents')) {
+          return {
+            results: [
+              { type: 'table', name: 'operational_incidents' },
+              { type: 'index', name: 'idx_operational_incidents_open' },
+              { type: 'index', name: 'idx_operational_incidents_alert' },
+            ],
+          };
+        }
+        return { results: RESERVA_MIGRATIONS.map((name) => ({ name })) };
+      },
+    }),
+  } as unknown as D1Database;
+}
+
 describe('Cloudflare runtime helpers', () => {
   it('reads injected test bindings without exposing env on context', async () => {
-    // Needs `prepare` to pass the D1 shape check, and `.all()` must resolve reserva's migrations
-    // plus a matching schema fingerprint so context creation doesn't reject this fake as unmigrated.
-    const db = {
-      prepare: (query: string) => ({
-        all: async () => {
-          if (query.startsWith('PRAGMA table_info(bookings)')) {
-            return { results: ['occupancy_units', 'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at', 'reschedule_transition_version', 'meeting_point_id', 'currency', 'metadata'].map((name) => ({ name })) };
-          }
-          if (query.includes("name IN ('bookings', 'idx_bookings_payment_ref')")) {
-            return {
-              results: [
-                {
-                  type: 'table', name: 'bookings',
-                  sql: `CREATE TABLE bookings (
-                    quantity INTEGER CHECK (quantity > 0), pickup_type TEXT,
-                    starts_at TEXT, ends_at TEXT CHECK (ends_at > starts_at), price_minor INTEGER CHECK (price_minor >= 0),
-                    currency TEXT NOT NULL, metadata TEXT,
-                    status TEXT CHECK (status IN ('hold','confirmed','cancelled','expired','no_show')),
-                    cancelled_by TEXT CHECK (cancelled_by IN ('customer','operator') OR cancelled_by IS NULL)
-                  )`,
-                },
-                {
-                  type: 'index', name: 'idx_bookings_payment_ref',
-                  sql: 'CREATE UNIQUE INDEX idx_bookings_payment_ref ON bookings (payment_ref) WHERE payment_ref IS NOT NULL',
-                },
-              ],
-            };
-          }
-          if (query.startsWith('PRAGMA table_info(side_effect_operations)')) {
-            return { results: ['family', 'name', 'event', 'discriminator', 'event_payload_json', 'failure_started_at', 'next_attempt_at'].map((name) => ({ name })) };
-          }
-          if (query.startsWith('PRAGMA table_info(refund_operations)')) {
-            return {
-              results: ['execution_claim_token', 'execution_claim_until', 'attempt_count', 'attempted_at', 'failure_started_at', 'next_attempt_at']
-                .map((name) => ({ name })),
-            };
-          }
-          if (query.includes('idx_side_effect_operations_reconciliation')) {
-            return {
-              results: [
-                { type: 'table', name: 'side_effect_operations', sql: "CHECK (family IN ('calendar_create','calendar_delete','email_confirmation','oversell','email','hook','webhook')), status TEXT CHECK (status IN ('pending','in_flight','succeeded','failed','abandoned'))" },
-                { type: 'index', name: 'idx_side_effect_operations_pending', sql: null },
-                { type: 'index', name: 'idx_side_effect_operations_reconciliation', sql: null },
-                { type: 'index', name: 'idx_side_effect_operations_identity', sql: null },
-              ],
-            };
-          }
-          if (query.includes('idx_refund_operations_reconciliation')) {
-            return {
-              results: [
-                { type: 'table', name: 'refund_operations', sql: "CHECK (status IN ('requested','in_flight','succeeded','failed','abandoned'))" },
-                { type: 'index', name: 'idx_refund_operations_status', sql: null },
-                { type: 'index', name: 'idx_refund_operations_reconciliation', sql: null },
-              ],
-            };
-          }
-          if (query.includes('operational_incidents')) {
-            return {
-              results: [
-                { type: 'table', name: 'operational_incidents' },
-                { type: 'index', name: 'idx_operational_incidents_open' },
-                { type: 'index', name: 'idx_operational_incidents_alert' },
-              ],
-            };
-          }
-          return { results: RESERVA_MIGRATIONS.map((name) => ({ name })) };
-        },
-      }),
-    } as unknown as D1Database;
+    const db = migratedD1();
     const cache = { match: async () => undefined, put: async () => undefined } as never;
     const definition = defineCloudflareReservaRuntime(config, { providers: { payments } });
     const request = new Request('https://example.test/api/booking/status');
@@ -101,6 +105,31 @@ describe('Cloudflare runtime helpers', () => {
       locals: { env: { RESERVA_DB: db, RESERVA_CACHE: cache } },
     });
     expect(nextContext.confirmationLocks).toBe(context.confirmationLocks);
+  });
+
+  it("reads reserva's own secrets and every declared webhook secretBinding without them being listed", async () => {
+    const withWebhook = { ...config, webhooks: [{ name: 'partner', url: 'https://partner.example/hook', secretBinding: 'PARTNER_WEBHOOK_SECRET' }] };
+    const definition = defineCloudflareReservaRuntime(withWebhook, { providers: { payments }, secretBindings: ['MY_OWN_SECRET'] });
+    const context = await definition.createContext({
+      request: new Request('https://example.test/api/booking/status'),
+      locals: { env: {
+        RESERVA_DB: migratedD1(),
+        RESERVA_OPERATOR_SECRET: 'operator',
+        RESERVA_CSRF_SECRET: 'csrf',
+        RESERVA_TOKEN_ENC_KEY: 'enc',
+        PARTNER_WEBHOOK_SECRET: 'partner',
+        MY_OWN_SECRET: 'mine',
+        UNDECLARED_SECRET: 'nope',
+      } },
+    });
+    for (const [name, value] of [
+      ['RESERVA_OPERATOR_SECRET', 'operator'], ['RESERVA_CSRF_SECRET', 'csrf'], ['RESERVA_TOKEN_ENC_KEY', 'enc'],
+      ['PARTNER_WEBHOOK_SECRET', 'partner'], ['MY_OWN_SECRET', 'mine'],
+    ] as const) {
+      await expect(context.secrets?.(name)).resolves.toBe(value);
+    }
+    // Still a closed allowlist, not a pass-through of the whole env.
+    await expect(context.secrets?.('UNDECLARED_SECRET')).resolves.toBeUndefined();
   });
 
   it('supports direct env locals and worker cache fallback', () => {

@@ -863,10 +863,8 @@ function mapSideEffectOperation(row: SideEffectOperationRow): SideEffectOperatio
   };
 }
 
-// Optional Worker secret to decrypt cancel_token_enc/operator_token_enc into a usable link. Not
-// added to the default secretBindings: a deployment must opt in explicitly, same as
-// RESERVA_CSRF_SECRET.
-const TOKEN_ENC_SECRET_NAME = 'RESERVA_TOKEN_ENC_KEY';
+// Optional Worker secret to decrypt cancel_token_enc/operator_token_enc into a usable link.
+export const TOKEN_ENC_SECRET_NAME = 'RESERVA_TOKEN_ENC_KEY';
 
 function base64UrlEncodeBytes(bytes: Uint8Array): string {
   let binary = '';

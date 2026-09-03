@@ -57,5 +57,4 @@ function providers(env: Env): ReservaProviders {
 
 export default defineCloudflareReservaRuntime<Env>(config, {
   providers: ({ env }) => providers(env),
-  secretBindings: ['RESERVA_TOKEN_ENC_KEY', 'RESERVA_CSRF_SECRET', 'OPERATIONS_WEBHOOK_SECRET'],
 });

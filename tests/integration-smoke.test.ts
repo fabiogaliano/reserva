@@ -25,7 +25,8 @@ describe('Astro smoke fixture', () => {
     const wrangler = readFileSync(resolve(fixture, 'wrangler.jsonc'), 'utf8');
     expect(runtime).toContain('amountTotal: session.amountTotal');
     expect(runtime).toContain('currency: session.currency');
-    expect(runtime).toContain("secretBindings: ['RESERVA_TOKEN_ENC_KEY', 'RESERVA_OPERATOR_SECRET', 'RESERVA_CSRF_SECRET']");
+    // Reserva's own secret names are readable without being restated, so the reference consumer must not list them.
+    expect(runtime).not.toContain('secretBindings');
     expect(wrangler).toContain('"RESERVA_TOKEN_ENC_KEY"');
   });
 });

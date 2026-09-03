@@ -14,7 +14,7 @@
 import { constantTimeEqual } from './http.js';
 
 const CSRF_TOKEN_TTL_MS = 60 * 60_000; // Outlives a normal admin editing session; short enough to bound a leaked-token window.
-const CSRF_SECRET_ENV_NAME = 'RESERVA_CSRF_SECRET';
+export const CSRF_SECRET_ENV_NAME = 'RESERVA_CSRF_SECRET';
 
 // Exported so tests can compute "just expired"/"still valid" boundaries without duplicating the
 // constant.

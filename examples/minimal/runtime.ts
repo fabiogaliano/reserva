@@ -30,7 +30,4 @@ const providers: ReservaProviders = {
 export default defineCloudflareReservaRuntime<Env>(config, {
   // The runtime reads D1 and Cache bindings per request, so provider instances never cross a Worker request boundary.
   providers,
-  // Secrets are read by name from env only when a handler needs them; they are not part of config or page props.
-  // The <Env> type argument constrains this list to keyof Env, catching a typo'd binding name at compile time.
-  secretBindings: ['RESERVA_OPERATOR_SECRET'],
 });
