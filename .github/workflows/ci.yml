@@ -63,9 +63,12 @@ jobs:
   # the repo root, so `src/` and `scripts/` alike count as changing @reservajs/astro; a PR that
   # genuinely ships nothing says so with `changeset add --empty`. Changesets attributes no
   # dot-directory to a package, so a `.github/`-only change (this job's own) passes untouched.
-  # PR-only: main legitimately has no changesets in the window right after a release.
+  # PR-only: main legitimately has no changesets in the window right after a release. The release
+  # PR is exempt for the same reason inverted — `changeset version` consumes the changesets while
+  # leaving the version and changelog bumps behind, so the check would see changed packages with
+  # nothing to explain them and block the very PR that ships the release.
   changeset:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && !startsWith(github.head_ref, 'changeset-release/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
