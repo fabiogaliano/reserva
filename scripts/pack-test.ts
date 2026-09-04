@@ -61,20 +61,6 @@ function bunInstall(consumerDir: string): void {
   if (result.status !== 0) fail('install', '`bun install` in the consumer fixture failed');
 }
 
-// @reservajs/stripe peers on @reservajs/astro at the version being released, which by definition is
-// not on the registry yet. Bun resolves that peer against the registry even though the adapter's
-// own tarball is installed in the same command, and once any install in the shared cache has
-// fetched the (stale) @reservajs/astro manifest, every later consumer hangs indefinitely on the
-// unsatisfiable range rather than erroring. Pinning the peer to the tarball under test keeps
-// resolution local and is what we actually want to verify anyway: this stripe build against this
-// astro build. Removable once the coordinated version is published.
-function pinAdapterPeer(consumerDir: string, astroTarball: string): void {
-  const manifestPath = resolve(consumerDir, 'package.json');
-  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
-  manifest.overrides = { ...(manifest.overrides as Record<string, string> | undefined), '@reservajs/astro': `file:${astroTarball}` };
-  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-}
-
 // `bun add <tarball path>`, not a workspace/link, proves the tarball is self-sufficient.
 function bunAddTarballs(consumerDir: string, tarballPaths: string[], expectInstalled: string[]): void {
   const result = runInherited('bun', ['add', ...tarballPaths], consumerDir);
@@ -282,9 +268,6 @@ function buildConsumer(workDir: string, spec: ConsumerSpec): void {
   console.log(`pack-test: [${spec.name}] assembling consumer in ${consumerDir}`);
   cpSync(fixtureBaseDir, consumerDir, { recursive: true });
   cpSync(resolve(fixtureConsumersDir, spec.name), consumerDir, { recursive: true });
-
-  // Only the adapter carries the unpublished peer; core-only stays a pristine fixture.
-  if (!spec.expectStripeAbsent) pinAdapterPeer(consumerDir, spec.tarballs[0]!);
 
   console.log(`pack-test: [${spec.name}] bun install (fixture devDependencies)`);
   bunInstall(consumerDir);

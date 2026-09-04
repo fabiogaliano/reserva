@@ -137,12 +137,6 @@ writeFileSync(join(projectDir, 'package.json'), `${JSON.stringify({
   name: 'reserva-quickstart-site',
   private: true,
   type: 'module',
-  // @reservajs/stripe peers on the @reservajs/astro version being released, which is not on the
-  // registry until publish day. Bun resolves that peer against the registry even though the astro
-  // tarball is installed in the same command, and hangs indefinitely on the unsatisfiable range
-  // instead of erroring. Pinning it to the tarball under test keeps resolution local, and pairs
-  // this stripe build with this astro build. Removable once the coordinated version is published.
-  overrides: { '@reservajs/astro': `file:${astroTarball}` },
   devDependencies: {
     '@astrojs/cloudflare': '^14.2.1',
     '@cloudflare/workers-types': '^5.20260813.1',
