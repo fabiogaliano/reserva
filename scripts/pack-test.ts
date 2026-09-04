@@ -31,6 +31,10 @@ function run(command: string, args: string[], options: { cwd: string; env?: Node
   return spawnSync(command, args, { cwd: options.cwd, env: options.env ?? process.env, encoding: 'utf8' });
 }
 
+function runInherited(command: string, args: string[], cwd: string) {
+  return spawnSync(command, args, { cwd, env: process.env, stdio: 'inherit' });
+}
+
 // Explicit, not relying on the packing tool's own lifecycle hooks, so the tarball always contains
 // a dist/ built from the tree under test, never a stale one.
 function buildDist(): void {
@@ -53,24 +57,32 @@ function packTarball(packageDir: string, destination: string): string {
 }
 
 function bunInstall(consumerDir: string): void {
-  const result = run('bun', ['install'], { cwd: consumerDir });
-  if (result.status !== 0) fail('install', `\`bun install\` in the consumer fixture failed:\n${result.stdout}\n${result.stderr}`);
+  const result = runInherited('bun', ['install'], consumerDir);
+  if (result.status !== 0) fail('install', '`bun install` in the consumer fixture failed');
 }
 
-// `bun add <tarball path>`, not a workspace/link, proves the tarball is self-sufficient. Until
-// release day @reservajs/astro doesn't exist on the registry, and bun resolves an installed
-// package's peerDependencies against the registry rather than what the same command just
-// installed — so adding the adapter tarball 404s on its peer even though both packages land
-// correctly. Tolerate exactly that error and prove the outcome on disk instead of the exit code.
-const UNPUBLISHED_PEER_ERROR = 'https://registry.npmjs.org/@reservajs%2fastro - 404';
+// @reservajs/stripe peers on @reservajs/astro at the version being released, which by definition is
+// not on the registry yet. Bun resolves that peer against the registry even though the adapter's
+// own tarball is installed in the same command, and once any install in the shared cache has
+// fetched the (stale) @reservajs/astro manifest, every later consumer hangs indefinitely on the
+// unsatisfiable range rather than erroring. Pinning the peer to the tarball under test keeps
+// resolution local and is what we actually want to verify anyway: this stripe build against this
+// astro build. Removable once the coordinated version is published.
+function pinAdapterPeer(consumerDir: string, astroTarball: string): void {
+  const manifestPath = resolve(consumerDir, 'package.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+  manifest.overrides = { ...(manifest.overrides as Record<string, string> | undefined), '@reservajs/astro': `file:${astroTarball}` };
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+}
 
+// `bun add <tarball path>`, not a workspace/link, proves the tarball is self-sufficient.
 function bunAddTarballs(consumerDir: string, tarballPaths: string[], expectInstalled: string[]): void {
-  const result = run('bun', ['add', ...tarballPaths], { cwd: consumerDir });
-  if (result.status === 0) return;
-  const output = `${result.stdout}\n${result.stderr}`;
-  const installed = expectInstalled.every((name) => existsSync(resolve(consumerDir, 'node_modules', name, 'package.json')));
-  if (!output.includes(UNPUBLISHED_PEER_ERROR) || !installed) {
-    fail('install', `\`bun add ${tarballPaths.join(' ')}\` failed:\n${output}`);
+  const result = runInherited('bun', ['add', ...tarballPaths], consumerDir);
+  if (result.status !== 0) fail('install', `\`bun add ${tarballPaths.join(' ')}\` failed`);
+  for (const name of expectInstalled) {
+    if (!existsSync(resolve(consumerDir, 'node_modules', name, 'package.json'))) {
+      fail('install', `\`bun add\` did not install ${name}`);
+    }
   }
 }
 
@@ -159,6 +171,8 @@ function assertAdapterPackagedLayout(consumerDir: string): void {
   }
   const unexpected = readdirSync(installedRoot).filter((entry) => !['dist', 'README.md', 'LICENSE', 'package.json', 'node_modules'].includes(entry));
   if (unexpected.length > 0) fail('layout', `unexpected entries in packed @reservajs/stripe: ${unexpected.join(', ')}`);
+  const manifest = JSON.parse(readFileSync(resolve(installedRoot, 'package.json'), 'utf8')) as { dependencies?: Record<string, string> };
+  if (typeof manifest.dependencies?.stripe !== 'string') fail('layout', '@reservajs/stripe must declare the Stripe SDK as a dependency');
 }
 
 // The core-only consumer proves the SDK is genuinely gone: a stripe/ directory in its node_modules
@@ -268,6 +282,9 @@ function buildConsumer(workDir: string, spec: ConsumerSpec): void {
   console.log(`pack-test: [${spec.name}] assembling consumer in ${consumerDir}`);
   cpSync(fixtureBaseDir, consumerDir, { recursive: true });
   cpSync(resolve(fixtureConsumersDir, spec.name), consumerDir, { recursive: true });
+
+  // Only the adapter carries the unpublished peer; core-only stays a pristine fixture.
+  if (!spec.expectStripeAbsent) pinAdapterPeer(consumerDir, spec.tarballs[0]!);
 
   console.log(`pack-test: [${spec.name}] bun install (fixture devDependencies)`);
   bunInstall(consumerDir);

@@ -30,6 +30,11 @@ function mustRun(phase: string, command: string, args: string[], cwd: string): v
   if (result.status !== 0) fail(`[${phase}] \`${command} ${args.join(' ')}\` failed:\n${result.stdout}\n${result.stderr}`);
 }
 
+function mustRunInherited(phase: string, command: string, args: string[], cwd: string): void {
+  const result = spawnSync(command, args, { cwd, env: process.env, stdio: 'inherit' });
+  if (result.status !== 0) fail(`[${phase}] \`${command} ${args.join(' ')}\` failed`);
+}
+
 // A quickstart block is identified by a `// path` (or `// path — note`) first line naming where
 // the file goes, matching what a reader would follow.
 function quickstartFiles(): Map<string, string> {
@@ -132,6 +137,12 @@ writeFileSync(join(projectDir, 'package.json'), `${JSON.stringify({
   name: 'reserva-quickstart-site',
   private: true,
   type: 'module',
+  // @reservajs/stripe peers on the @reservajs/astro version being released, which is not on the
+  // registry until publish day. Bun resolves that peer against the registry even though the astro
+  // tarball is installed in the same command, and hangs indefinitely on the unsatisfiable range
+  // instead of erroring. Pinning it to the tarball under test keeps resolution local, and pairs
+  // this stripe build with this astro build. Removable once the coordinated version is published.
+  overrides: { '@reservajs/astro': `file:${astroTarball}` },
   devDependencies: {
     '@astrojs/cloudflare': '^14.2.1',
     '@cloudflare/workers-types': '^5.20260813.1',
@@ -146,14 +157,11 @@ writeFileSync(join(projectDir, 'tsconfig.json'), `${JSON.stringify({
 }, null, 2)}\n`);
 
 console.log(`quickstart-test: assembled the README's quickstart in ${projectDir}`);
-mustRun('install', 'bun', ['install'], projectDir);
-
-// Until release day, bun resolves @reservajs/stripe's peer against the registry and 404s even
-// though both tarballs land correctly, so the outcome is proven on disk instead of by exit code.
-const add = run('bun', ['add', astroTarball, stripeTarball], projectDir);
+mustRunInherited('install', 'bun', ['install'], projectDir);
+mustRunInherited('install', 'bun', ['add', astroTarball, stripeTarball], projectDir);
 for (const installed of ['@reservajs/astro', '@reservajs/stripe']) {
   if (!existsSync(join(projectDir, 'node_modules', installed, 'package.json'))) {
-    fail(`[install] \`bun add\` did not install ${installed}:\n${add.stdout}\n${add.stderr}`);
+    fail(`[install] \`bun add\` did not install ${installed}`);
   }
 }
 
