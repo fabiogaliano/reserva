@@ -1,3 +1,5 @@
+![Reserva](./banner.svg)
+
 # Reserva
 
 **A booking engine for fixed-capacity time slots, built as an Astro integration — runs in
