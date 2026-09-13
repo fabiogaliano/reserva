@@ -63,6 +63,9 @@ const englishEmailCopy: Record<string, string> = {
   'label.date': 'Date',
   'label.time': 'Time',
   'label.guests': 'Guests',
+  // Operators who sell per-vehicle (a whole tuk-tuk, boat, car) book a capacity tier, not a
+  // headcount — they override this to 'Up to {people} guests'. Default stays the bare number.
+  'value.guests': '{people}',
   'label.meetingPoint': 'Meeting point',
   'label.pickup': 'Pickup',
   'label.openMap': 'Open map',
@@ -116,6 +119,7 @@ const portuguesePortugalEmailCopy: Record<string, string> = {
   'label.date': 'Data',
   'label.time': 'Hora',
   'label.guests': 'Pessoas',
+  'value.guests': '{people}',
   'label.meetingPoint': 'Ponto de encontro',
   'label.pickup': 'Recolha',
   'label.openMap': 'Abrir mapa',
@@ -251,6 +255,11 @@ function buildModel(context: BrevoEmailTemplateContext): EmailModel {
     people: String(booking.people), guestsWord, startsAtLocal: context.startsAtLocal,
   };
   const htmlValues = Object.fromEntries(Object.entries(rawValues).map(([key, value]) => [key, escapeHtml(value)]));
+  const guestsRow: EmailCardRow = {
+    label: copy('label.guests'),
+    valueHtml: `<strong>${interpolate(copy('value.guests'), htmlValues)}</strong>`,
+    valueText: interpolate(copy('value.guests'), rawValues),
+  };
 
   // Plan 017 (design decision 4/7): per-booking meeting-point resolution — a removed id falls back
   // to the booking's stored label snapshot with no maps link. Plan 018 (design decision 8): the
@@ -284,7 +293,7 @@ function buildModel(context: BrevoEmailTemplateContext): EmailModel {
     const price = new Intl.NumberFormat(formatLocale, { style: 'currency', currency: config.business.currency.toUpperCase() }).format(booking.priceCents / 100);
     const card: EmailCardRow[] = [
       { label: copy('label.date'), valueHtml: `<strong>${escapeHtml(`${dateLong}, ${time}`)}</strong>`, valueText: `${dateLong}, ${time}` },
-      { label: copy('label.guests'), valueHtml: `<strong>${booking.people}</strong>`, valueText: String(booking.people) },
+      guestsRow,
       { label: copy('label.paid'), valueHtml: `<strong>${escapeHtml(price)}</strong>`, valueText: price },
       ...pickupRows,
       ...(booking.customerEmail ? [{ label: copy('label.email'), valueHtml: `<a href="mailto:${escapeHtml(booking.customerEmail)}" style="color:inherit;">${escapeHtml(booking.customerEmail)}</a>`, valueText: booking.customerEmail }] : []),
@@ -309,7 +318,7 @@ function buildModel(context: BrevoEmailTemplateContext): EmailModel {
     ? [
         { label: copy('label.date'), valueHtml: `<strong>${escapeHtml(dateLong)}</strong>`, valueText: dateLong },
         { label: copy('label.time'), valueHtml: `<strong>${escapeHtml(time)}</strong>`, valueText: time },
-        { label: copy('label.guests'), valueHtml: `<strong>${booking.people}</strong>`, valueText: String(booking.people) },
+        guestsRow,
         ...pickupRows,
       ]
     : [];
