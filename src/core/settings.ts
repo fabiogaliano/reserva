@@ -6,7 +6,9 @@ import { minorUnitDigits, minorUnitFactor } from './currency.js';
 // merged over the file config per request. A row equal to the file value is deleted, so a later
 // config-file edit still takes effect for anything the operator never touched.
 
-export type SettingValue = string | number | boolean | null;
+// `number[]` is here for the one setting shape that isn't scalar: a schedule rule's weekdays.
+// Every producer keeps it sorted so the JSON comparison in settingValuesEqual stays meaningful.
+export type SettingValue = string | number | boolean | null | number[];
 
 export type SettingSection = 'policy' | 'hours' | 'pricing' | 'capacity' | 'contact' | 'legal';
 
@@ -24,13 +26,19 @@ export type SettingKind =
   | { type: 'time' }
   // Stored (and set on the config) as the integer minor-unit amount config itself holds; only the
   // form representation is in major units, so a currency change never rewrites stored rows.
-  | { type: 'money'; currency: string };
+  | { type: 'money'; currency: string }
+  // A sorted, deduplicated set of weekday indices (0 = Sunday), at least one, as scheduleSchema
+  // takes them.
+  | { type: 'days' };
 
 // Which schedule rule a service-hours definition belongs to; the settings page turns it into a
 // human heading (service title, weekdays, season) instead of exposing the raw slug/index key.
 export interface ScheduleRuleGroup {
   serviceSlug: string;
   serviceTitle: string;
+  ruleIndex: number;
+  // The rule as the file config declares it; the page reads the effective rule for the heading so
+  // it agrees with the fields below it once days have been overridden.
   rule: ScheduleRule;
 }
 
@@ -174,16 +182,16 @@ export const settingSections: readonly SettingSection[] = ['policy', 'hours', 'p
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-// First/last departure per service schedule rule. Services are deploy-time (their set can't change
-// from the admin) but their hours are a daily dial, so definitions are generated from the file
-// config rather than listed statically. Keys mirror the config path so validateConfig's issue
-// paths attribute a rejected merge to the row that caused it.
+// First/last departure, departure interval and weekdays per service schedule rule. Services are
+// deploy-time (their set can't change from the admin) but their hours are a daily dial, so
+// definitions are generated from the file config rather than listed statically. Keys mirror the
+// config path so validateConfig's issue paths attribute a rejected merge to the row that caused it.
 function scheduleRuleDefinitions(config: ResolvedClientConfig): SettingDefinition[] {
   const definitions: SettingDefinition[] = [];
   for (const [slug, service] of Object.entries(config.services)) {
     service.schedule.forEach((rule, index) => {
       const prefix = `services.${slug}.schedule.${index}`;
-      const scheduleRule: ScheduleRuleGroup = { serviceSlug: slug, serviceTitle: service.title ?? slug, rule };
+      const scheduleRule: ScheduleRuleGroup = { serviceSlug: slug, serviceTitle: service.title ?? slug, ruleIndex: index, rule };
       const ruleOf = (target: ResolvedClientConfig): ScheduleRule | undefined => target.services[slug]?.schedule[index];
       definitions.push(
         {
@@ -197,6 +205,19 @@ function scheduleRuleDefinitions(config: ResolvedClientConfig): SettingDefinitio
           kind: { type: 'time' },
           get: (target) => ruleOf(target)?.lastStart ?? null,
           set: (target, value) => { const found = ruleOf(target); if (found) found.lastStart = value as string; },
+        },
+        {
+          key: `${prefix}.intervalMin`, section: 'hours', labelKey: 'setting.intervalMin', groupKey: prefix, scheduleRule,
+          // Ceiling mirrors validateConfig: a gap longer than a day can never produce a slot.
+          kind: { type: 'int', min: 1, max: 1440 },
+          get: (target) => ruleOf(target)?.intervalMin ?? null,
+          set: (target, value) => { const found = ruleOf(target); if (found) found.intervalMin = value as number; },
+        },
+        {
+          key: `${prefix}.days`, section: 'hours', labelKey: 'setting.days', groupKey: prefix, scheduleRule,
+          kind: { type: 'days' },
+          get: (target) => ruleOf(target)?.days ?? null,
+          set: (target, value) => { const found = ruleOf(target); if (found) found.days = value as number[]; },
         },
       );
     });
@@ -227,8 +248,8 @@ function pricingRuleDefinitions(config: ResolvedClientConfig): SettingDefinition
   return definitions;
 }
 
-// The complete definition list for a deployment: the static dials plus one first/last departure
-// pair per schedule rule and one amount per pricing tier of every configured service. Pass the file
+// The complete definition list for a deployment: the static dials plus the hours, interval and days
+// of every schedule rule and one amount per pricing tier of every configured service. Pass the file
 // config so the set of services (and therefore of keys) is the same on the load path, the save
 // path, and the rendered page.
 export function settingDefinitionsFor(config: ResolvedClientConfig): SettingDefinition[] {
@@ -270,6 +291,12 @@ function decodeStoredValue(definition: SettingDefinition, raw: unknown): Setting
       return typeof raw === 'string' && TIME_PATTERN.test(raw) ? raw : undefined;
     case 'money':
       return typeof raw === 'number' && Number.isInteger(raw) && raw >= 0 ? raw : undefined;
+    case 'days': {
+      if (!Array.isArray(raw) || raw.length === 0) return undefined;
+      const valid = raw.every((day) => typeof day === 'number' && Number.isInteger(day) && day >= 0 && day <= 6);
+      if (!valid || new Set(raw).size !== raw.length) return undefined;
+      return [...(raw as number[])].sort((a, b) => a - b);
+    }
   }
 }
 
@@ -390,6 +417,17 @@ interface FormLike {
 export function parseSettingForm(definition: SettingDefinition, form: FormLike): SettingValue {
   const kind = definition.kind;
   if (kind.type === 'boolean') return form.get(definition.key) !== null;
+  if (kind.type === 'days') {
+    const days: number[] = [];
+    for (const entry of form.getAll(definition.key)) {
+      const text = typeof entry === 'string' ? entry.trim() : '';
+      if (!/^[0-6]$/.test(text)) throw new SettingParseError(`${definition.key}: each day must be a number from 0 (Sunday) to 6`);
+      const day = Number(text);
+      if (!days.includes(day)) days.push(day);
+    }
+    if (days.length === 0) throw new SettingParseError(`${definition.key}: select at least one day`);
+    return days.sort((a, b) => a - b);
+  }
   const raw = form.get(definition.key);
   const text = typeof raw === 'string' ? raw.trim() : '';
   if (text === '') {
@@ -444,6 +482,8 @@ export function parseSettingForm(definition: SettingDefinition, form: FormLike):
   }
 }
 
+// Order-sensitive by construction: every path that produces a day list sorts it first, so two
+// equal sets always serialize identically.
 export function settingValuesEqual(a: SettingValue, b: SettingValue): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }

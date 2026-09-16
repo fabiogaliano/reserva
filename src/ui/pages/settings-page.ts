@@ -51,14 +51,17 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
   // 2024-01-07 is a Sunday, so day index 0..6 (config convention: 0 = Sunday) maps onto it directly.
   const weekdayName = (day: number): string =>
     new Intl.DateTimeFormat(locale, { weekday: 'short', timeZone: 'UTC' }).format(new Date(Date.UTC(2024, 0, 7 + day)));
+  // Monday-first, the way a week is read here; the config's own indices stay 0 = Sunday.
+  const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
+  const dayNames = (days: readonly number[]): string =>
+    days.length === 7 ? messages['settingGroup.everyDay'] : [...days].sort((a, b) => a - b).map(weekdayName).join(', ');
   const monthDayName = (monthDay: string): string => {
     const [month = 1, day = 1] = monthDay.split('-').map(Number);
     return new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(Date.UTC(2024, month - 1, day)));
   };
-  const scheduleRuleHeading = ({ serviceTitle, rule }: ScheduleRuleGroup): string => {
-    const days = rule.days.length === 7
-      ? messages['settingGroup.everyDay']
-      : [...rule.days].sort((a, b) => a - b).map(weekdayName).join(', ');
+  const scheduleRuleHeading = ({ serviceTitle, serviceSlug, ruleIndex, rule: fileRule }: ScheduleRuleGroup): string => {
+    const rule = context.config.services[serviceSlug]?.schedule[ruleIndex] ?? fileRule;
+    const days = dayNames(rule.days);
     return rule.from || rule.to
       ? formatMessage(messages['settingGroup.scheduleRuleSeason'], { service: serviceTitle, days, from: monthDayName(rule.from ?? '01-01'), to: monthDayName(rule.to ?? '12-31') })
       : formatMessage(messages['settingGroup.scheduleRule'], { service: serviceTitle, days });
@@ -76,6 +79,7 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
   const majorUnits = (value: number, currency: string): string =>
     toMajorUnits(value, currency).toFixed(minorUnitDigits(currency));
   const displayValue = (definition: SettingDefinition, value: SettingValue): string => {
+    if (Array.isArray(value)) return dayNames(value);
     if (value === null) return messages['admin.none'];
     if (typeof value === 'boolean') return value ? messages['admin.on'] : messages['admin.off'];
     if (definition.kind.type === 'money') return majorUnits(value as number, definition.kind.currency);
@@ -97,6 +101,12 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
     const kind = definition.kind;
     if (kind.type === 'boolean') {
       return `<div class="bk-setting"><label class="bk-switch"><input type="checkbox" name="${escapeHtml(definition.key)}"${effective ? ' checked' : ''}><span>${escapeHtml(label)}</span></label>${help}${modified}</div>`;
+    }
+    if (kind.type === 'days') {
+      const selected = Array.isArray(effective) ? effective : [];
+      const boxes = WEEKDAY_ORDER.map((day) =>
+        `<label class="bk-check"><input type="checkbox" name="${escapeHtml(definition.key)}" value="${day}"${selected.includes(day) ? ' checked' : ''}><span>${escapeHtml(weekdayName(day))}</span></label>`).join('');
+      return `<div class="bk-setting"><fieldset class="bk-fieldset"><legend>${escapeHtml(label)}</legend><div class="bk-days">${boxes}</div></fieldset>${help}${modified}</div>`;
     }
     const inputType = kind.type === 'int' || kind.type === 'number' || kind.type === 'money' ? 'number' : kind.type === 'email' ? 'email' : kind.type === 'url' ? 'url' : kind.type === 'time' ? 'time' : 'text';
     const moneyStep = kind.type === 'money' ? (minorUnitDigits(kind.currency) === 0 ? '1' : `0.${'0'.repeat(minorUnitDigits(kind.currency) - 1)}1`) : '';

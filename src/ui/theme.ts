@@ -781,6 +781,9 @@ export const themeCss = `
 .bk-check input:focus-visible { outline: none; box-shadow: var(--bk-focus); border-radius: 2px; }
 .bk-fieldset { border: 0; margin: 0; padding: 0; }
 .bk-fieldset legend { font-size: 0.85rem; font-weight: 500; margin-bottom: 0.3rem; padding: 0; }
+/* Seven weekday toggles read as one row rather than a seven-item stack. */
+.bk-days { display: flex; flex-wrap: wrap; gap: 0 1rem; }
+.bk-days .bk-check { min-height: 2.25rem; }
 
 .bk-switch { display: flex; align-items: center; gap: 0.6rem; min-height: 2.75rem; font-size: 0.92rem; font-weight: 500; cursor: pointer; }
 .bk-switch input {

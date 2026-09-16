@@ -576,7 +576,7 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     expect(repo.settings.has('booking.holdMinutes')).toBe(false);
   });
 
-  it('renders an opening-hours tab with a time input per schedule rule and saves it', async () => {
+  it('renders an opening-hours tab with the departures, interval and days of each schedule rule and saves them', async () => {
     const repo = fakeRepository();
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const body = await (await handleAdminGet(settingsGetRequest(), context)).text();
@@ -584,20 +584,43 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     expect(body).toContain('<h3 class="bk-setting-group">vintage · Every day</h3>');
     expect(body).toContain('type="time" name="services.vintage.schedule.0.firstStart" value="09:00" required');
     expect(body).toContain('type="time" name="services.vintage.schedule.0.lastStart" value="12:00" required');
+    expect(body).toContain('name="services.vintage.schedule.0.intervalMin" value="30" min="1" max="1440" step="1" required');
+    // Seven weekday checkboxes, Monday first, all ticked for the fixture's every-day rule.
+    for (const [day, name] of [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat'], [0, 'Sun']] as const) {
+      expect(body).toContain(`<input type="checkbox" name="services.vintage.schedule.0.days" value="${day}" checked><span>${name}</span>`);
+    }
+    expect(body.indexOf('value="1" checked')).toBeLessThan(body.indexOf('value="0" checked'));
 
-    const save = await handleAdminPost(adminPostRequest({
-      action: 'settings-save', section: 'hours',
-      'services.vintage.schedule.0.firstStart': '10:00', 'services.vintage.schedule.0.lastStart': '12:00',
-    }), context);
+    const save = await handleAdminPost(adminPostRequest([
+      ['action', 'settings-save'], ['section', 'hours'],
+      ['services.vintage.schedule.0.firstStart', '10:00'], ['services.vintage.schedule.0.lastStart', '12:00'],
+      ['services.vintage.schedule.0.intervalMin', '45'],
+      ['services.vintage.schedule.0.days', '2'], ['services.vintage.schedule.0.days', '1'],
+      ['services.vintage.schedule.0.days', '5'], ['services.vintage.schedule.0.days', '4'],
+      ['services.vintage.schedule.0.days', '3'],
+    ]), context);
     expect(save.status).toBe(303);
     expect(repo.settings.get('services.vintage.schedule.0.firstStart')).toBe('"10:00"');
     expect(repo.settings.has('services.vintage.schedule.0.lastStart')).toBe(false);
+    expect(repo.settings.get('services.vintage.schedule.0.intervalMin')).toBe('45');
+    // Stored sorted, whatever order the checkboxes arrive in.
+    expect(repo.settings.get('services.vintage.schedule.0.days')).toBe('[1,2,3,4,5]');
+
+    // A rule with no day ticked is rejected at parse time, before the merged config is validated.
+    const noDays = await handleAdminPost(adminPostRequest({
+      action: 'settings-save', section: 'hours',
+      'services.vintage.schedule.0.firstStart': '10:00', 'services.vintage.schedule.0.lastStart': '12:00',
+      'services.vintage.schedule.0.intervalMin': '30',
+    }), context);
+    expect(noDays.status).toBe(400);
+    await expect(noDays.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('select at least one day') } });
 
     // Cross-field rule from validateConfig surfaces as a 400 naming the rule.
-    const inverted = await handleAdminPost(adminPostRequest({
-      action: 'settings-save', section: 'hours',
-      'services.vintage.schedule.0.firstStart': '13:00', 'services.vintage.schedule.0.lastStart': '12:00',
-    }), context);
+    const inverted = await handleAdminPost(adminPostRequest([
+      ['action', 'settings-save'], ['section', 'hours'],
+      ['services.vintage.schedule.0.firstStart', '13:00'], ['services.vintage.schedule.0.lastStart', '12:00'],
+      ['services.vintage.schedule.0.intervalMin', '30'], ['services.vintage.schedule.0.days', '1'],
+    ]), context);
     expect(inverted.status).toBe(400);
     await expect(inverted.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('firstStart must not be after lastStart') } });
 

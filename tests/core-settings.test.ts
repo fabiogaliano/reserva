@@ -166,13 +166,18 @@ describe('merge-then-validate backstop', () => {
   });
 });
 
-describe('service opening hours (per schedule rule first/last departure)', () => {
+describe('service opening hours (per schedule rule departures, interval and days)', () => {
   const FIRST = 'services.vintage.schedule.0.firstStart';
   const LAST = 'services.vintage.schedule.0.lastStart';
+  const INTERVAL = 'services.vintage.schedule.0.intervalMin';
+  const DAYS = 'services.vintage.schedule.0.days';
 
-  it('generates one first/last departure pair per schedule rule, in the hours section', () => {
+  it('generates the four editable fields of each schedule rule, in the hours section', () => {
     const hours = settingDefinitionsFor(config).filter((entry) => entry.section === 'hours');
-    expect(hours.map((entry) => entry.key)).toEqual([FIRST, LAST]);
+    expect(hours.map((entry) => entry.key)).toEqual([FIRST, LAST, INTERVAL, DAYS]);
+    // One heading per rule: every field of a rule shares its group and rule metadata.
+    expect(hours.every((entry) => entry.groupKey === 'services.vintage.schedule.0')).toBe(true);
+    expect(hours.every((entry) => entry.scheduleRule?.serviceSlug === 'vintage')).toBe(true);
     expect(hours[0]?.scheduleRule).toMatchObject({ serviceSlug: 'vintage', rule: config.services.vintage?.schedule[0] });
     // The static list stays free of per-deployment keys.
     expect(settingDefinitions.some((entry) => entry.section === 'hours')).toBe(false);
@@ -201,6 +206,45 @@ describe('service opening hours (per schedule rule first/last departure)', () =>
   it('save path rejects a first departure after the last departure', () => {
     expect(() => mergeAndValidateSettings(config, { [FIRST]: '"14:00"' })).toThrow(SettingsMergeError);
     expect(mergeAndValidateSettings(config, { [FIRST]: '"11:00"' }).services.vintage?.schedule[0]?.firstStart).toBe('11:00');
+  });
+
+  it('applies a stored interval and day set, sorting the days', () => {
+    const merged = applySettingOverrides(config, { [INTERVAL]: '45', [DAYS]: '[5,1,0]' });
+    expect(merged.services.vintage?.schedule[0]?.intervalMin).toBe(45);
+    expect(merged.services.vintage?.schedule[0]?.days).toEqual([0, 1, 5]);
+    expect(config.services.vintage?.schedule[0]?.days).toEqual([0, 1, 2, 3, 4, 5, 6]);
+  });
+
+  it('ignores stored day sets that are empty, out of range, duplicated, or not an array', () => {
+    for (const bad of ['[]', '[7]', '[-1]', '[1,1]', '[1.5]', '["1"]', '"1,2"', 'null']) {
+      const merged = applySettingOverrides(config, { [DAYS]: bad });
+      expect(merged.services.vintage?.schedule[0]?.days).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    }
+  });
+
+  it('ignores stored intervals outside 1..1440', () => {
+    for (const bad of ['0', '-30', '1441', '30.5', '"30"']) {
+      const merged = applySettingOverrides(config, { [INTERVAL]: bad });
+      expect(merged.services.vintage?.schedule[0]?.intervalMin).toBe(30);
+    }
+  });
+
+  it('parses the day checkboxes into a sorted, deduplicated set and rejects anything else', () => {
+    expect(parseSettingForm(definition(DAYS), form({ [DAYS]: ['5', '1', '1', '0'] }))).toEqual([0, 1, 5]);
+    expect(parseSettingForm(definition(DAYS), form({ [DAYS]: '3' }))).toEqual([3]);
+    // No box ticked at all: the form field is absent, which must fail before validateConfig sees it.
+    expect(() => parseSettingForm(definition(DAYS), form({}))).toThrow(SettingParseError);
+    for (const bad of [['7'], ['x'], [''], ['1', '9']]) {
+      expect(() => parseSettingForm(definition(DAYS), form({ [DAYS]: bad }))).toThrow(SettingParseError);
+    }
+  });
+
+  it('parses the interval within its bounds and rejects anything else', () => {
+    expect(parseSettingForm(definition(INTERVAL), form({ [INTERVAL]: '45' }))).toBe(45);
+    expect(parseSettingForm(definition(INTERVAL), form({ [INTERVAL]: '1440' }))).toBe(1440);
+    for (const bad of ['0', '-1', '1441', '30.5', '', 'half an hour']) {
+      expect(() => parseSettingForm(definition(INTERVAL), form({ [INTERVAL]: bad }))).toThrow(SettingParseError);
+    }
   });
 
   it('load path drops only the hours rows behind an invalid rule and keeps the rest', () => {
