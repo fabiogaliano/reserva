@@ -7,8 +7,8 @@ declare module 'virtual:reserva/runtime' {
 }
 
 declare module 'virtual:reserva/config' {
-  import type { ReservaResolvedRouteConfig } from './routes-manifest';
+  import type { ReservaVirtualConfig } from './routes-manifest';
 
-  const routeConfig: ReservaResolvedRouteConfig;
-  export default routeConfig;
+  const virtualConfig: ReservaVirtualConfig;
+  export default virtualConfig;
 }

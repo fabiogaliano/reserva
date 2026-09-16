@@ -1,9 +1,10 @@
 ---
-import routeConfig from 'virtual:reserva/config';
+import virtualConfig from 'virtual:reserva/config';
 // This example lives inside the Reserva repository, so it reads the library from source; a real
 // consumer imports the same names from '@reservajs/astro/ui' and '@reservajs/astro/core'. The
 // widget itself is example code — Reserva ships no customer booking funnel.
 import { defaultLocale, formatMessage, resolveMessages, type ReservaMessages } from '../../../../src/ui/messages';
+import { resolveWidgetMessages, type WidgetMessages } from './widget-messages';
 import './booking-widget.css';
 
 interface StartOption {
@@ -29,16 +30,16 @@ interface Props {
   contactEmail?: string;
   contactPhone?: string;
   // Partial overrides merged over the catalog selected by `locale`.
-  messages?: Partial<ReservaMessages>;
+  messages?: Partial<ReservaMessages & WidgetMessages>;
   showTitle?: boolean;
 }
 
 const {
   serviceSlug,
-  checkoutEndpoint = routeConfig.paths.checkout,
-  availabilityEndpoint = routeConfig.paths.availability,
-  catalogEndpoint = routeConfig.paths.catalog,
-  quoteEndpoint = routeConfig.paths.quote,
+  checkoutEndpoint = virtualConfig.routes.paths.checkout,
+  availabilityEndpoint = virtualConfig.routes.paths.availability,
+  catalogEndpoint = virtualConfig.routes.paths.catalog,
+  quoteEndpoint = virtualConfig.routes.paths.quote,
   availabilityFrom,
   availabilityTo,
   locale = defaultLocale,
@@ -50,7 +51,13 @@ const {
   showTitle = true,
 } = Astro.props;
 
-const t: ReservaMessages = { ...resolveMessages(undefined, locale), ...messageOverrides };
+// Library keys (shared vocabulary like `common.price`) plus the widget's own catalog, which lives
+// in this example rather than in Reserva: the library ships no booking funnel.
+const t: ReservaMessages & WidgetMessages = {
+  ...resolveMessages(undefined, locale),
+  ...resolveWidgetMessages(locale),
+  ...messageOverrides,
+};
 const usesAvailability = availabilityFrom !== undefined && availabilityTo !== undefined;
 const quantityLabel = (n: number): string => formatMessage(n === 1 ? t['widget.person'] : t['widget.quantityCount'], { n });
 
@@ -151,7 +158,7 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
   {/* The service's location axes are filled in from the catalog by
       the script below (see renderLocation), the way slots are filled in from availability — a
       location-less service leaves both anchors empty, so the submitted FormData carries no
-      pickupType/meetingPointId at all (checkout rejects the fields' mere presence for such a
+      pickup/meetingPointId at all (checkout rejects the fields' mere presence for such a
       service). */}
   <div data-reserva-pickup-slot></div>
   <div data-reserva-meeting-point-slot></div>
@@ -210,18 +217,16 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
 <script>
   import 'cally';
   import { toMajorUnits } from '../../../../src/core/index';
-  // This example reads the same exported wire types every consumer does — if a response shape
-  // changes without this component following, it fails to compile here rather than at a
-  // customer's browser.
-  import type {
-    ApiErrorEnvelope,
-    AvailabilityDay,
-    AvailabilityResponse,
-    CatalogResponse,
-    CatalogService,
-    CheckoutResponse,
-    QuoteResponse,
-  } from '../../../../src/core/index';
+  // Every request goes through the typed client, so the widget carries no URL assembly, no
+  // response narrowing and no error-envelope handling of its own; a real consumer imports the
+  // same names from '@reservajs/astro/client'.
+  import {
+    createReservaClient,
+    firstOpenDay,
+    isDayDisallowed,
+    type ReservaClient,
+  } from '../../../../src/client/index';
+  import type { AvailabilityDay, CatalogService, CheckoutRequest } from '../../../../src/core/index';
 
   interface CalendarDateElement extends HTMLElement {
     value: string;
@@ -229,10 +234,28 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     isDateDisallowed: (date: Date) => boolean;
   }
 
-  type Fallible<T> = Partial<T> & Partial<ApiErrorEnvelope>;
   interface WidgetData {
     locale: string;
     i18n: Record<string, string>;
+  }
+
+  // One client per instance: each widget carries its own endpoint dataset (a page can embed two
+  // widgets pointed at different mounts), and the client is the only thing that touches the wire.
+  const clients = new WeakMap<HTMLFormElement, ReservaClient>();
+  function clientFor(form: HTMLFormElement): ReservaClient {
+    const existing = clients.get(form);
+    if (existing) return existing;
+    const { endpoint, availabilityEndpoint, catalogEndpoint, quoteEndpoint } = form.dataset;
+    const client = createReservaClient({
+      paths: {
+        ...(endpoint ? { checkout: endpoint } : {}),
+        ...(availabilityEndpoint ? { availability: availabilityEndpoint } : {}),
+        ...(catalogEndpoint ? { catalog: catalogEndpoint } : {}),
+        ...(quoteEndpoint ? { quote: quoteEndpoint } : {}),
+      },
+    });
+    clients.set(form, client);
+    return client;
   }
 
   function readData(form: HTMLFormElement): WidgetData {
@@ -273,35 +296,28 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     const endpoint = form.dataset.quoteEndpoint;
     if (!target || !endpoint) return;
     const formData = new FormData(form);
-    const pickup = formData.get('pickupType');
+    const pickup = formData.get('pickup');
     const generation = (quoteState.get(form) ?? 0) + 1;
     quoteState.set(form, generation);
     try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          serviceSlug: String(formData.get('serviceSlug') ?? ''),
-          quantity: Number(formData.get('quantity')),
-          ...(pickup === null ? {} : { pickup: String(pickup) }),
-          locale: data.locale,
-        }),
+      const result = await clientFor(form).quote({
+        serviceSlug: String(formData.get('serviceSlug') ?? ''),
+        quantity: Number(formData.get('quantity')),
+        ...(pickup === null ? {} : { pickup: String(pickup) }),
       });
-      const result = await response.json() as Fallible<QuoteResponse>;
       if (quoteState.get(form) !== generation) return;
+      target.textContent = new Intl.NumberFormat(data.locale, { style: 'currency', currency: result.currency })
+        .format(toMajorUnits(result.priceMinor, result.currency));
+    } catch {
       // A quote the server won't give (an unsupported party size, say) blanks the price rather than
       // showing a stale one; the submit path surfaces the real error if the visitor books anyway.
-      target.textContent = response.ok && result.priceMinor !== undefined && result.currency !== undefined
-        ? new Intl.NumberFormat(data.locale, { style: 'currency', currency: result.currency }).format(toMajorUnits(result.priceMinor, result.currency))
-        : '';
-    } catch {
       if (quoteState.get(form) === generation) target.textContent = '';
     }
   }
 
   // The pickup and meeting-point groups are rendered from the deployment's catalog, so their ids,
   // labels, hints and usesMeetingPoint flags can't drift from what checkout accepts. A service
-  // with no location module leaves both anchors empty: no pickupType field is submitted at all.
+  // with no location module leaves both anchors empty: no pickup field is submitted at all.
   function pickupBody(label: string, hint: string | null): HTMLSpanElement {
     const body = document.createElement('span');
     body.className = 'bkw-pickup-body';
@@ -353,12 +369,12 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
       // radios do so syncMeetingPoints reads one thing in both shapes.
       const hidden = document.createElement('input');
       hidden.type = 'hidden';
-      hidden.name = 'pickupType';
+      hidden.name = 'pickup';
       hidden.value = pickupOptions[0]!.id;
       hidden.dataset.usesMeetingPoint = String(pickupOptions[0]!.usesMeetingPoint);
       pickupSlot.append(hidden);
     } else if (pickupSlot && pickupOptions.length > 1) {
-      pickupSlot.append(radioGroup(data.i18n.pickup ?? '', 'pickupType', pickupOptions.map((option) => ({
+      pickupSlot.append(radioGroup(data.i18n.pickup ?? '', 'pickup', pickupOptions.map((option) => ({
         value: option.id,
         label: option.label,
         hint: option.hint,
@@ -384,8 +400,8 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
   function syncMeetingPoints(form: HTMLFormElement): void {
     const wrap = form.querySelector<HTMLElement>('[data-reserva-meeting-points]');
     if (!wrap) return;
-    const selected = form.querySelector<HTMLInputElement>('input[name="pickupType"]:checked')
-      ?? form.querySelector<HTMLInputElement>('input[name="pickupType"]');
+    const selected = form.querySelector<HTMLInputElement>('input[name="pickup"]:checked')
+      ?? form.querySelector<HTMLInputElement>('input[name="pickup"]');
     const hide = selected?.dataset.usesMeetingPoint !== 'true';
     wrap.hidden = hide;
     for (const input of wrap.querySelectorAll<HTMLInputElement>('input[name="meetingPointId"]')) {
@@ -394,11 +410,8 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
   }
 
   async function loadCatalog(form: HTMLFormElement, data: WidgetData): Promise<void> {
-    const endpoint = form.dataset.catalogEndpoint;
-    if (!endpoint) throw new Error('Booking form is missing its catalog endpoint');
-    const response = await fetch(`${endpoint}?locale=${encodeURIComponent(data.locale)}`);
-    const result = await response.json() as Fallible<CatalogResponse>;
-    if (!response.ok || !result.services) throw new Error(result.error?.message ?? 'Catalog unavailable');
+    if (!form.dataset.catalogEndpoint) throw new Error('Booking form is missing its catalog endpoint');
+    const result = await clientFor(form).catalog({ locale: data.locale });
     const slug = String(new FormData(form).get('serviceSlug') ?? '');
     const service = result.services.find((entry) => entry.slug === slug);
     // A slug this deployment doesn't serve is an embedding mistake, not a runtime condition: fail
@@ -406,10 +419,6 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     // every submission would 404.
     if (!service) throw new Error(`Service "${slug}" is not in this deployment's catalog`);
     renderLocation(form, service, data);
-  }
-
-  function dateKey(date: Date): string {
-    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
   }
 
   function calStatus(form: HTMLFormElement, text: string): void {
@@ -448,7 +457,7 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
       if (index === 0) input.checked = true;
       const time = document.createElement('span');
       time.className = 'bkw-slot-time';
-      time.textContent = slot.start.slice(11, 16);
+      time.textContent = slot.time;
       label.append(input, time);
       // The server gates the exact count against the deployment's own limitedThreshold, so a
       // non-null `remaining` IS the scarce case — the widget re-applies no threshold of its own.
@@ -475,12 +484,6 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     const calendar = form.querySelector<CalendarDateElement>('[data-reserva-calendar]');
     if (!availabilityEndpoint || !availabilityFrom || !availabilityTo || !calendar) return;
     const formData = new FormData(form);
-    const query = new URLSearchParams({
-      service: String(formData.get('serviceSlug') ?? ''),
-      quantity: String(formData.get('quantity') ?? ''),
-      from: availabilityFrom,
-      to: availabilityTo,
-    });
     const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
 
     // Fired from initial load, every party-size change, retry click, and post-checkout failure.
@@ -498,20 +501,22 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     calStatus(form, data.i18n.loadingSlots ?? '');
     if (!keepError) clearError(form);
     try {
-      const response = await fetch(`${availabilityEndpoint}?${query}`, { cache: 'no-store', signal: controller.signal });
-      const result = await response.json() as Fallible<AvailabilityResponse>;
+      const result = await clientFor(form).availability({
+        serviceSlug: String(formData.get('serviceSlug') ?? ''),
+        quantity: Number(formData.get('quantity') ?? 1),
+        from: availabilityFrom,
+        to: availabilityTo,
+      }, { signal: controller.signal });
       // Superseded by a newer party-size/retry request while this one was in flight — its result
       // is stale by definition (see the class comment above), so discard it without touching any
       // UI a newer, possibly-already-rendered request now owns.
       if (!isCurrent()) return;
-      if (!response.ok || !result.days) throw new Error(result.error?.message ?? data.i18n.errorAvailability);
       const days = new Map(result.days.map((day) => [day.date, day]));
       // Reassigning the property re-renders the month grid, so sold-out/closed days grey out as
       // soon as availability (or the party size, which changes it) arrives.
-      calendar.isDateDisallowed = (date) => (days.get(dateKey(date))?.slots.length ?? 0) === 0;
-      const openDays = result.days.filter((day) => day.slots.length > 0);
+      calendar.isDateDisallowed = isDayDisallowed(result);
       const current = days.get(calendar.value);
-      const selected = current && current.slots.length > 0 ? current : openDays[0];
+      const selected = current && current.slots.length > 0 ? current : firstOpenDay(result);
       if (selected) {
         calendar.value = selected.date;
         calendar.focusedDate = selected.date;
@@ -559,7 +564,7 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
       void updatePrice(form, data);
       void loadAvailability(form, data);
     });
-    for (const pickup of form.querySelectorAll<HTMLInputElement>('input[name="pickupType"]')) {
+    for (const pickup of form.querySelectorAll<HTMLInputElement>('input[name="pickup"]')) {
       pickup.addEventListener('change', () => {
         void updatePrice(form, data);
         syncMeetingPoints(form);
@@ -574,20 +579,20 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       const formData = new FormData(form);
-      const payload: Record<string, unknown> = {
+      const payload: CheckoutRequest = {
         serviceSlug: String(formData.get('serviceSlug') ?? ''),
         start: String(formData.get('start') ?? ''),
         quantity: Number(formData.get('quantity')),
         locale: String(formData.get('locale') ?? ''),
       };
-      // A location-less service renders no pickupType field at all (see renderLocation above) —
+      // A location-less service renders no pickup field at all (see renderLocation above) —
       // omit it from the payload rather than sending an empty string, which checkout rejects as a
       // present-but-unsupported field.
-      const pickupType = formData.get('pickupType');
-      if (pickupType !== null) payload.pickupType = String(pickupType);
-      // A disabled meeting-point group (pickupType 'custom', or no such group at all for a
-      // single-point service) naturally drops out of FormData — follow that rather than sending
-      // an empty string the server would reject as an unknown id.
+      const pickup = formData.get('pickup');
+      if (pickup !== null) payload.pickup = String(pickup);
+      // A disabled meeting-point group (an option that uses no meeting point, or no such group at
+      // all for a single-point service) naturally drops out of FormData — follow that rather than
+      // sending an empty string the server would reject as an unknown id.
       const meetingPointId = formData.get('meetingPointId');
       if (meetingPointId !== null) payload.meetingPointId = String(meetingPointId);
       const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
@@ -602,13 +607,7 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
           submit.disabled = true;
           submit.textContent = data.i18n.submitting ?? idleLabel;
         }
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        const result = await response.json() as Fallible<CheckoutResponse>;
-        if (!response.ok || !result.checkoutUrl) throw new Error(result.error?.message ?? data.i18n.errorCheckout);
+        const result = await clientFor(form).checkout(payload);
         window.location.assign(result.checkoutUrl);
       } catch (cause) {
         if (submit) {

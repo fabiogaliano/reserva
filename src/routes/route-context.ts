@@ -1,5 +1,5 @@
 import runtime from 'virtual:reserva/runtime';
-import routeConfig from 'virtual:reserva/config';
+import virtualConfig from 'virtual:reserva/config';
 import type { ReservaContext } from '../context.js';
 import { loadMergedConfig } from '../core/settings.js';
 import { readThemePreference } from '../ui/theme.js';
@@ -9,6 +9,7 @@ import type { ReservaRuntimeRequest } from '../runtime-context.js';
 // independently of routePrefix/routes, so it has no way to know about them. This seam overwrites
 // the default routeConfig with the real per-build one, so no entrypoint can render a half-prefixed URL.
 export async function createRouteContext(input: ReservaRuntimeRequest): Promise<ReservaContext> {
+  const routeConfig = virtualConfig.routes;
   const context = await runtime.createContext(input);
   // The viewer's theme choice rides on the request cookie, resolved here so every page renders
   // <html data-theme> without an inline script (strict CSP).

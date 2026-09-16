@@ -6,10 +6,68 @@ import {
   dispatchMutation,
   runOwedMutationSideEffects,
 } from '../confirmation.js';
+import type { Booking } from '../core/booking.js';
+import type { PaymentEventParsed } from '../core/events.js';
 import type { ReservaContext } from '../context.js';
 import { nowIso } from '../context.js';
 import { HttpError, json } from '../http.js';
+import { attemptRefund } from '../refund-executor.js';
 import { run } from './shared.js';
+
+// Reserva does not support delayed payment methods (vouchers, bank debits): their money arrives
+// days after the capacity hold dies. Releasing the hold and cancelling the payment is everything
+// this path can do synchronously; `async_payment_succeeded` below covers the money that still lands.
+async function refuseDelayedPayment(context: ReservaContext, booking: Booking, event: PaymentEventParsed): Promise<void> {
+  await context.repo.expireHold(booking.id, nowIso(context));
+  await cancelPaymentBestEffort(context, event.paymentRef ?? booking.paymentRef ?? null, booking.id);
+  context.logger.warn?.('delayed payment method refused', {
+    eventId: event.id, bookingId: booking.id, paymentStatus: event.paymentStatus,
+  });
+}
+
+// Never lets a cancellation problem fail the webhook: the customer's booking is already refused
+// either way, and a payment that cannot be cancelled is refunded when it settles.
+async function cancelPaymentBestEffort(context: ReservaContext, paymentRef: string | null, bookingId: string): Promise<void> {
+  const cancel = context.providers.payments.cancelPayment;
+  if (!paymentRef || !cancel) {
+    context.logger.error?.('cannot cancel refused payment', { bookingId, reason: paymentRef ? 'provider has no cancelPayment' : 'no payment reference' });
+    return;
+  }
+  try {
+    await cancel.call(context.providers.payments, paymentRef);
+  } catch (error) {
+    context.logger.error?.('cancel refused payment failed', { bookingId, error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+// Records the refund as a durable refund_operations row FIRST, so a failed provider call is picked
+// up by the ordinary refund retry loop and its incident projection rather than needing a bespoke
+// "refund manually" alert. The booking stays expired: it was never confirmed.
+async function refundRefusedDelayedPayment(context: ReservaContext, booking: Booking, event: PaymentEventParsed): Promise<void> {
+  if (booking.paymentSessionRef && event.sessionRef && booking.paymentSessionRef !== event.sessionRef) {
+    context.logger.warn?.('async payment for a different session', { eventId: event.id, bookingId: booking.id });
+    return;
+  }
+  if (event.amountCaptured !== booking.priceMinor || (event.currency !== undefined && event.currency !== context.config.business.currency)) {
+    context.logger.warn?.('async payment amount does not match the refused booking', {
+      eventId: event.id, bookingId: booking.id, amountCaptured: event.amountCaptured, currency: event.currency,
+    });
+    return;
+  }
+  const paymentRef = event.paymentRef ?? booking.paymentRef ?? null;
+  if (!paymentRef) {
+    context.logger.error?.('async payment has no payment reference to refund', { eventId: event.id, bookingId: booking.id });
+    return;
+  }
+  const operationId = crypto.randomUUID();
+  const claimed = await context.repo.claimRefundOperation({
+    id: operationId, bookingId: booking.id, paymentIntent: paymentRef, choice: 'full', requestedAt: nowIso(context),
+  });
+  const operation = claimed ? null : await context.repo.getRefundOperationByBookingId(booking.id);
+  if (operation?.status === 'succeeded') return;
+  context.logger.warn?.('refunding a delayed payment for a refused booking', { eventId: event.id, bookingId: booking.id });
+  await attemptRefund(context, booking, operation?.id ?? operationId, 'full', paymentRef);
+}
 
 export function handlePaymentWebhook(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {
@@ -18,6 +76,14 @@ export function handlePaymentWebhook(request: Request, context: ReservaContext):
     if (event.type === 'checkout_completed') {
       const booking = event.bookingId ? await context.repo.getBookingById(event.bookingId) : event.sessionRef ? await context.repo.getBookingBySessionRef(event.sessionRef) : null;
       if (!booking) return json({ received: true });
+      // A completed session that is not paid means the customer picked a delayed method (voucher,
+      // bank debit) whose money arrives days after the hold dies. Reserva refuses it outright
+      // instead of verifying: release the capacity, try to stop the payment, and answer 200 so the
+      // provider stops redelivering an event that will never become acceptable.
+      if (event.paid === false && event.paymentStatus !== 'no_payment_required') {
+        await refuseDelayedPayment(context, booking, event);
+        return json({ received: true });
+      }
       const verification = verifyPayment(booking, {
         completed: true,
         sessionRef: event.sessionRef,
@@ -27,6 +93,7 @@ export function handlePaymentWebhook(request: Request, context: ReservaContext):
         currency: event.currency,
         expectedCurrency: context.config.business.currency,
       });
+      // 'payment_not_paid' can no longer reach here: an unpaid completed session was refused above.
       if (!verification.allowed) {
         context.logger.warn?.('payment verification rejected', { eventId: event.id, bookingId: booking.id, reason: verification.reason });
         if (verification.reason === 'session_ref_missing' || verification.reason === 'session_mismatch') {
@@ -42,6 +109,11 @@ export function handlePaymentWebhook(request: Request, context: ReservaContext):
     } else if (event.type === 'checkout_expired') {
       const booking = event.bookingId ? await context.repo.getBookingById(event.bookingId) : event.sessionRef ? await context.repo.getBookingBySessionRef(event.sessionRef) : null;
       if (booking) await context.repo.expireHold(booking.id, nowIso(context));
+    } else if (event.type === 'async_payment_succeeded') {
+      // The delayed payment Reserva already refused has now settled. The hold is long gone and no
+      // booking was made, so the only correct outcome is to give the money back.
+      const booking = event.bookingId ? await context.repo.getBookingById(event.bookingId) : event.sessionRef ? await context.repo.getBookingBySessionRef(event.sessionRef) : null;
+      if (booking) await refundRefusedDelayedPayment(context, booking, event);
     } else if (event.type === 'refunded') {
       if (event.amountCaptured === undefined || event.amountRefunded === undefined || event.amountRefunded !== event.amountCaptured) {
         context.logger.warn?.('non-full refund does not cancel booking', { eventId: event.id });

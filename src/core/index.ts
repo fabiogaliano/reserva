@@ -46,9 +46,14 @@ export type {
 // An adapter author must be able to implement a port from this subpath alone, so every type named
 // in a port's signature ships with it. The event arrays are runtime values so a subscriber can
 // enumerate the vocabulary instead of hardcoding it.
-export { BOOKING_EVENTS, PAYMENT_EVENTS, BOOKING_EVENT_API_VERSION } from './events.js';
+export { BOOKING_EVENTS, SETTINGS_EVENTS, WEBHOOK_EVENTS, PAYMENT_EVENTS, BOOKING_EVENT_API_VERSION } from './events.js';
 export type {
   BookingEvent,
+  SettingsEvent,
+  WebhookEvent,
+  SettingsChange,
+  SettingsEventEnvelope,
+  SettingsEventHookContext,
   PaymentEvent,
   PaymentProvider,
   PaymentEventParsed,
@@ -62,6 +67,7 @@ export type {
   BookingEventEnvelope,
   BookingEventHook,
   BookingEventHookContext,
+  BookingEventHookArgs,
 } from './events.js';
 // `CalendarProvider.listEvents` resolves to these; they live in occupancy.ts only because that is
 // where calendar busy-time is consumed. Nothing else from occupancy.ts is public.
@@ -77,6 +83,7 @@ export type {
   ServiceConfig,
   ResolvedServiceConfig,
   ScheduleRule,
+  ResolvedScheduleRule,
   PricingRule,
   MeetingPoint,
   PickupOption,
@@ -88,8 +95,9 @@ export type {
   MetadataRow,
 } from './config.js';
 // A payment adapter builds its checkout line items from the resolved config, which means looking
-// up the service and its pickup option (@reservajs/stripe is the first consumer of both).
-export { pickupOptionFor, resolveService } from './config.js';
+// up the service, its localized title and its pickup option (@reservajs/stripe is the first
+// consumer of all three).
+export { pickupOptionFor, resolveService, resolveLocalizedText, resolveMetadataFieldLabel, resolveServiceTitle } from './config.js';
 
 // --- Booking domain ----------------------------------------------------------------------------
 // The record a provider port receives and the canonical wire projection of it. The state
@@ -98,10 +106,12 @@ export { toWireBooking } from './booking.js';
 export type { Booking, WireBooking, BookingStatus, CancellationActor } from './booking.js';
 
 // --- Money -------------------------------------------------------------------------------------
-// Prices cross the wire in minor units, so any consumer rendering `priceMinor` needs the
-// conversion; `priceFor` is what a payment adapter charges (@reservajs/stripe calls it directly).
+// Prices cross the wire in minor units, so any consumer rendering `priceMinor` needs the conversion.
 export { toMajorUnits } from './currency.js';
-export { priceFor } from './pricing.js';
+// `priceFor` is what a payment adapter charges; the two table helpers are what a funnel renders a
+// price grid from, so it never re-derives breakpoint semantics itself. All three are order-safe.
+export { priceFor, resolvedPriceTableFor, pricingCombinations } from './pricing.js';
+export type { ResolvedPriceTable } from './pricing.js';
 
 // --- HTTP --------------------------------------------------------------------------------------
 // The bounded body reader a payment adapter needs to parse a webhook safely (@reservajs/stripe is

@@ -18,7 +18,7 @@ import type { RefundChoice } from '../repo.js';
 import { attemptRefund } from '../refund-executor.js';
 import { bearerToken, constantTimeEqual, HttpError, json, requestJson, requireString } from '../http.js';
 import { checkSlot } from './checkout.js';
-import { run, withSensitiveHeaders } from './shared.js';
+import { run, warnDeprecatedField, withSensitiveHeaders } from './shared.js';
 import { tokenBooking } from './status-manage.js';
 
 async function calendarPatch(context: ReservaContext, booking: Booking): Promise<void> {
@@ -48,7 +48,7 @@ export function handleCustomerCancel(request: Request, context: ReservaContext):
       // decision was computed against the stale start time, so it must not silently succeed.
       const fresh = await context.repo.getBookingById(cancelled.id);
       if (fresh?.status === 'confirmed' && fresh.startsAt !== booking.startsAt) {
-        throw new HttpError(409, 'slot_unavailable', 'The selected slot is no longer available');
+        throw new HttpError(409, 'invalid_transition', 'booking was rescheduled; reload and try again');
       }
       throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
     }
@@ -57,8 +57,14 @@ export function handleCustomerCancel(request: Request, context: ReservaContext):
   }).then(withSensitiveHeaders);
 }
 
-async function readNewStart(body: Record<string, unknown>): Promise<string> {
-  return requireString(body.newStart, 'newStart');
+// `start` is the one spelling, matching checkout; `newStart` still reads so a consumer can upgrade
+// on its own schedule, and says so once per isolate in the log.
+function readStart(context: ReservaContext, body: Record<string, unknown>): string {
+  if (body.start === undefined && body.newStart !== undefined) {
+    warnDeprecatedField(context, 'reschedule', 'newStart');
+    return requireString(body.newStart, 'start');
+  }
+  return requireString(body.start, 'start');
 }
 
 async function rescheduleWithToken(context: ReservaContext, booking: Booking, newStart: string, operator: boolean): Promise<Booking> {
@@ -114,9 +120,17 @@ export function handleCustomerReschedule(request: Request, context: ReservaConte
     if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const body = await requestJson(request);
     const booking = await tokenBooking(context, requireString(body.token, 'token'));
-    await rescheduleWithToken(context, booking, await readNewStart(body), false);
+    await rescheduleWithToken(context, booking, readStart(context, body), false);
     return json<ManageActionResponse>({ ok: true });
   }).then(withSensitiveHeaders);
+}
+
+// The bearer half of operator auth, on its own so the ops reconcile route gates on exactly the
+// same secret and comparison as the operator booking routes rather than re-deriving them.
+export async function operatorBearerAuthorized(context: ReservaContext, request: Request): Promise<boolean> {
+  const expected = await getSecret(context, OPERATOR_SECRET_NAME);
+  const supplied = bearerToken(request);
+  return Boolean(expected) && Boolean(supplied) && constantTimeEqual(expected!, supplied!);
 }
 
 async function operatorBooking(
@@ -127,9 +141,7 @@ async function operatorBooking(
 ): Promise<Booking> {
   const operatorToken = typeof body.operatorToken === 'string' ? body.operatorToken : null;
   if (operatorToken) return tokenBooking(context, operatorToken, true, refundRecovery);
-  const expected = await getSecret(context, OPERATOR_SECRET_NAME);
-  const supplied = bearerToken(request);
-  if (!expected || !supplied || !constantTimeEqual(expected, supplied)) throw new HttpError(403, 'forbidden', 'Operator authorization required');
+  if (!(await operatorBearerAuthorized(context, request))) throw new HttpError(403, 'forbidden', 'Operator authorization required');
   const bookingId = requireString(body.bookingId, 'bookingId');
   const booking = await context.repo.getBookingById(bookingId);
   if (!booking) throw new HttpError(404, 'not_found', 'Booking not found');
@@ -285,7 +297,7 @@ export function handleOperatorReschedule(request: Request, context: ReservaConte
     if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const body = await requestJson(request);
     const booking = await operatorBooking(context, request, body);
-    await rescheduleWithToken(context, booking, await readNewStart(body), true);
+    await rescheduleWithToken(context, booking, readStart(context, body), true);
     return json<ManageActionResponse>({ ok: true });
   }).then(withSensitiveHeaders);
 }

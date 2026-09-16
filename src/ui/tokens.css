@@ -1,0 +1,68 @@
+/* The single --bk-* token block. Both delivery channels source their defaults from here and
+   nothing else may declare one: `theme.ts` (the stylesheet served to library pages) reads the two
+   declaration lists below through `generated/tokens.ts`, and `components.css` @imports this file
+   directly for the embeddable components. Rebrand by overriding the tokens in site CSS.
+
+   scripts/generate-ui-tokens.ts and scripts/contract-docs.ts both parse the marker comments, so a
+   declaration outside a marked block reaches the components but not the pages or the docs table. */
+
+:root,
+.bk-embed {
+  /* Keeps native control chrome (select dropdowns, date pickers, scrollbars) in step with the
+     token flip below — without it they stay light inside the dark theme. */
+  color-scheme: light dark;
+  /* reserva:tokens-light */
+  --bk-font: "Inter", "Inter Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --bk-bg: #f3f4f6;
+  --bk-surface: #ffffff;
+  --bk-surface-2: #eceef1;
+  --bk-text: #282a30;
+  --bk-text-muted: #63666d;
+  --bk-border: #e0e2e6;
+  --bk-accent: #5e6ad2;
+  --bk-accent-contrast: #ffffff;
+  --bk-accent-soft: #eceefb;
+  --bk-danger: #b3261e;
+  --bk-danger-contrast: #ffffff;
+  --bk-danger-soft: #fbeae9;
+  --bk-warning: #8a5a00;
+  --bk-warning-soft: #f9efd8;
+  --bk-ok: #1d7a3f;
+  --bk-ok-soft: #e4f2e9;
+  --bk-masthead-text: #ededef;
+  --bk-masthead-muted: #8a8f98;
+  --bk-masthead-brand: #a9b1ef;
+  --bk-radius: 12px;
+  --bk-radius-sm: 8px;
+  --bk-shadow: 0 1px 2px rgb(20 21 26 / 0.05), 0 8px 28px rgb(20 21 26 / 0.05);
+  --bk-focus: 0 0 0 3px color-mix(in srgb, var(--bk-accent) 50%, transparent);
+  --bk-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  /* /reserva:tokens-light */
+}
+
+/* Only the OS-driven variant lives here as CSS. The viewer-forced `[data-theme]` selectors are
+   emitted by theme.ts from the same list, so the two can never drift apart. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]),
+  .bk-embed {
+    /* reserva:tokens-dark */
+    --bk-bg: #0a0a0c;
+    --bk-surface: #141517;
+    --bk-surface-2: #1d1e21;
+    --bk-text: #ededef;
+    --bk-text-muted: #8a8f98;
+    --bk-border: #2b2c30;
+    --bk-accent: #7c86e2;
+    --bk-accent-contrast: #14162b;
+    --bk-accent-soft: #232647;
+    --bk-danger: #f2a099;
+    --bk-danger-contrast: #2a100e;
+    --bk-danger-soft: #3a201e;
+    --bk-warning: #e0b568;
+    --bk-warning-soft: #362a13;
+    --bk-ok: #8fd0a0;
+    --bk-ok-soft: #1c3123;
+    --bk-shadow: 0 1px 2px rgb(0 0 0 / 0.5), 0 8px 28px rgb(0 0 0 / 0.4);
+    /* /reserva:tokens-dark */
+  }
+}

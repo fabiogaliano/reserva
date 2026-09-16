@@ -1,4 +1,4 @@
-import type { ResolvedClientConfig, PickupType, ResolvedServiceConfig } from './config.js';
+import type { PricingRule, ResolvedClientConfig, PickupType, ResolvedServiceConfig } from './config.js';
 import { resolveService } from './config.js';
 
 export class PricingError extends Error {
@@ -20,27 +20,29 @@ export type ResolvedPriceTable = Record<string, number[]>;
 
 export function priceFor(service: Pick<ResolvedServiceConfig, 'pricing'>, quantity: number, pickup: PickupType | null): number {
   if (!Number.isInteger(quantity) || quantity < 1) throw new PricingError(quantity, pickup);
-  // Config validation orders each pickup's rules by maxQuantity, so the first fit is the tightest
-  // tier. Normalizing an undefined `pickup` to null lets a location-less lookup match it.
-  const rule = service.pricing.find((candidate) => (candidate.pickup ?? null) === pickup && quantity <= candidate.maxQuantity);
-  if (!rule) throw new PricingError(quantity, pickup);
-  return rule.priceMinor;
+  // The tightest covering tier wins regardless of array order: validateConfig sorts its own output,
+  // but this is exported and a raw config module (or a hand-built rule list) is a legitimate input,
+  // where first-match would silently charge a wider tier. Normalizing an undefined `pickup` to null
+  // lets a location-less lookup match it.
+  let tightest: PricingRule | undefined;
+  for (const candidate of service.pricing) {
+    if ((candidate.pickup ?? null) !== pickup || quantity > candidate.maxQuantity) continue;
+    if (!tightest || candidate.maxQuantity < tightest.maxQuantity) tightest = candidate;
+  }
+  if (!tightest) throw new PricingError(quantity, pickup);
+  return tightest.priceMinor;
 }
 
 export function resolvedPriceTableFor(service: Pick<ResolvedServiceConfig, 'pricing'>): ResolvedPriceTable {
-  // `pricing` may arrive unsorted (e.g. a raw config module, not validateConfig's canonical
-  // return), so this sorts a local copy rather than trusting the array's order — the table always
-  // matches tightest-fitting-tier semantics, regardless of input order.
-  const canonicalPricing = [...service.pricing].sort((a, b) => a.maxQuantity - b.maxQuantity);
-  const highest = Math.max(...canonicalPricing.map((row) => row.maxQuantity), 0);
+  const highest = Math.max(...service.pricing.map((row) => row.maxQuantity), 0);
   // The key set is each row's own `pickup` (or '' for a location-less row), in first-occurrence
   // order — not a fixed 'default'/'custom' pinning.
-  const keys = Array.from(new Set(canonicalPricing.map((row) => row.pickup ?? '')));
+  const keys = Array.from(new Set(service.pricing.map((row) => row.pickup ?? '')));
   const table: ResolvedPriceTable = {};
   for (const key of keys) table[key] = [];
   for (let quantity = 1; quantity <= highest; quantity += 1) {
     for (const key of keys) {
-      table[key]![quantity] = priceFor({ pricing: canonicalPricing }, quantity, key === '' ? null : key);
+      table[key]![quantity] = priceFor(service, quantity, key === '' ? null : key);
     }
   }
   return table;

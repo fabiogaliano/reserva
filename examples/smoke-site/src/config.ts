@@ -10,9 +10,16 @@ export default {
   },
   // Declared directly rather than inherited: the minimal example collapses to the schema's
   // implied defaults, but this fixture deliberately exercises every optional module.
-  admin: { locale: 'en' },
+  admin: {
+    locale: 'en',
+    // Placeholders: Access only gates the deployed hostname, and `astro dev` bypasses the gate,
+    // so the smoke site never needs a hand-written dev `adminAuth`.
+    access: { teamDomain: 'https://smoke-site.cloudflareaccess.com', aud: 'smoke-site-placeholder-aud' },
+  },
   services: {
     oldTown: {
+      // A per-locale map, the shape every customer-facing label takes.
+      title: { en: 'Old Town Walk', 'pt-PT': 'Passeio na Cidade Velha' },
       durationMin: 60,
       turnaroundMin: 15,
       schedule: [{
@@ -31,13 +38,14 @@ export default {
           { id: 'station', label: 'Riverside dock', mapsUrl: 'https://maps.google.com/?q=Riverside+dock' },
         ],
         pickupOptions: [
-          { id: 'default', requiresAddress: false, usesMeetingPoint: true },
-          { id: 'custom', requiresAddress: true, usesMeetingPoint: false },
+          { id: 'default', label: { en: 'Meeting point', 'pt-PT': 'Ponto de encontro' }, requiresAddress: false, usesMeetingPoint: true },
+          { id: 'custom', label: { en: 'Custom pickup', 'pt-PT': 'Recolha personalizada' }, hint: { en: 'We pick you up at your address', 'pt-PT': 'Vamos buscá-lo à sua morada' }, requiresAddress: true, usesMeetingPoint: false },
         ],
       },
     },
     // Pricing is deliberately non-additive: +20 for either custom leg, but +30 for both.
     mazeRiverside: {
+      title: { en: 'Maze & Riverside', 'pt-PT': 'Labirinto e Ribeirinha' },
       durationMin: 120,
       turnaroundMin: 15,
       schedule: [{
@@ -66,6 +74,7 @@ export default {
       ],
     },
     riverCruise: {
+      title: { en: 'River Cruise', 'pt-PT': 'Cruzeiro no Rio' },
       durationMin: 90,
       turnaroundMin: 15,
       schedule: [{

@@ -3,7 +3,7 @@ import { meetingPointForBooking, pickupPresentationFor, type ResolvedClientConfi
 import type { CalendarProvider } from '../../core/events.js';
 import type { CalEvent } from '../../core/occupancy.js';
 import { ProviderFailure } from '../../provider-failure.js';
-import { GoogleServiceAccountAuth, type GoogleAuthOptions } from './auth.js';
+import { GoogleServiceAccountAuth, type GoogleAuthOptions, type GoogleFetch } from './auth.js';
 
 export interface GoogleCalendarAuth {
   getAccessToken(): Promise<string>;
@@ -11,12 +11,8 @@ export interface GoogleCalendarAuth {
 
 export interface GoogleCalendarProviderOptions extends GoogleAuthOptions {
   calendarId: string;
-  fetch?: typeof fetch;
-  fetchImpl?: typeof fetch;
   auth?: GoogleCalendarAuth;
   apiBase?: string;
-  apiBaseUrl?: string;
-  calendarApiUrl?: string;
   timezone?: string;
 }
 interface GoogleEvent { id?: string; summary?: string; description?: string; start?: { dateTime?: string; date?: string; timeZone?: string }; end?: { dateTime?: string; date?: string; timeZone?: string }; attendees?: Array<{ email?: string; displayName?: string; responseStatus?: string }>; extendedProperties?: { private?: Record<string, string> } }
@@ -50,7 +46,7 @@ function eventPayload(booking: Booking, config: ResolvedClientConfig | undefined
   // gets no Pickup line at all, not a "Default meeting point" placeholder.
   const presentation = service ? pickupPresentationFor(service, booking) : null;
   // A removed meeting point id falls back to the booking's stored label snapshot with no maps link.
-  const resolvedPoint = service && presentation ? meetingPointForBooking(service, booking.meetingPointId ?? null, booking.meetingPointLabel ?? null) : null;
+  const resolvedPoint = config && service && presentation ? meetingPointForBooking(service, booking.meetingPointId ?? null, booking.meetingPointLabel ?? null, booking.locale, config.locales.default) : null;
   // The two flags are independent gates, so an option declaring both shows the address on
   // the Pickup line AND the maps URL line.
   const requiresAddress = presentation?.requiresAddress ?? false;
@@ -74,7 +70,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
   readonly cacheKey: string;
   private readonly calendarId: string;
   private readonly auth: GoogleCalendarAuth;
-  private readonly request: typeof fetch;
+  private readonly request: GoogleFetch;
   private readonly apiBase: string;
   private readonly timezone: string;
   constructor(options: GoogleCalendarProviderOptions) {
@@ -84,8 +80,8 @@ export class GoogleCalendarProvider implements CalendarProvider {
     this.auth = options.auth ?? new GoogleServiceAccountAuth(options);
     // A bare global fetch stored as a method throws "Illegal invocation" in workerd, which
     // rebinds `this` to the instance; wrap it so `this` stays globalThis.
-    this.request = options.fetchImpl ?? options.fetch ?? ((input, init) => fetch(input, init));
-    this.apiBase = (options.apiBaseUrl ?? options.calendarApiUrl ?? options.apiBase ?? 'https://www.googleapis.com/calendar/v3').replace(/\/$/, '');
+    this.request = options.fetch ?? ((input, init) => fetch(input, init));
+    this.apiBase = (options.apiBase ?? 'https://www.googleapis.com/calendar/v3').replace(/\/$/, '');
     this.timezone = options.timezone ?? 'UTC';
   }
   private url(path: string, params?: Record<string, string>): string {
@@ -166,8 +162,3 @@ export class GoogleCalendarProvider implements CalendarProvider {
     }
   }
 }
-export const GoogleCalendar = GoogleCalendarProvider;
-export const CalendarGoogleProvider = GoogleCalendarProvider;
-export function createGoogleCalendarProvider(options: GoogleCalendarProviderOptions): GoogleCalendarProvider { return new GoogleCalendarProvider(options); }
-export const mapGoogleCalendarEvent = eventToCalEvent;
-export default GoogleCalendarProvider;

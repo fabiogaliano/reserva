@@ -26,3 +26,10 @@ export function resolveLocale(locales: LocaleNegotiationConfig, requested: strin
   }
   return best?.locale ?? locales.default;
 }
+
+// Bare 'en' resolves to en-US date ordering (Oct 15); European operators expect 15 Oct, so
+// formatting (not copy) upgrades it to en-GB. Shared by the email templates and the
+// server-rendered pages so both spell the same instant the same way.
+export function formatLocaleFor(locale: string): string {
+  return locale === 'en' ? 'en-GB' : locale;
+}

@@ -6,27 +6,26 @@ sit next to your own.
 
 ## Secrets and `astro:env`
 
-`reserva()` declares its providers' secret names in Astro's
+`reserva()` declares its own secret names — and only its own — in Astro's
 [`env.schema`](https://docs.astro.build/en/guides/environment-variables/#type-safe-environment-variables)
 as `envField.string({ context: 'server', access: 'secret', optional: true })`:
 
-| Declared name | Provider | Set with |
+| Declared name | Used by | Set with |
 | --- | --- | --- |
-| `STRIPE_SECRET_KEY` | `@reservajs/stripe` | `wrangler secret put STRIPE_SECRET_KEY` |
-| `STRIPE_WEBHOOK_SECRET` | `@reservajs/stripe` | `wrangler secret put STRIPE_WEBHOOK_SECRET` |
-| `BREVO_API_KEY` | `providers/email-brevo` | `wrangler secret put BREVO_API_KEY` |
 | `RESERVA_OPERATOR_SECRET` | operator endpoints (bearer auth) | `wrangler secret put RESERVA_OPERATOR_SECRET` |
-| `GOOGLE_SA_EMAIL` | `providers/calendar-google` | `wrangler secret put GOOGLE_SA_EMAIL` |
-| `GOOGLE_SA_PRIVATE_KEY` | `providers/calendar-google` | `wrangler secret put GOOGLE_SA_PRIVATE_KEY` |
-| `GOOGLE_IMPERSONATE_EMAIL` | `providers/calendar-google` | `wrangler secret put GOOGLE_IMPERSONATE_EMAIL` |
+| `RESERVA_CSRF_SECRET` | the admin CSRF token layer | `wrangler secret put RESERVA_CSRF_SECRET` |
+| `RESERVA_TOKEN_ENC_KEY` | manage-link token encryption | `wrangler secret put RESERVA_TOKEN_ENC_KEY` |
 
-Every entry is optional because providers are opt-in: a payments-only setup must not fail env
-validation over a missing Brevo key. The declaration gives typed access through
-`astro:env/server`; providers still receive credentials as constructor options from your
-runtime module, and `secrets()` still exposes a closed allowlist: Reserva's own `RESERVA_*`
-names, every `config.webhooks[].secretBinding`, and whatever `secretBindings` adds. Pass
-`envSchema: false` to skip the contribution if your project declares its own schema for these
-names.
+Provider credentials (`STRIPE_*`, `BREVO_API_KEY`, `GOOGLE_SA_*`) are not declared here: Reserva
+cannot know which adapters a deployment wires up, and a site that uses only Stripe should not
+carry names for Brevo and Google. Add the ones you use to your own `env.schema` if you want typed
+access to them; adapters receive their credentials as constructor options from your runtime module
+either way.
+
+Every entry is optional because each one enables a layer rather than gating startup. `secrets()`
+still exposes a closed allowlist: Reserva's own `RESERVA_*` names, every
+`config.webhooks[].secretBinding`, and whatever `secretBindings` adds. Pass `envSchema: false` to
+skip the contribution if your project declares its own schema for these names.
 
 ## Typed environment bindings
 
@@ -37,13 +36,15 @@ wired as a `pretypes`/`predev` script so it stays current:
 { "scripts": { "pretypes": "wrangler types", "predev": "wrangler types" } }
 ```
 
-Pass the generated `Env` as the type argument, as in the quickstart. The `providers` and
-`logger` factories then receive a typed `env`, and the `db`, `cache`, and `secretBindings`
-options are constrained to `keyof Env`, so a misspelled binding is a compile error. The type
-argument is optional. Set `cache: null` to disable caching entirely.
+`wrangler types` emits a **global** `interface Env`, so pass it as the type argument with no
+import: `defineCloudflareReservaRuntime<Env>({ … })`. The `providers` and `logger` factories then
+receive a typed `env`, and the `db`, `cache`, and `secretBindings` options are constrained to
+`keyof Env`, so a misspelled binding is a compile error. The type argument is optional. Set
+`cache: null` to disable caching entirely.
 
 `reserva()` also calls `injectTypes()`, so after `astro sync` (run implicitly by `astro dev`
-and `astro build`) the `virtual:reserva/runtime` module is typed as `ReservaRuntime`.
+and `astro build`) `virtual:reserva/runtime` is typed as `ReservaRuntime` and
+`virtual:reserva/config` as `ReservaVirtualConfig` (`{ config, routes: { paths, groups, dev } }`).
 
 ## Admin access and booking tokens
 
@@ -69,10 +70,14 @@ copy the application's Audience tag into `aud`. Reserva independently verifies t
 request that reaches the Worker without passing Access — a raw `workers.dev` URL, a
 misconfigured route — still gets 403.
 
-Access cannot protect `localhost`. For local development, omit `config.admin.access` and pass
-a custom `adminAuth` (the smoke site does this). A real deployment must gate any such bypass
-behind a `.dev.vars`-only variable; an unconditional bypass in shipped code is a fail-open
-hole.
+Access cannot protect `localhost`, so `astro dev` bypasses the gate for you: when
+`config.admin.access` is set and the build came from `astro dev`, the admin and operator routes
+resolve the identity `{ subject: 'dev' }` without calling Access, and the runtime logs
+`admin auth bypassed: astro dev` once per isolate. There is nothing to configure and nothing to
+swap out at cutover. The flag behind it (`routes.dev` in `virtual:reserva/config`) is written at
+build time from Astro's own command, never read from the environment, so `astro build` and
+`astro preview` output always calls Access. A custom `adminAuth` is never bypassed — in dev or
+anywhere else, its author owns what it lets through.
 
 **Admin mutations also carry same-origin CSRF protection.** `adminAuth` answers who is
 calling, not where the request came from, so Reserva enforces two independent layers before
@@ -127,52 +132,127 @@ regenerable — a row written without it never has its plaintext at rest again.
 2. Set `RESERVA_DB` in the Worker bindings. Optionally expose `RESERVA_CACHE`.
 3. Add payment, calendar, email, and webhook credentials as Worker secrets with
    `wrangler secret put <NAME>`; see [Secrets and `astro:env`](#secrets-and-astroenv) for the
-   canonical names.
-4. Run `wrangler types` and pass the generated `Env` to `defineCloudflareReservaRuntime<Env>()`.
+   canonical names. With `@reservajs/stripe`, subscribe the webhook endpoint to
+   `checkout.session.completed`, `checkout.session.expired`,
+   `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`,
+   `charge.refunded` and `charge.dispute.created`, and manage payment methods in the Stripe
+   dashboard. **Reserva does not support delayed payment methods. Do not enable Multibanco, SEPA
+   Direct Debit, or bank transfer in the Stripe dashboard** — their money arrives days after the
+   capacity hold expires. One enabled by mistake is refused at the webhook (hold released, payment
+   cancelled, customer told) and refunded in full if it settles anyway. Set the webhook endpoint's
+   API version explicitly rather than leaving it on the account default: the event payload's shape
+   follows the endpoint's version, so an account default that moves can change the fields the
+   adapter reads with no deploy on your side.
+4. Run `wrangler types` and pass its global `Env` to `defineCloudflareReservaRuntime<Env>()` (no import).
 5. Implement or import the provider adapters in the runtime module.
 6. Configure an admin auth strategy: Cloudflare Access matching `config.admin.access`, or a
    custom `adminAuth`. The runtime throws at startup if neither (or both) is configured while
-   the admin/ops routes are enabled. Before go-live, confirm production defines no dev-bypass
-   variable your `adminAuth` honors.
-7. Deploy with `output: 'server'` and `@astrojs/cloudflare`. Do not prerender booking routes.
-8. **Deploy the scheduled reconciliation Worker.** Reconciliation is a bounded sweep that
-   resumes stuck side-effect and refund debt, clears expired holds, and opens or resolves
-   operator incidents — the outage-survival backstop behind the "Attention required" cards on
-   `/booking/admin`. `@astrojs/cloudflare` regenerates its Wrangler config on every build, so a
-   `scheduled()` handler cannot be spliced into the site Worker: deploy a second Worker sharing
-   your `RESERVA_DB` binding. The whole entrypoint is:
+   the admin/ops routes are enabled. `astro dev` output bypasses Access automatically; a
+   production build never does.
+7. **Set `RESERVA_TOKEN_ENC_KEY` before the first booking.** It encrypts the manage/operator
+   tokens at rest. It cannot be rotated once bookings exist: every manage link minted under the
+   old key stops resolving. Without it Reserva stores the tokens in clear text and the admin
+   dashboard shows a warning card.
+8. **Set `RESERVA_CSRF_SECRET`.** It signs the admin dashboard's CSRF tokens. Without it that
+   layer is inert (the origin check still runs) and the dashboard shows a warning card.
+   `GET /api/booking/ops/health` reports both under `security`.
+9. Deploy with `output: 'server'` and `@astrojs/cloudflare`. Do not prerender booking routes.
+10. **Ship `scheduled` in the site Worker.** Reconciliation is a bounded sweep that resumes stuck
+   side-effect and refund debt, clears expired holds, and opens or resolves operator incidents —
+   the outage-survival backstop behind the "Attention required" cards on `/booking/admin`.
+   `@astrojs/cloudflare` honours a custom `main` in your `wrangler.jsonc`, so the cron lives in the
+   same Worker as the site and shares its bindings and secrets. Add one file:
 
    ```ts
-   // worker/scheduled.ts
+   // src/worker.ts
+   import { handle } from '@astrojs/cloudflare/handler';
    import { scheduledHandler } from '@reservajs/astro/runtime';
-   import runtime from '../src/reserva-runtime';
+   import runtime from './reserva-runtime';
 
-   export default { scheduled: scheduledHandler(runtime) };
+   export default {
+     fetch: handle,
+     scheduled: scheduledHandler(runtime),
+   } satisfies ExportedHandler<Env>;
    ```
 
-   `scheduledHandler` requires an operational alert sink and rethrows on failure, so a bad run
-   is recorded as a failed cron invocation. Pass `ReconciliationOptions` as its second argument
-   to change the limits, or call `runReconciliation(context, options)` yourself if you need to
-   do more in the same invocation. The published package includes the complete template,
-   `wrangler.jsonc` included, at
-   [`../examples/smoke-site/worker/`](../examples/smoke-site/worker).
+   and point Wrangler at it:
 
-   The cron Worker does not inherit bindings or secrets from the site Worker. Configure on it
-   every binding and secret your provider factory reads (`RESERVA_DB`, payment keys, Google
-   calendar credentials, `BREVO_API_KEY`, every `secretBinding` from `config.webhooks`, the
-   alert sink, `RESERVA_TOKEN_ENC_KEY`), repeating
-   `wrangler secret put <NAME> --config worker/wrangler.jsonc` even for names the site Worker
-   already has. Enable Workers observability with full logs on both Workers, and set up a
-   Cloudflare-side alert on this Worker's cron failures before go-live: the in-process alert
-   sink only fires from inside an invocation, so the platform alert is the independent
-   detection path when the trigger itself fails.
-9. In a staging Worker, verify availability, checkout holds, webhook redelivery, status
+   ```jsonc
+   {
+     "main": "./src/worker.ts",
+     "triggers": { "crons": ["*/5 * * * *"] }
+   }
+   ```
+
+   Five minutes is the documented cadence (`RECONCILIATION_CADENCE_MINUTES`); ops health opens a
+   `reconciliation_stale` incident once the last successful run is older than three ticks.
+
+   `scheduledHandler` requires an operational alert sink and rethrows on failure, so a bad run is
+   recorded as a failed cron invocation. An overlapping invocation takes no work: both it and
+   `POST /api/booking/ops/reconcile` compete for one D1 lease row, and the loser logs a warning and
+   exits successfully. Pass `ReconciliationOptions` as the second argument to change the limits, or
+   call `runReconciliationWithLease(context, options)` yourself if you need to do more in the same
+   invocation.
+
+   `POST /api/booking/ops/reconcile` runs the same sweep on demand, authorized by the operator
+   bearer secret or an admin identity. It takes an optional JSON body with `sourceLimit` and
+   `alertLimit`, returns the `ReconciliationSummary`, answers `409 reconciliation_in_progress` when
+   the lease is held, and `503 internal_error` when no alert sink is configured.
+   `GET /api/booking/ops/health` reports `reconciliation.lastRunAt` and the last summary.
+
+   **The operational alert sink.** Alerts are what tell you an incident opened without you watching
+   the dashboard. Reserva ships one: `emailAlertSink(email, { to })`, which renders through the same
+   branded email shell as booking mail and sends through the email provider's `sendMessage`. You do
+   not normally construct it — when `providers.alerts` is absent and `providers.email` implements
+   `sendMessage` (the shipped Brevo adapter does), the runtime wires it to
+   `business.contact.email` and logs `reserva operational alerts wired to the email provider` once.
+   Pass `providers.alerts` explicitly to override the mailbox or the channel. If email is down the
+   incident still shows on `/booking/admin`; there is deliberately no second channel.
+
+   Enable Workers observability with full logs, and set up a Cloudflare-side alert on cron failures
+   before go-live: the in-process alert sink only fires from inside an invocation, so the platform
+   alert is the independent detection path when the trigger itself fails.
+11. In a staging Worker, verify availability, checkout holds, webhook redelivery, status
    confirmation, cutoffs, operator actions, and admin authentication.
-10. Monitor the outbox and payment-webhook responses. Calendar and confirmation-email failures
+12. Monitor the outbox and payment-webhook responses. Calendar and confirmation-email failures
     intentionally return non-2xx so the payment provider retries delivery. Also alert on
     persistent `confirmation_in_progress` 503s (a stuck lease), on `payment_amount_mismatch`
     409s (never expected in normal operation), and on the "confirming expired hold after
     payment" warning, which marks a possible one-slot oversell.
+
+## Rebuilding a static site on admin changes
+
+The admin dashboard is the source of truth for prices, hours, capacity and policy. A static site
+that bakes those values at build time therefore has to rebuild when an operator saves. Reserva
+fires `settings.changed` once per admin save (settings, day overrides, capacity defaults); point a
+webhook at your build system and have the build read `/api/booking/catalog` for the live values:
+
+```ts
+webhooks: [{
+  name: 'rebuild',
+  url: 'https://api.cloudflare.com/client/v4/pages/webhooks/deploy_hooks/<id>',
+  secretBinding: 'REBUILD_WEBHOOK_SECRET',
+  events: ['settings.changed'],
+}]
+```
+
+Two receivers work:
+
+- **A Cloudflare Workers Builds deploy hook.** A plain POST with no auth header; the body and the
+  signature headers are ignored, and the endpoint is rate-limited to 10 builds per minute per
+  Worker. Simplest option, but anyone who learns the URL can trigger a build.
+- **A verifying Worker.** Verify the `webhook-*` headers with any Standard Webhooks library, then
+  forward to GitHub `repository_dispatch` (or your CI's equivalent) with a token the public never
+  sees. Use this when an unauthenticated build trigger is not acceptable.
+
+A hook that arrives while a build is still `queued`/`initializing` is deduplicated, not queued —
+which is safe, because that build has not fetched the catalog yet. A save during a *running* build
+queues a new one. So consecutive saves do not guarantee consecutive builds, but the last build to
+run always reads the latest catalog.
+
+Delivery is best-effort by design: three attempts (2 s, 8 s), then
+`logger.error('settings webhook delivery failed', { name, status })` and no incident row. If a
+rebuild is missed, save again or deploy by hand.
 
 ## Reserva and your own migrations
 

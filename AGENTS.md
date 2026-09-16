@@ -20,11 +20,11 @@ bun add @reservajs/astro
 bun add @reservajs/stripe   # the official payment adapter; optional, see "Payments"
 ```
 
-Four files, then migrations: `reserva.config.ts` (plain data, shared by the integration
-and the runtime module), `astro.config.ts` (which passes that config to
-`reserva({ config, runtimeEntrypoint })` alongside the `@astrojs/cloudflare` adapter),
-`src/reserva-runtime.ts` (the runtime module, the only place provider instances and secrets
-exist), and `wrangler.jsonc` (the `RESERVA_DB` D1 binding). `README.md`, shipped beside this
+Four files, then migrations: `reserva.config.ts` (plain data, imported only by
+`astro.config.ts`), `astro.config.ts` (which passes that config to `reserva({ config })`
+alongside the `@astrojs/cloudflare` adapter), `src/reserva-runtime.ts` (the runtime module, the
+only place provider instances and secrets exist), and `wrangler.jsonc` (the `RESERVA_DB` D1
+binding). `README.md`, shipped beside this
 file, carries all four verbatim under its Quickstart heading, and the repository builds a real
 site out of exactly those blocks on every run of its test suite — read them there rather than
 from a copy that can drift.
@@ -34,10 +34,37 @@ bunx reserva-migrate --local   # dev database
 bunx reserva-migrate           # remote database
 ```
 
-`runtimeEntrypoint` is mandatory: Astro serializes integration options during the build,
-and provider instances (clients, closures, secrets) cannot survive that. The integration
-validates `config` at `astro:config:setup`; the runtime module is resolved at request
-time through `virtual:reserva/runtime`.
+The runtime module is a separate file because Astro serializes integration options during the
+build, and provider instances (clients, closures, secrets) cannot survive that.
+`runtimeEntrypoint` defaults to `./src/reserva-runtime.ts` (resolved against the project root)
+and only has to be passed for a different path; a missing file throws with the resolved path.
+
+Build the funnel on the typed browser client rather than raw `fetch`: it is the only export that
+knows the deployment's route table and the error envelope.
+
+```ts
+import virtualConfig from 'virtual:reserva/config';
+import { createReservaClient, isReservaApiError, firstOpenDay } from '@reservajs/astro/client';
+
+const reserva = createReservaClient({ paths: virtualConfig.routes.paths });
+try {
+  const availability = await reserva.availability({ serviceSlug, quantity, from, to });
+  const day = firstOpenDay(availability);
+  const { checkoutUrl } = await reserva.checkout({ serviceSlug, start, quantity, locale, pickup });
+  location.assign(checkoutUrl);
+} catch (cause) {
+  if (isReservaApiError(cause)) console.error(cause.code, cause.details?.field);
+}
+```
+
+`@reservajs/astro/client` imports no Astro, Node or Cloudflare code; `@reservajs/astro/dev`
+exports `devProviders()` for `astro dev`. See [`docs/api.md`](./docs/api.md).
+
+The integration validates `config` once at `astro:config:setup` and serializes the result into
+`virtual:reserva/config` as `{ config, routes: { paths, groups, dev } }`. That is the single
+config source: `defineCloudflareReservaRuntime(options)` / `defineReservaRuntime(options)` take
+no config argument and read it from there, and `routes.dev` is `true` only in `astro dev`
+output. The runtime module itself is resolved at request time through `virtual:reserva/runtime`.
 
 ## Config schema outline
 
@@ -52,7 +79,7 @@ receive once the defaults below have been applied.
 | `capacity` | yes | `{ default: number }` — units available per slot |
 | `admin` | no | `{ access?: { teamDomain, aud }, locale? }` — defaults to `{}`. `access` present selects Cloudflare Access; absent requires a custom `adminAuth` while the `admin`/`ops` routes are on |
 | `services` | yes | `Record<slug, ServiceConfig>` |
-| `booking` | no | `{ minNoticeHours, maxHorizonDays, holdMinutes (≥35), cancelCutoffHours, reschedule: { enabled, cutoffHours }, limitedThreshold, calendarMaxStaleSeconds, maxHoldsPerIp?, tokenExpiryDays? }` — the whole key defaults, as does each of its own: `0`, `90`, `35`, `24`, `{ enabled: true }` with `cutoffHours` inheriting `cancelCutoffHours`, `2`, `900` |
+| `booking` | no | `{ minNoticeHours, maxHorizonDays, holdMinutes (≥35), cancelCutoffHours, reschedule: { enabled, cutoffHours }, limitedThreshold, calendarMaxStaleSeconds, reminderHoursBefore, maxHoldsPerIp?, tokenExpiryDays? }` — the whole key defaults, as does each of its own: `0`, `90`, `35`, `24`, `{ enabled: true }` with `cutoffHours` inheriting `cancelCutoffHours`, `2`, `900`, `24` (`reminderHoursBefore: 0` disables the reminder email) |
 | `locales` | no | `{ supported: string[], default: string }` — defaults to `{ supported: ['en'], default: 'en' }` |
 | `legal` | no | `{ termsUrl? }` — defaults to `{}`; `termsUrl` itself is optional |
 | `webhooks` | no | `Array<{ name, url, secretBinding, events? }>` |
@@ -64,15 +91,18 @@ receive once the defaults below have been applied.
 
 | Key | Required | Shape |
 |---|---|---|
-| `title` | no | display name; falls back to the slug |
+| `title` | yes | customer-facing display name; `LocalizedText` (a string or `Record<locale, string>`) |
 | `durationMin` / `turnaroundMin` | yes | slot length and the gap Reserva keeps after it |
-| `schedule` | yes | `Array<{ from?, to?, days: number[], firstStart?, lastStart?, intervalMin }>` (`days`: 0 = Sunday; `firstStart`/`lastStart` default to `'09:00'`/`'18:00'`) |
-| `pricing` | yes | `Array<{ maxQuantity, pickup?, priceMinor }>` — first row whose `maxQuantity` covers the request wins. `pickup` names one of the service's pickup options; it may be omitted when the service resolves to exactly one, and must be absent when the service declares no `location` |
-| `occupancyFor` | no | `(quantity) => number` — how many capacity units a booking of N consumes |
-| `location` | no | `{ meetingPoints?: Array<{ id, label, mapsUrl }>, pickupOptions?: Array<{ id, label?, hint?, requiresAddress, usesMeetingPoint }> }` — declare at least one of the two. `meetingPoints` on its own implies the single option `{ id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true }`. Omit `location` for a service with no pickup axis at all |
+| `schedule` | yes | `Array<{ from?, to?, days: number[], firstStart?, lastStart?, lastEnd?, intervalMin }>` (`days`: 0 = Sunday; `firstStart` defaults to `'09:00'`). Declare `lastStart` (latest departure) or `lastEnd` (time the last booking must be finished by), never both; `lastEnd` derives the last departure as the latest grid start that still fits `durationMin`. Neither ⇒ `lastStart: '18:00'`. The resolved rule always carries `lastStart` and keeps `lastEnd` for display |
+| `pricing` | yes | `Array<{ maxQuantity, pickup?, priceMinor }>` — the tightest row whose `maxQuantity` covers the request wins, in any row order (`priceFor`, `resolvedPriceTableFor`, `pricingCombinations` on `@reservajs/astro/core`). `pickup` names one of the service's pickup options; it may be omitted when the service resolves to exactly one, and must be absent when the service declares no `location` |
+| `occupancy` | no | `{ seatsPerUnit: number }` — a booking takes `ceil(quantity / seatsPerUnit)` capacity units. Absent ⇒ one unit per booking. (Replaces the removed `occupancyFor` function, which is now a validation error) |
+| `meta` | no | `Record<string, unknown>` — opaque JSON reserva never reads, echoed back by the catalog. Must be JSON-serializable and under 8 KB. `MeetingPoint` takes one too |
+| `location` | no | `{ meetingPoints?: Array<{ id, label, mapsUrl }>, pickupOptions?: Array<{ id, label, hint?, requiresAddress, usesMeetingPoint }> }` — declare at least one of the two. Pickup ids are opaque, so `label` is required and localized; address collection keys off `requiresAddress`, never off the id. `meetingPoints` on its own implies the single option `{ id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true }`, the one option named from a message key (`pickup.meetingPoint`). Omit `location` for a service with no pickup axis at all |
 | `metadataFields` | no | `Array<{ key, label, type: 'text' \| 'number' \| 'boolean' \| 'select', options?, required?, maxLength? }>` — the entire declarable DSL; there are no conditional fields or custom validators |
 
-`label` on a metadata field or option is a plain string or a `Record<locale, string>`.
+Every human-readable label in config — `title`, meeting-point `label`, pickup `label`/`hint`,
+metadata field and option labels — is `LocalizedText`: a plain string or a `Record<locale, string>`
+resolved with the same candidate-locale → base-language → default-locale chain as `ui.messages`.
 
 ## Routes
 
@@ -112,7 +142,21 @@ check.
 
 The booking flow: `catalog` (what can be booked) → `availability` (when) → `quote` (how
 much) → `checkout` (hold + payment session) → the payment provider redirects to
-`/booking-confirmation?session_id=…`, which polls `status` until the webhook confirms.
+`/booking-confirmation?sessionId=…`, which polls `status` until the webhook confirms.
+`StatusState` is `pending | confirmed | failed | cancelled | expired | not_found`. `failed`
+means the payment session completed but its payment was not acceptable (a delayed payment
+method, or a mismatched amount/currency): no booking was made, it is terminal for the
+customer, and it opens an operational incident for the operator. The confirmation page polls
+at most 20 times (~60 s) before showing a "still waiting" page with contact details.
+
+Endpoint field names are `serviceSlug`, `pickup`, `start` and `sessionId` everywhere. The old
+spellings (`?service=`, `?session_id=`, `pickupType` in the checkout body, `newStart` in the
+reschedule body) still read for one minor and log `deprecated field` once per isolate; they are
+already absent from the exported request types. The webhook envelope's booking keeps `pickupType`.
+`CheckoutResponse` carries `paymentDeadline`; `ManageResponse` carries `cancelDeadline` and
+`rescheduleDeadline` (`deadline` is a deprecated alias of the first). Four hours after creation,
+`status` answers `confirmed` with a `ConfirmationSummary` (`reference`, `serviceTitle`, `start`,
+`end`, `locale`) instead of the full booking.
 
 ## Introspection
 
@@ -126,18 +170,21 @@ Two endpoints let a deployment describe itself without source access:
   booking UI from this; do not hardcode config or prices in the consumer.
 - `GET /api/booking/ops/health` — admin-authenticated. `schema` (migrations applied +
   fingerprint match), `outbox` (pending/abandoned counts by family, oldest pending age),
-  `incidents` (open count). Takes no parameters, mutates nothing.
+  `incidents` (open count), `security` (`csrfTokenLayer`/`tokenEncryption` on or off from the
+  secrets that are set, and the resolved `adminAuth` path). Takes no parameters, mutates nothing.
 
 ## Error codes
 
-Every failure at every status is `{ error: { code, message } }`, where `code` is one of:
+Every failure at every status is `{ error: { code, message, details? } }`, where `code` is one of:
 
 <!-- generated:error-codes -->
 `validation_failed`, `method_not_allowed`, `payload_too_large`, `forbidden`, `not_found`, `past_cutoff`, `invalid_transition`, `slot_unavailable`, `too_many_holds`, `payment_session_mismatch`, `payment_amount_mismatch`, `invalid_payment_signature`, `duplicate_payment_ref`, `confirmation_in_progress`, `refund_conflict`, `refund_payment_ref_missing`, `refund_failed`, `calendar_unavailable`, `internal_error`
 <!-- /generated:error-codes -->
 
 `validation_failed` messages always name the offending field and the rule that rejected
-it. Switch on `code`, never on `message` or on the status alone.
+it. The optional `details` (`ApiErrorDetails`) carries `{ field?, allowed? }` — the rejected
+field's name and, for a closed set, the accepted values. Switch on `code`, never on `message`
+or on the status alone.
 
 ## Booking events
 
@@ -145,7 +192,7 @@ Emitted to in-process hooks and to signed outbound webhooks, both from the same 
 outbox:
 
 <!-- generated:booking-events -->
-`booking.confirmed`, `booking.cancelled_by_customer`, `booking.cancelled_by_operator`, `booking.rescheduled`, `booking.no_show`, `payment.dispute_created`
+`booking.confirmed`, `booking.cancelled_by_customer`, `booking.cancelled_by_operator`, `booking.rescheduled`, `booking.no_show`, `booking.reminder`, `payment.dispute_created`
 <!-- /generated:booking-events -->
 
 An unknown name in a subscriber's `events` filter fails the build with the valid list.
@@ -154,10 +201,10 @@ In-process hooks are registered on the runtime; webhooks are declared in config 
 URL is ordinary configuration and only the signing key is secret:
 
 ```ts
-defineCloudflareReservaRuntime<Env>(config, {
+defineCloudflareReservaRuntime<Env>({
   providers,
   hooks: [
-    { name: 'analytics', handler: async (event, booking) => track(event, booking.reference) },
+    { name: 'analytics', handler: async (event, booking) => track(event, booking?.reference) },
     { name: 'ops', durable: true, events: ['booking.confirmed'], handler: pushToOps },
   ],
 });
@@ -250,9 +297,26 @@ SQL error.
 | `409 payment_amount_mismatch` | captured amount ≠ the booking's stored price | never expected; alert on it, do not retry-loop it |
 | `503 confirmation_in_progress` | another caller holds the confirmation lease | retry; the payment webhook's retry is the intended path |
 | `429 too_many_holds` | `booking.maxHoldsPerIp` reached | expected under abuse; raise the cap or leave it |
-| `400 validation_failed: pickup …` | service has no `location`, or the id is not declared | omit `pickupType` for a location-less service; otherwise use a declared id |
+| `400 validation_failed: pickup …` | service has no `location`, or the id is not declared | omit `pickup` for a location-less service; otherwise use a declared id |
 | `<ManageBooking />` throws about a missing endpoint | its route group is disabled in `config.routes` | pass an explicit `endpoint`, or re-enable the group |
 | Consumer build cannot resolve `virtual:reserva/runtime` | `reserva()` missing from `integrations`, or types not synced | add the integration; run `astro sync` |
+
+## Provider ports
+
+Every integration point is an interface in `@reservajs/astro/core`; the runtime receives
+implementations through `providers`.
+
+| Port | Required members | Optional members |
+|---|---|---|
+| `PaymentProvider` | `createCheckout`, `parseWebhook`, `getSession`, `refund` | `cancelPayment`, `validateConfig` |
+| `CalendarProvider` | `listEvents`, `createEvent`, `patchEvent`, `deleteEvent` | `cacheKey` |
+| `EmailProvider` | `send` | `recipientsForEvent`, `sendToRecipient`, `sendMessage` |
+| `OperationalAlertSink` | `send` | — |
+
+`EmailProvider.sendMessage({ to, subject, html, text })` sends a plain message with no booking
+behind it. When `providers.alerts` is absent and the email provider implements it, the runtime
+wires `emailAlertSink(providers.email, { to: business.contact.email })` automatically and logs it
+once. An explicit `providers.alerts` always wins.
 
 ## Boundaries
 

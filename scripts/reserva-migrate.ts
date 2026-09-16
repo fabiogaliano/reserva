@@ -5,6 +5,7 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -140,11 +141,18 @@ async function writeDerivedConfig(configPath: string, root: WranglerConfigRoot):
   }
 }
 
-// Written beside the consumer's config (not os.tmpdir()) so wrangler's project root, and thus its
-// default local-persistence location, is unaffected. randomUUID() avoids collisions between
-// concurrent invocations without a retry loop.
-function uniqueSiblingConfigPath(configPath: string): string {
-  return resolve(dirname(configPath), `.reserva-migrate.${randomUUID()}${extname(configPath)}`);
+// Written under os.tmpdir(), never beside the consumer's config: a crashed run must not be able to
+// leave a stray config inside a repository, and some consumers' configs live in directories their
+// build treats as sources. randomUUID() avoids collisions between concurrent invocations.
+function uniqueDerivedConfigPath(configPath: string): string {
+  return resolve(tmpdir(), `.reserva-migrate.${randomUUID()}${extname(configPath)}`);
+}
+
+// Wrangler resolves `--cwd`-relative paths and its local persistence directory from the config's
+// own location, so a config moved to the tmpdir must pin both back to the consumer's project.
+function derivedConfigCwdArgs(originalConfigPath: string, passthrough: readonly string[]): string[] {
+  const hasCwd = passthrough.some((argument) => argument === '--cwd' || argument.startsWith('--cwd='));
+  return hasCwd ? [] : ['--cwd', dirname(originalConfigPath)];
 }
 
 type DatabaseSelection =
@@ -273,6 +281,25 @@ function parseArgs(argv: string[]): {
   return { configPath, cwd, databaseName, environment, passthrough };
 }
 
+const WRANGLER_MISSING_MESSAGE = 'reserva-migrate: `wrangler` was not found on PATH. Install it in this project '
+  + '(`bun add -d wrangler`) and run this command through your package manager, e.g. `bunx reserva-migrate --local`.';
+
+// Preflight rather than relying on the spawn's ENOENT: `wrangler --version` also catches a shim on
+// PATH that resolves but cannot execute, and it reports the problem before any work is announced.
+function requireWrangler(): void {
+  const probe = spawnSync('wrangler', ['--version'], { stdio: 'ignore' });
+  if (probe.error || probe.status !== 0) throw new CliFailure(WRANGLER_MISSING_MESSAGE);
+}
+
+// SIGINT bypasses `finally`, so Ctrl-C during a long `wrangler d1 migrations apply --remote` would
+// otherwise orphan the derived config in the tmpdir.
+function registerDerivedConfigCleanup(path: string): void {
+  process.once('SIGINT', () => {
+    rmSync(path, { force: true });
+    process.exit(130);
+  });
+}
+
 async function run(): Promise<number> {
   let derivedConfigPath: string | undefined;
   try {
@@ -343,19 +370,20 @@ async function run(): Promise<number> {
       const derivedSelection = selectDatabaseEntry(derivedRoot, environment, explicitDatabaseName);
       if (derivedSelection.kind !== 'selected') throw new Error('unreachable: selection changed between the original config and its clone');
       derivedSelection.entry.migrations_dir = packagedMigrationsDir;
-      derivedConfigPath = uniqueSiblingConfigPath(configPath);
+      derivedConfigPath = uniqueDerivedConfigPath(configPath);
+      registerDerivedConfigCleanup(derivedConfigPath);
       await writeDerivedConfig(derivedConfigPath, derivedRoot);
       effectiveConfigPath = derivedConfigPath;
     }
 
     console.log(`reserva-migrate: applying reserva's packaged migrations from ${effectiveMigrationsDir}`);
 
-    const wranglerArgs = ['d1', 'migrations', 'apply', databaseName, '--config', effectiveConfigPath, ...passthrough];
+    requireWrangler();
+    const derivedCwdArgs = derivedConfigPath ? derivedConfigCwdArgs(configPath, passthrough) : [];
+    const wranglerArgs = ['d1', 'migrations', 'apply', databaseName, '--config', effectiveConfigPath, ...derivedCwdArgs, ...passthrough];
     const result = spawnSync('wrangler', wranglerArgs, { stdio: 'inherit' });
     if (result.error) {
-      if ((result.error as NodeJS.ErrnoException).code === 'ENOENT') {
-        fail('`wrangler` was not found on PATH; add it as a devDependency and run this through your package manager (e.g. `bunx reserva-migrate`)');
-      }
+      if ((result.error as NodeJS.ErrnoException).code === 'ENOENT') throw new CliFailure(WRANGLER_MISSING_MESSAGE);
       throw result.error;
     }
     return result.status ?? 1;

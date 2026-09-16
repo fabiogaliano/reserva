@@ -23,7 +23,6 @@
   "files": [
     "dist",
     "migrations",
-    "examples/smoke-site/worker",
     "README.md",
     "AGENTS.md",
     "docs/api.md",
@@ -31,6 +30,7 @@
     "docs/customization.md",
     "docs/deployment.md",
     "docs/development.md",
+    "docs/providers.md",
     "docs/MIGRATING-v2.md",
     "LICENSE"
   ],
@@ -45,6 +45,14 @@
     "./core": {
       "types": "./dist/core/index.d.ts",
       "default": "./dist/core/index.js"
+    },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "default": "./dist/client/index.js"
+    },
+    "./dev": {
+      "types": "./dist/dev/index.d.ts",
+      "default": "./dist/dev/index.js"
     },
     "./email": {
       "types": "./dist/email/index.d.ts",
@@ -67,8 +75,8 @@
       "default": "./dist/runtime.js"
     },
     "./ui": {
-      "types": "./dist/ui/messages.d.ts",
-      "default": "./dist/ui/messages.js"
+      "types": "./dist/ui/index.d.ts",
+      "default": "./dist/ui/index.js"
     },
     "./components/ManageBooking.astro": "./dist/components/ManageBooking.astro"
   },

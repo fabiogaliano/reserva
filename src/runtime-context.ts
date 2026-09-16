@@ -1,4 +1,8 @@
 import type { D1Database } from '@cloudflare/workers-types';
+// The single build-time config source: the integration validated it and serialized it here, so a
+// runtime module never imports (or re-validates a second copy of) reserva.config.ts itself.
+import virtualConfig from 'virtual:reserva/config';
+import { emailAlertSink } from './alerts/email-sink.js';
 import { cloudflareAccessAdminAuth } from './access.js';
 import { CSRF_SECRET_ENV_NAME } from './admin-csrf.js';
 import { TOKEN_ENC_SECRET_NAME } from './repo.js';
@@ -21,7 +25,6 @@ export interface ReservaRuntimeDefinition {
 export type ReservaRuntime = ReservaRuntimeDefinition;
 
 export interface ReservaRuntimeFactoryOptions {
-  config: unknown;
   createContext(input: ReservaRuntimeRequest & { config: ResolvedClientConfig }): ReservaContextInput | Promise<ReservaContextInput>;
 }
 
@@ -101,6 +104,17 @@ export function getCache(locals: unknown, binding = 'RESERVA_CACHE'): ReservaCac
   return workerCaches?.default;
 }
 
+// Once per isolate per name: a mistyped or undeclared secret name reads as `undefined` forever, and
+// a warning per request would drown the logs a consumer reads to notice it.
+const warnedUnknownSecrets = new Set<string>();
+
+function warnUnknownSecret(name: string, logger: ReservaLogger | undefined): void {
+  if (warnedUnknownSecrets.has(name)) return;
+  warnedUnknownSecrets.add(name);
+  const sink: ReservaLogger = logger ?? console;
+  sink.warn?.('secret not in secretBindings', { name });
+}
+
 function resolveBinding<T, TEnv extends object>(
   binding: CloudflareBinding<T, TEnv> | undefined,
   input: CloudflareRuntimeBindings<TEnv>,
@@ -151,8 +165,26 @@ function resolveAdminAuth(config: ResolvedClientConfig, custom: AdminAuth | unde
   return resolved;
 }
 
+// Alerts are the backstop behind the admin dashboard's "Attention required" cards, so a deployment
+// with a capable email transport gets them without opting in. An explicit `alerts` always wins:
+// this only fills an absence.
+let autoAlertSinkLogged = false;
+function withDefaultAlertSink(
+  providers: ReservaProviders,
+  logger: ReservaLogger | undefined,
+  to: string,
+): ReservaProviders {
+  if (providers.alerts || !providers.email?.sendMessage) return providers;
+  const alerts = emailAlertSink(providers.email, { to });
+  if (!autoAlertSinkLogged) {
+    autoAlertSinkLogged = true;
+    logger?.info?.('reserva operational alerts wired to the email provider', { to });
+  }
+  return { ...providers, alerts };
+}
+
 export function defineReservaRuntime(options: ReservaRuntimeFactoryOptions): ReservaRuntimeDefinition {
-  const config = validateConfig(options.config);
+  const config = validateConfig(virtualConfig.config);
   let providerValidated = false;
   return {
     config,
@@ -162,7 +194,10 @@ export function defineReservaRuntime(options: ReservaRuntimeFactoryOptions): Res
         validatePaymentProvider(contextInput.providers, config);
         providerValidated = true;
       }
-      return createReservaContext(contextInput);
+      return createReservaContext({
+        ...contextInput,
+        providers: withDefaultAlertSink(contextInput.providers, contextInput.logger, config.business.contact.email),
+      });
     },
   };
 }
@@ -171,18 +206,17 @@ export function defineReservaRuntime(options: ReservaRuntimeFactoryOptions): Res
 // makes TEnv an inference site, so TypeScript would resolve an untyped call to the bare
 // `ReservaEnvShape` (losing its index signature) without the plain overload below.
 export function defineCloudflareReservaRuntime(
-  configInput: unknown,
   options: CloudflareReservaRuntimeOptions<UntypedReservaEnv>,
 ): ReservaRuntimeDefinition;
 export function defineCloudflareReservaRuntime<TEnv extends object>(
-  configInput: unknown,
   options: CloudflareReservaRuntimeOptions<TEnv>,
 ): ReservaRuntimeDefinition;
 export function defineCloudflareReservaRuntime<TEnv extends object>(
-  configInput: unknown,
   options: CloudflareReservaRuntimeOptions<TEnv>,
 ): ReservaRuntimeDefinition {
-  const config = validateConfig(configInput);
+  // Re-validated rather than trusted verbatim: the module arrives as parsed JSON, and this is what
+  // turns it back into a `ResolvedClientConfig` the rest of the runtime can rely on.
+  const config = validateConfig(virtualConfig.config);
   validateBookingEventHooks(options.hooks ?? []);
   const adminAuth = resolveAdminAuth(config, options.adminAuth);
   const migrationsTable = requireMigrationsTableName(options.migrationsTable ?? D1_MIGRATIONS_TABLE);
@@ -217,15 +251,16 @@ export function defineCloudflareReservaRuntime<TEnv extends object>(
         throw err;
       });
       await migrationsChecked;
-      const providers = typeof options.providers === 'function' ? await options.providers(bindings) : options.providers;
+      const rawProviders = typeof options.providers === 'function' ? await options.providers(bindings) : options.providers;
       if (!providerValidated) {
-        validatePaymentProvider(providers, config);
+        validatePaymentProvider(rawProviders, config);
         providerValidated = true;
       }
       const cache = options.cache === null ? undefined : options.cache
         ? resolveBinding(options.cache, bindings, 'RESERVA_CACHE')
         : getCache(locals);
       const logger = typeof options.logger === 'function' ? options.logger(bindings) : options.logger;
+      const providers = withDefaultAlertSink(rawProviders, logger, config.business.contact.email);
       const contextInput: ReservaContextInput = {
         config,
         db,
@@ -233,7 +268,10 @@ export function defineCloudflareReservaRuntime<TEnv extends object>(
         ...(options.hooks ? { hooks: options.hooks } : {}),
         ...(cache ? { cache } : {}),
         secrets: async (name) => {
-          if (!secretBindings.has(name)) return undefined;
+          if (!secretBindings.has(name)) {
+            warnUnknownSecret(name, logger);
+            return undefined;
+          }
           const value = (env as Record<string, unknown>)[name];
           return typeof value === 'string' ? value : undefined;
         },

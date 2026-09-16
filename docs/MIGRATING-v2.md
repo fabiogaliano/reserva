@@ -1,3 +1,8 @@
+# Migrating
+
+Two breaking cuts so far. [Migrating to 0.5.0](#migrating-to-050) is at the end of this file;
+0.2.0 (the first public release) is below.
+
 # Migrating to 0.2.0
 
 0.1.x shipped privately as `bookkit`: one package, raw TypeScript source, Stripe bundled in,
@@ -84,7 +89,7 @@ vendor name:
 | `BookkitMessageKey`, `BookkitMessages` | `ReservaMessageKey`, `ReservaMessages` |
 | `BookkitResolvedRouteConfig`, `BookkitRouteEntry`, `BookkitRouteGroup`, `BookkitRouteGroupFlags`, `BookkitRouteId`, `BookkitRouteOptions` | the same names with the `Reserva` prefix |
 | `createBookkitContext`, `checkBookkitMigrationsApplied`, `bookkitMigrationStatus`, `bookkitSchemaFingerprintPresent`, `bookkitSecretEnvSchema` | the same names with `reserva`/`Reserva` in place of `bookkit`/`Bookkit` |
-| `defaultMessages`, `defaultLocale`, `resolveMessages`, `formatMessage`, `SLOT_STATUS_MESSAGE_KEYS` (root export) | moved to `@reservajs/astro/ui` |
+| `defaultMessages`, `defaultLocale`, `resolveMessages`, `formatMessage` (root export) | moved to `@reservajs/astro/ui` |
 
 `ReservaMessages` key names also changed with the domain rename (`common.tour` →
 `common.service`, `setting.fleetCapacity` → `setting.capacity`, and kin). If you override copy
@@ -101,7 +106,7 @@ name every stale key.
 | `pricing[].priceCents` | `pricing[].priceMinor` |
 | `business.currency: 'eur'` (literal) | any lowercase ISO 4217 code; prices are that currency's minor unit |
 | service-level `meetingPoint` / `meetingPoints` / `pickupOptions` | `location.meetingPoints` / `location.pickupOptions` — and the whole `location` module is now optional per service |
-| `payments.methods` | the payment adapter's `paymentMethods` option (`stripe({ paymentMethods: [...] })`) |
+| `payments.methods` | removed — payment methods are managed in the payment provider's own dashboard |
 | Stripe locale/currency validation in `validateConfig` | validated by the adapter at runtime-definition initialization |
 
 `validateConfig` rejects the three old service-level location keys by name and points at their
@@ -176,3 +181,155 @@ what happens:
   the retry presents a new key and Stripe answers "already refunded", which the adapter
   reconciles through `refunds.list` exactly as it does for an expired key. No double refund is
   possible.
+
+
+# Migrating to 0.5.0
+
+0.5.0 removes the second config source. The integration validates `reserva.config.ts` once and
+ships the result to the runtime, so a runtime module no longer imports (or re-validates) it.
+
+Order of operations:
+
+1. Update `reserva.config.ts`: `occupancyFor` → `occupancy`, and `lastEnd` wherever a rule was
+   subtracting `durationMin` by hand.
+2. Update `astro.config.ts` and `src/reserva-runtime.ts`.
+3. Re-run `wrangler types` and drop the `worker-configuration` import.
+
+## Config keys
+
+| 0.4.x | 0.5.0 |
+| --- | --- |
+| `services.<slug>.occupancyFor: (quantity) => number` | `services.<slug>.occupancy: { seatsPerUnit: number }` |
+| `schedule[].lastStart` computed as `closing − durationMin` | `schedule[].lastEnd: 'HH:MM'` (the last departure is derived) |
+
+`occupancyFor` is now a validation error (`services.<slug>.occupancyFor: replaced by
+occupancy.seatsPerUnit`) rather than a silently ignored key. Units become
+`ceil(quantity / seatsPerUnit)`; a function that was not of that shape has to become one, since
+the resolved config must be JSON-serializable to travel through `virtual:reserva/config`.
+
+A schedule rule declares `lastStart` **or** `lastEnd`, never both. `lastEnd` is the time the last
+booking has to be finished by; the last departure is the latest start on the interval grid that
+still fits `durationMin`. A rule with neither keeps the old `'18:00'` default. `ResolvedScheduleRule`
+always carries the computed `lastStart`, so nothing downstream had to change.
+
+`services.<slug>.meta` and `location.meetingPoints[].meta` are new optional passthroughs: opaque
+JSON (≤ 8 KB, JSON-serializable) that the catalog echoes back and Reserva never reads.
+
+## The integration and the runtime module
+
+```diff
+ // astro.config.ts
+-integrations: [reserva({ config, runtimeEntrypoint: './src/reserva-runtime.ts' })],
++integrations: [reserva({ config })],
+```
+
+`runtimeEntrypoint` is now optional and defaults to `./src/reserva-runtime.ts`, resolved against
+the Astro project root. A missing file still throws, naming the resolved path.
+
+```diff
+ // src/reserva-runtime.ts
+-import config from '../reserva.config';
+-import type { Env } from '../worker-configuration';
+-
+-export default defineCloudflareReservaRuntime<Env>(config, {
++export default defineCloudflareReservaRuntime<Env>({
+   providers,
+ });
+```
+
+`defineCloudflareReservaRuntime(options)` and `defineReservaRuntime(options)` drop the config
+argument and read it from `virtual:reserva/config`. `ReservaRuntimeFactoryOptions.config` is gone;
+`ReservaContextInput.config` is unchanged. `reserva.config.ts` is now imported only by
+`astro.config.ts`.
+
+`Env` comes from `wrangler types`, which emits a **global** `interface Env` — there is nothing to
+import from `worker-configuration`.
+
+## `virtual:reserva/config`
+
+| 0.4.x | 0.5.0 |
+| --- | --- |
+| `ReservaResolvedRouteConfig` (`{ paths, groups }`) | `ReservaVirtualConfig` (`{ config, routes: { paths, groups, dev } }`) |
+
+A component or page reading route paths changes `routeConfig.paths.checkout` to
+`virtualConfig.routes.paths.checkout`. `routes.dev` is `true` only in output built by `astro dev`.
+
+## `env.schema`
+
+`reserva()` no longer declares provider secret names. `STRIPE_SECRET_KEY`,
+`STRIPE_WEBHOOK_SECRET`, `BREVO_API_KEY`, `GOOGLE_SA_EMAIL`, `GOOGLE_SA_PRIVATE_KEY` and
+`GOOGLE_IMPERSONATE_EMAIL` are gone from the contributed schema; `RESERVA_CSRF_SECRET` and
+`RESERVA_TOKEN_ENC_KEY` join `RESERVA_OPERATOR_SECRET`. Add whichever provider names you want typed
+access to in your own `env.schema`. The Worker secrets themselves are unchanged — only the
+build-time declaration moved.
+
+## Provider options
+
+Every provider option that had more than one spelling now has exactly one. The removed names are
+compile errors, not silently ignored keys.
+
+`@reservajs/stripe` — `stripe(options)`:
+
+| 0.4.x | 0.5.0 |
+| --- | --- |
+| `apiKey` | `secretKey` (now required) |
+| `stripe`, `stripeClient` | `client` |
+| `getSuccessUrl` | `successUrl` (string or `(booking, config) => string`) |
+| `getCancelUrl` | `cancelUrl` (string or `(booking, config) => string`) |
+| `getServiceName`, `serviceName`, `getProductName`, `productName`, `getLineItemName` | `lineItemName` |
+| `paymentMethods` | removed — methods come from the Stripe dashboard |
+
+`cancelUrl` now defaults to `business.url` instead of `business.url/services/<slug>`, and
+`lineItemName` defaults to the service's localized `title`, so most deployments can drop the option
+entirely. `charge.refunded` events no longer carry `refundRef`: Stripe stopped expanding the
+charge's `refunds` list in API 2022-11-15, so the parsed event reports `refundRef: null` and the
+cancel-on-full-refund path keys off the amounts.
+
+Subscribe your webhook endpoint to `checkout.session.completed`, `checkout.session.expired`,
+`checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`,
+`charge.refunded` and `charge.dispute.created`, and set the endpoint's API version explicitly.
+
+`@reservajs/astro/providers/calendar-google`:
+
+| 0.4.x | 0.5.0 |
+| --- | --- |
+| `googleSaEmail`, `saEmail` | `serviceAccountEmail` |
+| `googleSaPrivateKey`, `privateKey` | `serviceAccountPrivateKey` |
+| `googleImpersonateEmail`, `subject` | `impersonateEmail` |
+| `fetchImpl` | `fetch` |
+| `clock` | `now` |
+| `apiBaseUrl`, `calendarApiUrl` | `apiBase` |
+| `default`, `GoogleCalendar`, `CalendarGoogleProvider`, `createGoogleCalendarProvider` | the named `GoogleCalendarProvider` export |
+| `mapGoogleCalendarEvent` | removed (internal) |
+
+`verifyAccessJwt` options:
+
+| 0.4.x | 0.5.0 |
+| --- | --- |
+| `clock` | `now` |
+| `cacheTtlMs` | `jwksTtlMs` |
+
+## Pricing helpers
+
+`resolvedPriceTableFor` and `pricingCombinations` are now exported from `@reservajs/astro/core`,
+and `priceFor` picks the tightest covering tier regardless of row order, so an unsorted rule array
+prices the same as a sorted one.
+
+## Adding a migration (contributors)
+
+Reserva's D1 schema lives in `migrations/*.sql`, numbered `NNNN_<name>.sql` and applied in filename
+order. To add one:
+
+1. Create `migrations/NNNN_<name>.sql` with the next number. SQLite cannot widen a `CHECK`
+   constraint in place, so a constraint change is written as the rebuild pattern already used by
+   `0002_payment_verification_incidents.sql`: create `<name>_new`, copy the rows across, drop the
+   old table, `ALTER TABLE <name>_new RENAME TO <name>`, then recreate every index the drop took
+   with it.
+2. Run `bun scripts/generate-schema-fingerprint.ts` (or `bun run build`, which runs it first). It
+   replays every migration into `src/generated/schema-fingerprint.ts` — the gitignored module that
+   supplies `RESERVA_MIGRATIONS` and the table/column/index sets the isolate-time schema check
+   compares a live database against. Never edit that file by hand.
+3. Apply it locally with `bunx reserva-migrate --local` from a project that owns a `wrangler.jsonc`.
+
+Migrations are append-only: an already-published file is never edited, because `d1_migrations`
+records only filenames and would report the edited migration as applied.

@@ -4,7 +4,8 @@
 import type { PaymentProvider } from '@reservajs/astro/core';
 import { StripeProvider, type StripeOptions } from './provider.js';
 
-export type { StripeClient, StripeOptions, StripePaymentMethod } from './provider.js';
+export type { StripeClient, StripeOptions } from './provider.js';
+export { STRIPE_DELAYED_PAYMENT_METHOD_TYPES } from './provider.js';
 
 export function stripe(options: StripeOptions): PaymentProvider {
   return new StripeProvider(options);

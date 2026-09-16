@@ -11,13 +11,18 @@ import {
   resolveRouteConfig,
   routePath,
   validateRouteOptions,
-  type ReservaResolvedRouteConfig,
   type ReservaRouteGroupFlags,
+  type ReservaVirtualConfig,
 } from './routes-manifest.js';
+
+// Where a consumer's runtime module lives unless it says otherwise. Conventional enough that the
+// quickstart never has to mention the option at all.
+const DEFAULT_RUNTIME_ENTRYPOINT = './src/reserva-runtime.ts';
 
 export interface ReservaIntegrationOptions {
   config: ClientConfig | unknown;
-  runtimeEntrypoint: string | URL;
+  // Defaults to `./src/reserva-runtime.ts`, resolved against the Astro project root.
+  runtimeEntrypoint?: string | URL;
   // Set to `false` to skip contributing reserva's secret names to the `astro:env` schema, e.g. if
   // the consumer already declares its own schema for these names. Defaults to on.
   envSchema?: boolean;
@@ -26,17 +31,15 @@ export interface ReservaIntegrationOptions {
   routePrefix?: string;
 }
 
-// Canonical secret names for reserva's optional providers. All optional: every provider is opt-in,
-// so a consumer wiring up only Stripe must not fail env validation over a missing Brevo/Google key.
-// This only declares the names for typed access and build-time visibility; it doesn't change how providers read them.
+// Reserva's own secret names only. A provider adapter's keys (Stripe, Brevo, Google) belong to the
+// consumer's `env.schema`, not here: this library cannot know which adapters a deployment wires up,
+// and declaring them all made every site carry names it never sets. All optional, since every one of
+// these enables a layer rather than gating startup. Declares names for typed access and build-time
+// visibility only; it doesn't change how anything reads them.
 const reservaSecretEnvSchema = {
-  STRIPE_SECRET_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
-  STRIPE_WEBHOOK_SECRET: envField.string({ context: 'server', access: 'secret', optional: true }),
-  BREVO_API_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
   RESERVA_OPERATOR_SECRET: envField.string({ context: 'server', access: 'secret', optional: true }),
-  GOOGLE_SA_EMAIL: envField.string({ context: 'server', access: 'secret', optional: true }),
-  GOOGLE_SA_PRIVATE_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
-  GOOGLE_IMPERSONATE_EMAIL: envField.string({ context: 'server', access: 'secret', optional: true }),
+  RESERVA_CSRF_SECRET: envField.string({ context: 'server', access: 'secret', optional: true }),
+  RESERVA_TOKEN_ENC_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
 };
 
 const virtualRuntimeId = 'virtual:reserva/runtime';
@@ -55,12 +58,13 @@ const virtualRuntimeTypes = `declare module '${virtualRuntimeId}' {
 const virtualConfigId = 'virtual:reserva/config';
 const resolvedVirtualConfigId = '\0' + virtualConfigId;
 
-// Static declaration, like virtualRuntimeTypes above: the shape is fixed (resolved paths + group
-// flags), only the values differ per-consumer, so this never needs to be regenerated per-build.
+// Static declaration, like virtualRuntimeTypes above: the shape is fixed (validated config +
+// resolved paths + group flags), only the values differ per-consumer, so this never needs to be
+// regenerated per-build.
 const virtualConfigTypes = `declare module '${virtualConfigId}' {
-  import type { ReservaResolvedRouteConfig } from '@reservajs/astro';
-  const config: ReservaResolvedRouteConfig;
-  export default config;
+  import type { ReservaVirtualConfig } from '@reservajs/astro';
+  const virtualConfig: ReservaVirtualConfig;
+  export default virtualConfig;
 }
 `;
 
@@ -92,10 +96,11 @@ function routeEntrypoint(relativePath: string): string {
   return existsSync(fileURLToPath(compiled)) ? fileURLToPath(compiled) : fileURLToPath(new URL(relativePath, import.meta.url));
 }
 
-// Resolved once per build/dev-server start from the (validated, normalized) prefix + group flags —
-// unlike virtual:reserva/runtime, this has no dependency on the consumer's runtimeEntrypoint, so it
-// can be serialized directly instead of re-exporting a file path.
-function routeConfigVirtualPlugin(resolvedRouteConfig: ReservaResolvedRouteConfig): Plugin {
+// Resolved once per build/dev-server start from the validated config and the (normalized) prefix +
+// group flags — unlike virtual:reserva/runtime, this has no dependency on the consumer's
+// runtimeEntrypoint, so it can be serialized directly instead of re-exporting a file path. Plain
+// JSON by construction: `ResolvedClientConfig` carries no functions.
+function routeConfigVirtualPlugin(virtualConfig: ReservaVirtualConfig): Plugin {
   return {
     name: 'reserva-route-config',
     enforce: 'pre',
@@ -104,7 +109,7 @@ function routeConfigVirtualPlugin(resolvedRouteConfig: ReservaResolvedRouteConfi
     },
     load(id) {
       if (id !== resolvedVirtualConfigId) return undefined;
-      return `export default ${JSON.stringify(resolvedRouteConfig)};`;
+      return `export default ${JSON.stringify(virtualConfig)};`;
     },
   };
 }
@@ -113,10 +118,9 @@ export function reserva(options: ReservaIntegrationOptions): AstroIntegration {
   return {
     name: 'reserva',
     hooks: {
-      'astro:config:setup': ({ config, injectRoute, logger, updateConfig }) => {
-        // This hook runs during build/dev config resolution, separate from request-time Worker
-        // execution — defineReservaRuntime/defineCloudflareReservaRuntime independently validate the
-        // config that actually backs runtime behavior. The value captured here only decides which route groups to inject.
+      'astro:config:setup': ({ command, config, injectRoute, logger, updateConfig }) => {
+        // The one validation pass: what lands here is what `virtual:reserva/config` serializes and
+        // what the runtime module reads back, so there is no second config source to drift from it.
         let validatedConfig: ResolvedClientConfig;
         try {
           validatedConfig = validateConfig(options.config);
@@ -139,16 +143,21 @@ export function reserva(options: ReservaIntegrationOptions): AstroIntegration {
           ops: validatedConfig.routes?.ops ?? true,
           manage: validatedConfig.routes?.manage ?? true,
         };
-        const resolvedRouteConfig = resolveRouteConfig(prefix, groupFlags);
+        // `astro build` and `astro preview` both report a command other than 'dev', so only output
+        // built by the dev server ever carries `dev: true`.
+        const resolvedRouteConfig = resolveRouteConfig(prefix, groupFlags, command === 'dev');
 
-        const entrypoint = runtimePath(config.root, options.runtimeEntrypoint);
+        const entrypoint = runtimePath(config.root, options.runtimeEntrypoint ?? DEFAULT_RUNTIME_ENTRYPOINT);
         if (!existsSync(entrypoint)) {
           throw new Error(`Reserva runtimeEntrypoint does not exist: ${entrypoint}`);
         }
 
         updateConfig({
           vite: {
-            plugins: [runtimeVirtualPlugin(entrypoint), routeConfigVirtualPlugin(resolvedRouteConfig)],
+            plugins: [
+              runtimeVirtualPlugin(entrypoint),
+              routeConfigVirtualPlugin({ config: validatedConfig, routes: resolvedRouteConfig }),
+            ],
           },
         });
 

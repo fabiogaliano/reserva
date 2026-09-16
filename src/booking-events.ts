@@ -2,12 +2,13 @@
 // outbound webhooks. Both are the same thing to the outbox: a named subscriber whose delivery debt
 // is one row carrying the identity `family`/`name`/`event` and the serialized envelope.
 import { toWireBooking, type Booking } from './core/booking.js';
-import type { WebhookEndpointConfig } from './core/config.js';
+import type { ResolvedClientConfig, WebhookEndpointConfig } from './core/config.js';
 import {
   BOOKING_EVENT_API_VERSION,
   type BookingEvent,
   type BookingEventEnvelope,
   type BookingEventHook,
+  type WebhookEvent,
 } from './core/events.js';
 import type { ReservaContext } from './context.js';
 import { getSecret } from './context.js';
@@ -15,7 +16,7 @@ import { ProviderFailure } from './provider-failure.js';
 import { sideEffectOperationKey, type SideEffectOperationIdentity, type SideEffectOperationRecord, type SideEffectOperationSeed } from './repo.js';
 import { deliverWebhook } from './webhooks.js';
 
-function subscribes(events: readonly BookingEvent[] | undefined, event: BookingEvent): boolean {
+function subscribes(events: readonly WebhookEvent[] | undefined, event: BookingEvent): boolean {
   return events === undefined || events.includes(event);
 }
 
@@ -45,13 +46,14 @@ export function buildBookingEventEnvelope(
   identity: SideEffectOperationIdentity,
   booking: Booking,
   occurredAt: string,
+  config: ResolvedClientConfig,
 ): BookingEventEnvelope {
   return {
     apiVersion: BOOKING_EVENT_API_VERSION,
     id: bookingEventId(booking.id, identity),
     event: identity.event as BookingEvent,
     occurredAt,
-    data: { booking: toWireBooking(booking) },
+    data: { booking: toWireBooking(booking, config) },
   };
 }
 
@@ -68,7 +70,7 @@ export function bookingEventSeeds(
   return durableSubscriberIdentities(context, event).map((base) => ({
     ...base,
     discriminator,
-    eventPayloadJson: JSON.stringify(buildBookingEventEnvelope({ ...base, discriminator }, booking, occurredAt)),
+    eventPayloadJson: JSON.stringify(buildBookingEventEnvelope({ ...base, discriminator }, booking, occurredAt, context.config)),
     // Discriminator-free: only the reschedule path leaves the discriminator to SQL, and that is the
     // one case where this prefix is used to finish the stored id.
     eventIdPrefix: bookingEventId(booking.id, base),
@@ -84,7 +86,7 @@ export function dispatchNonDurableBookingEvent(
 ): void {
   const hooks = hooksFor(context, event, false);
   if (hooks.length === 0) return;
-  const wireBooking = toWireBooking(booking);
+  const wireBooking = toWireBooking(booking, context.config);
   const task = (async () => {
     for (const hook of hooks) {
       const identity = { family: 'hook' as const, name: hook.name, event };
@@ -126,7 +128,7 @@ export async function deliverBookingEventOperation(
   operation: SideEffectOperationRecord,
 ): Promise<void> {
   const body = operation.eventPayloadJson
-    ?? JSON.stringify(buildBookingEventEnvelope(operation, booking, booking.updatedAt));
+    ?? JSON.stringify(buildBookingEventEnvelope(operation, booking, booking.updatedAt, context.config));
 
   if (operation.family === 'hook') {
     const hook = (context.hooks ?? []).find((candidate) => candidate.durable && candidate.name === operation.name);
