@@ -1,5 +1,6 @@
+import type { OpsHealthSecurity } from '../../core/api.js';
 import type { Booking } from '../../core/booking.js';
-import { adminLocaleFor, meetingPointForBooking, pickupOptionFor, pickupPresentationFor, resolveService, type ResolvedServiceConfig } from '../../core/config.js';
+import { adminLocaleFor, meetingPointForBooking, pickupOptionFor, pickupPresentationFor, resolveLocalizedText, resolveService, resolveServiceTitle, type ResolvedServiceConfig } from '../../core/config.js';
 import { defaultCapacityForDate, occupancyFor, type CapacityDefault } from '../../core/occupancy.js';
 import { enumerateDateKeys, localDateKey, utcToLocalIso } from '../../core/time.js';
 import type { ReservaContext } from '../../context.js';
@@ -9,7 +10,7 @@ import { isManageableToken, type OperationalIncidentRecord } from '../../repo.js
 import type { ReservaResolvedRouteConfig } from '../../routes-manifest.js';
 import { cssAssetHref, jsAssetHref } from '../asset-hrefs.js';
 import { formatDateTime, formatDayDate, formatPrice } from '../format.js';
-import { factList, pageShell, statusBadge, statusToneOf, themeToggle } from '../layout.js';
+import { digitsOf, emailLink, factList, pageShell, phoneLinks, statusBadge, statusToneOf, themeToggle } from '../layout.js';
 import { formatMessage, resolveMessages } from '../messages.js';
 
 export interface AdminFilters {
@@ -47,7 +48,8 @@ function adminMeetingPointSubLabel(config: ReservaContext['config'], booking: Bo
     const service = resolveService(config, booking.serviceSlug);
     const presentation = pickupPresentationFor(service, booking);
     if (!presentation?.usesMeetingPoint || (service.location?.meetingPoints?.length ?? 0) <= 1) return '';
-    return meetingPointForBooking(service, booking.meetingPointId, booking.meetingPointLabel).label;
+    // The operator's own locale, not the customer's: this is the admin's view of the booking.
+    return meetingPointForBooking(service, booking.meetingPointId, booking.meetingPointLabel, adminLocaleFor(config), config.locales.default).label;
   } catch {
     return '';
   }
@@ -59,8 +61,17 @@ export function matchesAdminFilters(booking: Booking, filters: AdminFilters, con
     const needle = filters.q.toLowerCase();
     // adminMeetingPointSubLabel is exactly what the row displays, so a hidden meeting point can
     // never make a booking match.
-    const haystack = [booking.reference, booking.serviceSlug, booking.pickupType, booking.pickupAddress ?? '', adminMeetingPointSubLabel(config, booking), booking.customerName ?? '', booking.customerEmail ?? ''].join(' ').toLowerCase();
-    if (!haystack.includes(needle)) return false;
+    // Metadata is operator-declared per service (booth number, flight code…), so whatever an
+    // operator put there is exactly what they will later search the dashboard for.
+    const metadataValues = Object.values(booking.metadata ?? {}).map((value) => (value === null || value === undefined ? '' : String(value)));
+    const phone = booking.customerPhone ?? '';
+    const haystack = [booking.reference, resolveServiceTitle(config, booking.serviceSlug, adminLocaleFor(config)), booking.pickupType, booking.pickupAddress ?? '', adminMeetingPointSubLabel(config, booking), booking.customerName ?? '', booking.customerEmail ?? '', phone, ...metadataValues].join(' ').toLowerCase();
+    if (haystack.includes(needle)) return true;
+    // A phone reaches the operator over the phone, written however the caller reads it out, so the
+    // search compares digits only: '+351 912 345 678' and '912345678' find the same booking.
+    const needleDigits = digitsOf(needle);
+    const phoneDigits = digitsOf(phone);
+    if (needleDigits.length < 3 || !phoneDigits.includes(needleDigits)) return false;
   }
   return true;
 }
@@ -76,6 +87,28 @@ export function manageLinkHref(routeConfig: ReservaResolvedRouteConfig, token: s
 // a plain locale date/time wouldn't.
 function formatIncidentSince(iso: string, locale: string, timezone: string): string {
   return formatDateTime(utcToLocalIso(iso, timezone), locale, timezone);
+}
+
+// Sits above the incident cards in the "Attention" panel: an off security layer is silent by
+// design at runtime, so the dashboard is the only place an operator finds out.
+export function securityWarningsSection(
+  messages: ReturnType<typeof resolveMessages>,
+  security: OpsHealthSecurity,
+): string {
+  const warnings: string[] = [];
+  if (security.csrfTokenLayer === 'off') warnings.push(messages['admin.securityCsrfOff']);
+  if (security.tokenEncryption === 'off') warnings.push(messages['admin.securityTokenEncOff']);
+  if (warnings.length === 0) return '';
+  return `<section id="bk-security" class="bk-card bk-alert bk-alert--warn" role="status">`
+    + `<ul>${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join('')}</ul>`
+    + `</section>`;
+}
+
+// A deployment-wide incident (reconciliation) carries no booking, so the reference column shows
+// what it is about instead of a booking id.
+function incidentReference(incident: OperationalIncidentRecord, referenceByBookingId: Map<string, string>): string {
+  if (incident.bookingId === null) return incident.sourceType;
+  return referenceByBookingId.get(incident.bookingId) ?? incident.bookingId;
 }
 
 // The "Attention" panel: open incident cards with a technical-details disclosure and
@@ -98,20 +131,26 @@ export function incidentsSection(
   const locale = adminLocaleFor(context.config);
   const timezone = context.config.business.timezone;
   const csrfField = `<input type="hidden" name="csrf_token" value="${escapeHtml(csrfToken)}">`;
-  const savedAlert = saved === 'incident-retried'
-    ? `<p class="bk-alert bk-alert--ok" role="status">${escapeHtml(messages['admin.incidentRetried'])}</p>`
-    : saved === 'incident-resolved'
-      ? `<p class="bk-alert bk-alert--ok" role="status">${escapeHtml(messages['admin.incidentResolved'])}</p>`
-      : '';
+  // The retry POST reports what actually happened, so a retry that changed nothing must not read
+  // like a success: only an incident that closed gets the ok tone.
+  const savedNotice: Record<string, { key: keyof typeof messages; tone: string }> = {
+    'incident-resolved': { key: 'admin.incidentResolved', tone: 'ok' },
+    'incident-retry-failed': { key: 'admin.incidentRetryFailed', tone: 'warn' },
+    'incident-retry-unavailable': { key: 'admin.incidentRetryNotAvailable', tone: 'warn' },
+  };
+  const notice = savedNotice[saved];
+  const savedAlert = notice
+    ? `<p class="bk-alert bk-alert--${notice.tone}" role="status">${escapeHtml(messages[notice.key])}</p>`
+    : '';
   const hiddenSource = (incident: OperationalIncidentRecord): string =>
     `<input type="hidden" name="source_type" value="${escapeHtml(incident.sourceType)}">`
     + `<input type="hidden" name="source_key" value="${escapeHtml(incident.sourceKey)}">`;
   const cards = openIncidents.map((incident) => {
-    const reference = referenceByBookingId.get(incident.bookingId) ?? incident.bookingId;
+    const reference = incidentReference(incident, referenceByBookingId);
     const title = ownerFacingIncidentTitle(incident.action);
     const severityLabel = incident.severity === 'action_required' ? messages['admin.incidentSeverityActionRequired'] : messages['admin.incidentSeverityDelayed'];
     const severityTone = incident.severity === 'action_required' ? ' bk-badge--danger' : ' bk-badge--warn';
-    const canRetry = incident.action !== 'oversell';
+    const canRetry = incident.action !== 'oversell' && incident.bookingId !== null;
     const isMultiRecipientish = incident.action === 'confirmation_email' || incident.action === 'customer_notification' || incident.action === 'operations_sync';
     const retryForm = canRetry
       ? `<form method="post" class="bk-incident-action">${csrfField}${hiddenSource(incident)}`
@@ -137,7 +176,7 @@ export function incidentsSection(
   }).join('');
 
   const historyItems = resolvedIncidents.map((incident) => {
-    const reference = referenceByBookingId.get(incident.bookingId) ?? incident.bookingId;
+    const reference = incidentReference(incident, referenceByBookingId);
     const resolution = incident.resolutionKind === 'manual'
       ? formatMessage(messages['admin.incidentHistoryManual'], { who: incident.resolvedBy ?? '' })
       : messages['admin.incidentHistoryAutomatic'];
@@ -178,10 +217,16 @@ export function adminPage(
   incidentsHtml: string,
   openIncidentCount: number,
   activeTab: AdminTab,
+  // Widens the upcoming window; null when the list already covers the widest window the handler
+  // offers, or when there is nothing to widen to.
+  laterHref: string | null = null,
 ): string {
   const locale = adminLocaleFor(context.config);
   const messages = resolveMessages(context.config, locale);
   const timezone = context.config.business.timezone;
+  // The render clock, not the host's: formatDayDate names the year only when it differs from
+  // "now", and a test or a replayed request must see the same dates the request's clock implies.
+  const now = context.clock();
   const filtered = tableBookings.filter((booking) => matchesAdminFilters(booking, filters, context.config));
   const formatTime = (startsAt: string): string =>
     new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', timeZone: timezone }).format(new Date(startsAt));
@@ -201,18 +246,18 @@ export function adminPage(
     } catch {
       rowService = undefined;
     }
-    const serviceLabel = rowService?.title ?? booking.serviceSlug;
+    const serviceLabel = resolveServiceTitle(context.config, booking.serviceSlug, locale);
     const option = rowService ? pickupOptionFor(rowService, booking.pickupType) : undefined;
     // Gate on the row's own data, not config — a location-less booking (pickupType null) shows no
-    // pickup. A non-null pickupType falls back to the declared option, then the message-catalog
-    // key for 'default'/'custom', then the raw id.
+    // pickup. A stored id the service no longer declares has nothing left to name it but itself.
     const pickupLabel = booking.pickupType === null
       ? ''
-      : option?.label
-        ?? (booking.pickupType === 'default' ? messages['widget.pickupDefault']
-          : booking.pickupType === 'custom' ? messages['widget.pickupCustom']
-          : booking.pickupType);
-    const requiresAddress = option ? option.requiresAddress : booking.pickupType === 'custom';
+      : option
+        ? (option.label ? resolveLocalizedText(option.label, locale, context.config.locales.default) : messages['pickup.meetingPoint'])
+        : booking.pickupType;
+    // Ids are opaque, so the address row keys off the resolved option's own flag; an unknown option
+    // shows the raw id and no address.
+    const requiresAddress = option?.requiresAddress ?? false;
     const meetingPointLabel = adminMeetingPointSubLabel(context.config, booking);
     // The summary names one place: the meeting point when there is a choice of them, otherwise the
     // pickup option itself. The exact street address stays in the disclosure.
@@ -221,10 +266,18 @@ export function adminPage(
     // Confirmed is the expected state and reads as noise on every row, so only the states an
     // operator might act on are spelled out.
     const tone = statusToneOf(booking.status);
-    const statusText = booking.status === 'confirmed'
-      ? ''
-      : escapeHtml(messages[`status.${booking.status}` as keyof typeof messages] ?? booking.status);
-    const statusClass = tone === 'danger' ? ' bk-booking-status--danger' : tone === 'warn' ? ' bk-booking-status--warn' : '';
+    // The badge below brings its own tint, so the cell must not tint the text a second time.
+    const statusClass = booking.status === 'hold' ? '' : tone === 'danger' ? ' bk-booking-status--danger' : tone === 'warn' ? ' bk-booking-status--warn' : '';
+    // A hold is the one row with a deadline of its own: it releases the spot unattended, so the
+    // row carries the expiry an operator would otherwise have to open the booking to find, and
+    // takes a badge so it reads as a state rather than as part of the customer line.
+    const statusText = booking.status === 'hold'
+      ? `<span class="bk-badge bk-badge--warn">${escapeHtml(booking.holdExpiresAt
+          ? `${messages['status.hold']} · ${formatTime(booking.holdExpiresAt)}`
+          : messages['status.hold'])}</span>`
+      : booking.status === 'confirmed'
+        ? ''
+        : escapeHtml(messages[`status.${booking.status}` as keyof typeof messages] ?? booking.status);
     // No row action on terminal rows (reachable since the filter widening): "Manage" would open a
     // page with no actions left.
     const isTerminal = booking.status === 'cancelled' || booking.status === 'expired' || booking.status === 'no_show';
@@ -235,12 +288,14 @@ export function adminPage(
         ? `<a class="bk-btn bk-btn--secondary bk-btn--sm bk-booking-open" href="${escapeHtml(manageHref)}">${escapeHtml(messages['admin.manage'])}</a>`
         : `<span class="bk-sub bk-booking-open">${escapeHtml(messages['admin.manageUnavailable'])}</span>`;
     const facts: Array<[string, string]> = [[messages['common.reference'], `<span class="bk-mono">${escapeHtml(booking.reference)}</span>`]];
-    if (booking.customerEmail) facts.push([messages['common.email'], escapeHtml(booking.customerEmail)]);
-    if (booking.customerPhone) facts.push([messages['common.phone'], escapeHtml(booking.customerPhone)]);
+    // Reaching the customer is the reason this disclosure gets opened at all, so the details are
+    // one tap rather than a copy-paste into another app.
+    if (booking.customerEmail) facts.push([messages['common.email'], emailLink(booking.customerEmail)]);
+    if (booking.customerPhone) facts.push([messages['common.phone'], phoneLinks(booking.customerPhone, messages)]);
     facts.push([messages['common.price'], escapeHtml(formatPrice(booking.priceMinor, locale, context.config.business.currency))]);
     if (requiresAddress && booking.pickupAddress) facts.push([messages['common.pickupAddress'], escapeHtml(booking.pickupAddress)]);
     if (meetingPointLabel && pickupLabel) facts.push([messages['common.pickup'], escapeHtml(pickupLabel)]);
-    facts.push([messages['admin.bookedOn'], escapeHtml(formatDayDate(localDateKey(booking.createdAt, timezone), locale))]);
+    facts.push([messages['admin.bookedOn'], escapeHtml(formatDayDate(localDateKey(booking.createdAt, timezone), locale, now))]);
     return `<details class="bk-booking">`
       + `<summary>`
       + `<span class="bk-booking-time">${escapeHtml(formatTime(booking.startsAt))}</span>`
@@ -266,7 +321,7 @@ export function adminPage(
     return [...groups];
   };
   const bookingList = groupByDay(filtered).map(([date, list]) =>
-    `<div class="bk-daygroup"><h3>${escapeHtml(formatDayDate(date, locale))}</h3>${list.map(bookingRow).join('')}</div>`).join('');
+    `<div class="bk-daygroup"><h3>${escapeHtml(formatDayDate(date, locale, now))}</h3>${list.map(bookingRow).join('')}</div>`).join('');
 
   const overridesByDate = new Map(overrides.map((override) => [override.date, override]));
   const bookingsByDate = new Map<string, Booking[]>();
@@ -332,7 +387,7 @@ export function adminPage(
       // server-side here and client-side from the island's per-day `load` strings.
       const stateWord = capacity === 0 ? messages['widget.closed'] : override ? messages['admin.stateOverride'] : booked > 0 ? messages['admin.legendBooked'] : '';
       const load = booked > 0 || capacity === 0 || override ? ` — ${unitsLoad(date, capacity)}` : '';
-      const label = `${formatDayDate(date, locale)}${stateWord ? ` — ${stateWord}` : ''}${load}`;
+      const label = `${formatDayDate(date, locale, now)}${stateWord ? ` — ${stateWord}` : ''}${load}`;
       const tooltip = [override?.reason, load ? unitsLoad(date, capacity) : ''].filter(Boolean).join(' · ');
       const title = tooltip ? ` title="${escapeHtml(tooltip)}"` : '';
       // data-* carries each day's effective values so the enhancer can prefill the form without a
@@ -352,7 +407,9 @@ export function adminPage(
       + `<summary>${escapeHtml(monthTitle)}${flaggedBadge}</summary><div>${grid}</div></details>`;
   }).join('');
 
-  const statusOptions = ['', 'confirmed', 'hold', 'cancelled', 'no_show'].map((value) => {
+  // Every status a row can carry: 'expired' rows exist (a hold nobody paid) and were unreachable
+  // from the filter, so the only way to see one was to know its reference.
+  const statusOptions = ['', 'confirmed', 'hold', 'expired', 'cancelled', 'no_show'].map((value) => {
     const label = value === '' ? messages['admin.all'] : (messages[`status.${value}` as keyof typeof messages] ?? value);
     const selected = filters.status === value ? ' selected' : '';
     return `<option value="${escapeHtml(value)}"${selected}>${escapeHtml(label)}</option>`;
@@ -379,10 +436,13 @@ export function adminPage(
     + (filters.q || filters.status ? `<a class="bk-filter-clear" href="${escapeHtml(clearHref)}">${escapeHtml(messages['admin.clearFilters'])}</a>` : '')
     + `</form>`;
 
+  const laterLink = laterHref
+    ? `<p class="bk-sub"><a href="${escapeHtml(laterHref)}">${escapeHtml(messages['admin.showLaterBookings'])}</a></p>`
+    : '';
   const upcomingPanel = filterForm
     + (filtered.length === 0
       ? `<div class="bk-empty-state"><p>${escapeHtml(messages['admin.noBookings'])}</p></div>`
-      : bookingList);
+      : bookingList + laterLink);
 
   // Row "Edit" links land here with ?date=…, prefilling the form — no script needed.
   const editOverride = editDate ? overridesByDate.get(editDate) : undefined;
@@ -465,7 +525,7 @@ export function adminPage(
   const overrideForm = `<form method="post" id="bk-override" class="bk-day-form">${csrfField}${adminIsland}`
     // role="status" makes this a live region: once the enhancer starts rewriting this text on
     // selection changes, a screen reader announces it without focus moving. Inert without JS.
-    + `<h2 data-reserva-day-title role="status">${escapeHtml(editDate ? formatDayDate(editDate, locale) : messages['admin.overrideTitle'])}</h2>`
+    + `<h2 data-reserva-day-title role="status">${escapeHtml(editDate ? formatDayDate(editDate, locale, now) : messages['admin.overrideTitle'])}</h2>`
     + savedAlert('day')
     + dayDetail
     + `<label class="bk-field"><span>${escapeHtml(messages['common.date'])}</span><input class="bk-input" name="date" type="date" required value="${escapeHtml(editDate)}"></label>`
@@ -485,7 +545,7 @@ export function adminPage(
   // Capacity-level changes ("a van broke down") apply from a date onwards, so operators never
   // click 30 day cells one by one. Each scheduled change can be removed independently.
   const defaultEntries = capacityDefaults.map((entry) =>
-    `<li><span>${escapeHtml(formatMessage(messages['admin.defaultEntry'], { n: entry.capacity, date: formatDayDate(entry.fromDate, locale) }))}`
+    `<li><span>${escapeHtml(formatMessage(messages['admin.defaultEntry'], { n: entry.capacity, date: formatDayDate(entry.fromDate, locale, now) }))}`
     + (entry.reason ? `<span class="bk-sub">${escapeHtml(entry.reason)}</span>` : '')
     + `</span><form method="post">${csrfField}<input type="hidden" name="date" value="${escapeHtml(entry.fromDate)}">`
     + `<button type="submit" class="bk-btn bk-btn--secondary bk-btn--sm" name="action" value="default-clear">${escapeHtml(messages['admin.remove'])}</button></form></li>`).join('');
@@ -553,6 +613,8 @@ export function adminPage(
     lang: locale,
     title: `${messages['admin.title']} — ${context.config.business.name}`,
     cssHref: cssAssetHref(context.routeConfig.paths.assetsCss),
+    favicon: context.config.ui?.faviconUrl,
+    headHtml: context.config.ui?.headHtml,
     scriptHref: jsAssetHref(context.routeConfig.paths.assetsJs),
     sidebar: adminSidebar(context, messages, 'admin'),
     sidebarLabel: messages['admin.navigation'],

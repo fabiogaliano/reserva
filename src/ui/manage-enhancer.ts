@@ -6,7 +6,7 @@ export const manageEnhancerJs = `(() => {
   const form = document.querySelector('[data-reserva-reschedule]');
   if (!form || !('customElements' in window)) return;
   const ds = form.dataset;
-  const input = form.querySelector('input[name="newStart"]');
+  const input = form.querySelector('input[name="start"]');
   const nativeField = form.querySelector('[data-reserva-native-start]');
   const submit = form.querySelector('button[type="submit"]');
   const island = form.querySelector('[data-reserva-i18n]');
@@ -14,6 +14,8 @@ export const manageEnhancerJs = `(() => {
   let i18n = {};
   try { i18n = JSON.parse(island ? island.textContent : '{}'); } catch {}
 
+  // A copy of @reservajs/astro/client's dateKey rather than an import: this file is served as a
+  // plain script asset with no bundler in front of it, so it cannot resolve a module specifier.
   // UTC getters, not local: cally hands isDateDisallowed dates built with Date.UTC, so local
   // getters would read back the previous day in any timezone behind UTC.
   const dateKey = (date) => date.getUTCFullYear() + '-' + String(date.getUTCMonth() + 1).padStart(2, '0') + '-' + String(date.getUTCDate()).padStart(2, '0');
@@ -41,7 +43,9 @@ export const manageEnhancerJs = `(() => {
   calendar.className = 'bk-cal';
   calendar.setAttribute('min', ds.from || '');
   calendar.setAttribute('max', ds.to || '');
-  calendar.setAttribute('locale', ds.locale || 'pt-PT');
+  // The page's own language, never a hard-coded one: the manage route renders <html lang> from the
+  // booking's locale, and data-locale carries the same value for the form.
+  calendar.setAttribute('locale', ds.locale || document.documentElement.lang || 'en');
   const prev = chevron('M15 18l-6-6 6-6');
   prev.slot = 'previous';
   const next = chevron('M9 6l6 6-6 6');
@@ -74,7 +78,7 @@ export const manageEnhancerJs = `(() => {
       button.setAttribute('aria-pressed', 'false');
       const time = document.createElement('span');
       time.className = 'bk-slot-time';
-      time.textContent = slot.start.slice(11, 16);
+      time.textContent = slot.time;
       button.append(time);
       // The server already applied the deployment's limitedThreshold, so a non-null remaining IS
       // the scarce case — never re-decided here against a hardcoded threshold.
@@ -87,9 +91,9 @@ export const manageEnhancerJs = `(() => {
       button.addEventListener('click', () => {
         for (const other of slots.querySelectorAll('.bk-slot')) other.setAttribute('aria-pressed', 'false');
         button.setAttribute('aria-pressed', 'true');
-        // The POST handler expects a business-local YYYY-MM-DDTHH:MM; availability slot starts
-        // are local ISO strings with an offset, so the first 16 chars are exactly that.
-        input.value = slot.start.slice(0, 16);
+        // The POST handler expects a business-local YYYY-MM-DDTHH:MM, which is exactly the
+        // date/time pair the availability payload already carries.
+        input.value = slot.date + 'T' + slot.time;
         status.textContent = '';
         submit.disabled = false;
       });
@@ -97,7 +101,7 @@ export const manageEnhancerJs = `(() => {
     }
   };
 
-  const query = new URLSearchParams({ service: ds.service || '', quantity: ds.quantity || '', from: ds.from || '', to: ds.to || '' });
+  const query = new URLSearchParams({ serviceSlug: ds.service || '', quantity: ds.quantity || '', from: ds.from || '', to: ds.to || '' });
   fetch(ds.endpoint + '?' + query, { cache: 'no-store' })
     .then((response) => response.json().then((payload) => ({ ok: response.ok, payload })))
     .then(({ ok, payload }) => {

@@ -24,15 +24,13 @@ operator bearer token is `local-operator-secret`.
 
 ## Scheduled reconciliation
 
-`worker/` is a second, minimal Worker whose whole entrypoint is
-`export default { scheduled: scheduledHandler(runtime) }`. It is separate because the Astro
-adapter's generated entry exports only `fetch`. It shares this site's `RESERVA_DB` binding and
-nothing else: a production copy needs every secret the provider factory reads set on this Worker
-too (`wrangler secret put <NAME> --config worker/wrangler.jsonc`).
+`src/worker.ts` is this site's own Worker entry, pointed at by `main` in `wrangler.jsonc`. It
+exports `fetch: handle` from `@astrojs/cloudflare/handler` alongside
+`scheduled: scheduledHandler(runtime)`, so the cron runs in the same Worker as the site, with the
+same bindings and secrets. `triggers.crons` runs it every 5 minutes.
 
-Deploying it by hand keeps the demo's two Wrangler configs independent and inspectable. A real
-site can instead hand the same directory to `@astrojs/cloudflare`'s `auxiliaryWorkers` option, so
-`astro build` emits and deploys both Workers together.
+`POST /api/booking/ops/reconcile` runs the same sweep on demand; both paths share one D1 lease row,
+so they never sweep concurrently.
 
 ```bash
 bun run cron:dev       # wrangler dev with --test-scheduled, against the demo's D1 state

@@ -24,6 +24,7 @@ export default {
   },
   services: {
     oldTown: {
+      title: 'Old Town Walk',
       durationMin: 60,
       turnaroundMin: 15,
       schedule: [

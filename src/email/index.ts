@@ -3,4 +3,4 @@
 // internal — an external transport author gets the maintained template, not the machinery
 // that builds it.
 export { renderDefaultEmail } from './render.js';
-export type { EmailRenderer, EmailTemplateContext, RenderedEmail } from './render.js';
+export type { EmailAttachment, EmailRenderer, EmailTemplateContext, RenderedEmail } from './render.js';

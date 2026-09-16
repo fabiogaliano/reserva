@@ -1,4 +1,4 @@
-import { adminLocaleFor } from '../../core/config.js';
+import { adminLocaleFor, resolveLocalizedText } from '../../core/config.js';
 import { minorUnitDigits, toMajorUnits } from '../../core/currency.js';
 import {
   settingDefinitionsFor,
@@ -71,12 +71,14 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
       : group.serviceTitle;
   };
   // A tier's own description, since its label can't be a static message key: the quantity band and,
-  // where the service has a pickup axis, the pickup option's own copy (same fallbacks as the catalog).
+  // where the service has a pickup axis, the pickup option's own declared label (same resolution
+  // as the catalog). Only the implied meeting-point option falls back to the message catalog.
   const pricingTierLabel = ({ rule, service }: PricingTierGroup): string => {
     const option = service.location?.pickupOptions.find((candidate) => candidate.id === rule.pickup);
     if (!option) return formatMessage(messages['setting.priceTierNoPickup'], { n: rule.maxQuantity });
     const pickup = option.label
-      ?? (option.id === 'default' ? messages['widget.pickupDefault'] : option.id === 'custom' ? messages['widget.pickupCustom'] : option.id);
+      ? resolveLocalizedText(option.label, locale, context.config.locales.default)
+      : messages['pickup.meetingPoint'];
     return formatMessage(messages['setting.priceTier'], { n: rule.maxQuantity, pickup });
   };
   // Money is stored in minor units but only ever shown to an operator in major ones.
@@ -165,13 +167,19 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
     const last = byKey('lastStart');
     const interval = byKey('intervalMin');
     const days = byKey('days');
-    if (!first || !last || !interval || !days) return group.map((definition) => statement(plainSentence(definition), [definition])).join('');
+    if (!first || !interval || !days) return group.map((definition) => statement(plainSentence(definition), [definition])).join('');
     const bold = (definition: SettingDefinition) => `<b>${escapeHtml(displayValue(definition, definition.get(context.config)))}</b>`;
+    // A rule declared with `lastEnd` generates no `lastStart` definition: its last departure is
+    // derived from the closing time, so it reads in the sentence but carries no control.
+    const rule = first.scheduleRule?.rule;
     const departs = formatMessage(escapeHtml(messages['settingStmt.schedule']), {
-      from: bold(first), to: bold(last), n: bold(interval),
+      from: bold(first), to: last ? bold(last) : `<b>${escapeHtml(rule?.lastStart ?? '')}</b>`, n: bold(interval),
     });
+    const editable = last ? [first, last, interval] : [first, interval];
+    const derivedHint = last ? ''
+      : `<p class="bk-hint">${escapeHtml(formatMessage(messages['setting.lastEnd.hint'], { time: rule?.lastEnd ?? '' }))}</p>`;
     const runs = formatMessage(escapeHtml(messages['settingStmt.days']), { days: bold(days) });
-    return statement(departs, [first, last, interval]) + statement(runs, [days]);
+    return statement(departs, editable) + derivedHint + statement(runs, [days]);
   };
 
   const sections = settingSections.map((section) => {
@@ -232,6 +240,8 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
     lang: locale,
     title: `${messages['admin.settings']} — ${context.config.business.name}`,
     cssHref: cssAssetHref(context.routeConfig.paths.assetsCss),
+    favicon: context.config.ui?.faviconUrl,
+    headHtml: context.config.ui?.headHtml,
     scriptHref: jsAssetHref(context.routeConfig.paths.assetsJs),
     sidebar: adminSidebar(context, messages, 'settings'),
     sidebarLabel: messages['admin.navigation'],

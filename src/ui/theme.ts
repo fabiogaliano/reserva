@@ -1,58 +1,15 @@
 // The whole visual system as one stylesheet string, served at assetsCss so pages can reference it
 // as an external same-origin file (keeps CSP intact — no inline <style>). Every value routes
 // through a --bk-* custom property so a client site can rebrand without touching reserva.
-
-// The dark palette lives here once and is interpolated into both the OS-driven media query and the
-// viewer-forced `[data-theme="dark"]` selector below, so the two can never drift apart.
-const darkTokens = `
-  --bk-bg: #0a0a0c;
-  --bk-surface: #141517;
-  --bk-surface-2: #1d1e21;
-  --bk-text: #ededef;
-  --bk-text-muted: #8a8f98;
-  --bk-border: #2b2c30;
-  --bk-accent: #7c86e2;
-  --bk-accent-contrast: #14162b;
-  --bk-accent-soft: #232647;
-  --bk-danger: #f2a099;
-  --bk-danger-contrast: #2a100e;
-  --bk-danger-soft: #3a201e;
-  --bk-warning: #e0b568;
-  --bk-warning-soft: #362a13;
-  --bk-ok: #8fd0a0;
-  --bk-ok-soft: #1c3123;
-  --bk-shadow: 0 1px 2px rgb(0 0 0 / 0.5), 0 8px 28px rgb(0 0 0 / 0.4);`;
+// The palettes themselves are not declared here: they are lifted from src/ui/tokens.css, the one
+// place a --bk-* default may live, so this stylesheet and the components' CSS cannot drift.
+import { darkTokens, lightTokens } from './generated/tokens.js';
 
 export const themeCss = `
 :root {
   /* Keeps native control chrome (select dropdowns, date pickers, scrollbars) in step with the
      token flip below — without it they stay light inside the dark theme. */
-  color-scheme: light dark;
-  --bk-font: "Inter", "Inter Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --bk-bg: #f3f4f6;
-  --bk-surface: #ffffff;
-  --bk-surface-2: #eceef1;
-  --bk-text: #282a30;
-  --bk-text-muted: #63666d;
-  --bk-border: #e0e2e6;
-  --bk-accent: #5e6ad2;
-  --bk-accent-contrast: #ffffff;
-  --bk-accent-soft: #eceefb;
-  --bk-danger: #b3261e;
-  --bk-danger-contrast: #ffffff;
-  --bk-danger-soft: #fbeae9;
-  --bk-warning: #8a5a00;
-  --bk-warning-soft: #f9efd8;
-  --bk-ok: #1d7a3f;
-  --bk-ok-soft: #e4f2e9;
-  --bk-masthead-text: #ededef;
-  --bk-masthead-muted: #8a8f98;
-  --bk-masthead-brand: #a9b1ef;
-  --bk-radius: 12px;
-  --bk-radius-sm: 8px;
-  --bk-shadow: 0 1px 2px rgb(20 21 26 / 0.05), 0 8px 28px rgb(20 21 26 / 0.05);
-  --bk-focus: 0 0 0 3px color-mix(in srgb, var(--bk-accent) 50%, transparent);
-  --bk-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  color-scheme: light dark;${lightTokens}
 }
 /* Applies when the OS prefers dark and no theme is forced, or when the viewer picks dark via the
    bk_theme cookie (reflected onto <html data-theme> server-side for a flash-free first paint).
@@ -915,6 +872,51 @@ export const themeCss = `
 .bk-slot[aria-pressed="true"] .bk-slot-hint { color: inherit; opacity: 0.85; }
 .bk-slot-time { font-weight: 600; font-variant-numeric: tabular-nums; }
 .bk-slot-hint { font-size: 0.75rem; color: var(--bk-warning); }
+
+/* Printing is how a day's bookings get carried into the field, where there is no dashboard to tap.
+   Paper keeps only what can still be read on it: navigation, tabs, forms and the theme toggle go,
+   every disclosure is forced open so the contact details print with their row, and the list takes
+   the full page width it no longer has to share with the shell. */
+@media print {
+  :root { color-scheme: light; }
+  .bk-page { background: #ffffff; color: #000000; }
+  .bk-skip,
+  .bk-sidebar,
+  .bk-masthead,
+  .bk-tabs,
+  .bk-theme-toggle,
+  .bk-searchbar,
+  .bk-admin-attention,
+  .bk-filter-clear,
+  .bk-booking-open,
+  .bk-booking-chevron,
+  form { display: none !important; }
+  .bk-shell { display: block; min-height: 0; }
+  .bk-shell-main { padding: 0; }
+  .bk-main, .bk-main--shell, .bk-main--mid, .bk-main--wide, .bk-panel {
+    max-width: none;
+    padding: 0;
+    margin: 0;
+  }
+  /* A closed <details> keeps its panel out of the flow, so paper would drop exactly the reference
+     and contact details the printed copy exists for. Both the modern pseudo-element and the plain
+     child selector are set: browsers implement the closed state one way or the other. */
+  details > :not(summary) { display: block !important; }
+  ::details-content { display: block !important; content-visibility: visible !important; }
+  .bk-card, .bk-badge, .bk-booking { box-shadow: none; }
+  .bk-booking { break-inside: avoid; border-bottom: 1px solid #cccccc; }
+  .bk-booking > summary { min-height: 0; }
+  /* The day the rows belong to is the one thing a loose printed page must never lose, so it reads
+     as a heading and is never left stranded at the foot of a page. */
+  .bk-daygroup > h3 {
+    break-after: avoid;
+    font-size: 1.05rem;
+    letter-spacing: 0;
+    text-transform: none;
+    color: #000000;
+  }
+  a[href] { color: inherit; text-decoration: none; }
+}
 `;
 
 // An absent cookie means "follow the OS" (prefers-color-scheme); the toggle only stores an

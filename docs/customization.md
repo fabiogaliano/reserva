@@ -27,6 +27,30 @@ their stylesheet from `/booking/assets/reserva.css` and their calendar/enhancer 
 `/booking/assets/reserva.js`, both referenced through content-hashed URLs with year-long
 cache headers.
 
+Every token is declared once, in `src/ui/tokens.css`; the pages' stylesheet and the components'
+stylesheet both source their defaults from it, so overriding one token reaches both surfaces. The
+table below is generated from that file by `bun run docs:contract`.
+
+<!-- generated:ui-tokens -->
+<!-- /generated:ui-tokens -->
+
+### Head and favicon
+
+Two `config.ui` keys reach the `<head>` of every page Reserva server-renders (confirmation,
+`/booking/manage`, `/booking/admin`, admin settings):
+
+```ts
+ui: {
+  faviconUrl: '/favicon.svg',
+  headHtml: '<link rel="preconnect" href="https://fonts.example"><link rel="stylesheet" href="/site-tokens.css">',
+}
+```
+
+`faviconUrl` becomes `<link rel="icon" href="…">`. `headHtml` is emitted **verbatim, after**
+Reserva's own stylesheet link, so a `--bk-*` override in it wins over the defaults. It is trusted
+markup: Reserva never escapes or parses it, and keeping it within your Content-Security-Policy is
+your responsibility.
+
 **CSP.** Nothing Reserva renders is inline: external same-origin assets only
 (`style-src 'self'`/`script-src 'self'` suffice), plain POST forms, and meta-refresh polling
 on the pending-payment state. The manage page's reschedule keeps a native `datetime-local`

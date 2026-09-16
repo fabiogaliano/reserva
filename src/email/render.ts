@@ -1,9 +1,12 @@
-import type { Booking } from '../core/booking.js';
-import { meetingPointForBooking, metadataRowsForBooking, pickupPresentationFor, type ResolvedClientConfig } from '../core/config.js';
+import { cancellationDeadline, type Booking } from '../core/booking.js';
+import { meetingPointForBooking, metadataRowsForBooking, pickupPresentationFor, resolveServiceTitle, type ResolvedClientConfig } from '../core/config.js';
 import { toMajorUnits } from '../core/currency.js';
 import type { EmailBookingEvent, EmailRecipientRole } from '../core/events.js';
+import { formatLocaleFor } from '../core/locale.js';
 // Boolean metadata reuses the app's one existing yes/no copy pair (admin.on/off) instead of a
-// second one here — the only cross-import from src/ui/ in this module.
+// second one here; the calendar file is the same builder the confirmation page hands the browser,
+// so the attached .ics and the page's download can never describe the booking differently.
+import { icsText } from '../ui/format.js';
 import { resolveMessages } from '../ui/messages.js';
 import { emailString, eventCopyKey } from './copy.js';
 
@@ -19,13 +22,20 @@ export interface EmailTemplateContext {
   recipient: EmailRecipientRole;
   customerManageUrl: string;
   operatorManageUrl: string;
+  // The deployment's admin dashboard, for owner mail about something no booking action can fix
+  // (a payment dispute). Empty when the admin routes are disabled.
+  adminUrl?: string;
   startsAtLocal: string;
 }
 
 // Provider-neutral rendered result. A transport maps this to its own API vocabulary (Brevo's
 // `htmlContent`/`textContent`) rather than the public renderer contract leaking one transport's
 // field names.
-export interface RenderedEmail { subject: string; html: string; text?: string }
+// Base64 `content` rather than bytes: every transport this seam feeds takes the attachment as a
+// string in a JSON body, and a Uint8Array would just be encoded at each of them.
+export interface EmailAttachment { filename: string; contentType: string; content: string }
+
+export interface RenderedEmail { subject: string; html: string; text?: string; attachments?: EmailAttachment[] }
 
 export type EmailRenderer = (context: EmailTemplateContext) => RenderedEmail;
 
@@ -33,10 +43,9 @@ function escapeHtml(value: string): string { return value.replace(/[&<>"']/g, (c
 function interpolate(template: string, values: Record<string, string>): string { return template.replace(/\{([A-Za-z][A-Za-z0-9]*)\}/g, (_, key: string) => values[key] ?? ''); }
 function stripTags(html: string): string { return html.replace(/<[^>]+>/g, ''); }
 
-// Bare 'en' resolves to en-US date ordering (Oct 15); European operators expect 15 Oct, so
-// formatting (not copy) upgrades it to en-GB. Exported so a transport building an
-// `EmailTemplateContext` can format `startsAtLocal` consistently.
-export function formatLocaleFor(locale: string): string { return locale === 'en' ? 'en-GB' : locale; }
+// Re-exported from its home in core so a transport building an `EmailTemplateContext` can format
+// `startsAtLocal` the same way this template and the server-rendered pages do.
+export { formatLocaleFor };
 
 function digitsOf(value: string): string { return value.replace(/\D/g, ''); }
 
@@ -48,7 +57,7 @@ interface EmailModel {
   card: EmailCardRow[];
   button: { label: string; url: string } | null;
   buttonInverted: boolean;
-  contact: { lead: string; phones: string[]; whatsappLine: string | null } | null;
+  contact: { lead: string; phones: string[]; whatsapp: { label: string; number: string; digits: string } | null } | null;
   footerHtml?: string;
 }
 
@@ -74,18 +83,25 @@ function buildModel(context: EmailTemplateContext): EmailModel {
   const copy = (key: string) => emailString(config, locale, key);
   const eventKey = eventCopyKey[event];
   const service = config.services[booking.serviceSlug];
-  const serviceTitle = service?.title ?? booking.serviceSlug;
+  const serviceTitle = resolveServiceTitle(config, booking.serviceSlug, locale);
   const formatLocale = formatLocaleFor(locale);
   const timeZone = config.business.timezone;
   const startsAt = new Date(booking.startsAt);
-  const time = new Intl.DateTimeFormat(formatLocale, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone }).format(startsAt);
+  // No `hourCycle`: the locale decides 12- or 24-hour, so the email reads the same way as the
+  // pages instead of forcing 24-hour on a reader whose locale never uses it.
+  const time = new Intl.DateTimeFormat(formatLocale, { hour: '2-digit', minute: '2-digit', timeZone }).format(startsAt);
   const when = `${new Intl.DateTimeFormat(formatLocale, { weekday: 'short', day: 'numeric', month: 'short', timeZone }).format(startsAt)}, ${time}`;
   const dateLong = new Intl.DateTimeFormat(formatLocale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone }).format(startsAt);
   const guestsWord = copy(booking.quantity === 1 ? 'word.guest' : 'word.guests');
   const customerName = booking.customerName ?? '';
 
+  // The booking's own currency, captured at checkout — never today's configured one, which a
+  // deployment may have changed since the money moved.
+  const price = new Intl.NumberFormat(formatLocale, { style: 'currency', currency: booking.currency.toUpperCase() }).format(toMajorUnits(booking.priceMinor, booking.currency));
+  const cancelDeadline = new Intl.DateTimeFormat(formatLocale, { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', timeZone }).format(cancellationDeadline(booking, config.booking.cancelCutoffHours));
+
   const rawValues: Record<string, string> = {
-    serviceTitle, when, customerName, reference: booking.reference,
+    serviceTitle, when, customerName, reference: booking.reference, price, cancelDeadline,
     quantity: String(booking.quantity), guestsWord, startsAtLocal: context.startsAtLocal,
     // Copy key so a consumer can override with a concrete promise, interpolated like every
     // other placeholder.
@@ -97,7 +113,7 @@ function buildModel(context: EmailTemplateContext): EmailModel {
   // link. requiresAddress/usesMeetingPoint are independent, so an option declaring both renders
   // both rows; a location-less booking gets neither.
   const presentation = service ? pickupPresentationFor(service, booking) : null;
-  const resolvedPoint = service && presentation ? meetingPointForBooking(service, booking.meetingPointId ?? null, booking.meetingPointLabel ?? null) : null;
+  const resolvedPoint = service && presentation ? meetingPointForBooking(service, booking.meetingPointId ?? null, booking.meetingPointLabel ?? null, locale, config.locales.default) : null;
   const requiresAddress = presentation?.requiresAddress ?? false;
   const usesMeetingPoint = presentation?.usesMeetingPoint ?? false;
 
@@ -133,7 +149,6 @@ function buildModel(context: EmailTemplateContext): EmailModel {
   const leadHtml = `<p style="margin:0 0 26px;font-size:17px;line-height:1.5;">${interpolate(copy(`${eventKey}.${recipient}.lead`), htmlValues)}</p>`;
 
   if (recipient === 'owner') {
-    const price = new Intl.NumberFormat(formatLocale, { style: 'currency', currency: config.business.currency.toUpperCase() }).format(toMajorUnits(booking.priceMinor, config.business.currency));
     const card: EmailCardRow[] = [
       { label: copy('label.date'), valueHtml: `<strong>${escapeHtml(`${dateLong}, ${time}`)}</strong>`, valueText: `${dateLong}, ${time}` },
       { label: copy('label.guests'), valueHtml: `<strong>${booking.quantity}</strong>`, valueText: String(booking.quantity) },
@@ -144,9 +159,14 @@ function buildModel(context: EmailTemplateContext): EmailModel {
       ...(booking.customerPhone ? [{ label: copy('label.phone'), valueHtml: `<strong>${escapeHtml(booking.customerPhone)}</strong>`, valueText: booking.customerPhone }] : []),
       { label: copy('label.bookingId'), valueHtml: escapeHtml(booking.reference), valueText: booking.reference },
     ];
+    // A dispute is answered in Stripe and in the dashboard, not by a booking action, so its owner
+    // mail points at the admin instead of the operator manage link every other event uses.
+    const disputeButton = context.adminUrl ? { label: copy('dispute.owner.button'), url: context.adminUrl } : null;
     return {
       subject, leadHtml, card,
-      button: context.operatorManageUrl ? { label: copy('owner.button'), url: context.operatorManageUrl } : null,
+      button: event === 'payment.dispute_created'
+        ? disputeButton
+        : context.operatorManageUrl ? { label: copy('owner.button'), url: context.operatorManageUrl } : null,
       buttonInverted: true,
       contact: null,
     };
@@ -157,14 +177,27 @@ function buildModel(context: EmailTemplateContext): EmailModel {
     : copy('greeting.anonymous');
   const greetingHtml = `<p style="margin:0 0 18px;font-size:17px;line-height:1.5;">${greeting}</p>`;
 
-  const withCard = event === 'booking.confirmed' || event === 'booking.rescheduled';
+  const withCard = event === 'booking.confirmed' || event === 'booking.rescheduled' || event === 'booking.reminder';
+  // What the customer would otherwise have to hunt for across the mail: what they booked, what it
+  // cost, the reference to quote, and how long they can still change their mind. The reminder
+  // keeps the short card — by then the cancellation window is normally already closed.
+  const withBookingTerms = event === 'booking.confirmed' || event === 'booking.rescheduled';
+  const row = (label: string, value: string): EmailCardRow => ({ label, valueHtml: `<strong>${escapeHtml(value)}</strong>`, valueText: value });
   const card: EmailCardRow[] = withCard
     ? [
+        ...(withBookingTerms ? [row(copy('label.service'), serviceTitle)] : []),
         { label: copy('label.date'), valueHtml: `<strong>${escapeHtml(dateLong)}</strong>`, valueText: dateLong },
         { label: copy('label.time'), valueHtml: `<strong>${escapeHtml(time)}</strong>`, valueText: time },
         { label: copy('label.guests'), valueHtml: `<strong>${booking.quantity}</strong>`, valueText: String(booking.quantity) },
         ...pickupRows,
         ...metadataCardRows,
+        ...(withBookingTerms
+          ? [
+              row(copy('label.paid'), price),
+              row(copy('label.bookingId'), booking.reference),
+              row(copy('label.cancellation'), interpolate(copy('cancellation.free'), rawValues)),
+            ]
+          : []),
       ]
     : [];
 
@@ -181,7 +214,9 @@ function buildModel(context: EmailTemplateContext): EmailModel {
     contact: {
       lead: copy(whatsappIsListed ? 'contact.lead.whatsapp' : 'contact.lead.plain'),
       phones: contactPhones,
-      whatsappLine: whatsapp && !whatsappIsListed ? `${copy('label.whatsapp')}: ${whatsapp}` : null,
+      whatsapp: whatsapp && !whatsappIsListed
+        ? { label: copy('label.whatsapp'), number: whatsapp, digits: digitsOf(whatsapp) }
+        : null,
     },
     footerHtml: `${escapeHtml(copy('label.bookingId'))}: ${escapeHtml(booking.reference)}`,
   };
@@ -205,7 +240,7 @@ function renderHtml(model: EmailModel, config: ResolvedClientConfig): string {
     : '';
 
   const contactHtml = model.contact
-    ? `<tr><td align="center" style="padding:22px 32px 6px;font-family:${BODY_FONT};font-size:14px;color:#404040;line-height:1.7;">${escapeHtml(model.contact.lead)}<br>${model.contact.phones.map((phone) => `<a href="tel:${escapeHtml(phone.replace(/\s/g, ''))}" style="color:#191919;font-weight:600;text-decoration:none;">${escapeHtml(phone)}</a>`).join('<br>')}${model.contact.whatsappLine ? `<br>${escapeHtml(model.contact.whatsappLine)}` : ''}</td></tr>`
+    ? `<tr><td align="center" style="padding:22px 32px 6px;font-family:${BODY_FONT};font-size:14px;color:#404040;line-height:1.7;">${escapeHtml(model.contact.lead)}<br>${model.contact.phones.map((phone) => `<a href="tel:${escapeHtml(phone.replace(/\s/g, ''))}" style="color:#191919;font-weight:600;text-decoration:none;">${escapeHtml(phone)}</a>`).join('<br>')}${model.contact.whatsapp ? `<br>${escapeHtml(model.contact.whatsapp.label)}: <a href="https://wa.me/${escapeHtml(model.contact.whatsapp.digits)}" style="color:#191919;font-weight:600;text-decoration:none;">${escapeHtml(model.contact.whatsapp.number)}</a>` : ''}</td></tr>`
     : '';
 
   const footerHtml = model.footerHtml
@@ -224,16 +259,71 @@ function renderText(model: EmailModel, config: ResolvedClientConfig): string {
   if (model.button) lines.push(`${model.button.label}:`, model.button.url, '');
   if (model.contact) {
     lines.push(model.contact.lead, ...model.contact.phones);
-    if (model.contact.whatsappLine) lines.push(model.contact.whatsappLine);
+    if (model.contact.whatsapp) lines.push(`${model.contact.whatsapp.label}: ${model.contact.whatsapp.number}`);
     lines.push('');
   }
   if (model.footerHtml) lines.push(stripTags(model.footerHtml));
   return lines.join('\n').trimEnd();
 }
 
+// Events whose customer copy is about a date the customer needs in their own calendar. A
+// cancellation or no-show deliberately carries no file: there is nothing left to add.
+const CALENDAR_ATTACHMENT_EVENTS = new Set<EmailBookingEvent>(['booking.confirmed', 'booking.rescheduled', 'booking.reminder']);
+
+// btoa takes latin-1, so the UTF-8 bytes are widened one at a time; a meeting point with an
+// accent would otherwise throw here instead of arriving as an attachment.
+function toBase64(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  let binary = '';
+  for (let index = 0; index < bytes.length; index += 1) binary += String.fromCharCode(bytes[index]!);
+  return btoa(binary);
+}
+
+function calendarAttachment(context: EmailTemplateContext): EmailAttachment | null {
+  const { event, booking, config, locale, recipient } = context;
+  if (recipient !== 'customer' || !CALENDAR_ATTACHMENT_EVENTS.has(event)) return null;
+  const service = config.services[booking.serviceSlug];
+  const point = service
+    ? meetingPointForBooking(service, booking.meetingPointId ?? null, booking.meetingPointLabel ?? null, locale, config.locales.default)
+    : null;
+  const ics = icsText({
+    title: `${config.business.name} — ${resolveServiceTitle(config, booking.serviceSlug, locale)}`,
+    start: booking.startsAt,
+    end: booking.endsAt,
+    location: point?.label ?? booking.pickupAddress ?? '',
+    description: `${emailString(config, locale, 'label.bookingId')}: ${booking.reference}`,
+  });
+  return { filename: 'booking.ics', contentType: 'text/calendar; charset=utf-8', content: toBase64(ics) };
+}
+
 // The one default template, exported so a transport constructs it automatically and a custom
 // EmailRenderer can delegate events it doesn't want to replace.
 export function renderDefaultEmail(context: EmailTemplateContext): RenderedEmail {
   const model = buildModel(context);
-  return { subject: model.subject, html: renderHtml(model, context.config), text: renderText(model, context.config) };
+  const attachment = calendarAttachment(context);
+  return {
+    subject: model.subject,
+    html: renderHtml(model, context.config),
+    text: renderText(model, context.config),
+    ...(attachment ? { attachments: [attachment] } : {}),
+  };
+}
+
+
+// The same branded shell as the booking template, for a message that has no booking behind it
+// (operational alerts). Kept here so alert mail can never drift from the branding a deployment
+// already configured. `leadHtml` is trusted markup produced by Reserva's own copy, never input.
+export function renderMessageEmail(
+  config: ResolvedClientConfig,
+  message: { subject: string; leadHtml: string },
+): RenderedEmail {
+  const model: EmailModel = {
+    subject: message.subject,
+    leadHtml: `<p style="margin:0 0 18px;font-size:17px;line-height:1.5;">${message.leadHtml}</p>`,
+    card: [],
+    button: null,
+    buttonInverted: false,
+    contact: null,
+  };
+  return { subject: model.subject, html: renderHtml(model, config), text: renderText(model, config) };
 }

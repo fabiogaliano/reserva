@@ -13,15 +13,17 @@ export function handleQuote(request: Request, context: ReservaContext): Promise<
     if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const body = await requestJson(request);
     const serviceSlug = requireString(body.serviceSlug, 'serviceSlug');
-    if (!context.config.services[serviceSlug]) throw new HttpError(400, 'validation_failed', 'Unknown service');
+    if (!context.config.services[serviceSlug]) {
+      const declared = Object.keys(context.config.services);
+      throw new HttpError(400, 'validation_failed', `serviceSlug must be one of: ${declared.join(', ')}`, { field: 'serviceSlug', allowed: declared });
+    }
     const quantity = requireInteger(body.quantity, 'quantity');
     const service = resolveService(context.config, serviceSlug);
     const pickup = resolvePickupAxis(service, body.pickup, 'pickup');
-    // Accepted so a consumer can quote with the same payload builder it checks out with, and
-    // type-checked here — but never negotiated or stored, because a price never varies by locale.
-    if (body.locale !== undefined) requireString(body.locale, 'locale');
+    // A `locale` sent by a payload builder shared with checkout is accepted and dropped without a
+    // word: a price never varies by locale, so there is nothing to negotiate and nothing to reject.
     return json<QuoteResponse>({
-      priceMinor: quotedPriceMinor(service, quantity, pickup),
+      priceMinor: quotedPriceMinor(service, quantity, pickup, serviceSlug),
       // The booking's currency is captured from this same config value at checkout, so a quote and
       // the charge that follows are always denominated identically.
       currency: context.config.business.currency,

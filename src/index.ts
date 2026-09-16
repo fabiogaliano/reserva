@@ -17,4 +17,4 @@ export type { ClientConfig, ResolvedClientConfig } from './core/config.js';
 export type { EmailCopyKey } from './email/copy.js';
 // Exposed so `virtual:reserva/config`'s injected type declaration can reference the exact
 // resolved-route-config shape via `reserva`'s existing "." export, without a dedicated subpath.
-export type { ReservaResolvedRouteConfig, ReservaRouteGroupFlags, ReservaRouteId } from './routes-manifest.js';
+export type { ReservaResolvedRouteConfig, ReservaRouteGroupFlags, ReservaRouteId, ReservaVirtualConfig } from './routes-manifest.js';

@@ -1,4 +1,4 @@
-import type { PickupType } from './config.js';
+import { resolveServiceTitle, type PickupType, type ResolvedClientConfig } from './config.js';
 import { addMinutes, compareInstants, parseUtcInstant } from './time.js';
 
 export const bookingStatuses = ['hold', 'confirmed', 'cancelled', 'expired', 'no_show'] as const;
@@ -52,6 +52,9 @@ export interface WireBooking {
   id: string;
   reference: string;
   serviceSlug: string;
+  // The service's display name, resolved for the booking's own locale. `serviceSlug` stays the
+  // identifier; this is the only field a consumer should put in front of a person.
+  serviceTitle: string;
   quantity: number;
   pickupType: PickupType | null;
   pickupAddress: string | null;
@@ -75,11 +78,12 @@ export interface WireBooking {
   updatedAt: string;
 }
 
-export function toWireBooking(booking: Booking): WireBooking {
+export function toWireBooking(booking: Booking, config: ResolvedClientConfig): WireBooking {
   return {
     id: booking.id,
     reference: booking.reference,
     serviceSlug: booking.serviceSlug,
+    serviceTitle: resolveServiceTitle(config, booking.serviceSlug, booking.locale),
     quantity: booking.quantity,
     pickupType: booking.pickupType,
     pickupAddress: booking.pickupAddress,

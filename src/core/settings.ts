@@ -1,5 +1,5 @@
 import { ZodError } from 'astro/zod';
-import { validateConfig, type PricingRule, type ResolvedClientConfig, type ResolvedServiceConfig, type ScheduleRule } from './config.js';
+import { adminLocaleFor, resolveServiceTitle, validateConfig, type PricingRule, type ResolvedClientConfig, type ResolvedScheduleRule, type ResolvedServiceConfig } from './config.js';
 import { minorUnitDigits, minorUnitFactor } from './currency.js';
 
 // Operator-editable settings: the runtime-safe scalar dials of ClientConfig, stored as JSON and
@@ -39,7 +39,7 @@ export interface ScheduleRuleGroup {
   ruleIndex: number;
   // The rule as the file config declares it; the page reads the effective rule for the heading so
   // it agrees with the fields below it once days have been overridden.
-  rule: ScheduleRule;
+  rule: ResolvedScheduleRule;
 }
 
 // Which pricing rule a tier-amount definition belongs to. Carries the service so the page can
@@ -135,6 +135,14 @@ export const settingDefinitions: readonly SettingDefinition[] = [
     set: (config, value) => { config.booking.limitedThreshold = value as number; },
   },
   {
+    key: 'booking.reminderHoursBefore', section: 'policy', labelKey: 'setting.reminderHoursBefore',
+    groupKey: 'settingGroup.reminders',
+    // 0 is a valid submission, not an empty field: it is how an operator turns reminders off.
+    kind: { type: 'int', min: 0 },
+    get: (config) => config.booking.reminderHoursBefore,
+    set: (config, value) => { config.booking.reminderHoursBefore = value as number; },
+  },
+  {
     key: 'capacity.default', section: 'capacity', labelKey: 'setting.capacity',
     kind: { type: 'int', min: 0 },
     get: (config) => config.capacity.default,
@@ -191,8 +199,8 @@ function scheduleRuleDefinitions(config: ResolvedClientConfig): SettingDefinitio
   for (const [slug, service] of Object.entries(config.services)) {
     service.schedule.forEach((rule, index) => {
       const prefix = `services.${slug}.schedule.${index}`;
-      const scheduleRule: ScheduleRuleGroup = { serviceSlug: slug, serviceTitle: service.title ?? slug, ruleIndex: index, rule };
-      const ruleOf = (target: ResolvedClientConfig): ScheduleRule | undefined => target.services[slug]?.schedule[index];
+      const scheduleRule: ScheduleRuleGroup = { serviceSlug: slug, serviceTitle: resolveServiceTitle(config, slug, adminLocaleFor(config)), ruleIndex: index, rule };
+      const ruleOf = (target: ResolvedClientConfig): ResolvedScheduleRule | undefined => target.services[slug]?.schedule[index];
       definitions.push(
         {
           key: `${prefix}.firstStart`, section: 'hours', labelKey: 'setting.firstStart', groupKey: prefix, scheduleRule,
@@ -200,12 +208,18 @@ function scheduleRuleDefinitions(config: ResolvedClientConfig): SettingDefinitio
           get: (target) => ruleOf(target)?.firstStart ?? null,
           set: (target, value) => { const found = ruleOf(target); if (found) found.firstStart = value as string; },
         },
-        {
+      );
+      // A rule declared with `lastEnd` has no editable last departure: its value is derived from
+      // the closing time in config, and an override row would be recomputed away on the next save.
+      if (rule.lastEnd === undefined) {
+        definitions.push({
           key: `${prefix}.lastStart`, section: 'hours', labelKey: 'setting.lastStart', groupKey: prefix, scheduleRule,
           kind: { type: 'time' },
           get: (target) => ruleOf(target)?.lastStart ?? null,
           set: (target, value) => { const found = ruleOf(target); if (found) found.lastStart = value as string; },
-        },
+        });
+      }
+      definitions.push(
         {
           key: `${prefix}.intervalMin`, section: 'hours', labelKey: 'setting.intervalMin', groupKey: prefix, scheduleRule,
           // Ceiling mirrors validateConfig: a gap longer than a day can never produce a slot.
@@ -238,7 +252,7 @@ function pricingRuleDefinitions(config: ResolvedClientConfig): SettingDefinition
         section: 'pricing',
         labelKey: 'setting.priceTier',
         groupKey: `services.${slug}.pricing`,
-        pricingTier: { serviceSlug: slug, serviceTitle: service.title ?? slug, rule, service },
+        pricingTier: { serviceSlug: slug, serviceTitle: resolveServiceTitle(config, slug, adminLocaleFor(config)), rule, service },
         kind: { type: 'money', currency },
         get: (target) => ruleOf(target)?.priceMinor ?? null,
         set: (target, value) => { const found = ruleOf(target); if (found) found.priceMinor = value as number; },
@@ -300,8 +314,9 @@ function decodeStoredValue(definition: SettingDefinition, raw: unknown): Setting
   }
 }
 
-// Merges stored overrides over the file config. Clones only the branches settings can touch — a
-// deep clone is off the table because services carry the occupancyFor function.
+// Merges stored overrides over the file config. Clones only the branches settings can touch: the
+// config is plain JSON now, but deep-cloning the whole catalog (metadata fields, meta blobs) on
+// every request to mutate four scalars would be wasted work.
 // `onInvalidRow` is optional: the save path already validates fresh values and has nothing to
 // report, while the load path uses it to attribute a warning to the row it's about to drop.
 export function applySettingOverrides(
@@ -319,7 +334,7 @@ export function applySettingOverrides(
     legal: { ...config.legal },
     services: Object.fromEntries(Object.entries(config.services).map(([slug, service]) => [
       slug,
-      { ...service, schedule: service.schedule.map((rule) => ({ ...rule })), pricing: service.pricing.map((rule) => ({ ...rule })) },
+      { ...service, schedule: service.schedule.map(clonedScheduleRule), pricing: service.pricing.map((rule) => ({ ...rule })) },
     ])),
   };
   for (const definition of settingDefinitionsFor(config)) {
@@ -337,6 +352,16 @@ export function applySettingOverrides(
     else onInvalidRow?.(definition.key, 'stored value fails its current bounds');
   }
   return next;
+}
+
+// A rule declared with `lastEnd` owns its last departure, so the derived `lastStart` is dropped
+// from the clone: the re-validation that follows recomputes it from the edited firstStart/interval
+// instead of judging a stale pair, which is also what makes an edit past the closing time fail with
+// the rule's own lastEnd message.
+function clonedScheduleRule(rule: ResolvedScheduleRule): ResolvedScheduleRule {
+  if (rule.lastEnd === undefined) return { ...rule };
+  const { lastStart: _derived, ...rest } = rule;
+  return rest as ResolvedScheduleRule;
 }
 
 function zodIssues(error: unknown): Array<{ path: (string | number)[]; message: string }> {

@@ -1,9 +1,10 @@
 #!/usr/bin/env bun
 // Proves the *real* scheduled() dispatch path — not a direct runReconciliation() call — recovers
-// owed side-effect debt and resolves an open incident, against the standalone cron Worker template.
+// owed side-effect debt and resolves an open incident, against the site's own Worker entry
+// (`main: ./src/worker.ts`), which exports `fetch` and `scheduled` together.
 //
 // `wrangler dev --test-scheduled` exposing `GET /__scheduled` is the only boundary local workerd
-// supports for scheduled events; there is no Astro-preview equivalent, hence driving the cron
+// supports for scheduled events; there is no Astro-preview equivalent, hence driving the site's
 // Worker directly instead of through `astro preview`.
 //
 // Fixture: a confirmed booking with a `failed` calendar_create row (attempt 2, past both its
@@ -22,7 +23,7 @@ import { validateConfig } from '../src/core/config';
 import type { ReservaProviders } from '../src/context';
 
 const smokeSiteRoot = fileURLToPath(new URL('../examples/smoke-site/', import.meta.url));
-const workerConfigPath = fileURLToPath(new URL('../examples/smoke-site/worker/wrangler.jsonc', import.meta.url));
+const workerConfigPath = fileURLToPath(new URL('../examples/smoke-site/wrangler.jsonc', import.meta.url));
 // This probe's own persist dir; its D1 state must never leak into or be polluted by another
 // probe's.
 const PERSIST_DIR = '.wrangler-scheduled-test';
@@ -131,7 +132,7 @@ async function assertRecovered(): Promise<void> {
 
 await seedAndAssert();
 
-const cronWorker = spawn('bunx', ['wrangler', 'dev', '--config', 'worker/wrangler.jsonc', '--persist-to', PERSIST_DIR, '--test-scheduled', '--port', String(PORT)], {
+const cronWorker = spawn('bunx', ['wrangler', 'dev', '--persist-to', PERSIST_DIR, '--test-scheduled', '--port', String(PORT)], {
   cwd: smokeSiteRoot,
   stdio: 'inherit',
 });

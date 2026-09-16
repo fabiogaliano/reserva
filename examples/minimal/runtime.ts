@@ -1,10 +1,9 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { defineCloudflareReservaRuntime, type ReservaProviders } from '../../src/runtime';
-import config from './client-config';
 
-// Stand-in for the `Env` interface `wrangler types` generates from wrangler.jsonc into
-// worker-configuration.d.ts (see README "Typed environment bindings"). A real consumer imports
-// that generated `Env` instead of hand-declaring it.
+// Stand-in for the `Env` interface `wrangler types` generates from wrangler.jsonc. A real consumer
+// has it in scope globally (see README "Typed environment bindings") and declares nothing here.
+// The booking config is not imported either: it reaches the runtime through `virtual:reserva/config`.
 interface Env {
   RESERVA_DB: D1Database;
   RESERVA_OPERATOR_SECRET: string;
@@ -27,7 +26,7 @@ const providers: ReservaProviders = {
   },
 };
 
-export default defineCloudflareReservaRuntime<Env>(config, {
+export default defineCloudflareReservaRuntime<Env>({
   // The runtime reads D1 and Cache bindings per request, so provider instances never cross a Worker request boundary.
   providers,
 });

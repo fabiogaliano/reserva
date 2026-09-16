@@ -13,7 +13,7 @@ import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, sta
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { RESERVA_MIGRATIONS } from '../src/migrations-manifest';
+import { RESERVA_MIGRATIONS } from '../src/generated/schema-fingerprint';
 import { routeManifest } from '../src/routes-manifest';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -99,6 +99,8 @@ interface PackageJsonExports {
 const EXPECTED_EXPORT_SUBPATHS = [
   '.',
   './core',
+  './client',
+  './dev',
   './email',
   './providers/calendar-google',
   './providers/email-brevo',
@@ -126,16 +128,6 @@ function writeImportAll(consumerDir: string, extraSpecifiers: string[]): string[
   const usage = `export const importedSubpaths: unknown[] = [${subpaths.map((_, index) => `mod${index}`).join(', ')}];\n`;
   writeFileSync(resolve(consumerDir, 'import-all.generated.ts'), `${imports}\n\n${usage}`);
   return subpaths;
-}
-
-function assertScheduledTemplatePackaged(consumerDir: string): void {
-  for (const relativePath of [
-    'examples/smoke-site/worker/scheduled.ts',
-    'examples/smoke-site/worker/wrangler.jsonc',
-  ]) {
-    const installedPath = resolve(consumerDir, 'node_modules/@reservajs/astro', relativePath);
-    if (!existsSync(installedPath)) fail('template', `scheduled Worker template file missing from packed package: ${relativePath}`);
-  }
 }
 
 // dist/ is the whole artifact: raw `.astro` components and their CSS must mirror the source
@@ -294,7 +286,6 @@ function buildConsumer(workDir: string, spec: ConsumerSpec): void {
   bunAddTarballs(consumerDir, spec.tarballs, spec.expectInstalled);
 
   console.log(`pack-test: [${spec.name}] asserting the packed layout`);
-  assertScheduledTemplatePackaged(consumerDir);
   assertPackagedLayout(consumerDir);
   if (spec.expectStripeAbsent) assertStripeAbsent(consumerDir);
   else assertAdapterPackagedLayout(consumerDir);

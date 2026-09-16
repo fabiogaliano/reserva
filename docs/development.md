@@ -3,6 +3,50 @@
 Running Reserva's own repository: the local interactive demo, the test suites, and what CI
 enforces.
 
+## Local development
+
+`@reservajs/astro/dev` ships the in-memory providers a local run needs, so `astro dev` boots a
+complete booking flow with no Stripe account, no calendar and no mail transport:
+
+```ts
+// src/reserva-runtime.ts
+import { defineCloudflareReservaRuntime } from '@reservajs/astro/runtime';
+import { devProviders } from '@reservajs/astro/dev';
+import { stripePayments } from '@reservajs/stripe';
+
+export default defineCloudflareReservaRuntime<Env>({
+  // Gate on import.meta.env.DEV so the fakes are tree-shaken out of the production bundle.
+  providers: import.meta.env.DEV
+    ? devProviders({ pickupAddress: '1 Example Street' })
+    : { payments: stripePayments({ secretKey: …, webhookSecret: … }) },
+});
+```
+
+`devProviders()` returns payments (checkout redirects straight to the confirmation page and the
+session always reports paid), a calendar and an email provider that logs the customer and operator
+manage URLs to the console — the only way to reach a booking's manage page when no mail leaves the
+machine. `devOutbox` (`{ emails, alerts }`) exposes what the fakes "sent" for assertions, and
+`armNextCalendarFailure()` makes the next calendar create fail permanently so the incident path can
+be exercised.
+
+Before the first run, put the secrets in `.dev.vars`:
+
+```ini
+RESERVA_TOKEN_ENC_KEY="<32 random bytes, base64>"
+RESERVA_OPERATOR_SECRET="<any string>"
+RESERVA_CSRF_SECRET="<any string>"
+```
+
+then apply the migrations to the local D1 database:
+
+```sh
+bunx reserva-migrate --local
+```
+
+`/booking/admin` needs no credentials locally: output built by `astro dev` carries `dev: true`, and
+the admin gate honours it when `config.admin.access` is configured (see
+[`deployment.md`](./deployment.md)). Nothing about that bypass exists in an `astro build` bundle.
+
 ## Local interactive demo
 
 [`../examples/smoke-site`](../examples/smoke-site) runs the complete booking flow locally

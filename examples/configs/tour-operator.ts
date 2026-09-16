@@ -16,10 +16,13 @@ export default {
   admin: { access: { teamDomain: 'https://lisbontuktours.cloudflareaccess.com', aud: '<AUD>' } },
   services: {
     alfama: {
-      title: 'Alfama Discovery',
+      // A per-locale map wherever a customer reads it; a plain string is still accepted.
+      title: { en: 'Alfama Discovery', 'pt-PT': 'Descoberta de Alfama' },
       durationMin: 60,
       turnaroundMin: 15,
       schedule: [{ days: [1, 2, 3, 4, 5, 6], firstStart: '09:00', lastStart: '17:00', intervalMin: 60 }],
+      // Three seats per tuk-tuk, so a party of 4 takes two of the three vehicles in `capacity.default`.
+      occupancy: { seatsPerUnit: 3 },
       // A single meeting point implies one pickup option ('meeting_point'), so pricing needs no `pickup` column.
       pricing: [{ maxQuantity: 3, priceMinor: 4500 }],
       location: {
@@ -27,20 +30,22 @@ export default {
       },
     },
     riverside: {
-      title: 'Riverside Grand Tour',
+      title: { en: 'Riverside Grand Tour', 'pt-PT': 'Grande Tour Ribeirinho' },
       durationMin: 120,
       turnaroundMin: 15,
-      schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], firstStart: '09:00', lastStart: '17:00', intervalMin: 60 }],
+      // `lastEnd` is the closing time, not the last departure: the 17:00 last start is derived from
+      // it and follows `durationMin` automatically.
+      schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], firstStart: '09:00', lastEnd: '19:00', intervalMin: 60 }],
       location: {
         meetingPoints: [
           { id: 'dock', label: 'Riverside dock', mapsUrl: 'https://maps.google.com/?q=Riverside+dock' },
           { id: 'gate', label: 'North gate', mapsUrl: 'https://maps.google.com/?q=North+gate' },
         ],
         pickupOptions: [
-          { id: 'meeting_point', label: 'Meeting point', requiresAddress: false, usesMeetingPoint: true },
-          { id: 'custom_dropoff', label: 'Custom drop-off', requiresAddress: true, usesMeetingPoint: true },
-          { id: 'custom_pickup', label: 'Custom pick-up', requiresAddress: true, usesMeetingPoint: false },
-          { id: 'custom_both', label: 'Custom pick-up & drop-off', requiresAddress: true, usesMeetingPoint: false },
+          { id: 'meeting_point', label: { en: 'Meeting point', 'pt-PT': 'Ponto de encontro' }, requiresAddress: false, usesMeetingPoint: true },
+          { id: 'custom_dropoff', label: { en: 'Custom drop-off', 'pt-PT': 'Entrega personalizada' }, requiresAddress: true, usesMeetingPoint: true },
+          { id: 'custom_pickup', label: { en: 'Custom pick-up', 'pt-PT': 'Recolha personalizada' }, requiresAddress: true, usesMeetingPoint: false },
+          { id: 'custom_both', label: { en: 'Custom pick-up & drop-off', 'pt-PT': 'Recolha e entrega personalizadas' }, requiresAddress: true, usesMeetingPoint: false },
         ],
       },
       pricing: [

@@ -11,10 +11,24 @@ export const BOOKING_EVENTS = [
   'booking.cancelled_by_operator',
   'booking.rescheduled',
   'booking.no_show',
+  'booking.reminder',
   'payment.dispute_created',
 ] as const;
 
 export type BookingEvent = (typeof BOOKING_EVENTS)[number];
+
+// Events that describe the deployment rather than a booking. Kept in their own list because a
+// booking payload is exactly what they do NOT have: no booking id, no outbox row (the durable
+// outbox is keyed by booking), and a `data` shape of their own.
+export const SETTINGS_EVENTS = ['settings.changed'] as const;
+
+export type SettingsEvent = (typeof SETTINGS_EVENTS)[number];
+
+// The whole subscribable vocabulary: what `config.webhooks[].events` and hook `events` filters
+// validate against. `BOOKING_EVENTS` stays the booking-payload set.
+export const WEBHOOK_EVENTS = [...BOOKING_EVENTS, ...SETTINGS_EVENTS] as const;
+
+export type WebhookEvent = BookingEvent | SettingsEvent;
 
 export interface BookingEventPayload {
   bookingId: string;
@@ -42,6 +56,10 @@ export interface PaymentCustomerDetails {
 export const PAYMENT_EVENTS = [
   'checkout_completed',
   'checkout_expired',
+  // A delayed payment method (voucher, bank debit) that settled after Reserva already refused the
+  // checkout and released the hold: the money arrived for a booking that does not exist, so it is
+  // refunded rather than confirmed.
+  'async_payment_succeeded',
   'refunded',
   'dispute_created',
 ] as const;
@@ -75,7 +93,9 @@ export interface SessionStatus extends PaymentCustomerDetails {
   metadata?: Record<string, string>;
 }
 
-export type EmailBookingEvent = Exclude<BookingEvent, 'payment.dispute_created'>;
+// Every emittable booking event has customer or owner copy, including the one that is not a
+// booking transition: a dispute is owner-only mail (see `recipientsForEvent`).
+export type EmailBookingEvent = BookingEvent;
 
 // Who a given event's email goes to. Kept generic (not provider-specific) so the mutation
 // dispatcher can ask any provider which recipients apply.
@@ -102,6 +122,17 @@ export interface EmailProvider {
     config: ResolvedClientConfig,
     routeConfig?: ReservaResolvedRouteConfig,
   ): Promise<void>;
+  // A plain message with no booking behind it, so Reserva can reuse a transport the deployment
+  // already configured for something that is not a booking email — today, operational alerts.
+  // Optional: a provider that only knows how to render bookings stays valid.
+  sendMessage?(message: EmailMessage): Promise<void>;
+}
+
+export interface EmailMessage {
+  to: string;
+  subject: string;
+  html: string;
+  text: string;
 }
 
 export interface CalendarProvider {
@@ -117,15 +148,31 @@ export interface CalendarProvider {
 // (Stripe); a community adapter can implement this from its own package. Amounts are always minor
 // units of the booking's own currency; a "ref" is whatever opaque id the provider uses.
 export interface PaymentProvider {
+  // `expiresAt` (UTC ISO) is when the provider's payment page stops accepting payment; optional
+  // because not every processor exposes one, and callers fall back to the hold expiry.
+  //
+  // Contract: the session and the payment object it creates must both carry `bookingId` in their
+  // provider metadata — the webhook is the only place Reserva can recover which booking the money
+  // belongs to, and a session-only copy is lost on charge-level events (refunds, disputes).
+  // The call must be idempotent per `booking.id`: a retried checkout has to return the same
+  // session rather than mint a second, orphaned one.
   createCheckout(
     booking: Booking,
     config: ResolvedClientConfig,
     routePaths?: ReservaResolvedRouteConfig['paths'],
-  ): Promise<{ url: string; sessionRef: string }>;
+  ): Promise<{ url: string; sessionRef: string; expiresAt?: string }>;
+  // Must throw when the signature does not verify — Reserva turns the throw into a 400 and never
+  // inspects the body itself, so a lenient implementation would accept forged events.
   parseWebhook(request: Request): Promise<PaymentEventParsed>;
   getSession(sessionRef: string): Promise<SessionStatus>;
-  // The expected total lets a retry distinguish an incomplete historical partial refund from a
-  // completed full refund; amountMinor reports the cumulative total the operation satisfied.
+  // Best-effort by contract: Reserva calls it to stop money that should never have moved (a
+  // delayed payment method Reserva refuses). An implementation that cannot cancel — or whose
+  // provider rejects the call — is expected to resolve, not throw; a booking is never blocked on it.
+  cancelPayment?(paymentRef: string): Promise<void>;
+  // Must be idempotent per `paymentRef`: Reserva retries refunds from a durable queue, so a
+  // second call for the same payment has to report the original refund instead of moving money
+  // twice. The expected total lets a retry distinguish an incomplete historical partial refund
+  // from a completed full refund; amountMinor reports the cumulative total the operation satisfied.
   refund(paymentRef: string, expectedAmountMinor: number): Promise<{ refundRef: string; amountMinor: number }>;
   // Optional synchronous config check, invoked once at runtime-definition init — never per
   // request. This is where a provider's own limits live (currencies, locales, session lifetime),
@@ -137,10 +184,14 @@ export function isBookingEvent(value: string): value is BookingEvent {
   return (BOOKING_EVENTS as readonly string[]).includes(value);
 }
 
+export function isWebhookEvent(value: string): value is WebhookEvent {
+  return (WEBHOOK_EVENTS as readonly string[]).includes(value);
+}
+
 // Lists the whole valid vocabulary in the rejection, so a hook author learns every event name
 // from the error alone.
 export function unknownBookingEventsMessage(event: string): string {
-  return `Unknown booking event "${event}". Valid events: ${BOOKING_EVENTS.join(', ')}.`;
+  return `Unknown booking event "${event}". Valid events: ${WEBHOOK_EVENTS.join(', ')}.`;
 }
 
 export function invalidSubscriberNameMessage(name: string): string {
@@ -156,7 +207,7 @@ export function validateBookingEventHooks(hooks: readonly BookingEventHook[]): v
     if (seen.has(hook.name)) throw new Error(`Booking event hook name "${hook.name}" is registered twice; names must be unique.`);
     seen.add(hook.name);
     for (const event of hook.events ?? []) {
-      if (!isBookingEvent(event)) throw new Error(`Booking event hook "${hook.name}": ${unknownBookingEventsMessage(event)}`);
+      if (!isWebhookEvent(event)) throw new Error(`Booking event hook "${hook.name}": ${unknownBookingEventsMessage(event)}`);
     }
   }
 }
@@ -167,7 +218,8 @@ export function validateBookingEventHooks(hooks: readonly BookingEventHook[]): v
 export interface OperationalAlert {
   incidentId: string;
   reference: string;
-  action: 'confirmation_email' | 'customer_notification' | 'calendar' | 'operations_sync' | 'refund' | 'oversell';
+  action: 'confirmation_email' | 'customer_notification' | 'calendar' | 'operations_sync' | 'refund' | 'oversell'
+    | 'payment_verification_rejected' | 'reconciliation_stale';
   severity: 'delayed' | 'action_required';
   attemptCount: number;
   firstDetectedAt: string;
@@ -193,6 +245,26 @@ export interface BookingEventEnvelope {
   data: { booking: WireBooking };
 }
 
+// One row of the admin save that produced a `settings.changed` occurrence — the `admin_changes`
+// row itself, not a projection of the new config: a receiver rebuilds from the catalog, so what
+// it needs is "something in this domain moved", not the value.
+export interface SettingsChange {
+  domain: 'setting' | 'day_override' | 'capacity_default';
+  key: string;
+  action: 'upsert' | 'delete';
+  actor: string | null;
+}
+
+// Same envelope shape as a booking event, with a `data` of its own: there is no booking behind a
+// settings save, so `data.booking` would be a lie rather than an omission.
+export interface SettingsEventEnvelope {
+  apiVersion: number;
+  id: string;
+  event: SettingsEvent;
+  occurredAt: string;
+  data: { changes: SettingsChange[] };
+}
+
 // Hook and webhook names share this domain because outbox rows
 // distinguish them by their `family` column, not by a qualified string key.
 export const BOOKING_EVENT_SUBSCRIBER_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
@@ -205,12 +277,24 @@ export interface BookingEventHookContext {
   config: ResolvedClientConfig;
 }
 
+export interface SettingsEventHookContext extends BookingEventHookContext {
+  changes: SettingsChange[];
+}
+
+// A tuple union rather than three independent parameters, so the event name narrows the other two:
+// `settings.changed` has no booking, and only it carries `changes`.
+export type BookingEventHookArgs =
+  | [event: BookingEvent, booking: WireBooking, context: BookingEventHookContext]
+  | [event: SettingsEvent, booking: null, context: SettingsEventHookContext];
+
 // An in-process listener. `durable: false` (default) fires post-commit and is never retried;
 // `durable: true` gets an outbox row and rides the existing claim/attempt/abandon machinery. The
 // handler receives the same wire projection a webhook subscriber gets.
+// `settings.changed` is never durable: the outbox is keyed by booking, so a settings subscriber
+// gets the same best-effort, in-request delivery a non-durable hook gets, whatever `durable` says.
 export interface BookingEventHook {
   name: string;
-  events?: readonly BookingEvent[];
+  events?: readonly WebhookEvent[];
   durable?: boolean;
-  handler(event: BookingEvent, booking: WireBooking, context: BookingEventHookContext): Promise<void>;
+  handler(...args: BookingEventHookArgs): Promise<void>;
 }

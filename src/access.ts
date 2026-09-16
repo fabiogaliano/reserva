@@ -17,10 +17,8 @@ type Clock = () => number | Date;
 export interface AccessVerifierOptions {
   fetch?: typeof fetch;
   crypto?: Pick<Crypto, 'subtle'>;
-  clock?: Clock;
   now?: Clock;
   jwksTtlMs?: number;
-  cacheTtlMs?: number;
 }
 
 export class AccessVerificationError extends Error {
@@ -62,13 +60,12 @@ async function fetchJwks(domain: string, options: AccessVerifierOptions): Promis
   return { keys };
 }
 async function getJwks(domain: string, options: AccessVerifierOptions, refresh = false): Promise<AccessJwks> {
-  const clock = options.clock ?? options.now;
-  const clockValue = clock?.() ?? Date.now();
+  const clockValue = options.now?.() ?? Date.now();
   const now = clockValue instanceof Date ? clockValue.getTime() : clockValue;
   const cached = cache.get(domain);
   if (!refresh && cached && cached.expiresAt > now) return cached.value;
   const value = fetchJwks(domain, options);
-  cache.set(domain, { expiresAt: now + (options.jwksTtlMs ?? options.cacheTtlMs ?? DEFAULT_JWKS_TTL_MS), value });
+  cache.set(domain, { expiresAt: now + (options.jwksTtlMs ?? DEFAULT_JWKS_TTL_MS), value });
   try { return await value; } catch (error) { if (cache.get(domain)?.value === value) cache.delete(domain); throw error; }
 }
 async function verify(parts: ReturnType<typeof assertionParts>, jwk: AccessJwk, crypto: Pick<Crypto, 'subtle'>): Promise<boolean> {
@@ -93,8 +90,7 @@ export async function verifyAccessJwt(request: Request, config: AccessAdminConfi
   if (parts.header.alg !== 'RS256' || typeof parts.header.kid !== 'string') throw new AccessVerificationError('unsupported access assertion');
   if (parts.claims.iss !== admin.accessTeamDomain) throw new AccessVerificationError('access assertion issuer mismatch');
   if (!audienceMatches(parts.claims.aud, admin.accessAud)) throw new AccessVerificationError('access assertion audience mismatch');
-  const clock = options.clock ?? options.now;
-  const clockValue = clock?.() ?? Date.now();
+  const clockValue = options.now?.() ?? Date.now();
   const now = clockValue instanceof Date ? clockValue.getTime() : clockValue;
   const nowSeconds = Math.floor(now / 1000);
   if (typeof parts.claims.exp !== 'number') throw new AccessVerificationError('access assertion is missing a valid expiry');
@@ -108,11 +104,14 @@ export async function verifyAccessJwt(request: Request, config: AccessAdminConfi
   if (!jwk || !(await verify(parts, jwk, crypto))) throw new AccessVerificationError('access assertion signature mismatch');
   return parts.claims;
 }
+// Structural subset of ReservaLogger, declared here so this module keeps no runtime-context import.
+interface AccessLogger { warn?(message: string, data?: Record<string, unknown>): void }
+
 // The admin auth port's default implementation. Auto-wired only when `config.admin.access` is
-// configured — never both this and a consumer-supplied `adminAuth` at once. A single-argument
-// function is assignable to the two-argument `AdminAuth` type since Access verification never needs the ReservaContext.
-export function cloudflareAccessAdminAuth(teamDomain: string, aud: string): (request: Request) => Promise<AdminIdentity | null> {
-  return async (request) => {
+// configured — never both this and a consumer-supplied `adminAuth` at once. It reads nothing from
+// the ReservaContext but its logger, so the second parameter stays optional and structural.
+export function cloudflareAccessAdminAuth(teamDomain: string, aud: string): (request: Request, context?: { logger?: AccessLogger }) => Promise<AdminIdentity | null> {
+  return async (request, context) => {
     let claims: AccessClaims;
     try {
       claims = await verifyAccessJwt(request, { accessTeamDomain: teamDomain, accessAud: aud });
@@ -121,6 +120,13 @@ export function cloudflareAccessAdminAuth(teamDomain: string, aud: string): (req
     }
     const email = typeof claims.email === 'string' ? claims.email : undefined;
     const sub = typeof claims.sub === 'string' ? claims.sub : undefined;
+    if (!email && !sub) {
+      // An identity-less assertion would bind the CSRF token to an empty subject, so every admin
+      // would share one subject: unauthorized instead.
+      const sink: AccessLogger = context?.logger ?? console;
+      sink.warn?.('access assertion carries no email or sub claim', { teamDomain });
+      return null;
+    }
     return { subject: email ?? sub ?? '', ...(email ? { email } : {}) };
   };
 }

@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 // Extracts the quickstart's file blocks straight from README.md (never copied here), so drift
-// between the docs and the library breaks this test instead of shipping silently.
+// between the docs and the library breaks this test instead of shipping silently. The assembled
+// site is type-checked against `wrangler types` output before it is exercised over HTTP.
 //
 // The README wires `@reservajs/stripe`, which needs a live Stripe account to complete a checkout,
 // so the two lines that construct it are swapped for a local `PaymentProvider` on the same public
@@ -169,6 +170,10 @@ for (const installed of ['@reservajs/astro', '@reservajs/stripe']) {
 mustRun('types', 'bunx', ['wrangler', 'types'], projectDir);
 mustRun('migrate', 'bunx', ['reserva-migrate', '--local'], projectDir);
 mustRun('build', 'bunx', ['astro', 'build'], projectDir);
+// After the build, so `.astro/types.d.ts` (and the injected virtual-module declarations) exist.
+// This is what proves the README's runtime module compiles against the *global* `Env` that
+// `wrangler types` emits, rather than against a hand-written stand-in.
+mustRun('typecheck', 'bunx', ['tsc', '--noEmit'], projectDir);
 
 const preview = spawn(join(projectDir, 'node_modules/.bin/astro'), ['preview', '--host', HOST, '--port', String(PORT)], {
   cwd: projectDir,

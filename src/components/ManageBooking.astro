@@ -1,5 +1,5 @@
 ---
-import routeConfig from 'virtual:reserva/config';
+import virtualConfig from 'virtual:reserva/config';
 import { requireEnabledRoutePath } from '../routes-manifest';
 import { defaultLocale, resolveMessages, type ReservaMessages } from '../ui/messages';
 import '../ui/components.css';
@@ -14,8 +14,10 @@ interface Props {
 const { token = '', endpoint, locale = defaultLocale, messages: messageOverrides = {} } = Astro.props;
 // If `routes.manage` is disabled, the built-in page doesn't exist — defaulting would
 // submit to a 404, so an explicit endpoint is required instead.
-const action = endpoint === undefined ? requireEnabledRoutePath(routeConfig, 'managePage') : endpoint;
-const t: ReservaMessages = { ...resolveMessages(undefined, locale), ...messageOverrides };
+const action = endpoint === undefined ? requireEnabledRoutePath(virtualConfig.routes, 'managePage') : endpoint;
+// The deployment's own `ui.messages` catalogs, not just the bundled ones: an embed on the
+// consumer's marketing page must read the same copy as the pages Reserva renders itself.
+const t: ReservaMessages = { ...resolveMessages(virtualConfig.config, locale), ...messageOverrides };
 // A full UUID per render so two instances of this component on the same page never share an id.
 const titleId = `reserva-manage-title-${crypto.randomUUID()}`;
 ---

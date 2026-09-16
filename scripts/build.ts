@@ -6,6 +6,8 @@ import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { generateSchemaFingerprint } from './generate-schema-fingerprint';
+import { generateUiTokens } from './generate-ui-tokens';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -14,6 +16,8 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const RAW_ASSETS = [
   'components/ManageBooking.astro',
   'ui/components.css',
+  // components.css @imports it, so the consumer's bundler needs it next to that file in dist/.
+  'ui/tokens.css',
 ];
 
 function fail(message: string): never {
@@ -22,6 +26,12 @@ function fail(message: string): never {
 }
 
 rmSync(resolve(repoRoot, 'dist'), { recursive: true, force: true });
+
+// Before tsc: the generated fingerprint is a source file in the module graph, gitignored, so a
+// clean checkout has nothing for tsc to resolve until it is written.
+console.log(`build: ${generateSchemaFingerprint(repoRoot)}`);
+// Same reason: theme.ts imports the token lists lifted out of src/ui/tokens.css.
+console.log(`build: ${generateUiTokens(repoRoot)}`);
 
 const tsc = spawnSync('bunx', ['tsc', '-p', 'tsconfig.build.json'], { cwd: repoRoot, stdio: 'inherit' });
 if (tsc.status !== 0) fail('`tsc -p tsconfig.build.json` failed');

@@ -16,16 +16,8 @@ export interface GoogleAuthOptions {
   serviceAccountEmail?: string;
   serviceAccountPrivateKey?: string;
   impersonateEmail?: string;
-  googleSaEmail?: string;
-  googleSaPrivateKey?: string;
-  googleImpersonateEmail?: string;
-  saEmail?: string;
-  privateKey?: string;
-  subject?: string;
   fetch?: GoogleFetch;
-  fetchImpl?: GoogleFetch;
   crypto?: GoogleCrypto;
-  clock?: GoogleClock;
   now?: GoogleClock;
   tokenUrl?: string;
   scope?: string;
@@ -43,9 +35,9 @@ const tokenCache = new Map<string, CachedToken>();
 // token-issuance rate.
 const tokenRequestsInFlight = new Map<string, Promise<string>>();
 
-function required(options: GoogleAuthOptions, names: string[], value: string | undefined): string {
+function required(name: string, value: string | undefined): string {
   const trimmed = value?.trim();
-  if (!trimmed) throw new Error(`${names.join(' or ')} is required`);
+  if (!trimmed) throw new Error(`${name} is required`);
   return trimmed;
 }
 
@@ -54,21 +46,9 @@ function credentials(options: GoogleAuthOptions): {
   serviceAccountPrivateKey: string;
   impersonateEmail: string;
 } {
-  const serviceAccountEmail = required(
-    options,
-    ['serviceAccountEmail'],
-    options.serviceAccountEmail ?? options.googleSaEmail ?? options.saEmail,
-  );
-  const serviceAccountPrivateKey = required(
-    options,
-    ['serviceAccountPrivateKey'],
-    options.serviceAccountPrivateKey ?? options.googleSaPrivateKey ?? options.privateKey,
-  );
-  const impersonateEmail = required(
-    options,
-    ['impersonateEmail'],
-    options.impersonateEmail ?? options.googleImpersonateEmail ?? options.subject,
-  );
+  const serviceAccountEmail = required('serviceAccountEmail', options.serviceAccountEmail);
+  const serviceAccountPrivateKey = required('serviceAccountPrivateKey', options.serviceAccountPrivateKey);
+  const impersonateEmail = required('impersonateEmail', options.impersonateEmail);
   return { serviceAccountEmail, serviceAccountPrivateKey, impersonateEmail };
 }
 
@@ -188,9 +168,9 @@ export class GoogleServiceAccountAuth {
     this.impersonateEmail = values.impersonateEmail;
     this.tokenUrl = options.tokenUrl ?? GOOGLE_TOKEN_URL;
     this.scope = options.scope ?? GOOGLE_CALENDAR_SCOPE;
-    this.request = options.fetchImpl ?? options.fetch ?? defaultFetch;
+    this.request = options.fetch ?? defaultFetch;
     this.webCrypto = options.crypto ?? defaultCrypto();
-    this.clock = options.clock ?? options.now ?? defaultClock;
+    this.clock = options.now ?? defaultClock;
     this.cacheKey = cacheKeyFor(options, values, this.tokenUrl, this.scope);
   }
 
@@ -264,7 +244,7 @@ export async function getGoogleAccessToken(options: GoogleAuthOptions): Promise<
 
 export function createGoogleServiceAccountJwt(
   options: GoogleAuthOptions,
-  now: GoogleClock = options.clock ?? options.now ?? defaultClock,
+  now: GoogleClock = options.now ?? defaultClock,
 ): Promise<string> {
   const values = credentials(options);
   const webCrypto = options.crypto ?? defaultCrypto();

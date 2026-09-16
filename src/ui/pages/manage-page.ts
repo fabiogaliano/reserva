@@ -1,7 +1,7 @@
 import type { ManageBooking } from '../../core/api.js';
 import { escapeHtml } from '../../http.js';
-import { formatDateTime, formatPrice } from '../format.js';
-import { factList, pageShell, statusBadge, themeToggle } from '../layout.js';
+import { formatDateTime, formatDateTimeRange, formatPrice, googleCalendarUrl, icsDataUrl } from '../format.js';
+import { contactBlock, factList, pageShell, statusBadge, themeToggle, type ContactConfig } from '../layout.js';
 import { defaultLocale, formatMessage, resolveMessages, type ReservaMessages } from '../messages.js';
 import type { ThemePreference } from '../theme.js';
 
@@ -11,12 +11,19 @@ export interface ManagePageOptions {
   timezone?: string;
   currency?: string;
   cssHref?: string;
+  // `config.ui.faviconUrl` / `config.ui.headHtml`, threaded in by the route: this renderer takes a
+  // payload rather than a context, so its head extras arrive as options like everything else here.
+  favicon?: string | undefined;
+  headHtml?: string | undefined;
   // The viewer's forced theme (from the request cookie), set by the manage route so the page can
   // render <html data-theme> up front. Absent/undefined = follow the OS.
   theme?: ThemePreference | undefined;
   businessName?: string;
   // Makes the brand line a link back to the consumer's site.
   businessUrl?: string;
+  // Enables the shared contact block on the dead ends this page can render (past the change
+  // deadline, invalid link). Absent — a hand-built payload in a test — simply renders no block.
+  contactConfig?: ContactConfig;
   // Post-redirect feedback: which action just succeeded, or the error code it failed with.
   notice?: 'rescheduled';
   errorCode?: string;
@@ -46,21 +53,26 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
   const canReschedule = payload.canReschedule === true;
   const canNoShow = payload.canNoShow === true;
   const token = typeof payload.token === 'string' ? payload.token : '';
-  const deadline = typeof payload.deadline === 'string' ? payload.deadline : '';
+  // `cancelDeadline` is the name; `deadline` is its alias for one minor, and a hand-built test
+  // payload may carry either.
+  const deadline = typeof payload.cancelDeadline === 'string'
+    ? payload.cancelDeadline
+    : typeof payload.deadline === 'string' ? payload.deadline : '';
   const status = typeof booking.status === 'string' ? booking.status : '';
   const action = escapeHtml(managePagePath);
   const tokenField = role === 'operator' ? 'operatorToken' : 'token';
   const hiddenToken = `<input type="hidden" name="${tokenField}" value="${escapeHtml(token)}">`;
 
   const start = typeof booking.start === 'string' ? booking.start : '';
-  const displayStart = start && options.timezone ? formatDateTime(start, locale, options.timezone) : start;
+  const end = typeof booking.end === 'string' ? booking.end : start;
+  const displayStart = start && options.timezone ? formatDateTimeRange(start, end, locale, options.timezone) : start;
   const displayDeadline = deadline && options.timezone ? formatDateTime(deadline, locale, options.timezone) : deadline;
 
   const quantityLabel = typeof booking.quantity === 'number'
     ? formatMessage(messages[booking.quantity === 1 ? 'widget.person' : 'widget.quantityCount'], { n: booking.quantity })
     : String(booking.quantity ?? '');
   const facts: Array<[string, string]> = [
-    [messages['common.service'], escapeHtml(booking.serviceSlug)],
+    [messages['common.service'], escapeHtml(booking.serviceTitle)],
     [messages['common.date'], escapeHtml(displayStart)],
     [messages['common.quantity'], escapeHtml(quantityLabel)],
   ];
@@ -68,11 +80,9 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
     facts.push([messages['common.price'], escapeHtml(formatPrice(booking.priceMinor, locale, options.currency))]);
   }
   // Both facts key off the chosen option's flags independently — a both-flags option shows its
-  // address AND its meeting point. A payload predating the flags falls back to the literal
-  // 'custom' id for address, and any resolved point for the meeting-point row.
-  const requiresAddress = typeof booking.pickupRequiresAddress === 'boolean'
-    ? booking.pickupRequiresAddress
-    : booking.pickupType === 'custom';
+  // address AND its meeting point. Pickup ids are opaque, so a payload carrying no flag shows no
+  // address rather than guessing from the id.
+  const requiresAddress = booking.pickupRequiresAddress === true;
   if (requiresAddress && booking.pickupAddress) {
     facts.push([messages['common.pickupAddress'], escapeHtml(booking.pickupAddress)]);
   }
@@ -114,19 +124,33 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
   const successNotice = options.notice === 'rescheduled'
     ? `<p class="bk-alert bk-alert--ok" role="status">${escapeHtml(messages['manage.rescheduled'])}</p>`
     : '';
+  // Every code a manage action can bounce back with is named in words. The three transient ones
+  // (hold contention, calendar outage, unexpected failure) share the "try again in a minute" copy
+  // because the customer's next step is the same for all three.
   const errorKeyByCode: Record<string, keyof ReservaMessages> = {
     past_cutoff: 'manage.pastCutoff',
     slot_unavailable: 'manage.errorSlotTaken',
     invalid_transition: 'manage.errorNotChangeable',
+    // The booking IS cancelled — only the automatic refund failed, so this reads as an outcome
+    // rather than as a failed action.
+    refund_failed: 'manage.cancelledRefundPending',
+    refund_conflict: 'manage.errorConflict',
+    forbidden: 'manage.errorInvalidLink',
+    too_many_holds: 'manage.actionFailed',
+    calendar_unavailable: 'manage.actionFailed',
+    internal_error: 'manage.actionFailed',
   };
   const errorNotice = options.errorCode
     ? `<p class="bk-alert bk-alert--danger" role="alert">${escapeHtml(messages[errorKeyByCode[options.errorCode] ?? 'manage.actionFailed'])}</p>`
     : '';
 
   const cancelledNotice = status === 'cancelled' ? `<p class="bk-alert bk-alert--danger" role="status">${escapeHtml(messages['manage.cancelled'])}</p>` : '';
-  const cutoffNotice = status === 'confirmed' && role === 'customer' && !canCancel && !canReschedule
+  const pastCutoff = status === 'confirmed' && role === 'customer' && !canCancel && !canReschedule;
+  // "Contact us if you need help" is only useful next to the actual contact details.
+  const cutoffNotice = pastCutoff
     ? `<p class="bk-alert bk-alert--warn">${escapeHtml(messages['manage.pastCutoff'])}</p>`
     : '';
+  const cutoffContact = pastCutoff && options.contactConfig ? contactBlock(options.contactConfig, messages) : '';
   const policyNote = canCancel && displayDeadline && role === 'customer'
     ? `<p class="bk-hint">${escapeHtml(formatMessage(messages['manage.cancelPolicy'], { deadline: displayDeadline }))}</p>`
     : '';
@@ -151,7 +175,7 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
     ? `<section class="bk-card"><h2>${escapeHtml(messages['manage.rescheduleTitle'])}</h2>`
       + `<p class="bk-hint">${escapeHtml(messages['manage.rescheduleHint'])}</p>`
       + `<form method="post" action="${action}" data-reserva-reschedule${rescheduleData}>${rescheduleIsland}<input type="hidden" name="action" value="reschedule">${hiddenToken}`
-      + `<label class="bk-field" data-reserva-native-start><span>${escapeHtml(messages['manage.newStart'])}</span><input class="bk-input" name="newStart" type="datetime-local" required></label>`
+      + `<label class="bk-field" data-reserva-native-start><span>${escapeHtml(messages['manage.newStart'])}</span><input class="bk-input" name="start" type="datetime-local" required></label>`
       + `<button type="submit" class="bk-btn">${escapeHtml(messages['manage.rescheduleSubmit'])}</button></form></section>`
     : '';
 
@@ -177,18 +201,37 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
   // The booking summary sits as a sticky side column beside the actions on wide screens, stacking
   // on mobile. With no actions available, the summary takes the full width instead.
   const hasActions = Boolean(rescheduleForm || cancelForm || noShowForm);
-  const summaryCard = `<section class="bk-card${hasActions ? ' bk-col-side' : ''}" aria-label="${escapeHtml(messages['manage.yourBooking'])}"><h2>${escapeHtml(messages['manage.yourBooking'])}</h2>${factList(facts)}</section>`;
+  // The same two calendar buttons the confirmation page offers: a customer who lost the original
+  // mail lands here, and this is the only other place the booking is shown in full.
+  const calendar = status === 'confirmed' && start
+    ? (() => {
+      const event = {
+        title: options.businessName ? `${options.businessName} — ${booking.serviceTitle ?? ''}` : String(booking.serviceTitle ?? ''),
+        start,
+        end,
+        location: booking.meetingPoint?.label ?? '',
+        description: `${messages['common.reference']}: ${booking.reference ?? ''}`,
+      };
+      return `<div class="bk-actions"><span class="bk-sub">${escapeHtml(messages['confirmation.addToCalendar'])}</span>`
+        + `<a class="bk-btn bk-btn--secondary bk-btn--sm" href="${escapeHtml(googleCalendarUrl(event))}" rel="noopener" target="_blank">${escapeHtml(messages['confirmation.addGoogle'])}</a>`
+        + `<a class="bk-btn bk-btn--secondary bk-btn--sm" href="${escapeHtml(icsDataUrl(event))}" download="booking.ics">${escapeHtml(messages['confirmation.addIcs'])}</a></div>`;
+    })()
+    : '';
+  const summaryCard = `<section class="bk-card${hasActions ? ' bk-col-side' : ''}" aria-label="${escapeHtml(messages['manage.yourBooking'])}"><h2>${escapeHtml(messages['manage.yourBooking'])}</h2>${factList(facts)}${calendar}</section>`;
   const actionsColumn = `<div class="bk-col-main">${rescheduleForm}<section aria-label="${escapeHtml(messages['manage.title'])}">${cancelForm}${noShowForm}</section></div>`;
   const body = successNotice
     + errorNotice
     + cancelledNotice
     + cutoffNotice
-    + (hasActions ? `<div class="bk-cols">${summaryCard}${actionsColumn}</div>` : summaryCard);
+    + (hasActions ? `<div class="bk-cols">${summaryCard}${actionsColumn}</div>` : summaryCard)
+    + cutoffContact;
 
   return pageShell({
     lang: locale,
     title: `${messages['manage.title']} ${String(booking.reference ?? '')}${options.businessName ? ` — ${options.businessName}` : ''}`,
     cssHref: options.cssHref ?? '',
+    favicon: options.favicon,
+    headHtml: options.headHtml,
     ...(canReschedule && options.scriptHref ? { scriptHref: options.scriptHref } : {}),
     header,
     theme: options.theme,
@@ -198,8 +241,9 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
   });
 }
 
-// Rendered when the token is missing/invalid: an explanation plus a token entry form, so a
-// customer with a mangled link can still recover without seeing raw JSON.
+// Rendered when the token is missing/invalid: an explanation and how to reach a human. There is no
+// token entry form — the token is a link the customer has in their inbox, never something they
+// read off a screen and retype.
 export function renderManageErrorPage(managePagePath: string, options: ManagePageOptions = {}): string {
   const locale = options.locale ?? defaultLocale;
   const messages = options.messages ?? resolveMessages(undefined, locale);
@@ -207,14 +251,14 @@ export function renderManageErrorPage(managePagePath: string, options: ManagePag
   const header = brand
     + `<h1>${escapeHtml(messages['manage.invalidTitle'])}</h1>`
     + `<p class="bk-lead">${escapeHtml(messages['manage.invalidBody'])}</p>`;
-  const body = `<section class="bk-card">`
-    + `<form method="get" action="${escapeHtml(managePagePath)}">`
-    + `<label class="bk-field"><span>${escapeHtml(messages['manage.entryToken'])}</span><input class="bk-input" name="token" autocomplete="off" required></label>`
-    + `<button type="submit" class="bk-btn">${escapeHtml(messages['manage.entryOpen'])}</button></form></section>`;
+  const body = `<section class="bk-card"><p class="bk-lead">${escapeHtml(messages['manage.invalidUseEmailLink'])}</p></section>`
+    + (options.contactConfig ? contactBlock(options.contactConfig, messages) : '');
   return pageShell({
     lang: locale,
     title: `${messages['manage.invalidTitle']}${options.businessName ? ` — ${options.businessName}` : ''}`,
     cssHref: options.cssHref ?? '',
+    favicon: options.favicon,
+    headHtml: options.headHtml,
     header,
     theme: options.theme,
     themeToggle: themeToggle(messages, options.theme),

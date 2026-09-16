@@ -2,28 +2,10 @@
    so the consumer's Astro build bundles (and CSP-hashes) it once, however many components a page
    mounts. Rebrand by overriding the --bk-* tokens in site CSS. */
 
-.bk-embed {
-  /* Falls back to the system sans without any external font request. */
-  --bk-font: "Inter", "Inter Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --bk-surface: #ffffff;
-  --bk-surface-2: #eceef1;
-  --bk-text: #282a30;
-  --bk-text-muted: #63666d;
-  --bk-border: #e0e2e6;
-  --bk-accent: #5e6ad2;
-  --bk-accent-contrast: #ffffff;
-  --bk-accent-soft: #eceefb;
-  --bk-danger: #b3261e;
-  --bk-danger-soft: #fbeae9;
-  --bk-warning: #8a5a00;
-  --bk-radius: 12px;
-  --bk-radius-sm: 8px;
-  --bk-focus: 0 0 0 3px color-mix(in srgb, var(--bk-accent) 50%, transparent);
-  --bk-ease: cubic-bezier(0.16, 1, 0.3, 1);
+/* The --bk-* defaults (light and dark) are declared once in tokens.css and nowhere else. */
+@import './tokens.css';
 
-  /* Keeps native control chrome (selects, pickers) in step with the dark-token flip below even
-     when the host page is light-only. */
-  color-scheme: light dark;
+.bk-embed {
   display: block;
   max-width: 26rem;
   padding: 1.25rem;
@@ -34,23 +16,7 @@
   font-family: var(--bk-font);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
-  box-shadow: 0 1px 2px rgb(20 21 26 / 0.05), 0 8px 28px rgb(20 21 26 / 0.05);
-}
-@media (prefers-color-scheme: dark) {
-  .bk-embed {
-    --bk-surface: #141517;
-    --bk-surface-2: #1d1e21;
-    --bk-text: #ededef;
-    --bk-text-muted: #8a8f98;
-    --bk-border: #2b2c30;
-    --bk-accent: #7c86e2;
-    --bk-accent-contrast: #14162b;
-    --bk-accent-soft: #232647;
-    --bk-danger: #f2a099;
-    --bk-danger-soft: #3a201e;
-    --bk-warning: #e0b568;
-    box-shadow: 0 1px 2px rgb(0 0 0 / 0.5), 0 8px 28px rgb(0 0 0 / 0.4);
-  }
+  box-shadow: var(--bk-shadow);
 }
 
 .bk-embed .bke-title { display: flex; align-items: center; gap: 0.5rem; margin: 0 0 1rem; font-size: 1.2rem; font-weight: 600; letter-spacing: -0.01em; line-height: 1.3; text-wrap: balance; }

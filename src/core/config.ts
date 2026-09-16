@@ -3,9 +3,9 @@ import { CURRENCY_CODE_PATTERN } from './currency.js';
 import {
   BOOKING_EVENT_SUBSCRIBER_NAME_PATTERN,
   invalidSubscriberNameMessage,
-  isBookingEvent,
+  isWebhookEvent,
   unknownBookingEventsMessage,
-  type BookingEvent,
+  type WebhookEvent,
 } from './events.js';
 
 // A plain string: the pickup axis is whatever ids a service declares in
@@ -33,38 +33,110 @@ const scheduleSchema = z.object({
   // A conventional 09:00–18:00 day so a minimal config only has to say which days it operates;
   // both remain per-rule overridable here and per-deployment from the admin settings page.
   firstStart: z.string().regex(timePattern).default(DEFAULT_FIRST_START),
-  lastStart: z.string().regex(timePattern).default(DEFAULT_LAST_START),
+  // No schema-level default: `lastEnd` is the alternative spelling, and the service-level transform
+  // is the only place that knows `durationMin` and can therefore derive one from the other.
+  lastStart: z.string().regex(timePattern).optional(),
+  // The closing time an operator actually thinks in ("last tour back by 19:00"); the last departure
+  // is derived from it so a duration change does not have to be subtracted by hand in config.
+  lastEnd: z.string().regex(timePattern).optional(),
   intervalMin: z.number().int().positive(),
 });
+
+function minutesOfDay(time: string): number {
+  const [hour = 0, minute = 0] = time.split(':').map(Number);
+  return hour * 60 + minute;
+}
+
+function timeOfMinutes(minutes: number): string {
+  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+}
+
+// Floored to the interval grid anchored at `firstStart`, so the derived value is a start time the
+// slot generator would actually produce rather than an arbitrary instant. Clamped at `firstStart`;
+// `validateService` is what rejects a `lastEnd` that cannot fit a single booking.
+function derivedLastStart(rule: { firstStart: string; lastEnd?: string; intervalMin: number }, durationMin: number): string {
+  const first = minutesOfDay(rule.firstStart);
+  const latest = minutesOfDay(rule.lastEnd ?? rule.firstStart) - durationMin;
+  if (latest <= first) return rule.firstStart;
+  return timeOfMinutes(first + Math.floor((latest - first) / rule.intervalMin) * rule.intervalMin);
+}
+
+// `slots.ts` and `occupancy.ts` only ever ask for a last START, so every resolved rule carries one
+// whichever spelling the config used. `lastEnd` survives on the resolved rule for display only.
+function resolveScheduleRule(rule: z.output<typeof scheduleSchema>, durationMin: number): ResolvedScheduleRule {
+  if (rule.lastStart !== undefined || rule.lastEnd === undefined) {
+    return { ...rule, lastStart: rule.lastStart ?? DEFAULT_LAST_START };
+  }
+  return { ...rule, lastStart: derivedLastStart(rule, durationMin) };
+}
+
+// 8 KB per entry: `meta` rides on every catalog response, so an unbounded blob would be paid for on
+// every page build and every widget load.
+const META_MAX_BYTES = 8 * 1024;
+
+// `JSON.stringify` silently drops a function or `undefined` instead of throwing, so a round-trip
+// comparison would pass for a value that lost data. This walks the tree and rejects anything that
+// is not already a JSON value.
+function isJsonValue(value: unknown, depth: number): boolean {
+  if (depth > 32) return false;
+  if (value === null) return true;
+  switch (typeof value) {
+    case 'string':
+    case 'boolean':
+      return true;
+    case 'number':
+      return Number.isFinite(value);
+    case 'object': {
+      if (Array.isArray(value)) return value.every((entry) => isJsonValue(entry, depth + 1));
+      const prototype = Object.getPrototypeOf(value);
+      if (prototype !== Object.prototype && prototype !== null) return false;
+      return Object.values(value as Record<string, unknown>).every((entry) => isJsonValue(entry, depth + 1));
+    }
+    default:
+      return false;
+  }
+}
+
+function isSerializableMeta(value: Record<string, unknown>): boolean {
+  if (!isJsonValue(value, 0)) return false;
+  return new TextEncoder().encode(JSON.stringify(value)).length <= META_MAX_BYTES;
+}
+
+// Opaque passthrough: reserva never reads a key of it, it only guarantees the value survives the
+// catalog's JSON round-trip, so a site can keep its per-service content next to the service itself.
+const metaSchema = z.record(z.string(), z.unknown())
+  .refine(isSerializableMeta, 'must be JSON-serializable and under 8 KB')
+  .optional();
+
+// Either a plain string or a per-locale map, resolved with the same candidate-locale → base
+// language → default-locale fallback as `config.ui.messages` (see `resolveLocalizedText`).
+const localizedTextSchema = z.union([z.string().min(1), z.record(z.string(), z.string().min(1))]);
 
 // Slug-safe so an id can be used verbatim as a `data-` attribute
 // value, a widget radio input's `value`, and a URL-safe checkout body field without escaping.
 const pickupOptionIdPattern = /^[a-z0-9_-]+$/;
 
 // The unit the pricing axis's `pickup` column points at. `requiresAddress` gates address
-// collection at checkout; `usesMeetingPoint` decides the meeting-point requirement instead of a
-// fixed `pickupType === 'default'`. Missing `label`/`hint` fall back to message-catalog copy.
+// collection at checkout; `usesMeetingPoint` decides the meeting-point requirement. Ids are opaque
+// to the library, so `label` is required: nothing else can name the option to a customer.
 const pickupOptionSchema = z.object({
   id: z.string().min(1).regex(pickupOptionIdPattern),
-  label: z.string().min(1).optional(),
-  hint: z.string().min(1).optional(),
+  label: localizedTextSchema,
+  hint: localizedTextSchema.optional(),
   requiresAddress: z.boolean(),
   usesMeetingPoint: z.boolean(),
 });
 
 const meetingPointSchema = z.object({
   id: z.string().min(1),
-  label: z.string().min(1),
+  label: localizedTextSchema,
   mapsUrl: z.string().url(),
+  meta: metaSchema,
 });
 
 // The wire/storage key — lowercase, `_`-separated, capped at 32
 // characters so it's safe to use verbatim as a JSON object key and a checkout body field.
 export const METADATA_FIELD_KEY_PATTERN = /^[a-z][a-z0-9_]{0,31}$/;
-
-// Either a plain string or a per-locale map, resolved with the same candidate-locale → base
-// language → default-locale fallback as `config.ui.messages` (see `resolveMetadataFieldLabel`).
-const localizedTextSchema = z.union([z.string().min(1), z.record(z.string(), z.string().min(1))]);
 
 const metadataFieldOptionSchema = z.object({
   value: z.string().min(1),
@@ -99,7 +171,7 @@ const locationSchema = z.object({
   }
 }).transform((location) => {
   const pickupOptions: PickupOption[] = location.pickupOptions
-    ?? [{ id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true }];
+    ?? [{ id: IMPLIED_MEETING_POINT_PICKUP_ID, requiresAddress: false, usesMeetingPoint: true }];
   return { ...location, pickupOptions };
 });
 
@@ -112,29 +184,40 @@ const pricingRuleSchema = z.object({
 });
 
 const serviceSchema = z.object({
-  // Customer-facing display name used in emails ("Your Alfama Discovery is confirmed");
-  // absent falls back to the service slug.
-  title: z.string().min(1).optional(),
+  // Customer-facing display name wherever a human reads the service ("Your Alfama Discovery is
+  // confirmed"). Required: a slug is an identifier, never a name to put in front of a customer.
+  title: localizedTextSchema,
   durationMin: z.number().int().positive(),
   turnaroundMin: z.number().int().nonnegative(),
   schedule: z.array(scheduleSchema).min(1),
   pricing: z.array(pricingRuleSchema).min(1),
-  occupancyFor: z.custom<(quantity: number) => number>((value) => typeof value === 'function').optional(),
+  // How many seats one capacity unit holds (a 4-seat vehicle, a 6-person table). Absent means one
+  // unit per booking regardless of party size.
+  occupancy: z.object({ seatsPerUnit: z.number().int().positive() }).optional(),
+  // Declared only to reject it by name: silently stripping an unknown key would leave a deployment
+  // that still reads as a working config while quietly overselling.
+  occupancyFor: z.unknown().optional().refine((value) => value === undefined, 'replaced by occupancy.seatsPerUnit'),
   // Opt-in per service; absent means no pickup/meeting-point dimension anywhere (pricing, checkout,
   // emails, admin, calendar).
   location: locationSchema.optional(),
   // Extension point for business-specific fields — dietary notes, skill level, etc. Absent means no
   // metadata; checkout rejects a non-empty `metadata` body for it.
   metadataFields: z.array(metadataFieldSchema).optional(),
-}).transform((service) => {
+  // Opaque site content (images, taglines, coordinates) the catalog echoes back, so a static site
+  // builds its pages from the same call that gives it prices.
+  meta: metaSchema,
+}).transform(({ occupancyFor: _rejected, ...service }) => {
   // Normalized in the schema rather than in `validateConfig` so `z.output` is the single source of
-  // truth for the resolved shape: every runtime reader sees `pickupOptions` present, and a
-  // single-option service's pricing rows already carry `pickup`, with no extra narrowing.
+  // truth for the resolved shape: every runtime reader sees `pickupOptions` present, a resolved
+  // schedule rule always carries `lastStart`, and a single-option service's pricing rows already
+  // carry `pickup`, with no extra narrowing.
+  const schedule = service.schedule.map((rule) => resolveScheduleRule(rule, service.durationMin));
   const options = service.location?.pickupOptions ?? [];
   const only = options.length === 1 ? options[0]! : undefined;
-  if (!only) return service;
-  const pricing: PricingRule[] = service.pricing.map((rule) => rule.pickup === undefined ? { ...rule, pickup: only.id } : rule);
-  return { ...service, pricing };
+  const pricing: PricingRule[] = only
+    ? service.pricing.map((rule) => rule.pickup === undefined ? { ...rule, pickup: only.id } : rule)
+    : service.pricing;
+  return { ...service, schedule, pricing };
 });
 
 const bookingSchema = z.object({
@@ -149,6 +232,9 @@ const bookingSchema = z.object({
     cutoffHours: z.number().nonnegative().optional(),
   }).prefault({}),
   limitedThreshold: z.number().int().nonnegative().default(2),
+  // How long before the start the reminder email goes out. `0` disables reminders entirely; a
+  // booking made inside the window never gets one (it just received its confirmation).
+  reminderHoursBefore: z.number().int().nonnegative().default(24),
   calendarMaxStaleSeconds: z.number().int().min(60).default(15 * 60),
   maxHoldsPerIp: z.number().int().positive().optional(),
   // Token lifetime counted from booking end, not creation, so links survive reschedules, refund
@@ -164,9 +250,11 @@ const webhookEndpointSchema = z.object({
   url: z.string().url(),
   // Must also be listed in the runtime's `secretBindings` for reserva to be allowed to read it.
   secretBinding: z.string().min(1),
-  // Defaults to every event in BOOKING_EVENTS. Any string parses so `validateConfig` can report a
-  // typo'd name with the valid set, instead of a bare enum mismatch.
-  events: z.array(z.custom<BookingEvent>((value) => typeof value === 'string')).min(1).optional(),
+  // Defaults to every event in BOOKING_EVENTS — `settings.changed` is never implied, so a
+  // booking-only subscriber declared before it existed never starts receiving it. Any string
+  // parses so `validateConfig` can report a typo'd name with the valid set, instead of a bare
+  // enum mismatch.
+  events: z.array(z.custom<WebhookEvent>((value) => typeof value === 'string')).min(1).optional(),
 });
 
 export const clientConfigSchema = z.object({
@@ -223,6 +311,13 @@ export const clientConfigSchema = z.object({
     // Per-locale overrides for Reserva's rendered copy, merged over its bundled catalog and
     // English fallback. Keys are locale tags ('pt-PT', 'fr', …); values are partial message maps.
     messages: z.record(z.string(), z.record(z.string(), z.string())).optional(),
+    // A URL or site-absolute path rendered as <link rel="icon"> on every page Reserva renders, so
+    // the confirmation and manage pages carry the site's identity instead of the browser default.
+    faviconUrl: z.string().min(1).optional(),
+    // Raw head markup (a font link, a stylesheet overriding the --bk-* tokens), appended after
+    // Reserva's own stylesheet so consumer CSS wins. Trusted verbatim and never escaped: it is the
+    // consumer's own markup, and their CSP is the thing that bounds it.
+    headHtml: z.string().optional(),
   }).optional(),
   emails: z.object({
     // Forces every outgoing email into one locale regardless of the language the customer booked
@@ -253,9 +348,18 @@ export type ResolvedClientConfig = z.output<typeof clientConfigSchema>;
 export type ServiceConfig = z.input<typeof serviceSchema>;
 export type ResolvedServiceConfig = z.output<typeof serviceSchema>;
 export type ScheduleRule = z.output<typeof scheduleSchema>;
+// What every runtime reader sees: `lastStart` is computed once (from `lastEnd` when that is the
+// spelling the config used) so nothing downstream has to know which of the two was declared.
+export type ResolvedScheduleRule = ScheduleRule & { lastStart: string };
 export type PricingRule = z.output<typeof pricingRuleSchema>;
 export type MeetingPoint = z.output<typeof meetingPointSchema>;
-export type PickupOption = z.output<typeof pickupOptionSchema>;
+// The single pickup option implied for a service that declares meeting points and no pickup
+// options. It is the one option with no declared label: renderers name it from the
+// `pickup.meetingPoint` message key, resolved per request locale.
+export const IMPLIED_MEETING_POINT_PICKUP_ID = 'meeting_point';
+// `label` is required of everything a consumer declares (the schema enforces it) but optional on
+// the resolved shape, because the implied option above carries none.
+export type PickupOption = Omit<z.output<typeof pickupOptionSchema>, 'label'> & { label?: LocalizedText };
 export type MetadataField = z.output<typeof metadataFieldSchema>;
 export type MetadataFieldOption = z.output<typeof metadataFieldOptionSchema>;
 export type LocalizedText = z.output<typeof localizedTextSchema>;
@@ -303,6 +407,33 @@ function isValidMonthDay(value: string): boolean {
   const [month = 0, day = 0] = value.split('-').map(Number);
   const probe = new Date(Date.UTC(2024, month - 1, day));
   return probe.getUTCMonth() === month - 1 && probe.getUTCDate() === day;
+}
+
+function monthDayValue(value: string): number {
+  const [month = 0, day = 0] = value.split('-').map(Number);
+  return month * 100 + day;
+}
+
+// A season is one or two month-day intervals: a rule whose `from` is after its `to` wraps the new year.
+function seasonIntervals(rule: ScheduleRule): Array<[number, number]> {
+  const from = rule.from ? monthDayValue(rule.from) : 101;
+  const to = rule.to ? monthDayValue(rule.to) : 1231;
+  return from <= to ? [[from, to]] : [[from, 1231], [101, to]];
+}
+
+function seasonsOverlap(left: ScheduleRule, right: ScheduleRule): boolean {
+  return seasonIntervals(left).some(([leftFrom, leftTo]) =>
+    seasonIntervals(right).some(([rightFrom, rightTo]) => leftFrom <= rightTo && rightFrom <= leftTo));
+}
+
+function scheduleStartTimes(rule: ResolvedScheduleRule): string[] {
+  const [firstHour = 0, firstMinute = 0] = rule.firstStart.split(':').map(Number);
+  const [lastHour = 0, lastMinute = 0] = rule.lastStart.split(':').map(Number);
+  const starts: string[] = [];
+  for (let minutes = firstHour * 60 + firstMinute; minutes <= lastHour * 60 + lastMinute; minutes += rule.intervalMin) {
+    starts.push(`${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`);
+  }
+  return starts;
 }
 
 function validateService(service: ResolvedServiceConfig, serviceSlug: string, add: (path: (string | number)[], message: string) => void): void {
@@ -383,6 +514,35 @@ function validateService(service: ResolvedServiceConfig, serviceSlug: string, ad
     if (rule.intervalMin > 24 * 60) {
       add(['services', serviceSlug, 'schedule', index, 'intervalMin'], 'intervalMin must be at most one day');
     }
+    if (rule.lastEnd !== undefined) {
+      if (minutesOfDay(rule.lastEnd) - service.durationMin < minutesOfDay(rule.firstStart)) {
+        add(
+          ['services', serviceSlug, 'schedule', index],
+          `services.${serviceSlug}.schedule.${index}: lastEnd ${rule.lastEnd} leaves no room for a ${service.durationMin}-minute booking starting at firstStart ${rule.firstStart}`,
+        );
+      } else if (rule.lastStart !== derivedLastStart(rule, service.durationMin)) {
+        // Compared against the derived value rather than testing "both present": a resolved config
+        // carries both, and it round-trips back through validateConfig (settings merges, the
+        // virtual config module) where a bare presence check would reject its own output.
+        add(['services', serviceSlug, 'schedule', index], `services.${serviceSlug}.schedule.${index}: declare lastStart or lastEnd, not both`);
+      }
+    }
+  }
+
+  // Rules combine, so two rules that can fire on the same date must not produce the same start time:
+  // one would silently shadow the other. Overlapping windows with distinct starts are legal.
+  for (const [index, rule] of service.schedule.entries()) {
+    for (const [otherIndex, other] of service.schedule.entries()) {
+      if (otherIndex <= index) continue;
+      if (!rule.days.some((day) => other.days.includes(day))) continue;
+      if (!seasonsOverlap(rule, other)) continue;
+      const shared = scheduleStartTimes(rule).filter((start) => scheduleStartTimes(other).includes(start));
+      if (shared.length === 0) continue;
+      add(
+        ['services', serviceSlug, 'schedule', index],
+        `services.${serviceSlug}.schedule.${index} and services.${serviceSlug}.schedule.${otherIndex} share a weekday and season and both start at ${shared.join(', ')}; schedule rules combine, so change one rule's firstStart or intervalMin`,
+      );
+    }
   }
 
   const highest = Math.max(...service.pricing.map((row) => row.maxQuantity), 0);
@@ -422,19 +582,6 @@ function validateService(service: ResolvedServiceConfig, serviceSlug: string, ad
     }
   }
 
-  if (service.occupancyFor) {
-    for (const quantity of quantityValues) {
-      try {
-        const units = service.occupancyFor(quantity);
-        if (!Number.isInteger(units) || units < 1) {
-          add(['services', serviceSlug, 'occupancyFor'], `occupancyFor(${quantity}) must return a positive integer`);
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        add(['services', serviceSlug, 'occupancyFor'], `occupancyFor(${quantity}) threw: ${message}`);
-      }
-    }
-  }
 }
 
 export function validateConfig(input: unknown): ResolvedClientConfig {
@@ -478,7 +625,7 @@ export function validateConfig(input: unknown): ResolvedClientConfig {
     }
     webhookNames.add(endpoint.name);
     for (const [eventIndex, event] of (endpoint.events ?? []).entries()) {
-      if (!isBookingEvent(event)) add(['webhooks', index, 'events', eventIndex], unknownBookingEventsMessage(event));
+      if (!isWebhookEvent(event)) add(['webhooks', index, 'events', eventIndex], unknownBookingEventsMessage(event));
     }
   }
 
@@ -547,32 +694,48 @@ export function meetingPointForBooking(
   service: ResolvedServiceConfig,
   meetingPointId: string | null,
   meetingPointLabel: string | null,
+  locale: string,
+  defaultLocale: string,
 ): { label: string; mapsUrl: string | null } {
   const points = service.location?.meetingPoints ?? [];
+  const resolve = (label: LocalizedText): string => resolveLocalizedText(label, locale, defaultLocale);
   if (meetingPointId) {
     const match = points.find((point) => point.id === meetingPointId);
-    if (match) return { label: match.label, mapsUrl: match.mapsUrl };
+    if (match) return { label: resolve(match.label), mapsUrl: match.mapsUrl };
     return { label: meetingPointLabel ?? meetingPointId, mapsUrl: null };
   }
   const first = points[0];
-  if (first) return { label: first.label, mapsUrl: first.mapsUrl };
+  if (first) return { label: resolve(first.label), mapsUrl: first.mapsUrl };
   return { label: meetingPointLabel ?? '', mapsUrl: null };
 }
 
 // Same locale-fallback chain as `config.ui.messages`, duplicated here rather than imported:
-// core must not depend on the ui layer, and this file is metadata's only declaration point.
-function metadataLabelCandidates(locale: string, defaultLocale: string): string[] {
+// core must not depend on the ui layer, and this file declares every localized config value.
+function localizedTextCandidates(locale: string, defaultLocale: string): string[] {
   const values = [locale, locale.split('-')[0], defaultLocale, defaultLocale.split('-')[0]];
   return values.filter((value, index): value is string => Boolean(value) && values.indexOf(value) === index);
 }
 
-export function resolveMetadataFieldLabel(label: LocalizedText, locale: string, defaultLocale: string): string {
-  if (typeof label === 'string') return label;
-  for (const candidate of metadataLabelCandidates(locale, defaultLocale)) {
-    const value = label[candidate];
+// The one resolution for every `LocalizedText` in config — titles, meeting-point and pickup
+// labels, metadata labels — so no two surfaces can disagree about which locale wins.
+export function resolveLocalizedText(text: LocalizedText, locale: string, defaultLocale: string): string {
+  if (typeof text === 'string') return text;
+  for (const candidate of localizedTextCandidates(locale, defaultLocale)) {
+    const value = text[candidate];
     if (value) return value;
   }
-  return Object.values(label)[0] ?? '';
+  return Object.values(text)[0] ?? '';
+}
+
+// Kept for one release so a consumer that imported the metadata-only name still compiles.
+export const resolveMetadataFieldLabel = resolveLocalizedText;
+
+// A booking can outlive the service that made it; a slug no longer declared is the only name left
+// to show, so this degrades to it instead of throwing on a renderer's hot path.
+export function resolveServiceTitle(config: ResolvedClientConfig, slug: string, locale: string): string {
+  const service = config.services[slug];
+  if (!service) return slug;
+  return resolveLocalizedText(service.title, locale, config.locales.default);
 }
 
 export interface MetadataRow {
@@ -597,10 +760,10 @@ export function metadataRowsForBooking(
   for (const field of service.metadataFields ?? []) {
     if (!(field.key in metadata)) continue;
     const raw = metadata[field.key];
-    const label = resolveMetadataFieldLabel(field.label, locale, defaultLocale);
+    const label = resolveLocalizedText(field.label, locale, defaultLocale);
     if (field.type === 'select') {
       const option = field.options?.find((candidate) => candidate.value === raw);
-      if (option) rows.push({ key: field.key, label, value: resolveMetadataFieldLabel(option.label, locale, defaultLocale) });
+      if (option) rows.push({ key: field.key, label, value: resolveLocalizedText(option.label, locale, defaultLocale) });
       else if (typeof raw === 'string') rows.push({ key: field.key, label, value: raw });
       continue;
     }

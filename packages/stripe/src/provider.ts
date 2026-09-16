@@ -4,6 +4,7 @@ import {
   priceFor,
   requestText,
   resolveService,
+  resolveServiceTitle,
   PAYMENT_WEBHOOK_BODY_LIMIT_BYTES,
   type ApiErrorCode,
   type Booking,
@@ -24,6 +25,10 @@ export interface StripeClient {
     // Optional: only needed for the already-fully-refunded reconciliation path in refund() below.
     list?(params: Stripe.RefundListParams): Promise<Stripe.ApiList<Stripe.Refund>>;
   };
+  // Optional: only the best-effort cancelPayment() path uses it, so an injected test double may omit it.
+  paymentIntents?: {
+    cancel(paymentIntentId: string): Promise<Stripe.PaymentIntent>;
+  };
   webhooks: { constructEventAsync(
     payload: string,
     signature: string,
@@ -37,39 +42,36 @@ type BookingCallback<T> = (booking: Booking, config: ResolvedClientConfig) => T;
 type UrlOption = string | BookingCallback<string>;
 
 export interface StripeOptions {
-  secretKey?: string;
-  apiKey?: string;
+  secretKey: string;
   webhookSecret: string;
   client?: StripeClient;
-  stripe?: StripeClient;
-  stripeClient?: StripeClient;
   now?: () => Date | number;
   successUrl?: UrlOption;
   cancelUrl?: UrlOption;
-  getSuccessUrl?: BookingCallback<string>;
-  getCancelUrl?: BookingCallback<string>;
-  getServiceName?: BookingCallback<string>;
-  serviceName?: BookingCallback<string>;
-  getProductName?: BookingCallback<string>;
-  productName?: BookingCallback<string>;
-  getLineItemName?: BookingCallback<string>;
+  // Overrides the line item's name on Stripe's hosted checkout; defaults to the service's
+  // localized title.
+  lineItemName?: UrlOption;
   // Shown under the name on Stripe's hosted checkout line item. Omitted when unset so the
   // checkout stays name-only.
   productDescription?: string | BookingCallback<string>;
   pickupFieldLabel?: string | BookingCallback<string>;
-  // Payment methods are adapter configuration, not a Reserva setting — the accepted set is
-  // Stripe's, changing it needs a Stripe dashboard capability, and no other provider shares the
-  // vocabulary. Defaults to card-only.
-  paymentMethods?: StripePaymentMethod[];
   // Stripe rejects consent collection unless the account has a Terms of Service URL in its
   // public business details, which a not-yet-activated test account lacks. Defaults to
   // 'required' to keep the chargeback-defense consent record; set 'none' for such an account.
   termsOfService?: 'required' | 'none';
 }
 
-export type StripePaymentMethod = 'card' | 'mb_way';
-
-const DEFAULT_PAYMENT_METHODS: readonly StripePaymentMethod[] = ['card'];
+// Which methods a session offers is dashboard-managed (Stripe's dynamic payment methods), with one
+// exception: Reserva cannot honour a method whose money arrives days later, because the capacity
+// hold has expired long before. Stripe publishes no canonical "delayed" enumeration, so this list
+// is curated from the per-method pages (2026-09): bank debits, bank transfer, and vouchers. Sent as
+// `excluded_payment_method_types`, which Stripe rejects for apple_pay/google_pay/link — never add
+// them here.
+export const STRIPE_DELAYED_PAYMENT_METHOD_TYPES = [
+  'us_bank_account', 'sepa_debit', 'bacs_debit', 'au_becs_debit', 'nz_bank_account', 'acss_debit',
+  'customer_balance',
+  'boleto', 'konbini', 'multibanco', 'oxxo',
+] as const;
 
 // Stripe Checkout's own supported `locale` values, and its 24-hour cap on how long a session may
 // stay open. Both left core config because they are this vendor's limits, enforced in
@@ -148,16 +150,6 @@ function currencyOf(value: unknown): string | undefined {
   return typeof currency === 'string' ? currency : undefined;
 }
 
-// The charge.refunded payload's `refunds` list has the actual Refund objects; its most recent
-// entry is the refund this event is about. Absent in some API versions/payloads, hence the
-// optional chaining — falls back to no refund id rather than throwing.
-function refundIdOf(value: unknown): string | undefined {
-  if (!value || typeof value !== 'object') return undefined;
-  const refunds = (value as { refunds?: { data?: Array<{ id?: string }> } }).refunds;
-  const id = refunds?.data?.[0]?.id;
-  return typeof id === 'string' ? id : undefined;
-}
-
 function paymentIntentOf(value: unknown): string | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const paymentIntent = (value as { payment_intent?: unknown }).payment_intent;
@@ -220,15 +212,13 @@ function isChargeAlreadyRefundedError(error: unknown): boolean {
 }
 
 function defaultSuccessUrl(config: ResolvedClientConfig, routePaths?: ReservaResolvedRouteConfig['paths']): string {
-  return `${config.business.url.replace(/\/$/, '')}${routePaths?.confirmationPage ?? '/booking-confirmation'}?session_id=${checkoutSessionPlaceholder}`;
+  return `${config.business.url.replace(/\/$/, '')}${routePaths?.confirmationPage ?? '/booking-confirmation'}?sessionId=${checkoutSessionPlaceholder}`;
 }
 
-function defaultCancelUrl(booking: Booking, config: ResolvedClientConfig): string {
-  return `${config.business.url.replace(/\/$/, '')}/services/${booking.serviceSlug}`;
-}
-
-export function stripePaymentMethodTypes(methods: readonly StripePaymentMethod[]): Stripe.Checkout.SessionCreateParams.PaymentMethodType[] {
-  return [...methods] as Stripe.Checkout.SessionCreateParams.PaymentMethodType[];
+// The site root, not a per-service page: the library does not own the consumer's URL scheme, so
+// guessing `/services/<slug>` sent abandoned payers to a 404 on sites shaped differently.
+function defaultCancelUrl(config: ResolvedClientConfig): string {
+  return config.business.url.replace(/\/$/, '');
 }
 
 
@@ -253,6 +243,10 @@ export function sessionStatusFromStripe(session: Stripe.Checkout.Session): Sessi
 const PAYMENT_EVENT_BY_STRIPE_TYPE: Record<string, PaymentEventParsed['type']> = {
   'checkout.session.completed': 'checkout_completed',
   'checkout.session.expired': 'checkout_expired',
+  'checkout.session.async_payment_succeeded': 'async_payment_succeeded',
+  // A delayed payment that never arrived needs nothing beyond what an expired checkout already
+  // does: release the hold, idempotently.
+  'checkout.session.async_payment_failed': 'checkout_expired',
   'charge.refunded': 'refunded',
   'charge.dispute.created': 'dispute_created',
 };
@@ -264,7 +258,12 @@ export function stripeEventToParsed(event: Stripe.Event): PaymentEventParsed {
     type: PAYMENT_EVENT_BY_STRIPE_TYPE[event.type] ?? event.type,
     raw: event,
   };
-  if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.expired') {
+  if (
+    event.type === 'checkout.session.completed'
+    || event.type === 'checkout.session.expired'
+    || event.type === 'checkout.session.async_payment_succeeded'
+    || event.type === 'checkout.session.async_payment_failed'
+  ) {
     const session = object as Stripe.Checkout.Session;
     const bookingId = bookingIdOf(session);
     const paymentIntent = objectId(session.payment_intent);
@@ -276,7 +275,7 @@ export function stripeEventToParsed(event: Stripe.Event): PaymentEventParsed {
     if (amountCaptured !== undefined) parsed.amountCaptured = amountCaptured;
     const currency = currencyOf(session);
     if (currency !== undefined) parsed.currency = currency;
-    if (event.type === 'checkout.session.completed') {
+    if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.async_payment_succeeded') {
       parsed.paid = session.payment_status === 'paid';
       parsed.paymentStatus = session.payment_status;
     }
@@ -288,12 +287,13 @@ export function stripeEventToParsed(event: Stripe.Event): PaymentEventParsed {
     const paymentIntent = paymentIntentOf(charge);
     const amountCaptured = amountOf(charge, 'amount_captured');
     const amountRefunded = amountOf(charge, 'amount_refunded');
-    const refundId = event.type === 'charge.refunded' ? refundIdOf(charge) : undefined;
     if (bookingId) parsed.bookingId = bookingId;
     if (paymentIntent) parsed.paymentRef = paymentIntent;
     if (amountCaptured !== undefined) parsed.amountCaptured = amountCaptured;
     if (amountRefunded !== undefined) parsed.amountRefunded = amountRefunded;
-    if (refundId !== undefined) parsed.refundRef = refundId;
+    // No `refundRef`: Stripe stopped expanding `charge.refunds` in the charge payload (API
+    // 2022-11-15), and the refund id is only needed by `refund.created` subscribers. The
+    // cancel-on-full-refund path keys off the amounts, not the id.
     if (charge.paid !== undefined) parsed.paid = charge.paid;
   }
   return parsed;
@@ -309,10 +309,9 @@ export class StripeProvider implements PaymentProvider {
   private readonly options: StripeOptions;
 
   constructor(options: StripeOptions) {
-    const secretKey = options.secretKey ?? options.apiKey;
-    if (!secretKey) throw new Error('Stripe secret key is required');
+    if (!options.secretKey) throw new Error('Stripe secret key is required');
     if (!options.webhookSecret) throw new Error('Stripe webhook secret is required');
-    this.stripe = options.client ?? options.stripe ?? options.stripeClient ?? new Stripe(secretKey) as unknown as StripeClient;
+    this.stripe = options.client ?? new Stripe(options.secretKey) as unknown as StripeClient;
     this.webhookSecret = options.webhookSecret;
     this.now = options.now ?? (() => Date.now());
     this.options = options;
@@ -322,19 +321,14 @@ export class StripeProvider implements PaymentProvider {
     booking: Booking,
     config: ResolvedClientConfig,
     routePaths?: ReservaResolvedRouteConfig['paths'],
-  ): Promise<{ url: string; sessionRef: string }> {
+  ): Promise<{ url: string; sessionRef: string; expiresAt: string }> {
     const service = resolveService(config, booking.serviceSlug);
-    const nameCallback = this.options.getServiceName
-      ?? this.options.serviceName
-      ?? this.options.getProductName
-      ?? this.options.productName
-      ?? this.options.getLineItemName;
-    const name = resolveOption(nameCallback, booking, config, booking.serviceSlug);
+    // The line item is the one thing the payer reads on Stripe's page, so it defaults to the
+    // service's own localized title — the slug is an identifier, never a name.
+    const name = resolveOption(this.options.lineItemName, booking, config, resolveServiceTitle(config, booking.serviceSlug, booking.locale));
     const description = resolveOption(this.options.productDescription, booking, config, '').trim();
-    const successUrl = this.options.getSuccessUrl?.(booking, config)
-      ?? resolveOption(this.options.successUrl, booking, config, defaultSuccessUrl(config, routePaths));
-    const cancelUrl = this.options.getCancelUrl?.(booking, config)
-      ?? resolveOption(this.options.cancelUrl, booking, config, defaultCancelUrl(booking, config));
+    const successUrl = resolveOption(this.options.successUrl, booking, config, defaultSuccessUrl(config, routePaths));
+    const cancelUrl = resolveOption(this.options.cancelUrl, booking, config, defaultCancelUrl(config));
     const pickupLabel = resolveOption(this.options.pickupFieldLabel, booking, config, defaultPickupFieldLabel);
     const expiresInMinutes = Math.max(30, config.booking.holdMinutes - 5);
     const params: Stripe.Checkout.SessionCreateParams = {
@@ -346,7 +340,11 @@ export class StripeProvider implements PaymentProvider {
       } }],
       expires_at: Math.floor(nowMs(this.now) / 1000) + expiresInMinutes * 60,
       locale: stripeLocaleFor(booking.locale) as Stripe.Checkout.SessionCreateParams.Locale,
-      payment_method_types: stripePaymentMethodTypes(this.options.paymentMethods ?? DEFAULT_PAYMENT_METHODS),
+      // No `payment_method_types`: sending it overrides the dashboard and hides Apple Pay, Google
+      // Pay and Link. The exclusion list is the cheap guard against a dashboard that enables a
+      // delayed method by mistake; the webhook's refusal path is the real backstop.
+      excluded_payment_method_types: [...STRIPE_DELAYED_PAYMENT_METHOD_TYPES],
+      submit_type: 'book',
       phone_number_collection: { enabled: true },
       metadata: { bookingId: booking.id },
       payment_intent_data: { metadata: { bookingId: booking.id } },
@@ -369,7 +367,31 @@ export class StripeProvider implements PaymentProvider {
     const idempotencyKey = `reserva-checkout-${booking.id}`;
     const session = await this.createSession(params, idempotencyKey);
     if (!session.url) throw new Error('Stripe Checkout Session did not include a URL');
-    return { url: session.url, sessionRef: session.id };
+    // Stripe's own expiry, not the one requested above: a replayed idempotent create returns the
+    // original session, whose expires_at is older than this call's computed value.
+    return {
+      url: session.url,
+      sessionRef: session.id,
+      expiresAt: new Date((session.expires_at || params.expires_at || 0) * 1000).toISOString(),
+    };
+  }
+
+  // Best effort by contract. Stripe only lets a Checkout payment intent be cancelled in some
+  // states (a voucher awaiting payment can be; a `processing` bank debit cannot), so every
+  // failure — including a client injected without `paymentIntents` — is a logged no-op.
+  async cancelPayment(paymentRef: string): Promise<void> {
+    try {
+      const paymentIntents = this.stripe.paymentIntents;
+      if (!paymentIntents) throw new Error('Stripe client does not expose paymentIntents.cancel');
+      await paymentIntents.cancel(paymentRef);
+    } catch (error) {
+      // console, not a Reserva logger: the adapter is constructed outside the request context and
+      // has no logger port of its own.
+      console.warn('stripe cancelPayment failed', {
+        paymentRef,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   // Stripe only replays the cached response for a reused idempotency key when the retry carries

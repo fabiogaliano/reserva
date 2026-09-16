@@ -1,18 +1,18 @@
 import type { CheckoutResponse } from '../core/api.js';
 import type { Booking } from '../core/booking.js';
-import { DEFAULT_TOKEN_EXPIRY_DAYS, pickupOptionFor, resolveMeetingPoint, resolveService, type MetadataField, type PickupType, type ResolvedServiceConfig } from '../core/config.js';
+import { DEFAULT_TOKEN_EXPIRY_DAYS, pickupOptionFor, resolveLocalizedText, resolveMeetingPoint, resolveService, type MetadataField, type PickupType, type ResolvedServiceConfig } from '../core/config.js';
 import { availabilityForDay, capacityForDate, defaultCapacityForDate, occupancyFor } from '../core/occupancy.js';
 import { priceFor } from '../core/pricing.js';
 import { resolveLocale } from '../core/locale.js';
-import { generateUniqueReference } from '../core/reference.js';
+import { generateReference } from '../core/reference.js';
 import { generateSlots } from '../core/slots.js';
 import { localDateKey, parseUtcInstant } from '../core/time.js';
 import type { ReservaContext } from '../context.js';
 import { nowIso } from '../context.js';
-import { HoldLimitExceededError } from '../repo.js';
+import { HoldLimitExceededError, ReferenceConflictError } from '../repo.js';
 import { HttpError, json, requestJson, requireInteger, requireString, tokenBytes } from '../http.js';
 import { assertSupportedPartySize, calendarEventsForWindow } from './availability.js';
-import { run } from './shared.js';
+import { run, warnDeprecatedField } from './shared.js';
 
 // A location-less service must not receive pickupType/meetingPointId at all — the 400 names what
 // to remove. A location-ful service validates the value against its declared option ids; the 400
@@ -29,50 +29,76 @@ export function resolvePickupAxis(service: ResolvedServiceConfig, value: unknown
   if (typeof value === 'string' && pickupOptionFor(service, value)) return value;
   const validIds = service.location.pickupOptions.map((option) => option.id);
   requireString(value, field);
-  throw new HttpError(400, 'validation_failed', `${field} must be one of: ${validIds.join(', ')}`);
+  throw new HttpError(400, 'validation_failed', `${field} must be one of: ${validIds.join(', ')}`, { field, allowed: validIds });
 }
 
 // The one priced-amount resolution — quote and checkout both call this, so the quoted price and
 // the charged price can never disagree for any (service, quantity, pickup).
-export function quotedPriceMinor(service: ResolvedServiceConfig, quantity: number, pickup: PickupType | null): number {
+export function quotedPriceMinor(service: ResolvedServiceConfig, quantity: number, pickup: PickupType | null, serviceSlug: string): number {
   assertSupportedPartySize(service, quantity);
   try {
     return priceFor(service, quantity, pickup);
   } catch {
-    throw new HttpError(400, 'validation_failed', 'No price is configured for this party and pickup type');
+    throw new HttpError(
+      400,
+      'validation_failed',
+      `quantity ${quantity} with pickupType ${pickup ?? 'none'} has no pricing rule for service ${serviceSlug}`,
+      { field: 'quantity' },
+    );
   }
 }
 
 // meetingPointId is required exactly when the pickup option's usesMeetingPoint flag is set — not
 // merely pickupType === 'default', since e.g. a "custom drop-off" can still use a meeting point.
 // Resolves to null/null rather than throwing when the service declares no meeting points at all.
-function resolveCheckoutMeetingPoint(service: ResolvedServiceConfig, pickupType: PickupType, body: Record<string, unknown>): { id: string | null; label: string | null } {
+function resolveCheckoutMeetingPoint(
+  service: ResolvedServiceConfig,
+  pickupType: PickupType,
+  body: Record<string, unknown>,
+  locales: { locale: string; defaultLocale: string },
+): { id: string | null; label: string | null } {
+  // The stored label is a point-in-time snapshot shown to this customer, so it is rendered here in
+  // the booking's own locale rather than kept as the config's per-locale map.
+  const snapshot = (point: { id: string; label: Parameters<typeof resolveLocalizedText>[0] }) =>
+    ({ id: point.id, label: resolveLocalizedText(point.label, locales.locale, locales.defaultLocale) });
   const points = service.location?.meetingPoints ?? [];
   const raw = body.meetingPointId;
   if (raw !== undefined) {
     if (points.length === 0) throw new HttpError(400, 'validation_failed', 'This service declares no meeting points; do not send meetingPointId');
     const suppliedId = requireString(raw, 'meetingPointId');
     const point = resolveMeetingPoint(service, suppliedId);
-    if (point.id !== suppliedId) throw new HttpError(400, 'validation_failed', 'Unknown meetingPointId');
-    return point;
+    if (point.id !== suppliedId) {
+      const declared = points.map((candidate) => candidate.id);
+      throw new HttpError(400, 'validation_failed', `meetingPointId must be one of: ${declared.join(', ')}`, { field: 'meetingPointId', allowed: declared });
+    }
+    return snapshot(point);
   }
   if (points.length === 0) return { id: null, label: null };
   if (points.length > 1 && pickupOptionFor(service, pickupType)?.usesMeetingPoint) {
     throw new HttpError(400, 'validation_failed', 'meetingPointId is required for a service with more than one meeting point');
   }
-  return resolveMeetingPoint(service);
+  return snapshot(resolveMeetingPoint(service));
 }
 
 // Rejects (rather than silently ignores) pickupType/meetingPointId for a location-less service, so
 // a client with stale fields (e.g. after an operator drops the location module) gets an actionable
 // 400 instead of a booking that silently discarded input.
-function resolveCheckoutLocation(service: ResolvedServiceConfig, body: Record<string, unknown>): CheckoutLocation {
-  const pickupType = resolvePickupAxis(service, body.pickupType, 'pickupType');
+function resolveCheckoutLocation(
+  context: ReservaContext,
+  service: ResolvedServiceConfig,
+  body: Record<string, unknown>,
+  locale: string,
+): CheckoutLocation {
+  // `pickup` is the one spelling; `pickupType` still reads so a consumer can upgrade on its own
+  // schedule, and says so once per isolate in the log.
+  const legacyPickup = body.pickup === undefined ? body.pickupType : undefined;
+  if (legacyPickup !== undefined) warnDeprecatedField(context, 'checkout', 'pickupType');
+  const pickupType = resolvePickupAxis(service, body.pickup ?? legacyPickup, 'pickup');
   if (pickupType === null) {
     if (body.meetingPointId !== undefined) throw new HttpError(400, 'validation_failed', 'This service has no location module; do not send meetingPointId');
     return { pickupType: null, meetingPointId: null, meetingPointLabel: null };
   }
-  const meetingPoint = resolveCheckoutMeetingPoint(service, pickupType, body);
+  const meetingPoint = resolveCheckoutMeetingPoint(service, pickupType, body, { locale, defaultLocale: context.config.locales.default });
   return { pickupType, meetingPointId: meetingPoint.id, meetingPointLabel: meetingPoint.label };
 }
 
@@ -102,7 +128,14 @@ function coerceMetadataValue(field: MetadataField, raw: unknown): string | numbe
   // 'select'
   if (typeof raw !== 'string') throw new HttpError(400, 'validation_failed', `metadata.${field.key} must be a string matching one of its declared options (declared type: select)`);
   const validValues = (field.options ?? []).map((option) => option.value);
-  if (!validValues.includes(raw)) throw new HttpError(400, 'validation_failed', `metadata.${field.key} must be one of: ${validValues.join(', ')} (declared type: select)`);
+  if (!validValues.includes(raw)) {
+    throw new HttpError(
+      400,
+      'validation_failed',
+      `metadata.${field.key} must be one of: ${validValues.join(', ')} (declared type: select)`,
+      { field: `metadata.${field.key}`, allowed: validValues },
+    );
+  }
   return raw;
 }
 
@@ -210,26 +243,31 @@ export function handleCheckout(request: Request, context: ReservaContext): Promi
     if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const body = await requestJson(request);
     const serviceSlug = requireString(body.serviceSlug, 'serviceSlug');
-    if (!context.config.services[serviceSlug]) throw new HttpError(400, 'validation_failed', 'Unknown service');
+    if (!context.config.services[serviceSlug]) {
+      const declared = Object.keys(context.config.services);
+      throw new HttpError(400, 'validation_failed', `serviceSlug must be one of: ${declared.join(', ')}`, { field: 'serviceSlug', allowed: declared });
+    }
     const start = requireString(body.start, 'start');
     const quantity = requireInteger(body.quantity, 'quantity');
     // resolveService is a cheap lookup, already needed below for assertSupportedPartySize — pulled
     // forward here since resolveCheckoutLocation also needs it to validate pickupType.
     const service = resolveService(context.config, serviceSlug);
-    const location = resolveCheckoutLocation(service, body);
-    const metadata = validateCheckoutMetadata(service, serviceSlug, body.metadata);
+    // Resolved before the location: the meeting-point label snapshot stored on the booking is
+    // rendered in this locale.
     // A bare or regional variant tag negotiates onto a supported locale (`pt` -> `pt-PT`) instead of
     // being rejected, so only what the deployment supports is ever stored on the booking.
     const locale = resolveLocale(context.config.locales, requireString(body.locale, 'locale'));
+    const location = resolveCheckoutLocation(context, service, body, locale);
+    const metadata = validateCheckoutMetadata(service, serviceSlug, body.metadata);
     const now = nowIso(context);
-    await context.repo.sweepExpiredHolds(now);
     const candidate = await checkSlot(context, serviceSlug, quantity, start, now);
-    const priceMinor = quotedPriceMinor(candidate.service, quantity, location.pickupType);
+    const priceMinor = quotedPriceMinor(candidate.service, quantity, location.pickupType, serviceSlug);
     const year = Number(localDateKey(candidate.startsAt, context.config.business.timezone).slice(0, 4));
     const prefix = `${context.config.business.shortCode.toUpperCase()}-${year}-`;
-    const referenceExists = async (candidateReference: string): Promise<boolean> =>
-      (await context.repo.getBookingByReference(candidateReference)) !== null;
+    // No per-candidate pre-read: the insert's ON CONFLICT(reference) is the authority, and a
+    // collision comes back as ReferenceConflictError for the retry below to regenerate against.
     let sequence = await context.repo.countReferencesForYear(prefix) + 1;
+    let referenceAttempts = 0;
     // checkSlot above is only a fast-path pre-check (TOCTOU — two concurrent checkouts can both pass
     // it for the last unit). insertHoldWithCapacity is the authority: it re-evaluates capacity inside
     // the same atomic INSERT ... SELECT ... WHERE, so only one concurrent request can win the last unit.
@@ -237,8 +275,9 @@ export function handleCheckout(request: Request, context: ReservaContext): Promi
     const occupancyEndsAt = new Date(parseUtcInstant(candidate.endsAt).getTime() + candidate.service.turnaroundMin * 60_000).toISOString();
     const localDate = localDateKey(candidate.startsAt, context.config.business.timezone);
     let booking: Booking | null = null;
+    let sweptForCapacity = false;
     for (let attempt = 0; attempt < 12; attempt += 1) {
-      const reference = await generateUniqueReference(context.config.business.shortCode, year, sequence, referenceExists);
+      const reference = generateReference(context.config.business.shortCode, year, sequence);
       try {
         const holdLimit = context.config.booking.maxHoldsPerIp;
         // Expiry counts from the service's end, not from creation, so the link keeps working through
@@ -256,7 +295,15 @@ export function handleCheckout(request: Request, context: ReservaContext): Promi
           occupancyUnits, occupancyEndsAt, localDate, defaultCapacity: context.config.capacity.default,
           ...(holdLimit ? { holdIp: clientIp(request), maxActiveHoldsForIp: holdLimit } : {}),
         });
-        if (!created) throw new HttpError(409, 'slot_unavailable', 'The selected slot is no longer available');
+        if (!created) {
+          // The only sweep left on this path, and deliberately unthrottled: a hold that expired
+          // seconds ago still occupies the unit the customer is paying for, so free it and retry
+          // once before telling them the slot is gone.
+          if (sweptForCapacity) throw new HttpError(409, 'slot_unavailable', 'The selected slot is no longer available');
+          sweptForCapacity = true;
+          await context.repo.sweepExpiredHolds(now);
+          continue;
+        }
         booking = created;
         break;
       } catch (error) {
@@ -264,9 +311,11 @@ export function handleCheckout(request: Request, context: ReservaContext): Promi
           throw new HttpError(429, 'too_many_holds', error.message);
         }
         if (error instanceof HttpError) throw error;
-        // Classify the insert failure by re-checking the DB rather than parsing the error
-        // message: the table has other UNIQUE columns, so message-sniffing could misfire.
-        if (attempt === 11 || !(await referenceExists(reference))) throw error;
+        // A taken reference is the one retryable insert failure: regenerate and try again, up to
+        // five times, then give up rather than loop on a sequence that keeps colliding.
+        if (!(error instanceof ReferenceConflictError)) throw error;
+        referenceAttempts += 1;
+        if (referenceAttempts >= 5) throw error;
         sequence += Math.floor(Math.random() * 5) + 1;
       }
     }
@@ -277,7 +326,14 @@ export function handleCheckout(request: Request, context: ReservaContext): Promi
       // and key; the abandoned hold's session, if any, still resolves via the late-webhook backfill.
       const checkout = await context.providers.payments.createCheckout(booking, context.config, context.routeConfig.paths);
       await context.repo.updateBooking(booking.id, { paymentSessionRef: checkout.sessionRef, updatedAt: nowIso(context) });
-      return json<CheckoutResponse>({ checkoutUrl: checkout.url, bookingId: booking.id, reference: booking.reference }, 201);
+      return json<CheckoutResponse>({
+        checkoutUrl: checkout.url,
+        bookingId: booking.id,
+        reference: booking.reference,
+        // The provider's own page deadline where it publishes one; otherwise the hold expiry, which
+        // is the moment the slot is released either way.
+        paymentDeadline: checkout.expiresAt ?? booking.holdExpiresAt ?? nowIso(context),
+      }, 201);
     } catch (error) {
       await context.repo.expireHold(booking.id, nowIso(context)).catch(() => undefined);
       throw error;

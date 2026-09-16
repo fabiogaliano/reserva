@@ -1,6 +1,6 @@
 import type { Booking } from '../../core/booking.js';
 import type { ResolvedClientConfig } from '../../core/config.js';
-import type { EmailBookingEvent, EmailProvider, EmailRecipientRole } from '../../core/events.js';
+import type { EmailBookingEvent, EmailMessage, EmailProvider, EmailRecipientRole } from '../../core/events.js';
 import { renderDefaultEmail, type EmailRenderer, type EmailTemplateContext, type RenderedEmail } from '../../email/index.js';
 import { formatLocaleFor } from '../../email/render.js';
 import { ProviderFailure } from '../../provider-failure.js';
@@ -22,7 +22,8 @@ export class BrevoResponseError extends ProviderFailure {
 
 // Brevo's own field names, kept distinct from the provider-neutral `RenderedEmail` so a
 // Brevo-specific field name never leaks into the public renderer seam.
-export interface BrevoEmailContent { subject: string; htmlContent: string; textContent?: string }
+export interface BrevoAttachment { name: string; content: string }
+export interface BrevoEmailContent { subject: string; htmlContent: string; textContent?: string; attachment?: BrevoAttachment[] }
 export interface BrevoSender { email: string; name?: string }
 export interface BrevoRecipientAddress { email: string; name?: string }
 export interface BrevoEmailProviderOptions {
@@ -34,12 +35,22 @@ export interface BrevoEmailProviderOptions {
 }
 
 const ownerEvents = new Set<EmailBookingEvent>(['booking.confirmed', 'booking.cancelled_by_customer']);
+// The one event with no customer copy at all: a chargeback is between the operator and the bank,
+// and telling the customer about it would only invite a second conversation.
+const ownerOnlyEvents = new Set<EmailBookingEvent>(['payment.dispute_created']);
 
 // Returns '' when `routes.manage` is disabled — the renderer omits the button for an empty
 // URL, so a disabled manage page can't leave a 404 link in a customer's inbox.
 function manageUrl(config: ResolvedClientConfig, token: string, routeConfig?: ReservaResolvedRouteConfig): string {
   if (routeConfig && !routeConfig.groups.manage) return '';
   return `${config.business.url.replace(/\/$/, '')}${routeConfig?.paths.managePage ?? '/booking/manage'}?token=${encodeURIComponent(token)}`;
+}
+
+// The admin dashboard on the deployment's own origin, or '' when the admin routes are disabled —
+// the renderer omits the button for an empty URL exactly as it does for the manage link.
+function adminUrl(config: ResolvedClientConfig, routeConfig?: ReservaResolvedRouteConfig): string {
+  if (routeConfig && !routeConfig.groups.admin) return '';
+  return new URL(routeConfig?.paths.adminPage ?? '/booking/admin', config.business.url).toString();
 }
 
 // config.emails.locale pins every email to one language, for an operator whose working
@@ -56,7 +67,14 @@ function localStart(booking: Booking, config: ResolvedClientConfig): string {
 // The one place a Brevo-specific field name (htmlContent/textContent) exists, regardless of
 // whether the renderer that produced the result was the built-in default or a custom one.
 function toBrevoContent(rendered: RenderedEmail): BrevoEmailContent {
-  return { subject: rendered.subject, htmlContent: rendered.html, ...(rendered.text !== undefined ? { textContent: rendered.text } : {}) };
+  return {
+    subject: rendered.subject,
+    htmlContent: rendered.html,
+    ...(rendered.text !== undefined ? { textContent: rendered.text } : {}),
+    // Brevo takes base64 under `content` and the filename under `name`, which is exactly what the
+    // renderer already produced — no re-encoding here.
+    ...(rendered.attachments?.length ? { attachment: rendered.attachments.map((file) => ({ name: file.filename, content: file.content })) } : {}),
+  };
 }
 
 function addressFor(recipient: BrevoRecipient, booking: Booking, config: ResolvedClientConfig, owner?: BrevoRecipientAddress): BrevoRecipientAddress | null {
@@ -75,6 +93,7 @@ export class BrevoEmailProvider implements EmailProvider {
   // Exposed so a caller can record and retry each recipient as its own durable operation
   // without knowing this provider's template config.
   recipientsForEvent(event: EmailBookingEvent): BrevoRecipient[] {
+    if (ownerOnlyEvents.has(event)) return ['owner'];
     const recipients: BrevoRecipient[] = ['customer'];
     if (ownerEvents.has(event)) recipients.push('owner');
     return recipients;
@@ -91,9 +110,27 @@ export class BrevoEmailProvider implements EmailProvider {
   ): Promise<void> {
     const address = addressFor(recipient, booking, config, this.owner);
     if (!address) return;
-    const context: EmailTemplateContext = { event, booking, config, locale: emailLocaleFor(booking, config), recipient, customerManageUrl: isManageableToken(booking.cancelToken) ? manageUrl(config, booking.cancelToken, routeConfig) : '', operatorManageUrl: isManageableToken(booking.operatorToken) ? manageUrl(config, booking.operatorToken, routeConfig) : '', startsAtLocal: localStart(booking, config) };
+    const context: EmailTemplateContext = { event, booking, config, locale: emailLocaleFor(booking, config), recipient, customerManageUrl: isManageableToken(booking.cancelToken) ? manageUrl(config, booking.cancelToken, routeConfig) : '', operatorManageUrl: isManageableToken(booking.operatorToken) ? manageUrl(config, booking.operatorToken, routeConfig) : '', adminUrl: adminUrl(config, routeConfig), startsAtLocal: localStart(booking, config) };
     const content = toBrevoContent(this.renderer(context));
     const response = await this.request(this.endpoint, { method: 'POST', headers: { accept: 'application/json', 'api-key': this.apiKey, 'content-type': 'application/json' }, body: JSON.stringify({ ...content, sender: this.sender ?? { email: config.business.contact.email, name: config.business.name }, to: [address] }) });
+    if (!response.ok) throw new BrevoResponseError(response.status, await response.text());
+  }
+
+  // Same transport, same ProviderFailure mapping as the booking paths, for a message Reserva
+  // rendered itself (operational alerts). Sender falls back to the business contact exactly as the
+  // booking sends do, so a deployment configures one Brevo sender and gets both.
+  async sendMessage(message: EmailMessage): Promise<void> {
+    const response = await this.request(this.endpoint, {
+      method: 'POST',
+      headers: { accept: 'application/json', 'api-key': this.apiKey, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        subject: message.subject,
+        htmlContent: message.html,
+        textContent: message.text,
+        sender: this.sender ?? { email: message.to },
+        to: [{ email: message.to }],
+      }),
+    });
     if (!response.ok) throw new BrevoResponseError(response.status, await response.text());
   }
 

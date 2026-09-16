@@ -7,6 +7,7 @@ import {
   defaultCapacityForDate,
   getOccupancyIntervals,
   isSlotAvailable,
+  occupancyFor,
 } from './core/occupancy.js';
 import { localDateKey, parseUtcInstant } from './core/time.js';
 import type { ReservaContext } from './context.js';
@@ -143,7 +144,7 @@ async function expiredHoldOversold(context: ReservaContext, booking: Booking, no
       services: context.config.services,
       now,
     }),
-    requestedUnits: service.occupancyFor ? service.occupancyFor(booking.quantity) : 1,
+    requestedUnits: occupancyFor(service, booking.quantity),
     turnaroundMin: service.turnaroundMin,
   });
 }
@@ -441,6 +442,17 @@ function scheduleConfirmationEventDelivery(context: ReservaContext, booking: Boo
 export async function dispatchDisputeEvent(context: ReservaContext, booking: Booking, occurrenceId: string): Promise<void> {
   const now = nowIso(context);
   const seeds = bookingEventSeeds(context, 'payment.dispute_created', booking, now, occurrenceId);
+  // The dispute notice is owner mail: whoever the provider names for this event, keyed by the same
+  // Stripe event id, so a redelivery can't send a second copy.
+  const email = context.providers.email;
+  if (email?.recipientsForEvent && email.sendToRecipient) {
+    for (const recipient of email.recipientsForEvent('payment.dispute_created')) {
+      seeds.push({
+        family: 'email', name: recipient, event: 'payment.dispute_created',
+        discriminator: occurrenceId, eventPayloadJson: null, eventIdPrefix: null,
+      });
+    }
+  }
   if (seeds.length > 0) {
     await context.repo.recordBookingEventOperations(booking.id, seeds, now);
     detach(context, runOwedMutationSideEffects(context, booking));
@@ -479,6 +491,32 @@ export function mutationSideEffectSeeds(
     }
   }
   seeds.push(...bookingEventSeeds(context, event, snapshot, occurredAt));
+  return seeds;
+}
+
+// The reminder's rows: the customer email, plus one per durable hook/webhook subscribed to
+// booking.reminder. `starts_at` is the discriminator, so a reschedule re-arms the reminder with a
+// new row and the old one stays behind as history of what was already sent.
+export function reminderSideEffectSeeds(
+  context: ReservaContext,
+  booking: Booking,
+  occurredAt: string,
+): SideEffectOperationSeed[] {
+  const seeds: SideEffectOperationSeed[] = [];
+  const email = context.providers.email;
+  if (email) {
+    // Customer only: a reminder to the owner is a daily-schedule feature, not this one.
+    const recipients = email.recipientsForEvent && email.sendToRecipient
+      ? email.recipientsForEvent('booking.reminder').filter((recipient) => recipient === 'customer')
+      : [undefined];
+    for (const recipient of recipients) {
+      seeds.push({
+        family: 'email', name: recipient ?? null, event: 'booking.reminder',
+        discriminator: booking.startsAt, eventPayloadJson: null, eventIdPrefix: null,
+      });
+    }
+  }
+  seeds.push(...bookingEventSeeds(context, 'booking.reminder', booking, occurredAt, booking.startsAt));
   return seeds;
 }
 

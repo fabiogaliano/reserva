@@ -1,4 +1,4 @@
-import { isApiErrorCode, type ApiErrorCode, type ApiErrorEnvelope } from './core/api.js';
+import { isApiErrorCode, type ApiErrorCode, type ApiErrorDetails, type ApiErrorEnvelope } from './core/api.js';
 
 // `code` is the closed API_ERROR_CODES union, not a free string — a
 // code that isn't in the catalog no longer compiles, which is what lets a consumer switch
@@ -6,12 +6,14 @@ import { isApiErrorCode, type ApiErrorCode, type ApiErrorEnvelope } from './core
 export class HttpError extends Error {
   readonly status: number;
   readonly code: ApiErrorCode;
+  readonly details: ApiErrorDetails | undefined;
 
-  constructor(status: number, code: ApiErrorCode, message: string) {
+  constructor(status: number, code: ApiErrorCode, message: string, details?: ApiErrorDetails) {
     super(message);
     this.name = 'HttpError';
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -23,7 +25,7 @@ export function json<T>(value: T, status = 200, headers: HeadersInit = {}): Resp
 
 export function errorResponse(error: unknown): Response {
   if (error instanceof HttpError) {
-    return json<ApiErrorEnvelope>({ error: { code: error.code, message: error.message } }, error.status);
+    return json<ApiErrorEnvelope>({ error: { code: error.code, message: error.message, ...(error.details ? { details: error.details } : {}) } }, error.status);
   }
   // A foreign error that already describes itself as an HTTP failure (a provider error, a caller's
   // own thrown shape) is honored only when its code is in the catalog — otherwise the envelope

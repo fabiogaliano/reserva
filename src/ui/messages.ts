@@ -8,11 +8,9 @@ import portuguesePortugalCatalog from './locales/pt-PT.json' with { type: 'json'
 
 export const defaultMessages = {
   // Shared
-  'common.brandFallback': 'Bookings',
   'common.reference': 'Reference',
   'common.service': 'Service',
   'common.date': 'Date',
-  'common.time': 'Time',
   'common.quantity': 'People',
   'common.pickup': 'Pickup',
   'common.customer': 'Customer',
@@ -22,9 +20,14 @@ export const defaultMessages = {
   'common.price': 'Total price',
   'common.status': 'Status',
   'common.meetingPoint': 'Meeting point',
+  // The only message key that ever names a pickup option: the implied meeting-point option, which
+  // a config declaring `meetingPoints` alone never gets to label itself.
+  'pickup.meetingPoint': 'Meeting point',
   'common.openInMaps': 'Open in Google Maps',
-  'common.back': 'Back',
   'common.skipContent': 'Skip to content',
+  // Heading and link label of the shared contact block (see ui/layout.ts).
+  'common.contactTitle': 'Need help?',
+  'common.whatsapp': 'WhatsApp',
   // Theme toggle (System → Light → Dark). `theme.toggle` is the control's accessible-name prefix.
   'theme.toggle': 'Theme',
   'theme.system': 'System',
@@ -36,36 +39,17 @@ export const defaultMessages = {
   'status.cancelled': 'Cancelled',
   'status.expired': 'Expired',
   'status.no_show': 'No-show',
-  // Widget
-  'widget.title': 'Book now',
-  'widget.quantity': 'How many people?',
+  // Slot-picker and party-size copy shared by the manage page's reschedule picker and the
+  // admin calendar. Named `widget.*` from when the reference booking widget was the only
+  // consumer; that widget now carries its own catalog.
   'widget.person': '{n} person',
   'widget.quantityCount': '{n} people',
   'widget.date': 'Pick a date',
   'widget.time': 'Pick a time',
   'widget.loadingSlots': 'Checking availability…',
   'widget.noSlots': 'No times available for this date',
-  'widget.noDates': 'No dates available for this party size',
   'widget.closed': 'Closed',
-  'widget.soldOut': 'Sold out',
   'widget.limited': 'Only {n} left',
-  'widget.spotsLeft': '{n} spots left',
-  'widget.pickup': 'Where do we meet?',
-  'widget.pickupDefault': 'Meeting point',
-  'widget.pickupDefaultHint': 'Meet us at the starting point',
-  'widget.pickupCustom': 'Custom pickup',
-  'widget.pickupCustomHint': 'We pick you up at your address',
-  // Shown only when a service declares 2+ meeting points.
-  'widget.meetingPoint': 'Choose a meeting point',
-  'widget.start': 'Start',
-  'widget.startPlaceholder': 'Select a start time',
-  'widget.submit': 'Continue to payment',
-  'widget.submitting': 'Redirecting to secure payment…',
-  'widget.priceNote': 'Price for your group, taxes included',
-  'widget.errorAvailability': 'Could not load availability. Please try again.',
-  'widget.errorCheckout': 'Checkout failed. Please try again.',
-  'widget.retry': 'Retry',
-  'widget.noscript': 'Booking requires JavaScript. Please contact us directly to book.',
   // Confirmation page
   'confirmation.title': 'Booking confirmed',
   'confirmation.lead': 'Thank you — your booking is confirmed. A confirmation email is on its way.',
@@ -77,6 +61,11 @@ export const defaultMessages = {
   'confirmation.addIcs': 'Apple / Outlook (.ics)',
   'confirmation.pendingTitle': 'Confirming your payment…',
   'confirmation.pendingBody': 'This page updates automatically. It usually takes a few seconds.',
+  'confirmation.pendingTimeoutTitle': 'Still waiting for the payment provider',
+  'confirmation.pendingTimeoutBody': "We're still waiting for the payment provider. You'll get an email once it's confirmed.",
+  'confirmation.checkAgain': 'Check again',
+  'confirmation.failedTitle': "We couldn't take this payment",
+  'confirmation.failedBody': "We couldn't confirm your payment and no booking was made. Any voucher or bank instructions you received are void; if a payment does go through it will be refunded. Contact us and we'll sort it out.",
   'confirmation.expiredTitle': 'Checkout expired',
   'confirmation.expiredBody': 'No confirmed payment was found for this session. Your card was not charged — you can start a new booking.',
   'confirmation.cancelledTitle': 'Booking cancelled',
@@ -104,7 +93,12 @@ export const defaultMessages = {
   'manage.pastCutoff': 'The change deadline for this booking has passed. Contact us if you need help.',
   'manage.errorSlotTaken': 'That time is no longer available — it may have just been booked. Please pick another time.',
   'manage.errorNotChangeable': 'This booking can no longer be changed.',
-  'manage.actionFailed': 'Something went wrong and nothing was changed. Please try again.',
+  // A cancel whose refund failed: the slot IS freed, only the money is still on its way, so this
+  // reads as an outcome rather than as "nothing happened".
+  'manage.cancelledRefundPending': 'Booking cancelled. The refund could not be issued automatically and will be handled by us.',
+  'manage.errorConflict': 'Another change to this booking is still being processed. Wait a moment and reload this page.',
+  'manage.errorInvalidLink': 'This link is no longer valid for that action. Use the link from your confirmation email, or contact us.',
+  'manage.actionFailed': 'Something went wrong and nothing was changed. Please try again in a minute.',
   'manage.refund': 'Refund',
   'manage.refundNone': 'No refund',
   'manage.refundFull': 'Full refund',
@@ -113,6 +107,7 @@ export const defaultMessages = {
   'manage.operatorBadge': 'Operator view',
   'manage.invalidTitle': 'Link not valid',
   'manage.invalidBody': 'This booking link is invalid or has expired. Use the exact link from your confirmation email, or contact us.',
+  'manage.invalidUseEmailLink': 'Open your booking with the "Manage my booking" link in your confirmation email — it is the only way in. If you no longer have the email, contact us and we will resend it.',
   // Admin
   'admin.title': 'Booking admin',
   'admin.tabUpcoming': 'Upcoming',
@@ -129,6 +124,7 @@ export const defaultMessages = {
   'admin.navigation': 'Admin navigation',
   'admin.navOverview': 'Dashboard',
   'admin.noBookings': 'No upcoming bookings.',
+  'admin.showLaterBookings': 'Show later bookings',
   'admin.capacity': 'Capacity',
   'admin.stateOverride': 'Adjusted',
   'admin.reason': 'Reason',
@@ -164,7 +160,6 @@ export const defaultMessages = {
   'admin.clearFilters': 'Clear filters',
   // Admin settings page
   'admin.settings': 'Settings',
-  'admin.backToAdmin': 'Back to booking admin',
   'admin.saved': 'Saved. Changes reach the public site within a minute.',
   'admin.sectionPolicy': 'Booking policy',
   'admin.sectionPolicyHint': 'The rules customers book, cancel and reschedule under.',
@@ -190,12 +185,14 @@ export const defaultMessages = {
   'settingGroup.window': 'Booking window',
   'settingGroup.changes': 'Cancellation & rescheduling',
   'settingGroup.holds': 'Checkout holds & availability',
+  'settingGroup.reminders': 'Reminders',
   'settingGroup.scheduleRuleSeason': '{service} · {from} – {to}',
   'settingGroup.everyDay': 'Every day',
   'setting.firstStart': 'First departure',
   'setting.firstStart.hint': 'Earliest start time offered on the days this rule covers.',
   'setting.lastStart': 'Last departure',
   'setting.lastStart.hint': 'Latest start time offered. The booking still runs for the service’s full duration after it.',
+  'setting.lastEnd.hint': 'Derived from the closing time {time} in config, so it is not editable here.',
   'setting.intervalMin': 'Departure interval (minutes)',
   'setting.intervalMin.hint': 'How far apart start times are offered.',
   'setting.days': 'Days offered',
@@ -216,6 +213,8 @@ export const defaultMessages = {
   'setting.limitedThreshold.hint': 'Show “only N left” once remaining spots drop to this number. 0 turns it off.',
   'setting.maxHoldsPerIp': 'Max holds per visitor',
   'setting.maxHoldsPerIp.hint': 'Stops one visitor reserving many spots with unpaid checkouts. Leave empty for no limit.',
+  'setting.reminderHoursBefore': 'Reminder email (hours before)',
+  'setting.reminderHoursBefore.hint': 'Send customers a reminder this many hours before the start. 0 turns reminders off.',
   'setting.businessName': 'Business name',
   'setting.contactEmail': 'Contact email',
   'setting.contactPhone': 'Contact phone',
@@ -244,7 +243,6 @@ export const defaultMessages = {
   'admin.incidentResolveNoteLabel': 'What did you do?',
   'admin.incidentResolveNoteHint': 'Required, 1-500 characters. Recorded against your Access account and this incident only — it never changes the underlying booking.',
   'admin.incidentResolveSubmit': 'I handled this manually',
-  'admin.incidentRetried': 'Retry attempted. Refresh to see whether it cleared.',
   'admin.incidentRetryFailed': 'The retry ran but did not succeed. It will keep retrying automatically.',
   'admin.incidentRetryNotAvailable': 'This cannot be retried automatically.',
   'admin.incidentResolved': 'Marked as handled.',
@@ -253,19 +251,12 @@ export const defaultMessages = {
   'admin.incidentHistoryAutomatic': 'Resolved automatically',
   'admin.incidentHistoryManual': 'Resolved manually by {who}',
   'admin.incidentCounts30d': '{opened} opened, {resolved} resolved in the last 30 days',
+  'admin.securityCsrfOff': 'Admin form protection is off: set the RESERVA_CSRF_SECRET secret on this deployment.',
+  'admin.securityTokenEncOff': 'Booking tokens are stored unencrypted: set the RESERVA_TOKEN_ENC_KEY secret on this deployment.',
 } as const;
 
 export type ReservaMessageKey = keyof typeof defaultMessages;
 export type ReservaMessages = Record<ReservaMessageKey, string>;
-
-// The availability API returns structured scarcity, never rendered status text — this is the
-// closed set of catalog keys that renders it. `widget.limited`/`widget.spotsLeft` interpolate
-// {n} from a slot's non-null `remaining`.
-export const SLOT_STATUS_MESSAGE_KEYS = [
-  'widget.limited', 'widget.spotsLeft', 'widget.soldOut', 'widget.noSlots', 'widget.closed',
-] as const satisfies readonly ReservaMessageKey[];
-
-export type SlotStatusMessageKey = (typeof SLOT_STATUS_MESSAGE_KEYS)[number];
 
 // A generic library must not default to Portuguese; deployments set config.locales.default, so
 // this only matters for a caller of resolveMessages/the components with no locale argument at all.

@@ -6,7 +6,8 @@ import type {
   CatalogService,
 } from '../core/api.js';
 import {
-  resolveMetadataFieldLabel,
+  resolveLocalizedText,
+  resolveServiceTitle,
   type ResolvedClientConfig,
   type PickupOption,
   type ResolvedServiceConfig,
@@ -20,28 +21,30 @@ import { run } from './shared.js';
 // Customer-facing catalog contract. Must never expose turnaroundMin, the raw schedule, capacity,
 // or any occupancy number — adding a field here declares it customer-facing.
 
-// `label`/`hint` stay optional, falling back to the message catalog for `default`/`custom` ids,
-// so every consumer resolves the same copy from one place.
-function pickupCopy(option: PickupOption, messages: ReservaMessages): { label: string; hint: string | null } {
-  if (option.id === 'default') {
-    return { label: option.label ?? messages['widget.pickupDefault'], hint: option.hint ?? messages['widget.pickupDefaultHint'] };
-  }
-  if (option.id === 'custom') {
-    return { label: option.label ?? messages['widget.pickupCustom'], hint: option.hint ?? messages['widget.pickupCustomHint'] };
-  }
-  return { label: option.label ?? option.id, hint: option.hint ?? null };
+interface Locales { locale: string; defaultLocale: string }
+
+// Ids are opaque: a declared option is named by its own required label, and the only option without
+// one is the implied meeting-point option, which the message catalog names in the request locale.
+function pickupCopy(option: PickupOption, locales: Locales, messages: ReservaMessages): { label: string; hint: string | null } {
+  return {
+    label: option.label ? resolveLocalizedText(option.label, locales.locale, locales.defaultLocale) : messages['pickup.meetingPoint'],
+    hint: option.hint ? resolveLocalizedText(option.hint, locales.locale, locales.defaultLocale) : null,
+  };
 }
 
-function catalogLocation(service: ResolvedServiceConfig, messages: ReservaMessages): CatalogLocation | null {
+function catalogLocation(service: ResolvedServiceConfig, locales: Locales, messages: ReservaMessages): CatalogLocation | null {
   if (!service.location) return null;
   return {
     // Empty (not absent) for a location-ful service that collects only a custom address.
     meetingPoints: (service.location.meetingPoints ?? []).map((point) => ({
-      id: point.id, label: point.label, mapsUrl: point.mapsUrl,
+      id: point.id,
+      label: resolveLocalizedText(point.label, locales.locale, locales.defaultLocale),
+      mapsUrl: point.mapsUrl,
+      meta: point.meta ?? {},
     })),
     pickupOptions: service.location.pickupOptions.map((option) => ({
       id: option.id,
-      ...pickupCopy(option, messages),
+      ...pickupCopy(option, locales, messages),
       requiresAddress: option.requiresAddress,
       usesMeetingPoint: option.usesMeetingPoint,
     })),
@@ -51,11 +54,11 @@ function catalogLocation(service: ResolvedServiceConfig, messages: ReservaMessag
 function catalogMetadataFields(service: ResolvedServiceConfig, locale: string, defaultLocale: string): CatalogMetadataField[] {
   return (service.metadataFields ?? []).map((field) => ({
     key: field.key,
-    label: resolveMetadataFieldLabel(field.label, locale, defaultLocale),
+    label: resolveLocalizedText(field.label, locale, defaultLocale),
     type: field.type,
     options: (field.options ?? []).map((option) => ({
       value: option.value,
-      label: resolveMetadataFieldLabel(option.label, locale, defaultLocale),
+      label: resolveLocalizedText(option.label, locale, defaultLocale),
     })),
     required: field.required ?? false,
     maxLength: field.maxLength ?? null,
@@ -73,18 +76,21 @@ function catalogPricing(service: ResolvedServiceConfig): CatalogPricingRule[] {
 }
 
 export function catalogPayload(config: ResolvedClientConfig, locale: string, messages: ReservaMessages): CatalogResponse {
+  const locales: Locales = { locale, defaultLocale: config.locales.default };
   const services: CatalogService[] = Object.entries(config.services).map(([slug, service]) => {
     const pricing = catalogPricing(service);
     return {
       slug,
-      // A service with no declared title is identified by its slug — the same fallback emails use.
-      title: service.title ?? slug,
+      title: resolveServiceTitle(config, slug, locale),
       durationMin: service.durationMin,
-      location: catalogLocation(service, messages),
+      location: catalogLocation(service, locales, messages),
       metadataFields: catalogMetadataFields(service, locale, config.locales.default),
       pricing,
       // `pricing` is non-empty by schema (min(1)), so this is never Infinity.
       fromPriceMinor: Math.min(...pricing.map((rule) => rule.priceMinor)),
+      // Always present, like every other catalog field: a consumer reads `meta.image` without
+      // first proving the key exists.
+      meta: service.meta ?? {},
     };
   });
   return {

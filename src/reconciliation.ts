@@ -3,8 +3,15 @@
 // Row-level execution preserves sibling backoff and failure isolation. Side-effect backoff is
 // derived in the repository query because HTTP recovery remains immediate, while refund rows use
 // their persisted next_attempt_at.
-import { classifyAttemptOutcome, runScheduledSideEffectOperation } from './confirmation.js';
+import {
+  classifyAttemptOutcome,
+  reminderSideEffectSeeds,
+  runOwedMutationSideEffects,
+  runScheduledSideEffectOperation,
+} from './confirmation.js';
+import { dispatchNonDurableBookingEvent } from './booking-events.js';
 import type { Booking } from './core/booking.js';
+import type { ReconciliationSummary } from './core/api.js';
 import type { OperationalAlert } from './core/events.js';
 import type { ReservaContext } from './context.js';
 import { nowIso } from './context.js';
@@ -46,16 +53,19 @@ export interface ReconciliationOptions {
   requireAlertSink?: boolean;
 }
 
-export interface ReconciliationSummary {
-  expiredHoldsSwept: number;
-  sideEffectBookingsProcessed: number;
-  refundBookingsProcessed: number;
-  incidentsOpened: number;
-  incidentsUpdated: number;
-  incidentsResolved: number;
-  alertsSent: number;
-  alertsFailed: number;
-}
+// Re-exported from its original home so every existing importer keeps working now that the shape
+// is part of the ops wire contract.
+export type { ReconciliationSummary };
+
+// The sweep runs every 5 minutes. A constant, not prose in the docs: ops health derives its
+// staleness threshold from it, and the shipped wrangler `triggers.crons` must match.
+export const RECONCILIATION_CADENCE_MINUTES = 5;
+// The batch loop's own budget. Comfortably inside the lease and the cron cadence, so a large
+// backlog is drained over several ticks instead of one invocation overrunning both.
+const RECONCILIATION_MAX_WALL_CLOCK_MS = 20_000;
+// One minute under the cadence, so a lease left behind by a killed invocation frees itself before
+// the next tick rather than skipping one.
+const RECONCILIATION_LEASE_MS = 4 * 60_000;
 
 function clampLimit(requested: number | undefined, fallback: number, hardCap: number): number {
   return Math.max(1, Math.min(requested ?? fallback, hardCap));
@@ -174,17 +184,27 @@ async function projectRefundIncidentForBooking(context: ReservaContext, tally: I
   await applyIncidentProjection(context, tally, bookingId, 'refund', bookingId, 'refund', signal);
 }
 
+// What the operator is told after pressing Retry: the projection below already knows whether the
+// incident cleared, so the dashboard reports the outcome instead of "we tried, refresh to see".
+export type AdminRetryOutcome = 'resolved' | 'still_open' | 'not_retryable';
+
 // Admin retries reproject synchronously so the card disappears in the same response flow. Cron's
 // independent source-change page provides the equivalent safety net for ordinary status, manage,
 // and webhook recovery that happens outside reconciliation.
 export async function reprojectIncidentAfterAdminRetry(
   context: ReservaContext,
-  sourceType: 'side_effect' | 'refund',
-  bookingId: string,
-): Promise<void> {
+  sourceType: OperationalIncidentSourceType,
+  sourceKey: string,
+  bookingId: string | null,
+): Promise<AdminRetryOutcome> {
+  // Oversell, payment_verification and reconciliation have no operation to re-run, and a
+  // booking-less incident has nothing to project against.
+  if (bookingId === null || (sourceType !== 'side_effect' && sourceType !== 'refund')) return 'not_retryable';
   const tally: IncidentTally = { opened: 0, updated: 0, resolved: 0 };
   if (sourceType === 'side_effect') await projectSideEffectIncidentsForBooking(context, tally, bookingId);
   else await projectRefundIncidentForBooking(context, tally, bookingId);
+  const incident = await context.repo.getIncidentBySource(sourceType, sourceKey);
+  return !incident || incident.status !== 'open' ? 'resolved' : 'still_open';
 }
 
 // Oversell markers are permanent (never retried) and always
@@ -255,6 +275,28 @@ async function processRefundCandidate(context: ReservaContext, bookingId: string
   } catch (error) {
     context.logger.warn?.('reserva reconciliation refund attempt failed', { bookingId, error: String(error) });
   }
+}
+
+// Arms the reminder email for every confirmed booking that just entered the reminder window.
+// Bounded by the same `sourceLimit` as the other sweeps; a backlog drains over consecutive runs.
+// The row is the record — a second sweep finds nothing because the row already exists.
+async function sweepReminders(context: ReservaContext, now: string, limit: number): Promise<number> {
+  const reminderHours = context.config.booking.reminderHoursBefore;
+  if (reminderHours <= 0) return 0;
+  const until = new Date(Date.parse(now) + reminderHours * 3_600_000).toISOString();
+  const candidates = await context.repo.listReminderCandidates(now, until, reminderHours, limit);
+  let armed = 0;
+  for (const booking of candidates) {
+    const seeds = reminderSideEffectSeeds(context, booking, now);
+    // No email provider and no durable subscriber: nothing to deliver, so nothing to record.
+    if (seeds.length === 0) continue;
+    await context.repo.recordBookingEventOperations(booking.id, seeds, now);
+    armed += 1;
+    // Same outbox drain every other mutation uses: retries, abandonment and incidents come free.
+    await runOwedMutationSideEffects(context, booking);
+    dispatchNonDurableBookingEvent(context, 'booking.reminder', booking, now);
+  }
+  return armed;
 }
 
 async function projectIncidents(
@@ -330,7 +372,9 @@ async function drainAlerts(context: ReservaContext, limit: number): Promise<{ se
   return { sent, failed };
 }
 
-async function referenceForBooking(context: ReservaContext, bookingId: string): Promise<string> {
+async function referenceForBooking(context: ReservaContext, bookingId: string | null): Promise<string> {
+  // A deployment-wide incident has no booking; the alert still needs something to name it by.
+  if (bookingId === null) return 'deployment';
   const booking: Booking | null = await context.repo.getBookingById(bookingId);
   return booking?.reference ?? bookingId;
 }
@@ -353,43 +397,109 @@ export async function runReconciliation(context: ReservaContext, options: Reconc
   });
 
   const expiredHoldsSwept = await context.repo.sweepExpiredHolds(startedAt);
+  await sweepReminders(context, startedAt, sourceLimit);
 
-  const sideEffectCandidates = await context.repo.listSideEffectExecutionCandidates(startedAt, staleBefore, sourceLimit);
-  for (const operation of sideEffectCandidates) await processSideEffectCandidate(context, operation);
+  const incidentTally: IncidentTally = { opened: 0, updated: 0, resolved: 0 };
+  const sideEffectBookingIds = new Set<string>();
+  // A row whose provider is not configured stays 'pending' and comes back in the next page
+  // unchanged. Remembering what this run already touched is what stops the loop from re-reading
+  // the same page forever when nothing it does can change it.
+  const seenSideEffects = new Set<string>();
+  const seenRefunds = new Set<string>();
+  let refundBookingsProcessed = 0;
+  let batches = 0;
+  // One page of candidates was never a decision about how much debt exists, only about how much
+  // one query returns. Keep pulling pages until a short one says the backlog is drained, or the
+  // wall clock says this invocation has had its share — the next tick resumes where this stopped.
+  const deadline = Date.parse(startedAt) + RECONCILIATION_MAX_WALL_CLOCK_MS;
+  for (;;) {
+    batches += 1;
+    const batchStartedAt = nowIso(context);
+    const sideEffectCandidates = await context.repo.listSideEffectExecutionCandidates(batchStartedAt, staleBefore, sourceLimit);
+    for (const operation of sideEffectCandidates) await processSideEffectCandidate(context, operation);
 
-  const refundBookingIds = await context.repo.listRefundExecutionCandidateBookingIds(startedAt, staleBefore, sourceLimit);
-  for (const bookingId of refundBookingIds) await processRefundCandidate(context, bookingId);
+    const refundBookingIds = await context.repo.listRefundExecutionCandidateBookingIds(batchStartedAt, staleBefore, sourceLimit);
+    for (const bookingId of refundBookingIds) await processRefundCandidate(context, bookingId);
+    refundBookingsProcessed += refundBookingIds.length;
 
-  const [sideEffectIncidentIds, refundIncidentIds, reprojectionCandidates] = await Promise.all([
-    context.repo.listSideEffectIncidentCandidateBookingIds(failureDueBefore, sourceLimit),
-    context.repo.listRefundIncidentCandidateBookingIds(sourceLimit),
-    context.repo.listIncidentReprojectionCandidates(sourceLimit),
-  ]);
-  const sideEffectProjectionIds = new Set(sideEffectCandidates.map((operation) => operation.bookingId));
-  const refundProjectionIds = new Set(refundBookingIds);
-  for (const bookingId of sideEffectIncidentIds) sideEffectProjectionIds.add(bookingId);
-  for (const bookingId of refundIncidentIds) refundProjectionIds.add(bookingId);
-  for (const incident of reprojectionCandidates) {
-    if (incident.sourceType === 'side_effect') sideEffectProjectionIds.add(incident.bookingId);
-    else if (incident.sourceType === 'refund') refundProjectionIds.add(incident.bookingId);
+    const [sideEffectIncidentIds, refundIncidentIds, reprojectionCandidates] = await Promise.all([
+      context.repo.listSideEffectIncidentCandidateBookingIds(failureDueBefore, sourceLimit),
+      context.repo.listRefundIncidentCandidateBookingIds(sourceLimit),
+      context.repo.listIncidentReprojectionCandidates(sourceLimit),
+    ]);
+    const sideEffectProjectionIds = new Set(sideEffectCandidates.map((operation) => operation.bookingId));
+    const refundProjectionIds = new Set(refundBookingIds);
+    for (const bookingId of sideEffectIncidentIds) sideEffectProjectionIds.add(bookingId);
+    for (const bookingId of refundIncidentIds) refundProjectionIds.add(bookingId);
+    for (const incident of reprojectionCandidates) {
+      // A deployment-wide incident (reconciliation) has no booking to reproject against.
+      if (incident.bookingId === null) continue;
+      if (incident.sourceType === 'side_effect') sideEffectProjectionIds.add(incident.bookingId);
+      else if (incident.sourceType === 'refund') refundProjectionIds.add(incident.bookingId);
+    }
+
+    const batchTally = await projectIncidents(context, sideEffectProjectionIds, refundProjectionIds, sourceLimit);
+    incidentTally.opened += batchTally.opened;
+    incidentTally.updated += batchTally.updated;
+    incidentTally.resolved += batchTally.resolved;
+    for (const operation of sideEffectCandidates) sideEffectBookingIds.add(operation.bookingId);
+
+    const progressed = sideEffectCandidates.some((operation) => !seenSideEffects.has(`${operation.bookingId}:${sideEffectOperationKey(operation)}`))
+      || refundBookingIds.some((bookingId) => !seenRefunds.has(bookingId));
+    for (const operation of sideEffectCandidates) seenSideEffects.add(`${operation.bookingId}:${sideEffectOperationKey(operation)}`);
+    for (const bookingId of refundBookingIds) seenRefunds.add(bookingId);
+
+    const full = sideEffectCandidates.length >= sourceLimit || refundBookingIds.length >= sourceLimit;
+    if (!full || !progressed || context.clock().getTime() >= deadline) break;
   }
 
-  const incidentTally = await projectIncidents(context, sideEffectProjectionIds, refundProjectionIds, sourceLimit);
   const alertResult = await drainAlerts(context, alertLimit);
   const summary: ReconciliationSummary = {
     expiredHoldsSwept,
-    sideEffectBookingsProcessed: new Set(sideEffectCandidates.map((operation) => operation.bookingId)).size,
-    refundBookingsProcessed: refundBookingIds.length,
+    sideEffectBookingsProcessed: sideEffectBookingIds.size,
+    refundBookingsProcessed,
     incidentsOpened: incidentTally.opened,
     incidentsUpdated: incidentTally.updated,
     incidentsResolved: incidentTally.resolved,
     alertsSent: alertResult.sent,
     alertsFailed: alertResult.failed,
+    batches,
   };
   context.logger.info?.('reserva reconciliation completed', { lifecycle: 'completed', ...summary });
   return summary;
 }
 
+
+// Both reconciliation entry points — the cron `scheduled` event and POST /api/booking/ops/reconcile
+// — go through here, so two sweeps can never claim the same side-effect and refund rows. `busy` is
+// the honest answer for the loser: the work is being done, just not by this caller.
+export type LeasedReconciliationResult =
+  | { kind: 'ran'; summary: ReconciliationSummary }
+  | { kind: 'busy' };
+
+export async function runReconciliationWithLease(
+  context: ReservaContext,
+  options: ReconciliationOptions = {},
+): Promise<LeasedReconciliationResult> {
+  const now = nowIso(context);
+  const token = crypto.randomUUID();
+  const leaseUntil = new Date(Date.parse(now) + RECONCILIATION_LEASE_MS).toISOString();
+  const acquired = await context.repo.acquireReconciliationLease(token, now, leaseUntil);
+  if (!acquired) return { kind: 'busy' };
+  try {
+    const summary = await runReconciliation(context, options);
+    await context.repo.releaseReconciliationLease(token, {
+      lastRunAt: nowIso(context),
+      lastSummary: JSON.stringify(summary),
+    });
+    return { kind: 'ran', summary };
+  } catch (error) {
+    // Release without a completion: a failed sweep must not advertise itself as the last
+    // successful run, or ops health would stop reporting the staleness the failure caused.
+    await context.repo.releaseReconciliationLease(token, null);
+    throw error;
+  }
+}
 
 // The `scheduled()` body every cron Worker would otherwise hand-copy. The synthetic request exists
 // only because `createContext` is request-shaped; nothing reads its URL. Failures rethrow so the
@@ -401,8 +511,14 @@ export function scheduledHandler(
   return async () => {
     try {
       const context = await runtime.createContext({ request: new Request('https://reserva-scheduled.invalid/') });
-      const summary = await runReconciliation(context, options);
-      context.logger.info?.('reserva scheduled reconciliation summary', { ...summary });
+      const result = await runReconciliationWithLease(context, options);
+      if (result.kind === 'busy') {
+        // Not a failure: a manual trigger or an overrunning previous tick is already sweeping, and
+        // throwing here would record a failed cron invocation for work that is being done.
+        context.logger.warn?.('reserva scheduled reconciliation skipped', { lifecycle: 'skipped', reason: 'lease_held' });
+        return;
+      }
+      context.logger.info?.('reserva scheduled reconciliation summary', { ...result.summary });
     } catch (error) {
       console.error('reserva scheduled reconciliation failed', { lifecycle: 'failed', error: String(error) });
       throw error;

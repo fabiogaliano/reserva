@@ -13,6 +13,8 @@ import { enumerateDateKeys, localDateKey, parseUtcInstant } from '../core/time.j
 import { adminOriginAllowed, mintAdminCsrfToken, verifyAdminCsrfToken } from '../admin-csrf.js';
 import { accessAllowed } from '../admin-access.js';
 import { retrySideEffectOperation } from '../confirmation.js';
+import { dispatchSettingsChanged } from '../settings-events.js';
+import type { SettingsChange } from '../core/events.js';
 import type { ReservaContext } from '../context.js';
 import { nowIso } from '../context.js';
 import type {
@@ -22,7 +24,8 @@ import type {
 import { reprojectIncidentAfterAdminRetry, sideEffectIncidentSourceKey } from '../reconciliation.js';
 import { attemptRefund } from '../refund-executor.js';
 import { resolveMessages } from '../ui/messages.js';
-import { adminPage, adminTabs, incidentsSection, type AdminFilters, type AdminTab } from '../ui/pages/admin-page.js';
+import { adminPage, adminTabs, incidentsSection, matchesAdminFilters, securityWarningsSection, type AdminFilters, type AdminTab } from '../ui/pages/admin-page.js';
+import { securityPosture } from './ops-health.js';
 import { settingsPage } from '../ui/pages/settings-page.js';
 import {
   html,
@@ -32,7 +35,13 @@ import {
   requireInteger,
   requireString,
 } from '../http.js';
-import { run, runAdminPost } from './shared.js';
+import { run, runAdminPost, sweepExpiredHoldsThrottled } from './shared.js';
+
+// The dashboard's bounds: a quarter ahead by default, a half-year behind the "show later" link,
+// and never more rows than one page can usefully render.
+const ADMIN_DEFAULT_UNTIL_DAYS = 90;
+const ADMIN_MAX_UNTIL_DAYS = 180;
+const ADMIN_LIST_LIMIT = 500;
 
 export function handleAdminGet(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {
@@ -51,9 +60,15 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
       });
     }
     const now = nowIso(context);
-    await context.repo.sweepExpiredHolds(now);
+    await sweepExpiredHoldsThrottled(context, now);
     const end = new Date(parseUtcInstant(now).getTime() + context.config.booking.maxHorizonDays * 86_400_000).toISOString();
-    const bookings = await context.repo.listUpcoming(now);
+    // The dashboard is a "what is coming up" view, not an archive: the default window is a
+    // quarter, and ?until= widens it on demand. Both paths stay capped at ADMIN_LIST_LIMIT rows.
+    const requestedUntil = Number(requestUrl.searchParams.get('until') ?? '');
+    const untilDays = Number.isFinite(requestedUntil) && requestedUntil > 0
+      ? Math.min(Math.floor(requestedUntil), ADMIN_MAX_UNTIL_DAYS)
+      : ADMIN_DEFAULT_UNTIL_DAYS;
+    const bookings = await context.repo.listUpcoming(now, { untilDays, limit: ADMIN_LIST_LIMIT });
     const fromDate = localDateKey(now, context.config.business.timezone);
     const toDate = localDateKey(end, context.config.business.timezone);
     const overrides = await context.repo.listDayOverrides(fromDate, toDate);
@@ -67,8 +82,16 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
     // included), since listUpcoming can't return cancelled/expired/past rows. The unfiltered
     // `bookings` set still backs the occupancy calendar and stat counts, where cancelled rows must not consume capacity.
     const tableBookings = filters.q || filters.status
-      ? await context.repo.listAllFrom(new Date(parseUtcInstant(now).getTime() - 365 * 86_400_000).toISOString())
+      ? await context.repo.listAllFrom(new Date(parseUtcInstant(now).getTime() - 365 * 86_400_000).toISOString(), { limit: ADMIN_LIST_LIMIT })
       : bookings;
+    // Token decryption is per-row AES-GCM, so it happens once, here, for exactly the rows the page
+    // can emit a manage link for: the upcoming set plus whatever survives the search/status filter.
+    const emitted = [...new Map(
+      [...bookings, ...tableBookings.filter((booking) => matchesAdminFilters(booking, filters, context.config))]
+        .map((booking) => [booking.id, booking] as const),
+    ).values()];
+    const hydratedById = new Map((await context.repo.hydrateBookingTokens(emitted)).map((booking) => [booking.id, booking] as const));
+    const withTokens = (list: typeof bookings): typeof bookings => list.map((booking) => hydratedById.get(booking.id) ?? booking);
     const editDate = url.searchParams.get('date')?.trim() ?? '';
     const saved = url.searchParams.get('saved') ?? '';
     // An explicit ?tab wins; otherwise the URL's own shape picks the panel, so a day link, a
@@ -87,18 +110,27 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
       context.repo.listRecentResolvedIncidents(incidentsSince, 20),
       context.repo.countIncidentsSince(incidentsSince),
     ]);
-    const incidentBookingIds = [...new Set([...openIncidents, ...resolvedIncidents].map((incident) => incident.bookingId))];
+    // A deployment-wide incident (reconciliation) has no booking, so it contributes no lookup.
+    const incidentBookingIds = [...new Set([...openIncidents, ...resolvedIncidents]
+      .flatMap((incident) => (incident.bookingId === null ? [] : [incident.bookingId])))];
     const incidentBookings = await Promise.all(incidentBookingIds.map((id) => context.repo.getBookingById(id)));
     const referenceByBookingId = new Map<string, string>();
     incidentBookingIds.forEach((id, index) => {
       const found = incidentBookings[index];
       referenceByBookingId.set(id, found?.reference ?? id);
     });
-    const incidentsHtml = incidentsSection(context, messages, openIncidents, resolvedIncidents, incidentCounts, referenceByBookingId, csrfToken, saved);
+    const incidentsHtml = securityWarningsSection(messages, await securityPosture(context))
+      + incidentsSection(context, messages, openIncidents, resolvedIncidents, incidentCounts, referenceByBookingId, csrfToken, saved);
+    // Only offered while the window is still the default one; ?until= already widened it otherwise.
+    const laterUrl = new URL(request.url);
+    laterUrl.searchParams.set('until', String(ADMIN_MAX_UNTIL_DAYS));
+    const laterHref = untilDays < ADMIN_MAX_UNTIL_DAYS && bookings.length > 0
+      ? `${laterUrl.pathname}${laterUrl.search}`
+      : null;
     return html(adminPage(
       context,
-      bookings,
-      tableBookings,
+      withTokens(bookings),
+      withTokens(tableBookings),
       overrides,
       fromDate,
       toDate,
@@ -110,6 +142,7 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
       incidentsHtml,
       openIncidents.length,
       activeTab,
+      laterHref,
     ), 200, {
       'cache-control': 'no-store',
       // `no-referrer` would null the Origin header on this page's own same-origin POSTs, tripping
@@ -155,19 +188,28 @@ export function handleAdminPost(request: Request, context: ReservaContext): Prom
         return new Response(null, { status: 303, headers: { location: location.toString(), 'cache-control': 'no-store' } });
       }
       // 'oversell' has no safe one-shot retry (retrySideEffectOperation already enforces the STOP
-      // condition) — reject it server-side too, so the UI's omitted button isn't the only guard.
-      if (sourceType === 'oversell') throw new HttpError(400, 'validation_failed', 'This incident cannot be retried automatically');
-      const booking = await context.repo.getBookingById(incident.bookingId);
+      // condition) — refuse it server-side too, so the UI's omitted button isn't the only guard.
+      // 'payment_verification' joins it for the same reason: there is no operation to re-run, only
+      // a record that a payment was refused.
+      // 'reconciliation' likewise: a stopped cron is fixed by deploying a trigger, not by a retry.
+      if (sourceType === 'oversell' || sourceType === 'payment_verification' || sourceType === 'reconciliation' || incident.bookingId === null) {
+        // Told, not errored: the UI omits the button for these, so a request that gets here is
+        // stale rather than malicious and an error page would tell the operator nothing useful.
+        location.searchParams.set('saved', 'incident-retry-unavailable');
+        return new Response(null, { status: 303, headers: { location: location.toString(), 'cache-control': 'no-store' } });
+      }
+      const bookingId = incident.bookingId;
+      const booking = await context.repo.getBookingById(bookingId);
       if (!booking) throw new HttpError(404, 'not_found', 'Booking not found');
       if (sourceType === 'side_effect') {
         // source_key is a rendering of an operation's identity, not a parseable encoding of it —
         // find the row by rebuilding each candidate's key and comparing, not by slicing the string.
-        const operations = await context.repo.listSideEffectOperations(incident.bookingId);
+        const operations = await context.repo.listSideEffectOperations(bookingId);
         const operation = operations.find((candidate) => sideEffectIncidentSourceKey(candidate) === sourceKey);
         if (!operation) throw new HttpError(404, 'not_found', 'Operation not found');
         await retrySideEffectOperation(context, booking, operation);
       } else {
-        const refundOperation = await context.repo.getRefundOperationByBookingId(incident.bookingId);
+        const refundOperation = await context.repo.getRefundOperationByBookingId(bookingId);
         if (refundOperation) {
           const attemptNumber = await context.repo.claimRefundExecutionForRetry(refundOperation.id, nowIso(context));
           if (attemptNumber !== null) {
@@ -177,8 +219,10 @@ export function handleAdminPost(request: Request, context: ReservaContext): Prom
       }
       // An admin retry happens outside any reconciliation pass — reproject this incident directly so
       // a successful retry can auto-resolve without waiting for a scan that won't revisit this booking.
-      await reprojectIncidentAfterAdminRetry(context, sourceType, incident.bookingId);
-      location.searchParams.set('saved', 'incident-retried');
+      const outcome = await reprojectIncidentAfterAdminRetry(context, sourceType, sourceKey, bookingId);
+      location.searchParams.set('saved', outcome === 'resolved'
+        ? 'incident-resolved'
+        : outcome === 'still_open' ? 'incident-retry-failed' : 'incident-retry-unavailable');
       return new Response(null, { status: 303, headers: { location: location.toString(), 'cache-control': 'no-store' } });
     }
     if (action.startsWith('settings-')) {
@@ -195,6 +239,7 @@ export function handleAdminPost(request: Request, context: ReservaContext): Prom
         const definition = allDefinitions.find((entry) => entry.key === key);
         if (!definition) throw new HttpError(400, 'validation_failed', 'Unknown setting');
         await context.repo.deleteSetting(definition.key, audit);
+        dispatchSettingsChanged(context, [{ domain: 'setting', key: definition.key, action: 'delete', actor: audit.actor }]);
         return new Response(null, { status: 303, headers: { location: location.toString(), 'cache-control': 'no-store' } });
       }
       if (action !== 'settings-save' && action !== 'settings-reset') throw new HttpError(400, 'validation_failed', 'Unknown admin action');
@@ -236,7 +281,14 @@ export function handleAdminPost(request: Request, context: ReservaContext): Prom
           throw error;
         }
       }
-      if (operations.length > 0) await context.repo.applySettingsBatch(operations, audit);
+      if (operations.length > 0) {
+        await context.repo.applySettingsBatch(operations, audit);
+        // The same rows the batch just wrote to admin_change_history — a rebuild receiver learns
+        // which domains moved, and reads the new values back from the catalog.
+        dispatchSettingsChanged(context, operations.map((operation): SettingsChange => ({
+          domain: 'setting', key: operation.key, action: operation.type === 'upsert' ? 'upsert' : 'delete', actor: audit.actor,
+        })));
+      }
       return new Response(null, { status: 303, headers: { location: location.toString(), 'cache-control': 'no-store' } });
     }
     // Day actions may target several days at once: repeated date fields (the enhancer's
@@ -259,15 +311,22 @@ export function handleAdminPost(request: Request, context: ReservaContext): Prom
     }
     const reasonValue = form.get('reason');
     const reason = typeof reasonValue === 'string' && reasonValue.trim() ? reasonValue.trim() : null;
+    const dayChanges = (changeAction: 'upsert' | 'delete'): SettingsChange[] =>
+      dayDates.map((date) => ({ domain: 'day_override', key: date, action: changeAction, actor: audit.actor }));
     if (action === 'clear') {
       await context.repo.deleteDayOverrides(dayDates, audit);
+      dispatchSettingsChanged(context, dayChanges('delete'));
     } else if (action === 'set' || action === 'close') {
       const capacity = action === 'close' ? 0 : requireInteger(Number(form.get('capacity')), 'capacity', 0);
       await context.repo.upsertDayOverrides(dayDates, capacity, reason, audit);
-    } else if (action === 'default-clear') await context.repo.deleteCapacityDefault(firstDate, audit);
-    else if (action === 'default-set') {
+      dispatchSettingsChanged(context, dayChanges('upsert'));
+    } else if (action === 'default-clear') {
+      await context.repo.deleteCapacityDefault(firstDate, audit);
+      dispatchSettingsChanged(context, [{ domain: 'capacity_default', key: firstDate, action: 'delete', actor: audit.actor }]);
+    } else if (action === 'default-set') {
       const capacity = requireInteger(Number(form.get('capacity')), 'capacity', 0);
       await context.repo.upsertCapacityDefault(firstDate, capacity, reason, audit);
+      dispatchSettingsChanged(context, [{ domain: 'capacity_default', key: firstDate, action: 'upsert', actor: audit.actor }]);
     } else throw new HttpError(400, 'validation_failed', 'Unknown admin action');
     // saved=day|default renders a confirmation inside the submitted form; the hash lands there.
     // Day actions also pin ?date= to the first edited day so the form reflects what was just saved.

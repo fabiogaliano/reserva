@@ -21,11 +21,58 @@ runtime and a provider adapter receive.
 
 A service declares its slot geometry (`durationMin`, `turnaroundMin`, `schedule`) and a
 `pricing` array of `{ maxQuantity, pickup?, priceMinor }` rows. `priceMinor` is in the minor
-unit of `business.currency` (4500 = €45.00). The first row whose `maxQuantity` covers the
-requested quantity wins, so tiers are breakpoints, not per-person maths.
+unit of `business.currency` (4500 = €45.00). The tightest row whose `maxQuantity` covers the
+requested quantity wins, whatever order the rows are written in, so tiers are breakpoints, not
+per-person maths. `@reservajs/astro/core` exports `priceFor`, `resolvedPriceTableFor` and
+`pricingCombinations` so a funnel applies that rule rather than reimplementing it.
 
-`occupancyFor(quantity)` maps a headcount onto capacity units when they are not 1:1; most
-deployments do not need it.
+`occupancy: { seatsPerUnit }` maps a headcount onto capacity units when they are not 1:1: a
+booking takes `ceil(quantity / seatsPerUnit)` units, so a party of 5 on a 4-seat vehicle holds
+two of them. Omit the key and every booking takes exactly one unit, which is what most
+deployments want.
+
+## Opening hours
+
+Each `schedule` rule generates start times from `firstStart` on the interval grid. Say where the
+day ends with either `lastStart` (the latest departure) or `lastEnd` (the time the last booking
+must be finished by) — one or the other, never both. `lastEnd` is usually what an operator
+actually means: the last departure is derived from it as the latest grid start that still fits
+`durationMin`, so changing a service's duration no longer means re-doing the subtraction by hand.
+A rule that declares neither keeps the historical `lastStart` of `'18:00'`.
+
+```ts
+// An 8-hour tour that must be back by 19:00: last departure resolves to 11:00.
+schedule: [{ days: [1, 2, 3, 4, 5], firstStart: '09:00', lastEnd: '19:00', intervalMin: 60 }],
+```
+
+Rules that match the same date combine, so a split day is two rules. The admin settings page can
+edit `firstStart`, the interval and the weekdays of every rule; the last departure of a rule
+declared with `lastEnd` is shown there read-only, since it is derived.
+
+## Site content next to the service
+
+`meta` on a service, and on a meeting point, is an opaque JSON object Reserva stores, validates
+for size, and echoes back on the catalog endpoint without ever reading a key of it. It is where a
+site keeps the content that belongs to a service but is not a booking rule — a hero image, a
+tagline, a meeting point's coordinates — so a static build fetches prices and content in one call
+instead of maintaining a parallel file keyed by slug.
+
+```ts
+services: {
+  alfama: {
+    // ...
+    meta: { image: '/img/alfama.jpg', tagline: { en: 'The oldest streets', 'pt-PT': 'As ruas mais antigas' } },
+    location: {
+      meetingPoints: [{ id: 'se', label: 'Sé Cathedral', mapsUrl: '…', meta: { lat: 38.7098, lng: -9.1330 } }],
+    },
+  },
+}
+```
+
+Every value must be JSON-serializable (no functions, `BigInt`, `undefined`, or class instances)
+and each `meta` object must stay under 8 KB; validation reports
+`services.<slug>.meta: must be JSON-serializable and under 8 KB`. The catalog always returns
+`meta`, as `{}` when the config declares none.
 
 ## The location module
 
@@ -94,7 +141,6 @@ export default {
 // astro.config.ts
 reserva({
   config,
-  runtimeEntrypoint: './src/reserva-runtime.ts',
   routePrefix: '/en', // mounts every route under /en/..., e.g. /en/api/booking/checkout
 })
 ```

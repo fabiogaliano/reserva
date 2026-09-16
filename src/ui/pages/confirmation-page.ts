@@ -1,14 +1,20 @@
-import type { StatusResponse } from '../../core/api.js';
+import type { ConfirmationBooking, ConfirmationSummary, StatusResponse } from '../../core/api.js';
 import type { ReservaContext } from '../../context.js';
 import { escapeHtml } from '../../http.js';
 import { cssAssetHref } from '../asset-hrefs.js';
-import { formatDateParts, formatDateTime, formatPrice, googleCalendarUrl, icsDataUrl } from '../format.js';
-import { factList, pageShell, themeToggle } from '../layout.js';
+import { formatDateParts, formatDateTime, formatDateTimeRange, formatPrice, googleCalendarUrl, icsDataUrl } from '../format.js';
+import { contactBlock, factList, pageShell, themeToggle } from '../layout.js';
 import { formatMessage, resolveMessages, type ReservaMessages } from '../messages.js';
 
 // This page renders whatever GET /api/booking/status answers, so it takes that exported response
 // type rather than a hand-kept copy — a contract change breaks here at compile time.
-type ConfirmedBooking = NonNullable<StatusResponse['booking']>;
+type ConfirmedBooking = ConfirmationBooking;
+
+// `metadataRows` is on the full payload only, so it is what tells the two apart without the
+// endpoint having to publish a discriminator field nobody else would read.
+function isFullBooking(booking: ConfirmationBooking | ConfirmationSummary): booking is ConfirmationBooking {
+  return 'metadataRows' in booking;
+}
 
 function brandLine(context: Pick<ReservaContext, 'config'>): string {
   return `<p class="bk-brand"><a href="${escapeHtml(context.config.business.url)}">${escapeHtml(context.config.business.name)}</a></p>`;
@@ -26,7 +32,8 @@ function confirmedBody(context: Pick<ReservaContext, 'config'>, messages: Reserv
   // Stays alongside the decorative date block (aria-hidden) so screen readers and copy-paste get
   // the full spelled-out datetime.
   const facts: Array<[string, string]> = [
-    [messages['common.date'], escapeHtml(start ? formatDateTime(start, locale, timezone) : '')],
+    [messages['common.service'], escapeHtml(booking.serviceTitle)],
+    [messages['common.date'], escapeHtml(start ? formatDateTimeRange(start, end, locale, timezone) : '')],
     [messages['common.quantity'], escapeHtml(quantityLabel)],
   ];
   if (typeof booking.priceMinor === 'number') {
@@ -50,7 +57,7 @@ function confirmedBody(context: Pick<ReservaContext, 'config'>, messages: Reserv
   let calendar = '';
   if (start) {
     const event = {
-      title: `${context.config.business.name} — ${booking.serviceSlug ?? ''}`,
+      title: `${context.config.business.name} — ${booking.serviceTitle}`,
       start,
       end,
       location: meetingLabel,
@@ -72,9 +79,40 @@ function confirmedBody(context: Pick<ReservaContext, 'config'>, messages: Reserv
     + `<p>${escapeHtml(messages['confirmation.whatsNextBody'])}</p></section>`;
 }
 
-function simpleBody(body: string, options: { pending?: boolean; actionHtml?: string } = {}): string {
+// Past the detail grace window the endpoint answers with a summary, not the full booking: name the
+// service and when it is, then say where the rest went.
+function summaryBody(context: Pick<ReservaContext, 'config'>, messages: ReservaMessages, summary: ConfirmationSummary, locale: string): string {
+  const start = typeof summary.start === 'string' ? summary.start : '';
+  const facts: Array<[string, string]> = [
+    [messages['common.service'], escapeHtml(summary.serviceTitle)],
+    [messages['common.date'], escapeHtml(start ? formatDateTime(start, locale, context.config.business.timezone) : '')],
+    [messages['common.reference'], escapeHtml(summary.reference)],
+  ];
+  return `<section class="bk-card">${factList(facts)}</section>`
+    + `<section class="bk-card"><p class="bk-lead">${escapeHtml(messages['confirmation.detailsEmailed'])}</p></section>`;
+}
+
+function simpleBody(body: string, options: { pending?: boolean; actionHtml?: string; afterHtml?: string } = {}): string {
   const spinner = options.pending ? '<div class="bk-spinner" aria-hidden="true"></div>' : '';
-  return `<section class="bk-card">${spinner}<p class="bk-lead">${escapeHtml(body)}</p>${options.actionHtml ?? ''}</section>`;
+  return `<section class="bk-card">${spinner}<p class="bk-lead">${escapeHtml(body)}</p>${options.actionHtml ?? ''}</section>`
+    + (options.afterHtml ?? '');
+}
+
+// The meta refresh is the whole polling mechanism (no script, so the page survives script-src
+// 'none'), which means the only place to keep a count is the URL. Twenty refreshes at three
+// seconds is about a minute — past that the webhook is late enough that waiting on a browser tab
+// is the wrong thing to ask of the customer.
+const MAX_CONFIRMATION_ATTEMPTS = 20;
+
+function attemptOf(requestUrl: string): number {
+  const raw = Number(new URL(requestUrl).searchParams.get('attempt'));
+  return Number.isInteger(raw) && raw > 0 ? Math.min(raw, MAX_CONFIRMATION_ATTEMPTS) : 0;
+}
+
+function urlWithAttempt(requestUrl: string, attempt: number): string {
+  const url = new URL(requestUrl);
+  url.searchParams.set('attempt', String(attempt));
+  return url.toString();
 }
 
 export function confirmationPage(
@@ -85,34 +123,47 @@ export function confirmationPage(
 ): string {
   const status = payload.status;
   const booking = payload.booking;
-  const hasConfirmedBooking = booking !== null && booking.reference.length > 0;
   const locale = booking?.locale ?? requestedLocale ?? context.config.locales.default;
   const messages = resolveMessages(context.config, locale);
+  const attempt = attemptOf(requestUrl);
+  const pendingTimedOut = status === 'pending' && attempt >= MAX_CONFIRMATION_ATTEMPTS;
   // Meta refresh (not script polling) keeps the pending→confirmed webhook race handled without
   // any inline script, so the page works under script-src 'none'.
-  const refresh = status === 'pending' ? `<meta http-equiv="refresh" content="3;url=${escapeHtml(requestUrl)}">` : '';
+  const refresh = status === 'pending' && !pendingTimedOut
+    ? `<meta http-equiv="refresh" content="3;url=${escapeHtml(urlWithAttempt(requestUrl, attempt + 1))}">`
+    : '';
   // Both dead-end states tell the visitor to start over, so give them the button that does it.
   const startOver = `<div class="bk-actions"><a class="bk-btn" href="${escapeHtml(context.config.business.url)}">${escapeHtml(messages['confirmation.startOver'])}</a></div>`;
+  // Restarting the count rather than reloading the current URL, so the link polls afresh instead
+  // of rendering the timeout page again immediately.
+  const checkAgain = `<div class="bk-actions"><a class="bk-btn bk-btn--secondary" href="${escapeHtml(urlWithAttempt(requestUrl, 0))}">${escapeHtml(messages['confirmation.checkAgain'])}</a></div>`;
+  const contact = contactBlock(context.config, messages);
   const body = status === 'confirmed'
-    ? hasConfirmedBooking
-      ? confirmedBody(context, messages, booking, locale)
+    ? booking !== null && booking.reference.length > 0
+      ? isFullBooking(booking) ? confirmedBody(context, messages, booking, locale) : summaryBody(context, messages, booking, locale)
       : simpleBody(messages['confirmation.detailsEmailed'])
     : status === 'pending'
-      ? simpleBody(messages['confirmation.pendingBody'], { pending: true })
-      : status === 'expired'
-        ? simpleBody(messages['confirmation.expiredBody'], { actionHtml: startOver })
-        : status === 'cancelled'
-          ? simpleBody(messages['confirmation.cancelledBody'], { actionHtml: startOver })
-          : simpleBody(messages['confirmation.notFoundBody'], { actionHtml: startOver });
+      ? pendingTimedOut
+        ? simpleBody(messages['confirmation.pendingTimeoutBody'], { actionHtml: checkAgain, afterHtml: contact })
+        : simpleBody(messages['confirmation.pendingBody'], { pending: true })
+      : status === 'failed'
+        ? simpleBody(messages['confirmation.failedBody'], { afterHtml: contact })
+        : status === 'expired'
+          ? simpleBody(messages['confirmation.expiredBody'], { actionHtml: startOver, afterHtml: contact })
+          : status === 'cancelled'
+            ? simpleBody(messages['confirmation.cancelledBody'], { actionHtml: startOver })
+            : simpleBody(messages['confirmation.notFoundBody'], { actionHtml: startOver });
   const title = status === 'confirmed'
     ? messages['confirmation.title']
     : status === 'pending'
-      ? messages['confirmation.pendingTitle']
-      : status === 'expired'
-        ? messages['confirmation.expiredTitle']
-        : status === 'cancelled'
-          ? messages['confirmation.cancelledTitle']
-          : messages['confirmation.notFoundTitle'];
+      ? pendingTimedOut ? messages['confirmation.pendingTimeoutTitle'] : messages['confirmation.pendingTitle']
+      : status === 'failed'
+        ? messages['confirmation.failedTitle']
+        : status === 'expired'
+          ? messages['confirmation.expiredTitle']
+          : status === 'cancelled'
+            ? messages['confirmation.cancelledTitle']
+            : messages['confirmation.notFoundTitle'];
   const badge = status === 'confirmed'
     ? `<span class="bk-badge bk-badge--ok">${escapeHtml(messages['status.confirmed'])}</span>`
     : status === 'pending'
@@ -126,6 +177,8 @@ export function confirmationPage(
     lang: locale,
     title: `${title} — ${context.config.business.name}`,
     cssHref: cssAssetHref(context.routeConfig.paths.assetsCss),
+    favicon: context.config.ui?.faviconUrl,
+    headHtml: context.config.ui?.headHtml,
     headExtra: refresh,
     header,
     theme: context.viewerTheme,

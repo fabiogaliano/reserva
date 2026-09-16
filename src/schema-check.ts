@@ -1,5 +1,5 @@
 import type { OpsHealthSchema } from './core/api.js';
-import { RESERVA_MIGRATIONS } from './migrations-manifest.js';
+import { RESERVA_MIGRATIONS, RESERVA_SCHEMA_TABLES } from './generated/schema-fingerprint.js';
 
 export const D1_MIGRATIONS_TABLE = 'd1_migrations';
 const migrationsTableNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -48,14 +48,8 @@ function migrationsErrorMessage(missing: readonly string[]): string {
 
 // The filename ledger alone is fooled by a consumer migration that reuses one of reserva's
 // filenames without running reserva's SQL — d1_migrations only records names, never content. This
-// is cheap, read-only detection (not a fix), spanning the columns/CHECKs/indexes reserva's current schema requires.
-const REQUIRED_BOOKINGS_COLUMNS = [
-  'occupancy_units', // 0008
-  'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at', // 0009
-  'reschedule_transition_version', // 0010
-  'meeting_point_id', // 0014
-  'currency', 'metadata', // 0018
-] as const;
+// is cheap, read-only detection (not a fix), comparing the live database against the schema
+// replayed from migrations/*.sql at build time.
 
 // A consumer migration that collides with reserva's own rename migration without running its SQL
 // keeps these columns, and every repo query would then fail against a schema the ledger reports as
@@ -65,99 +59,43 @@ const REMOVED_BOOKINGS_COLUMNS = [
   'calendar_synced', 'email_synced', 'tourflow_synced', 'reminded_at', 'review_requested_at',
 ] as const;
 
-async function bookingsSchemaPresent(db: MigrationsQueryable): Promise<boolean> {
-  const [columnsResult, schemaResult] = await Promise.all([
-    db.prepare('PRAGMA table_info(bookings)').all<{ name: string }>(),
-    db.prepare(`SELECT type, name, sql FROM sqlite_master WHERE name IN ('bookings', 'idx_bookings_payment_ref')`)
-      .all<{ type: string; name: string; sql: string | null }>(),
-  ]);
-  const columns = new Set(columnsResult.results.map((row) => row.name));
-  if (!REQUIRED_BOOKINGS_COLUMNS.every((column) => columns.has(column))) return false;
-  if (REMOVED_BOOKINGS_COLUMNS.some((column) => columns.has(column))) return false;
-
-  const table = schemaResult.results.find((row) => row.type === 'table' && row.name === 'bookings');
-  const paymentIndex = schemaResult.results.find((row) => row.type === 'index' && row.name === 'idx_bookings_payment_ref');
-  const tableSql = table?.sql?.toLowerCase().replace(/\s+/g, '') ?? '';
-  const indexSql = paymentIndex?.sql?.toLowerCase().replace(/\s+/g, '') ?? '';
-  const requiredChecks = [
-    'check(quantity>0)',
-    'check(ends_at>starts_at)',
-    'check(price_minor>=0)',
-    "check(statusin('hold','confirmed','cancelled','expired','no_show'))",
-    "check(cancelled_byin('customer','operator')orcancelled_byisnull)",
-  ];
-  const paymentIndexSql = 'createuniqueindexidx_bookings_payment_refonbookings(payment_ref)wherepayment_refisnotnull';
-  // pickup_type's domain moved from a fixed SQL CHECK to config-declared option ids, which the DB
-  // can't enumerate, and stopped being NOT NULL so a location-less service can store NULL. Both are
-  // NEGATIVE assertions: a colliding migration leaves the old CHECK/NOT NULL, and neither shows up as a missing column.
-  const hasPickupTypeCheck = tableSql.includes("check(pickup_typein(");
-  const hasPickupTypeNotNull = tableSql.includes('pickup_typetextnotnull');
-  return requiredChecks.every((check) => tableSql.includes(check))
-    && !hasPickupTypeCheck && !hasPickupTypeNotNull && indexSql.includes(paymentIndexSql);
+async function tableColumns(db: MigrationsQueryable, table: string): Promise<Set<string>> {
+  // Table names come from the generated fingerprint, never from user input, so interpolating them
+  // into the PRAGMA (which takes no bound parameters) is safe.
+  const result = await db.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>();
+  return new Set(result.results.map((row) => row.name));
 }
 
-async function sideEffectOperationsSchemaPresent(db: MigrationsQueryable): Promise<boolean> {
-  const [result, columnsResult] = await Promise.all([
-    db.prepare(`SELECT type, name, sql FROM sqlite_master WHERE name IN ('side_effect_operations', 'idx_side_effect_operations_pending', 'idx_side_effect_operations_reconciliation', 'idx_side_effect_operations_identity')`)
-      .all<{ type: string; name: string; sql: string | null }>(),
-    db.prepare('PRAGMA table_info(side_effect_operations)').all<{ name: string }>(),
-  ]);
-  const table = result.results.find((row) => row.type === 'table' && row.name === 'side_effect_operations');
-  const index = result.results.find((row) => row.type === 'index' && row.name === 'idx_side_effect_operations_pending');
-  // The reconciliation index and the two nullable backoff columns it supports are additive-only, but
-  // a colliding consumer migration without running reserva's ALTER TABLE would still satisfy the
-  // ledger while leaving both absent — the same collision class REQUIRED_BOOKINGS_COLUMNS guards for `bookings`.
-  const reconciliationIndex = result.results.find((row) => row.type === 'index' && row.name === 'idx_side_effect_operations_reconciliation');
-  // Identity moved from a single `kind` string to family/name/event/discriminator, and dedupe now
-  // depends on the COALESCE expression index (SQLite treats NULLs in a plain UNIQUE as distinct, so
-  // without this exact index every enqueue would insert a duplicate instead of hitting ON CONFLICT DO NOTHING).
-  const identityIndex = result.results.find((row) => row.type === 'index' && row.name === 'idx_side_effect_operations_identity');
-  const tableSql = table?.sql?.toLowerCase().replace(/\s+/g, '') ?? '';
-  const columns = new Set(columnsResult.results.map((row) => row.name));
-  return Boolean(index) && Boolean(reconciliationIndex) && Boolean(identityIndex)
-    && tableSql.includes("familyin('calendar_create','calendar_delete','email_confirmation','oversell','email','hook','webhook')")
-    && tableSql.includes('abandoned')
-    && columns.has('family') && columns.has('name') && columns.has('event') && columns.has('discriminator')
-    && columns.has('event_payload_json') && !columns.has('kind')
-    && columns.has('failure_started_at') && columns.has('next_attempt_at');
-}
-
-// refund_operations needs the same "does the schema actually match, not just the ledger" guard
-// every other rebuilt table already has.
-async function refundOperationsSchemaPresent(db: MigrationsQueryable): Promise<boolean> {
-  const [result, columnsResult] = await Promise.all([
-    db.prepare(`SELECT type, name, sql FROM sqlite_master WHERE name IN ('refund_operations', 'idx_refund_operations_status', 'idx_refund_operations_reconciliation')`)
-      .all<{ type: string; name: string; sql: string | null }>(),
-    db.prepare('PRAGMA table_info(refund_operations)').all<{ name: string }>(),
-  ]);
-  const table = result.results.find((row) => row.type === 'table' && row.name === 'refund_operations');
-  const statusIndex = result.results.find((row) => row.type === 'index' && row.name === 'idx_refund_operations_status');
-  const reconciliationIndex = result.results.find((row) => row.type === 'index' && row.name === 'idx_refund_operations_reconciliation');
-  const columns = new Set(columnsResult.results.map((row) => row.name));
-  const tableSql = table?.sql?.toLowerCase().replace(/\s+/g, '') ?? '';
-  return Boolean(statusIndex) && Boolean(reconciliationIndex)
-    && tableSql.includes("statusin('requested','in_flight','succeeded','failed','abandoned')")
-    && columns.has('execution_claim_token') && columns.has('execution_claim_until')
-    && columns.has('attempt_count') && columns.has('attempted_at')
-    && columns.has('failure_started_at') && columns.has('next_attempt_at');
-}
-
-async function operationalIncidentsSchemaPresent(db: MigrationsQueryable): Promise<boolean> {
+async function indexNamesByTable(db: MigrationsQueryable): Promise<Map<string, Set<string>>> {
   const result = await db
-    .prepare(`SELECT type, name FROM sqlite_master WHERE name IN ('operational_incidents', 'idx_operational_incidents_open', 'idx_operational_incidents_alert')`)
-    .all<{ type: string; name: string }>();
-  return ['operational_incidents', 'idx_operational_incidents_open', 'idx_operational_incidents_alert']
-    .every((name) => result.results.some((row) => row.name === name));
+    .prepare("SELECT name, tbl_name FROM sqlite_master WHERE type='index'")
+    .all<{ name: string; tbl_name: string }>();
+  const byTable = new Map<string, Set<string>>();
+  for (const row of result.results) {
+    const names = byTable.get(row.tbl_name) ?? new Set<string>();
+    names.add(row.name);
+    byTable.set(row.tbl_name, names);
+  }
+  return byTable;
 }
 
 async function reservaSchemaFingerprintPresent(db: MigrationsQueryable): Promise<boolean> {
-  const [bookingsOk, sideEffectOk, refundOk, incidentsOk] = await Promise.all([
-    bookingsSchemaPresent(db),
-    sideEffectOperationsSchemaPresent(db),
-    refundOperationsSchemaPresent(db),
-    operationalIncidentsSchemaPresent(db),
+  const tableNames = Object.keys(RESERVA_SCHEMA_TABLES);
+  const [indexes, columnSets] = await Promise.all([
+    indexNamesByTable(db),
+    Promise.all(tableNames.map((table) => tableColumns(db, table))),
   ]);
-  return bookingsOk && sideEffectOk && refundOk && incidentsOk;
+  for (const [position, table] of tableNames.entries()) {
+    const expected = RESERVA_SCHEMA_TABLES[table]!;
+    const columns = columnSets[position]!;
+    if (columns.size === 0) return false;
+    if (!expected.columns.every((column) => columns.has(column))) return false;
+    const liveIndexes = indexes.get(table) ?? new Set<string>();
+    if (!expected.indexes.every((index) => liveIndexes.has(index))) return false;
+  }
+  const bookingsColumns = columnSets[tableNames.indexOf('bookings')];
+  if (bookingsColumns && REMOVED_BOOKINGS_COLUMNS.some((column) => bookingsColumns.has(column))) return false;
+  return true;
 }
 
 function migrationCollisionErrorMessage(): string {

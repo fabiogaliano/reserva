@@ -62,6 +62,8 @@ export function ownerFacingIncidentTitle(action: OperationalIncidentAction): str
     case 'operations_sync': return 'Operations sync not delivered';
     case 'refund': return 'Refund needs attention';
     case 'oversell': return 'Booking may exceed capacity';
+    case 'payment_verification_rejected': return 'Payment refused after checkout';
+    case 'reconciliation_stale': return 'Reconciliation has stopped running';
   }
 }
 

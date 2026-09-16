@@ -72,7 +72,9 @@ export interface ReservaContext {
 
 // The unprefixed, all-groups-enabled default for any context built without an explicit routeConfig,
 // so adding this field can't change existing behavior.
-const defaultRouteConfig: ReservaResolvedRouteConfig = { paths: resolvedRoutePaths(), groups: { admin: true, ops: true, manage: true } };
+// `dev: false` because this default is what a context built outside an Astro build gets, and the
+// dev bypass must only ever come from a build the dev server produced.
+const defaultRouteConfig: ReservaResolvedRouteConfig = { paths: resolvedRoutePaths(), groups: { admin: true, ops: true, manage: true }, dev: false };
 
 export interface ReservaContextInput extends Omit<ReservaContext, 'repo' | 'clock' | 'logger' | 'providers' | 'routeConfig'> {
   providers: ReservaProviders;

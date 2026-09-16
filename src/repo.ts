@@ -4,7 +4,7 @@ import type { Booking, BookingStatus, CancellationActor } from './core/booking.j
 import type { PickupType } from './core/config.js';
 import type { EmailRecipientRole } from './core/events.js';
 import { sha256Base64Url } from './http.js';
-import type { CapacityDefault, DayCapacityOverride } from './core/occupancy.js';
+import type { CapacityDefault, DayCapacityOverride, OccupancyBooking } from './core/occupancy.js';
 
 export interface BookingInsert {
   id: string;
@@ -60,6 +60,15 @@ export class HoldLimitExceededError extends Error {
   constructor() {
     super('Too many active holds from this IP');
     this.name = 'HoldLimitExceededError';
+  }
+}
+
+// A reference the insert's ON CONFLICT swallowed. The caller regenerates and retries; nothing
+// about the booking itself is wrong.
+export class ReferenceConflictError extends Error {
+  constructor(readonly reference: string) {
+    super(`Booking reference ${reference} is already taken`);
+    this.name = 'ReferenceConflictError';
   }
 }
 
@@ -143,15 +152,17 @@ export interface RefundOperationRecord {
 }
 
 // Must match the operational_incidents table's CHECK constraints exactly.
-export type OperationalIncidentSourceType = 'side_effect' | 'refund' | 'oversell';
-export type OperationalIncidentAction = 'confirmation_email' | 'customer_notification' | 'calendar' | 'operations_sync' | 'refund' | 'oversell';
+export type OperationalIncidentSourceType = 'side_effect' | 'refund' | 'oversell' | 'payment_verification' | 'reconciliation';
+export type OperationalIncidentAction = 'confirmation_email' | 'customer_notification' | 'calendar' | 'operations_sync' | 'refund' | 'oversell'
+  | 'payment_verification_rejected' | 'reconciliation_stale';
 export type OperationalIncidentStatus = 'open' | 'resolved';
 export type OperationalIncidentSeverity = 'delayed' | 'action_required';
 export type OperationalIncidentResolutionKind = 'automatic' | 'manual';
 
 export interface OperationalIncidentRecord {
   id: string;
-  bookingId: string;
+  // Null for a deployment-wide incident (`reconciliation`), which belongs to no booking.
+  bookingId: string | null;
   sourceType: OperationalIncidentSourceType;
   sourceKey: string;
   action: OperationalIncidentAction;
@@ -453,11 +464,23 @@ export interface BookingRepository {
     // so a repeated A→B hop cannot collide with an earlier one.
     mutationSideEffects?: SideEffectOperationSeed[];
   } & CapacityGuardInput): Promise<Booking | null>;
-  listOccupancyBookings(from: string, to: string): Promise<Booking[]>;
-  listUpcoming(now: string): Promise<Booking[]>;
+  // Narrow by design: occupancy needs seven columns, not the whole booking, and this query runs
+  // on every availability/checkout request.
+  listOccupancyBookings(from: string, to: string): Promise<OccupancyBooking[]>;
+  // Bounded on both axes: `untilDays` keeps a far-future booking out of the default admin view,
+  // `limit` keeps one busy season from rendering thousands of rows. Tokens are NOT hydrated here —
+  // the caller hydrates the rows it actually emits (see `hydrateBookingTokens`).
+  listUpcoming(now: string, options?: { untilDays?: number; limit?: number }): Promise<Booking[]>;
+  // Restores cancel/operator tokens (AES-GCM) on rows loaded by the unhydrated list queries, for
+  // the subset that will really be rendered as manage links.
+  hydrateBookingTokens(bookings: readonly Booking[]): Promise<Booking[]>;
   // Every booking regardless of status from a starts_at lower bound — the admin's search/status
   // filters need cancelled/expired/past rows that listUpcoming (live upcoming only) never returns.
-  listAllFrom(startsAtFrom: string): Promise<Booking[]>;
+  listAllFrom(startsAtFrom: string, options?: { limit?: number }): Promise<Booking[]>;
+  // Confirmed bookings whose start falls in (now, until] and that have no reminder row for that
+  // exact start yet. `reminderHours` also excludes bookings made inside the window: they just
+  // received a confirmation email, so a reminder minutes later is noise.
+  listReminderCandidates(now: string, until: string, reminderHours: number, limit: number): Promise<Booking[]>;
   getDayOverride(date: string): Promise<DayCapacityOverride | null>;
   listDayOverrides(from: string, to: string): Promise<DayCapacityOverride[]>;
   upsertDayOverride(date: string, capacity: number, reason: string | null): Promise<void>;
@@ -537,7 +560,7 @@ export interface BookingRepository {
   // source_updated_at. Reopening a resolved row always clears its resolution fields.
   upsertOpenIncident(input: {
     id: string;
-    bookingId: string;
+    bookingId: string | null;
     sourceType: OperationalIncidentSourceType;
     sourceKey: string;
     action: OperationalIncidentAction;
@@ -575,6 +598,21 @@ export interface BookingRepository {
   claimIncidentAlert(id: string, token: string, now: string, leaseUntil: string): Promise<OperationalIncidentRecord | null>;
   resolveIncidentAlertSuccess(id: string, token: string, alertedRevision: number): Promise<void>;
   resolveIncidentAlertFailure(id: string, token: string, error: string, nextAttemptAt: string): Promise<void>;
+
+  // The deployment-wide reconciliation lease. One row, compare-and-set: the cron `scheduled` event
+  // and the ops reconcile route must never sweep concurrently, or both would claim the same
+  // side-effect and refund rows.
+  acquireReconciliationLease(token: string, now: string, leaseUntil: string): Promise<boolean>;
+  // `lastRunAt`/`lastSummary` null on a failed run, so a crash never advertises a successful sweep.
+  releaseReconciliationLease(token: string, completion: { lastRunAt: string; lastSummary: string } | null): Promise<void>;
+  readReconciliationLease(): Promise<ReconciliationLeaseRecord>;
+}
+
+export interface ReconciliationLeaseRecord {
+  lastRunAt: string | null;
+  // The serialized ReconciliationSummary of the last successful run; the caller parses it, so repo
+  // stays free of the reconciliation module's shapes.
+  lastSummary: string | null;
 }
 
 interface BookingRow {
@@ -689,6 +727,28 @@ function mapBooking(row: BookingRow): Booking {
   };
 }
 
+// Everything `getOccupancyIntervals` reads, and nothing else — status/hold_expires_at decide
+// whether a row counts, calendar_event_id deduplicates a booking against its own calendar event.
+const occupancyBookingColumns = 'id, service_slug, quantity, starts_at, ends_at, hold_expires_at, status, calendar_event_id';
+
+interface OccupancyBookingRow {
+  id: string;
+  service_slug: string;
+  quantity: number;
+  starts_at: string;
+  ends_at: string;
+  hold_expires_at: string | null;
+  status: BookingStatus;
+  calendar_event_id: string | null;
+}
+
+// The admin's default window and row cap: a year-long list is a report, not a dashboard, and the
+// page offers an explicit "show later bookings" link for the rest.
+const DEFAULT_UPCOMING_UNTIL_DAYS = 90;
+const DEFAULT_BOOKING_LIST_LIMIT = 500;
+// D1 caps bound parameters per statement well below a full admin page of rows.
+const TOKEN_HYDRATION_CHUNK = 50;
+
 const bookingColumns = `id, reference, service_slug, quantity, pickup_type, pickup_address, meeting_point_id,
   meeting_point_label, starts_at, ends_at,
   customer_name, customer_email, customer_phone, locale, price_minor, currency, status, hold_expires_at,
@@ -746,7 +806,7 @@ const refundOperationColumns = `id, booking_id, payment_intent, choice, status, 
 
 interface OperationalIncidentRow {
   id: string;
-  booking_id: string;
+  booking_id: string | null;
   source_type: OperationalIncidentSourceType;
   source_key: string;
   action: OperationalIncidentAction;
@@ -1290,7 +1350,8 @@ export function createBookingRepository(
               (SELECT capacity FROM capacity_defaults WHERE from_date <= ? ORDER BY from_date DESC LIMIT 1),
               ?
             ))
-          )`,
+          )
+        ON CONFLICT(reference) DO NOTHING`,
       ).bind(
         input.id, input.reference, input.serviceSlug, input.quantity, input.pickupType,
         input.startsAt, input.endsAt, input.locale, input.priceMinor, input.currency, input.holdExpiresAt,
@@ -1311,6 +1372,13 @@ export function createBookingRepository(
         input.localDate, input.localDate, input.defaultCapacity,
       ).run();
       if (result.meta.changes === 0) {
+        // ON CONFLICT(reference) makes a taken reference look exactly like a capacity loss, so one
+        // cheap read tells them apart — on a path that only runs once the insert already failed,
+        // which is what replaced the per-candidate pre-read this used to do on every checkout.
+        const conflict = await first(db.prepare(
+          'SELECT 1 AS hit FROM bookings WHERE reference = ? AND id != ?',
+        ).bind(input.reference, input.id).all<{ hit: number }>());
+        if (conflict) throw new ReferenceConflictError(input.reference);
         // Reclassify a losing write: the hold-ip cap throws (matching insertHold's contract),
         // anything else is a capacity loss reported as null. This re-check is for error
         // classification only — the atomic WHERE clause already made the authoritative decision.
@@ -1755,29 +1823,88 @@ export function createBookingRepository(
       if ((results[1]?.meta.changes ?? 0) === 0) return null;
       return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
     },
-    // Not hydrated (plain mapBooking): internal occupancy math that can span many rows and never
-    // renders/emails a token — hydrating would cost a per-row AES-GCM decrypt for nothing.
+    // Only the columns the occupancy math reads: this query can span many rows per availability
+    // request, and every extra column is bytes D1 ships for nothing. Never hydrated — occupancy
+    // never renders or emails a token.
     async listOccupancyBookings(from, to) {
       const result = await db.prepare(
-        `SELECT ${bookingColumns} FROM bookings
+        `SELECT ${occupancyBookingColumns} FROM bookings
          WHERE starts_at < ? AND starts_at >= ? AND status IN ('hold', 'confirmed')
          ORDER BY starts_at`,
-      ).bind(to, from).all<BookingRow>();
-      return result.results.map(mapBooking);
+      ).bind(to, from).all<OccupancyBookingRow>();
+      return result.results.map((row) => ({
+        id: row.id,
+        serviceSlug: row.service_slug,
+        quantity: Number(row.quantity),
+        startsAt: row.starts_at,
+        endsAt: row.ends_at,
+        holdExpiresAt: row.hold_expires_at,
+        status: row.status,
+        calendarEventId: row.calendar_event_id,
+      }));
     },
-    // Hydrated: the admin dashboard renders each row's operatorToken as a manage-link href.
-    async listUpcoming(now) {
+    // Not hydrated: the admin dashboard decrypts tokens only for the rows it ends up emitting,
+    // through hydrateBookingTokens — a per-row AES-GCM decrypt for a row nobody renders is waste.
+    async listUpcoming(now, options = {}) {
+      const untilDays = options.untilDays ?? DEFAULT_UPCOMING_UNTIL_DAYS;
+      const limit = options.limit ?? DEFAULT_BOOKING_LIST_LIMIT;
+      const until = new Date(Date.parse(now) + untilDays * 86_400_000).toISOString();
       const result = await db.prepare(
         `SELECT ${bookingColumns} FROM bookings
-         WHERE starts_at >= ? AND (status = 'confirmed' OR (status = 'hold' AND hold_expires_at > ?))
-         ORDER BY starts_at`,
-      ).bind(now, now).all<BookingRow>();
-      const key = await resolveTokenKey();
-      return Promise.all(result.results.map((row) => hydrateBooking(row, key)));
+         WHERE starts_at >= ? AND starts_at <= ? AND (status = 'confirmed' OR (status = 'hold' AND hold_expires_at > ?))
+         ORDER BY starts_at
+         LIMIT ?`,
+      ).bind(now, until, now, limit).all<BookingRow>();
+      return result.results.map(mapBooking);
     },
-    // Hydrated: the admin dashboard renders each row's operatorToken as a manage-link href.
-    async listAllFrom(startsAtFrom) {
-      const result = await db.prepare(`SELECT ${bookingColumns} FROM bookings WHERE starts_at >= ? ORDER BY starts_at`).bind(startsAtFrom).all<BookingRow>();
+    // Not hydrated, for the same reason as listUpcoming.
+    async listAllFrom(startsAtFrom, options = {}) {
+      const result = await db.prepare(
+        `SELECT ${bookingColumns} FROM bookings WHERE starts_at >= ? ORDER BY starts_at LIMIT ?`,
+      ).bind(startsAtFrom, options.limit ?? DEFAULT_BOOKING_LIST_LIMIT).all<BookingRow>();
+      return result.results.map(mapBooking);
+    },
+    async hydrateBookingTokens(bookings) {
+      const key = await resolveTokenKey();
+      if (!key || bookings.length === 0) return [...bookings];
+      const byId = new Map<string, { cancel_token_enc: string | null; operator_token_enc: string | null }>();
+      // Chunked: D1 caps bound parameters per statement, and an admin list is hundreds of rows.
+      for (let index = 0; index < bookings.length; index += TOKEN_HYDRATION_CHUNK) {
+        const chunk = bookings.slice(index, index + TOKEN_HYDRATION_CHUNK);
+        const result = await db.prepare(
+          `SELECT id, cancel_token_enc, operator_token_enc FROM bookings WHERE id IN (${chunk.map(() => '?').join(', ')})`,
+        ).bind(...chunk.map((booking) => booking.id)).all<{ id: string; cancel_token_enc: string | null; operator_token_enc: string | null }>();
+        for (const row of result.results) byId.set(row.id, row);
+      }
+      return Promise.all(bookings.map(async (booking) => {
+        const row = byId.get(booking.id);
+        if (!row) return booking;
+        const [cancelToken, operatorToken] = await Promise.all([
+          row.cancel_token_enc ? decryptToken(key, row.cancel_token_enc) : Promise.resolve(null),
+          row.operator_token_enc ? decryptToken(key, row.operator_token_enc) : Promise.resolve(null),
+        ]);
+        return {
+          ...booking,
+          ...(cancelToken !== null ? { cancelToken } : {}),
+          ...(operatorToken !== null ? { operatorToken } : {}),
+        };
+      }));
+    },
+    // Left unhydrated is not an option here: the reminder email links to the manage page, so the
+    // customer token has to be readable. Bounded by `limit` like every other sweep query.
+    async listReminderCandidates(now, until, reminderHours, limit) {
+      const result = await db.prepare(
+        `SELECT ${bookingColumns} FROM bookings
+         WHERE status = 'confirmed' AND starts_at > ? AND starts_at <= ?
+           AND julianday(created_at) < julianday(starts_at) - (? / 24.0)
+           AND NOT EXISTS (
+             SELECT 1 FROM side_effect_operations o
+             WHERE o.booking_id = bookings.id AND o.family = 'email'
+               AND o.event = 'booking.reminder' AND o.discriminator = bookings.starts_at
+           )
+         ORDER BY starts_at
+         LIMIT ?`,
+      ).bind(now, until, reminderHours, limit).all<BookingRow>();
       const key = await resolveTokenKey();
       return Promise.all(result.results.map((row) => hydrateBooking(row, key)));
     },
@@ -2187,6 +2314,32 @@ export function createBookingRepository(
          SET alert_claim_token = NULL, alert_claim_until = NULL, alert_next_attempt_at = ?, alert_error = ?
          WHERE id = ? AND alert_claim_token = ?`,
       ).bind(nextAttemptAt, error.slice(0, 200), id, token).run();
+    },
+    async acquireReconciliationLease(token, now, leaseUntil) {
+      // An expired lease is takeable: a Worker killed mid-sweep must not wedge reconciliation
+      // permanently, and every claim the dead run held carries its own expiry too.
+      const result = await db.prepare(
+        `UPDATE reconciliation_lease SET lease_token = ?, lease_until = ?
+         WHERE id = 'singleton' AND (lease_until IS NULL OR lease_until <= ?)`,
+      ).bind(token, leaseUntil, now).run();
+      return result.meta.changes > 0;
+    },
+    async releaseReconciliationLease(token, completion) {
+      const sql = completion
+        ? `UPDATE reconciliation_lease SET lease_token = NULL, lease_until = NULL, last_run_at = ?, last_summary = ?
+           WHERE id = 'singleton' AND lease_token = ?`
+        : `UPDATE reconciliation_lease SET lease_token = NULL, lease_until = NULL
+           WHERE id = 'singleton' AND lease_token = ?`;
+      const statement = completion
+        ? db.prepare(sql).bind(completion.lastRunAt, completion.lastSummary, token)
+        : db.prepare(sql).bind(token);
+      await statement.run();
+    },
+    async readReconciliationLease() {
+      const row = await first(db.prepare(
+        "SELECT last_run_at, last_summary FROM reconciliation_lease WHERE id = 'singleton'",
+      ).all<{ last_run_at: string | null; last_summary: string | null }>());
+      return { lastRunAt: row?.last_run_at ?? null, lastSummary: row?.last_summary ?? null };
     },
   };
 }

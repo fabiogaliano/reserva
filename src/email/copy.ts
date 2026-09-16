@@ -12,6 +12,8 @@ export const eventCopyKey: Record<EmailBookingEvent, string> = {
   'booking.cancelled_by_operator': 'cancelledByOperator',
   'booking.rescheduled': 'rescheduled',
   'booking.no_show': 'noShow',
+  'booking.reminder': 'reminder',
+  'payment.dispute_created': 'dispute',
 };
 
 export const englishEmailCopy: Record<string, string> = {
@@ -19,8 +21,10 @@ export const englishEmailCopy: Record<string, string> = {
   'greeting.anonymous': 'Hello,',
   'word.guest': 'guest',
   'word.guests': 'guests',
+  'label.service': 'Service',
   'label.date': 'Date',
   'label.time': 'Time',
+  'label.cancellation': 'Cancellation',
   'label.guests': 'Guests',
   'label.meetingPoint': 'Meeting point',
   'label.pickup': 'Pickup',
@@ -31,6 +35,7 @@ export const englishEmailCopy: Record<string, string> = {
   'label.whatsapp': 'WhatsApp',
   'label.bookingId': 'Booking ID',
   'pickup.pending': 'Custom pickup address pending',
+  'cancellation.free': 'Free cancellation until {cancelDeadline}',
   'contact.lead.whatsapp': 'Questions? Just reply to this email, or call / WhatsApp us:',
   'contact.lead.plain': 'Questions? Just reply to this email, or call us:',
   // Neutral default; a consumer can override with a concrete turnaround promise via
@@ -59,6 +64,19 @@ export const englishEmailCopy: Record<string, string> = {
   'noShow.customer.lead': 'Your booking for <strong>{serviceTitle}</strong> on {when} was marked as a no-show. If you think this is a mistake, just reply to this email.',
   'noShow.owner.subject': 'No-show: {serviceTitle} — {when}',
   'noShow.owner.lead': 'Booking <strong>{reference}</strong> was marked as a no-show.',
+  // Reminders go to the customer only; there is no owner variant, so no owner keys.
+  'reminder.customer.subject': 'Reminder: {serviceTitle} — {when}',
+  'reminder.customer.lead': 'A quick reminder about your <strong>{serviceTitle}</strong> — see you {when}!',
+  'reminder.customer.button': 'Manage my booking',
+  // A dispute is the bank's decision to make, not the customer's problem to hear about, so this
+  // event has owner copy only.
+  'dispute.owner.subject': 'Payment dispute opened for {reference}',
+  'dispute.owner.lead': 'A payment dispute was opened for booking <strong>{reference}</strong> ({price}). Respond in your payment provider\'s dashboard before its deadline — the booking itself was left unchanged.',
+  'dispute.owner.button': 'Open the admin dashboard',
+  // Operational alerts, not booking mail: the audience is whoever runs the deployment, and the
+  // copy deliberately carries no customer data — only what the admin dashboard already shows.
+  'alert.subject': '[Reserva] Attention required: {action} for {reference}',
+  'alert.body': '<strong>{action}</strong> needs attention on {reference}.<br>Severity: {severity}<br>Attempts: {attemptCount}<br>First detected: {firstDetectedAt}<br><a href="{adminUrl}">Open the admin dashboard</a>',
 };
 
 export const portuguesePortugalEmailCopy: Record<string, string> = {
@@ -66,8 +84,10 @@ export const portuguesePortugalEmailCopy: Record<string, string> = {
   'greeting.anonymous': 'Olá,',
   'word.guest': 'pessoa',
   'word.guests': 'pessoas',
+  'label.service': 'Serviço',
   'label.date': 'Data',
   'label.time': 'Hora',
+  'label.cancellation': 'Cancelamento',
   'label.guests': 'Pessoas',
   'label.meetingPoint': 'Ponto de encontro',
   'label.pickup': 'Recolha',
@@ -78,6 +98,7 @@ export const portuguesePortugalEmailCopy: Record<string, string> = {
   'label.whatsapp': 'WhatsApp',
   'label.bookingId': 'Referência',
   'pickup.pending': 'Endereço de recolha a confirmar',
+  'cancellation.free': 'Cancelamento gratuito até {cancelDeadline}',
   'contact.lead.whatsapp': 'Dúvidas? Responda a este email, ou contacte-nos por telefone / WhatsApp:',
   'contact.lead.plain': 'Dúvidas? Responda a este email, ou ligue-nos:',
   'refund.timing': 'Os reembolsos são devolvidos ao seu método de pagamento original.',
@@ -104,6 +125,14 @@ export const portuguesePortugalEmailCopy: Record<string, string> = {
   'noShow.customer.lead': 'A sua reserva de <strong>{serviceTitle}</strong> para {when} foi marcada como não comparecimento. Se acha que se trata de um erro, responda a este email.',
   'noShow.owner.subject': 'Não comparecimento: {serviceTitle} — {when}',
   'noShow.owner.lead': 'A reserva <strong>{reference}</strong> foi marcada como não comparecimento.',
+  'reminder.customer.subject': 'Lembrete: {serviceTitle} — {when}',
+  'reminder.customer.lead': 'Um lembrete sobre a sua reserva de <strong>{serviceTitle}</strong> — até {when}!',
+  'reminder.customer.button': 'Gerir a minha reserva',
+  'dispute.owner.subject': 'Contestação de pagamento aberta para {reference}',
+  'dispute.owner.lead': 'Foi aberta uma contestação de pagamento para a reserva <strong>{reference}</strong> ({price}). Responda no painel do fornecedor de pagamentos antes do prazo — a reserva em si não foi alterada.',
+  'dispute.owner.button': 'Abrir o painel de administração',
+  'alert.subject': '[Reserva] Atenção necessária: {action} em {reference}',
+  'alert.body': '<strong>{action}</strong> precisa de atenção em {reference}.<br>Gravidade: {severity}<br>Tentativas: {attemptCount}<br>Primeira deteção: {firstDetectedAt}<br><a href="{adminUrl}">Abrir o painel de administração</a>',
 };
 
 const emailCopyCatalogs: Record<string, Record<string, string>> = {

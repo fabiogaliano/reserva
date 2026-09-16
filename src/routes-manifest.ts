@@ -3,41 +3,47 @@
 // silently desync the widget from what's actually mounted.
 
 import { z } from 'astro/zod';
+import type { ResolvedClientConfig } from './core/config.js';
+import { resolvedRoutePaths, routePatterns, type ReservaRouteId, type ReservaRoutePaths } from './core/route-paths.js';
 
-export type ReservaRouteGroup = 'customer' | 'ops' | 'admin' | 'webhook' | 'manage';
+export { routePath, resolvedRoutePaths } from './core/route-paths.js';
+export type { ReservaRouteGroup, ReservaRouteId, ReservaRoutePaths } from './core/route-paths.js';
 
 export interface ReservaRouteEntry {
-  readonly id: string;
-  readonly group: ReservaRouteGroup;
+  readonly id: ReservaRouteId;
+  readonly group: (typeof routePatterns)[number]['group'];
   readonly pattern: string;
   readonly entrypoint: string;
 }
 
-// `satisfies` (not a `readonly ReservaRouteEntry[]` annotation) so the literal `id`/`group` values
-// survive into `typeof routeManifest` — an interface-typed annotation would widen `id` to `string`,
-// turning every `Record<ReservaRouteId, string>` read into `string | undefined` under noUncheckedIndexedAccess.
-export const routeManifest = [
-  { id: 'availability', group: 'customer', pattern: '/api/booking/availability', entrypoint: './routes/api/booking/availability.ts' },
-  { id: 'checkout', group: 'customer', pattern: '/api/booking/checkout', entrypoint: './routes/api/booking/checkout.ts' },
-  { id: 'quote', group: 'customer', pattern: '/api/booking/quote', entrypoint: './routes/api/booking/quote.ts' },
-  { id: 'catalog', group: 'customer', pattern: '/api/booking/catalog', entrypoint: './routes/api/booking/catalog.ts' },
-  { id: 'webhooksPayment', group: 'webhook', pattern: '/api/booking/webhooks/payment', entrypoint: './routes/api/booking/webhooks/payment.ts' },
-  { id: 'status', group: 'customer', pattern: '/api/booking/status', entrypoint: './routes/api/booking/status.ts' },
-  { id: 'manageApi', group: 'customer', pattern: '/api/booking/manage', entrypoint: './routes/api/booking/manage.ts' },
-  { id: 'cancel', group: 'customer', pattern: '/api/booking/cancel', entrypoint: './routes/api/booking/cancel.ts' },
-  { id: 'reschedule', group: 'customer', pattern: '/api/booking/reschedule', entrypoint: './routes/api/booking/reschedule.ts' },
-  { id: 'operatorCancel', group: 'ops', pattern: '/api/booking/operator/cancel', entrypoint: './routes/api/booking/operator/cancel.ts' },
-  { id: 'operatorReschedule', group: 'ops', pattern: '/api/booking/operator/reschedule', entrypoint: './routes/api/booking/operator/reschedule.ts' },
-  { id: 'operatorNoShow', group: 'ops', pattern: '/api/booking/operator/no-show', entrypoint: './routes/api/booking/operator/no-show.ts' },
-  { id: 'opsHealth', group: 'ops', pattern: '/api/booking/ops/health', entrypoint: './routes/api/booking/ops/health.ts' },
-  { id: 'assetsCss', group: 'customer', pattern: '/booking/assets/reserva.css', entrypoint: './routes/booking/assets.ts' },
-  { id: 'assetsJs', group: 'customer', pattern: '/booking/assets/reserva.js', entrypoint: './routes/booking/assets-js.ts' },
-  { id: 'adminPage', group: 'admin', pattern: '/booking/admin', entrypoint: './routes/booking/admin.ts' },
-  { id: 'managePage', group: 'manage', pattern: '/booking/manage', entrypoint: './routes/booking/manage.ts' },
-  { id: 'confirmationPage', group: 'customer', pattern: '/booking-confirmation', entrypoint: './routes/booking-confirmation.ts' },
-] as const satisfies readonly ReservaRouteEntry[];
+// The Astro-only half of the table: `src/core/route-paths.ts` owns id/group/pattern (it is
+// importable from a browser bundle), and this map adds the module each pattern is injected from.
+const routeEntrypoints: Record<ReservaRouteId, string> = {
+  availability: './routes/api/booking/availability.ts',
+  checkout: './routes/api/booking/checkout.ts',
+  quote: './routes/api/booking/quote.ts',
+  catalog: './routes/api/booking/catalog.ts',
+  webhooksPayment: './routes/api/booking/webhooks/payment.ts',
+  status: './routes/api/booking/status.ts',
+  manageApi: './routes/api/booking/manage.ts',
+  cancel: './routes/api/booking/cancel.ts',
+  reschedule: './routes/api/booking/reschedule.ts',
+  operatorCancel: './routes/api/booking/operator/cancel.ts',
+  operatorReschedule: './routes/api/booking/operator/reschedule.ts',
+  operatorNoShow: './routes/api/booking/operator/no-show.ts',
+  opsHealth: './routes/api/booking/ops/health.ts',
+  reconcile: './routes/api/booking/ops/reconcile.ts',
+  assetsCss: './routes/booking/assets.ts',
+  assetsJs: './routes/booking/assets-js.ts',
+  adminPage: './routes/booking/admin.ts',
+  managePage: './routes/booking/manage.ts',
+  confirmationPage: './routes/booking-confirmation.ts',
+};
 
-export type ReservaRouteId = (typeof routeManifest)[number]['id'];
+export const routeManifest: readonly ReservaRouteEntry[] = routePatterns.map((entry) => ({
+  ...entry,
+  entrypoint: routeEntrypoints[entry.id],
+}));
 
 // Feature groups a consumer can turn off via `config.routes`. `customer` and `webhook` are absent
 // here: the booking API is load-bearing, never disableable. `manage` holds only the server-rendered
@@ -59,31 +65,31 @@ export function enabledRouteManifest(groups: ReservaRouteGroupFlags): readonly R
   return routeManifest.filter((entry) => isRouteEnabled(entry, groups));
 }
 
-// The seam a `routePrefix` option rewrites through: `prefix` must already be normalized so every
-// call site produces a consistently-prefixed pattern instead of assembling one ad hoc.
-export function routePath(entry: ReservaRouteEntry, prefix = ''): string {
-  return prefix + entry.pattern;
-}
-
-// The full { routeId -> resolved pattern } table exposed through `virtual:reserva/config` so
-// components and handlers read their URL defaults from one resolved source instead of each
-// re-deriving `prefix + pattern` themselves.
-export function resolvedRoutePaths(prefix = ''): Record<ReservaRouteId, string> {
-  return Object.fromEntries(
-    routeManifest.map((entry) => [entry.id, routePath(entry, prefix)]),
-  ) as Record<ReservaRouteId, string>;
-}
-
 // The single object threaded through `virtual:reserva/config` (and, at request time, onto
 // `ReservaContext.routeConfig`) so every URL-producing site reads the same resolved paths and the
 // same group flags, instead of some seeing a prefix and others not.
 export interface ReservaResolvedRouteConfig {
-  paths: Record<ReservaRouteId, string>;
+  paths: ReservaRoutePaths;
   groups: ReservaRouteGroupFlags;
+  // True only in output built by `astro dev`. Derived from the build command, never from runtime
+  // env, so a production bundle can't be talked into a development behaviour by a stray variable.
+  dev: boolean;
 }
 
-export function resolveRouteConfig(prefix = '', groups: ReservaRouteGroupFlags = { admin: true, ops: true, manage: true }): ReservaResolvedRouteConfig {
-  return { paths: resolvedRoutePaths(prefix), groups };
+export function resolveRouteConfig(
+  prefix = '',
+  groups: ReservaRouteGroupFlags = { admin: true, ops: true, manage: true },
+  dev = false,
+): ReservaResolvedRouteConfig {
+  return { paths: resolvedRoutePaths(prefix), groups, dev };
+}
+
+// The whole payload of `virtual:reserva/config`: one build-time source for the validated config and
+// the resolved route table, so a runtime module, a component and a handler never disagree about
+// either. Serialized as JSON, which is why nothing in `ResolvedClientConfig` may be a function.
+export interface ReservaVirtualConfig {
+  config: ResolvedClientConfig;
+  routes: ReservaResolvedRouteConfig;
 }
 
 export function requireEnabledRoutePath(routeConfig: ReservaResolvedRouteConfig, id: ReservaRouteId): string {

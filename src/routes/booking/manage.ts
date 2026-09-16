@@ -45,9 +45,12 @@ export async function GET({ request, locals }: APIContext): Promise<Response> {
     timezone: context.config.business.timezone,
     currency: context.config.business.currency,
     cssHref: cssAssetHref(context.routeConfig.paths.assetsCss),
+    favicon: context.config.ui?.faviconUrl,
+    headHtml: context.config.ui?.headHtml,
     theme: context.viewerTheme,
     businessName: context.config.business.name,
     businessUrl: context.config.business.url,
+    contactConfig: context.config,
   };
   const params = new URL(request.url).searchParams;
   if (params.get('done') === 'reschedule') options.notice = 'rescheduled';
@@ -101,15 +104,15 @@ export async function POST({ request, locals }: APIContext): Promise<Response> {
         ? await handleOperatorCancel(new Request(request, { body: JSON.stringify({ operatorToken, refund: String(form.get('refund') ?? 'none') }), headers: { 'content-type': 'application/json' } }), context)
         : await handleCustomerCancel(new Request(request, { body: JSON.stringify({ token }), headers: { 'content-type': 'application/json' } }), context);
     } else if (action === 'reschedule') {
-      const newStart = String(form.get('newStart') ?? '');
-      if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(newStart)) throw new HttpError(400, 'validation_failed', 'newStart is required');
+      const start = String(form.get('start') ?? '');
+      if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(start)) throw new HttpError(400, 'validation_failed', 'start is required');
       let startsAt: string;
       try {
-        startsAt = localDateTimeToUtcIso(newStart, context.config.business.timezone);
+        startsAt = localDateTimeToUtcIso(start, context.config.business.timezone);
       } catch {
-        throw new HttpError(400, 'validation_failed', 'newStart is not a valid local time');
+        throw new HttpError(400, 'validation_failed', 'start is not a valid local time');
       }
-      const body = JSON.stringify(operatorToken ? { operatorToken, newStart: startsAt } : { token, newStart: startsAt });
+      const body = JSON.stringify(operatorToken ? { operatorToken, start: startsAt } : { token, start: startsAt });
       response = operatorToken
         ? await handleOperatorReschedule(new Request(request, { body, headers: { 'content-type': 'application/json' } }), context)
         : await handleCustomerReschedule(new Request(request, { body, headers: { 'content-type': 'application/json' } }), context);

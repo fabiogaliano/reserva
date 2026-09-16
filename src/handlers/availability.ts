@@ -7,7 +7,7 @@ import { addDaysToDateKey, enumerateDateKeys, localDateKey, localDateTimeToUtcIs
 import type { ReservaContext } from '../context.js';
 import { nowIso } from '../context.js';
 import { HttpError, json, parseDate, requireInteger, requireString } from '../http.js';
-import { run } from './shared.js';
+import { run, sweepExpiredHoldsThrottled, warnDeprecatedField } from './shared.js';
 
 // Bounded by the deployment's own maxHorizonDays, not a fixed cap, so a consumer never needs to
 // chunk-and-merge requests. Checked BEFORE enumerating (zero-padded keys compare lexicographically)
@@ -149,9 +149,17 @@ interface AvailabilityInput {
 
 function availabilityInput(request: Request, context: ReservaContext): AvailabilityInput {
   const url = new URL(request.url);
-  const serviceSlug = requireString(url.searchParams.get('service'), 'service');
-  if (!context.config.services[serviceSlug]) throw new HttpError(400, 'validation_failed', 'Unknown service');
-  const quantity = requireInteger(Number(url.searchParams.get('quantity')), 'quantity');
+  const legacyService = url.searchParams.get('serviceSlug') === null ? url.searchParams.get('service') : null;
+  if (legacyService !== null) warnDeprecatedField(context, 'availability', 'service');
+  const serviceSlug = requireString(url.searchParams.get('serviceSlug') ?? legacyService, 'serviceSlug');
+  if (!context.config.services[serviceSlug]) {
+    const declared = Object.keys(context.config.services);
+    throw new HttpError(400, 'validation_failed', `serviceSlug must be one of: ${declared.join(', ')}`, { field: 'serviceSlug', allowed: declared });
+  }
+  // A funnel that hasn't asked for a party size yet still wants the calendar: absent means one
+  // person, the smallest booking every service can price.
+  const quantityParam = url.searchParams.get('quantity');
+  const quantity = quantityParam === null || quantityParam === '' ? 1 : requireInteger(Number(quantityParam), 'quantity');
   const from = requireString(url.searchParams.get('from'), 'from');
   const to = requireString(url.searchParams.get('to'), 'to');
   const dates = validDateRange(from, to, context.config.booking.maxHorizonDays);
@@ -165,7 +173,13 @@ function availabilityInput(request: Request, context: ReservaContext): Availabil
       priceFor(service, quantity, pickup);
     }
   } catch {
-    throw new HttpError(400, 'validation_failed', 'No price is configured for this party size');
+    const maxQuantity = Math.max(...service.pricing.map((row) => row.maxQuantity), 0);
+    throw new HttpError(
+      400,
+      'validation_failed',
+      `quantity ${quantity} has no pricing rule for service ${serviceSlug}; maximum is ${maxQuantity}`,
+      { field: 'quantity' },
+    );
   }
   return { quantity, dates, service };
 }
@@ -173,15 +187,22 @@ function availabilityInput(request: Request, context: ReservaContext): Availabil
 // `remaining` is published only at or below `limitedThreshold` so a consumer can say "only N left";
 // above it the field is null so real capacity stays private. Slots that fit nothing are filtered
 // out upstream, so `remaining` is never 0.
-function wireDay(day: DayAvailability, limitedThreshold: number): AvailabilityDay {
+function wireDay(day: DayAvailability, limitedThreshold: number, localByStart: Map<string, { date: string; time: string }>): AvailabilityDay {
   return {
     date: day.date,
     status: day.status,
     closedReason: day.closedReason ?? null,
-    slots: day.slots.map((slot) => ({
-      start: slot.start,
-      remaining: slot.remainingBookings <= limitedThreshold ? slot.remainingBookings : null,
-    })),
+    slots: day.slots.map((slot) => {
+      // The generator already projected every start into the business timezone, so the wire fields
+      // reuse that rather than re-deriving a local day from the ISO offset.
+      const local = localByStart.get(slot.start);
+      return {
+        start: slot.start,
+        date: local?.date ?? day.date,
+        time: local?.time ?? slot.start.slice(11, 16),
+        remaining: slot.remainingBookings <= limitedThreshold ? slot.remainingBookings : null,
+      };
+    }),
   };
 }
 
@@ -189,7 +210,9 @@ async function availabilityPayload(context: ReservaContext, now: string, input: 
   const { quantity, dates, service } = input;
   const firstDay = dates[0];
   const lastDay = dates[dates.length - 1];
-  if (!firstDay || !lastDay) throw new HttpError(400, 'validation_failed', 'Date range is empty');
+  if (!firstDay || !lastDay) {
+    throw new HttpError(400, 'validation_failed', 'from/to contain no days; check the dates and the booking horizon', { field: 'from' });
+  }
   const dayAfterLast = addDaysToDateKey(lastDay, 1);
   const horizonStart = parseUtcInstant(localDateTimeToUtcIso(`${firstDay}T00:00`, context.config.business.timezone));
   const horizonEnd = parseUtcInstant(localDateTimeToUtcIso(`${dayAfterLast}T00:00`, context.config.business.timezone));
@@ -210,13 +233,15 @@ async function availabilityPayload(context: ReservaContext, now: string, input: 
   const limitedThreshold = context.config.booking.limitedThreshold;
   const days = dates.map((date) => {
     const capacityInfo = capacityForDate(date, defaultCapacityForDate(date, context.config.capacity.default, capacityDefaults), overridesByDate);
-    if (generateSlots(service, date, context.config.business.timezone).length === 0) {
+    const generated = generateSlots(service, date, context.config.business.timezone);
+    const localByStart = new Map(generated.map((slot) => [slot.start, { date: slot.localDate, time: slot.localTime }]));
+    if (generated.length === 0) {
       return wireDay({
         date,
         status: 'closed' as const,
         ...(capacityInfo.closedReason ? { closedReason: capacityInfo.closedReason } : {}),
         slots: [],
-      }, limitedThreshold);
+      }, limitedThreshold, localByStart);
     }
     return wireDay(availabilityForDay({
       date,
@@ -232,7 +257,7 @@ async function availabilityPayload(context: ReservaContext, now: string, input: 
       minNoticeHours: context.config.booking.minNoticeHours,
       maxHorizonDays: context.config.booking.maxHorizonDays,
       limitedThreshold,
-    }), limitedThreshold);
+    }), limitedThreshold, localByStart);
   });
   return {
     // The threshold travels with the payload so a consumer can explain the scarcity policy behind
@@ -247,7 +272,7 @@ export function handleAvailability(request: Request, context: ReservaContext): P
     if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const input = availabilityInput(request, context);
     const now = nowIso(context);
-    await context.repo.sweepExpiredHolds(now);
+    await sweepExpiredHoldsThrottled(context, now);
     const availabilityCache = context.providers.calendar ? undefined : context.cache;
     let cacheKey: Request | undefined;
     if (availabilityCache) {
@@ -257,7 +282,9 @@ export function handleAvailability(request: Request, context: ReservaContext): P
       const requestParams = new URL(request.url).searchParams;
       const keyUrl = new URL(request.url);
       keyUrl.search = '';
-      for (const name of ['service', 'quantity', 'from', 'to']) keyUrl.searchParams.set(name, requestParams.get(name) ?? '');
+      // Both spellings of the service param are in the key: reading only the new one would make
+      // every request that still sends `service=` share a single cache entry.
+      for (const name of ['serviceSlug', 'service', 'quantity', 'from', 'to']) keyUrl.searchParams.set(name, requestParams.get(name) ?? '');
       cacheKey = new Request(keyUrl.toString(), { method: 'GET' });
       const hit = await availabilityCache.match(cacheKey);
       if (hit) return hit;
