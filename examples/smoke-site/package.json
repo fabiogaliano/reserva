@@ -7,7 +7,7 @@
     "db:migrate": "bun ../../scripts/reserva-migrate.ts --local",
     "demo": "bun run db:migrate && bun run dev",
     "e2e:server": "RESERVA_E2E_PERSIST=.wrangler-e2e bun e2e-dev-server.ts",
-    "cron:dev": "wrangler dev --persist-to .wrangler/state --test-scheduled",
+    "cron:dev": "wrangler dev --persist-to .wrangler/state",
     "cron:trigger": "curl -s \"http://127.0.0.1:8787/__scheduled?cron=*+*+*+*+*\"",
     "cron:deploy": "wrangler deploy"
   }

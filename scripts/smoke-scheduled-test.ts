@@ -3,9 +3,10 @@
 // owed side-effect debt and resolves an open incident, against the site's own Worker entry
 // (`main: ./src/worker.ts`), which exports `fetch` and `scheduled` together.
 //
-// `wrangler dev --test-scheduled` exposing `GET /__scheduled` is the only boundary local workerd
-// supports for scheduled events; there is no Astro-preview equivalent, hence driving the site's
-// Worker directly instead of through `astro preview`.
+// Local workerd triggers a scheduled event through `GET /cdn-cgi/handler/scheduled`; there is no
+// Astro-preview equivalent, hence driving the site's Worker through `wrangler dev` instead. Not
+// `--test-scheduled`'s `/__scheduled`: that route is injected by wrangler's bundler, and the
+// adapter's redirected config sets `no_bundle`, so the built site never gets it.
 //
 // Fixture: a confirmed booking with a `failed` calendar_create row (attempt 2, past both its
 // backoff window and the delayed-incident threshold) and an already-open incident — the state two
@@ -33,7 +34,7 @@ const persistPath = fileURLToPath(new URL(PERSIST_DIR, `file://${smokeSiteRoot}`
 const apiPersistPath = `${persistPath}/v3`;
 const HOST = '127.0.0.1';
 const PORT = 4397;
-const triggerUrl = `http://${HOST}:${PORT}/__scheduled?cron=*+*+*+*+*`;
+const triggerUrl = `http://${HOST}:${PORT}/cdn-cgi/handler/scheduled?cron=*+*+*+*+*`;
 
 function run(command: string, args: string[]): void {
   const result = spawnSync(command, args, { cwd: smokeSiteRoot, stdio: 'inherit' });
@@ -98,7 +99,7 @@ async function waitForScheduledTrigger(timeoutMs: number): Promise<void> {
     try {
       const response = await fetch(triggerUrl);
       if (response.status === 200) return;
-      throw new Error(`GET /__scheduled returned ${response.status}`);
+      throw new Error(`GET /cdn-cgi/handler/scheduled returned ${response.status}`);
     } catch (error) {
       if (Date.now() > deadline) throw new Error(`could not trigger the scheduled event within ${timeoutMs}ms: ${String(error)}`);
       await delay(250);
@@ -132,7 +133,7 @@ async function assertRecovered(): Promise<void> {
 
 await seedAndAssert();
 
-const cronWorker = spawn('bunx', ['wrangler', 'dev', '--persist-to', PERSIST_DIR, '--test-scheduled', '--port', String(PORT)], {
+const cronWorker = spawn('bunx', ['wrangler', 'dev', '--persist-to', PERSIST_DIR, '--port', String(PORT)], {
   cwd: smokeSiteRoot,
   stdio: 'inherit',
 });

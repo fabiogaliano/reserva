@@ -333,3 +333,29 @@ describe('email providers', () => {
     });
   });
 });
+
+describe('brevo sendMessage and attachments', () => {
+  const message = { to: 'owner@example.test', subject: 'Attention required', html: '<p>hi</p>', text: 'hi' };
+
+  it('posts a plain message to the same endpoint and maps a failure to ProviderFailure', async () => {
+    const ok = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
+    await brevoEmail({ apiKey: 'key', fetch: ok }).sendMessage(message);
+    const [url, init] = ok.mock.calls[0]!;
+    expect(String(url)).toBe(BREVO_TRANSACTIONAL_EMAIL_URL);
+    const body = JSON.parse(String(init?.body));
+    expect(body.to).toEqual([{ email: 'owner@example.test' }]);
+    expect(body.subject).toBe('Attention required');
+
+    const down = vi.fn<typeof fetch>(async () => new Response('upstream down', { status: 503 }));
+    await expect(brevoEmail({ apiKey: 'key', fetch: down }).sendMessage(message)).rejects.toBeInstanceOf(BrevoResponseError);
+  });
+
+  it('forwards the rendered .ics as a Brevo attachment on the customer confirmation', async () => {
+    const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
+    await brevoEmail({ apiKey: 'key', fetch: request }).send('booking.confirmed', booking(), config);
+    const customerBody = JSON.parse(String(request.mock.calls[0]![1]?.body));
+    expect(customerBody.attachment).toHaveLength(1);
+    expect(customerBody.attachment[0].name).toBe('booking.ics');
+    expect(atob(customerBody.attachment[0].content)).toContain('BEGIN:VCALENDAR');
+  });
+});

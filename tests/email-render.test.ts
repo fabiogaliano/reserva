@@ -87,3 +87,17 @@ describe('renderDefaultEmail (@reservajs/astro/email)', () => {
     expect(delegated).toEqual(renderDefaultEmail(context({ event: 'booking.confirmed' })));
   });
 });
+
+describe('calendar attachment', () => {
+  it('attaches booking.ics to the customer confirmation only', () => {
+    const customer = renderDefaultEmail(context());
+    expect(customer.attachments).toHaveLength(1);
+    const [file] = customer.attachments!;
+    expect(file!.filename).toBe('booking.ics');
+    expect(file!.contentType).toMatch(/^text\/calendar/);
+    expect(atob(file!.content)).toContain('BEGIN:VCALENDAR');
+
+    expect(renderDefaultEmail(context({ recipient: 'owner' })).attachments).toBeUndefined();
+    expect(renderDefaultEmail(context({ event: 'booking.cancelled_by_customer' })).attachments).toBeUndefined();
+  });
+});
