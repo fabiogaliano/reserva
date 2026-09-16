@@ -61,6 +61,23 @@ describe('themeCss (OS default + forced overrides)', () => {
     // makes the no-script tab links show one panel at a time.
     expect(themeCss).toContain('.bk-panels > [hidden] { display: none; }');
   });
+
+  // The legend dots are classed, not inline-styled: a style attribute is blocked under the strict
+  // style-src the pages are meant to run under, which would leave three unlabelled blank dots.
+  it('colours the calendar legend through classes and keeps the row chevron on the name line when narrow', () => {
+    expect(themeCss).toContain('.bk-legend-dot--booked { background: var(--bk-accent); }');
+    expect(themeCss).toContain('.bk-legend-dot--adjusted { background: transparent; box-shadow: inset 0 0 0 1px var(--bk-warning); }');
+    expect(themeCss).toContain('.bk-legend-dot--closed { background: var(--bk-danger); }');
+    expect(themeCss).toContain('.bk-booking-status { grid-row: 2; grid-column: 2; }');
+    expect(themeCss).toContain('.bk-booking-chevron { grid-row: 1; grid-column: 3; }');
+    // Adjusted and booked must not differ by dot hue alone.
+    expect(themeCss).toContain('.bk-day--adjusted { color: var(--bk-text); font-weight: 600; box-shadow: inset 0 0 0 1px var(--bk-warning); }');
+    // A same-specificity rule later in the sheet would silently win, so each of these must be declared once.
+    expect(themeCss.match(/^\.bk-days \{/gm)).toHaveLength(1);
+    expect(themeCss.match(/^\.bk-modified \{/gm)).toHaveLength(1);
+    expect(themeCss.match(/^\.bk-pager \{/gm)).toHaveLength(1);
+    expect(themeCss.match(/^\.bk-day-bookings \{/gm)).toHaveLength(1);
+  });
 });
 
 describe('admin dashboard enhancement', () => {
@@ -75,6 +92,13 @@ describe('admin dashboard enhancement', () => {
   it('defers the incident resolve note until the first press of Resolve', () => {
     expect(adminEnhancerJs).toContain("[data-reserva-resolve-note]");
     expect(adminEnhancerJs).toContain('noteField.hidden = true;');
+  });
+
+  // The cell only shows a dot, so the day panel is where the units figure has to reappear once
+  // the enhancer takes over rendering it.
+  it('renders the per-day unit load in the day panel from the island', () => {
+    expect(adminEnhancerJs).toContain('const dayLoads = i18n.loads || {};');
+    expect(adminEnhancerJs).toContain('load.textContent = dayLoads[date];');
   });
 });
 

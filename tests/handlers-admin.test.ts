@@ -251,6 +251,24 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
     // cell's accessible name and tooltip rather than as printed text under every number.
     expect(body).toContain('2/2 units booked');
     expect(body).not.toContain('1/2 units booked');
+    // The island carries the same preformatted line per day so a client-side selection can show
+    // it; the cell's aria-label alone would be lost the moment the enhancer rewrites the panel.
+    expect(body).toContain('"loads":{');
+    expect(body).toContain('"2026-06-20":"2/2 units booked"');
+  });
+
+  // With a date in the URL the handler infers the availability tab, so the list's own filter
+  // controls must say which tab they belong to or every filter round-trip changes panel.
+  it('keeps the operator on Upcoming when filters are applied or cleared with a selected day', async () => {
+    const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+    const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?date=2026-06-20&q=LVT&tab=upcoming`), context)).text();
+    expect(body).toContain('<section class="bk-panel" id="bk-upcoming">');
+    expect(body).toContain('<form method="get" class="bk-searchbar" role="search"><input type="hidden" name="tab" value="upcoming">');
+    expect(body).toContain('class="bk-filter-clear" href="?date=2026-06-20&amp;tab=upcoming#bk-upcoming"');
+
+    const roundTrip = await (await handleAdminGet(new Request(`${ADMIN_URL}?tab=upcoming&date=2026-06-20&q=&status=`), context)).text();
+    expect(roundTrip).toContain('<section class="bk-panel" id="bk-upcoming">');
+    expect(roundTrip).toContain('<section class="bk-panel" id="bk-availability" hidden>');
   });
 
   // The meeting-point sub-line only renders for a default pickup on a service that actually
@@ -609,6 +627,12 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     // The three departure fields read as one statement; the weekdays are their own.
     expect(body).toContain('Departs <b>09:00</b> to <b>12:00</b>, every <b>30</b> minutes');
     expect(body).toContain('Runs <b>Every day</b>');
+    // Each Change button names its own sentence; identical button labels are otherwise indistinguishable.
+    const stmt = /<span class="bk-stmt-text" id="(bk-stmt-\d+)">Departs <b>09:00<\/b>.*?<button type="button" class="bk-stmt-edit" data-reserva-stmt-edit aria-describedby="(bk-stmt-\d+)">/s.exec(body);
+    expect(stmt).not.toBeNull();
+    expect(stmt?.[1]).toBe(stmt?.[2]);
+    const ids = body.match(/id="bk-stmt-\d+"/g) ?? [];
+    expect(new Set(ids).size).toBe(ids.length);
     expect(body).toContain('type="time" name="services.vintage.schedule.0.firstStart" value="09:00" required');
     expect(body).toContain('type="time" name="services.vintage.schedule.0.lastStart" value="12:00" required');
     expect(body).toContain('name="services.vintage.schedule.0.intervalMin" value="30" min="1" max="1440" step="1" required');

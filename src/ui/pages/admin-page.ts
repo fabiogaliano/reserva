@@ -328,7 +328,8 @@ export function adminPage(
       if (selected) containsSelected = true;
       // Printing "units 2/4" under all thirty numbers turned the month into a table to decode, so
       // the grid shows a dot and the load travels in the cell's accessible name and tooltip —
-      // still one hover or one screen-reader stop away, and spelled out in the panel on selection.
+      // still one hover or one screen-reader stop away. The day panel spells it out on selection,
+      // server-side here and client-side from the island's per-day `load` strings.
       const stateWord = capacity === 0 ? messages['widget.closed'] : override ? messages['admin.stateOverride'] : booked > 0 ? messages['admin.legendBooked'] : '';
       const load = booked > 0 || capacity === 0 || override ? ` — ${unitsLoad(date, capacity)}` : '';
       const label = `${formatDayDate(date, locale)}${stateWord ? ` — ${stateWord}` : ''}${load}`;
@@ -337,7 +338,7 @@ export function adminPage(
       // data-* carries each day's effective values so the enhancer can prefill the form without a
       // page load; the href stays as the no-JS path.
       const dayData = ` data-date="${date}" data-capacity="${capacity}"${override?.reason ? ` data-reason="${escapeHtml(override.reason)}"` : ''}`;
-      return `<a class="bk-day${tone}${selected ? ' bk-day--selected' : ''}"${selected ? ' aria-current="date"' : ''} href="?${dayParams}#bk-override" aria-label="${escapeHtml(label)}"${title}${dayData}>`
+      return `<a class="bk-day${tone}${selected ? ' bk-day--selected' : ''}"${selected ? ' aria-current="date"' : ''} href="?${escapeHtml(String(dayParams))}#bk-override" aria-label="${escapeHtml(label)}"${title}${dayData}>`
         + `<span class="bk-day-num">${Number(date.slice(8, 10))}</span></a>`;
     }).join('');
     const grid = `<div class="bk-monthgrid">${header}${blanks}${cells}</div>`;
@@ -358,15 +359,19 @@ export function adminPage(
   }).join('');
 
   // Keeps the selected day when filters are (re)applied — the two workflows share one URL.
+  // Both carry tab=upcoming explicitly: with a date in play the handler would otherwise infer the
+  // availability tab and move the operator off the list they were filtering.
   const clearParams = new URLSearchParams();
   if (editDate) clearParams.set('date', editDate);
-  const clearHref = `${clearParams.size ? `?${clearParams}` : context.routeConfig.paths.adminPage}#bk-upcoming`;
+  clearParams.set('tab', 'upcoming');
+  const clearHref = `?${clearParams}#bk-upcoming`;
   // Drops the "pickup" mention from the search hint when no service declares a location module.
   const hasLocationService = Object.values(context.config.services).some((candidate) => candidate.location);
   const searchPlaceholder = hasLocationService ? messages['admin.searchPlaceholder'] : messages['admin.searchPlaceholderNoPickup'];
   // One row of controls with no field labels: the placeholder names what the box searches and the
   // select's own options name what it filters.
   const filterForm = `<form method="get" class="bk-searchbar" role="search">`
+    + `<input type="hidden" name="tab" value="upcoming">`
     + (editDate ? `<input type="hidden" name="date" value="${escapeHtml(editDate)}">` : '')
     + `<input class="bk-input" type="search" name="q" value="${escapeHtml(filters.q)}" placeholder="${escapeHtml(searchPlaceholder)}" aria-label="${escapeHtml(messages['admin.searchLabel'])}">`
     + `<select class="bk-select" name="status" aria-label="${escapeHtml(messages['common.status'])}">${statusOptions}</select>`
@@ -406,6 +411,13 @@ export function adminPage(
       };
     });
   }
+  // The load line per calendar day, preformatted so the enhancer never re-derives units or
+  // capacity: a client-side selection shows the same "x/y units booked" the server render does.
+  const dayLoads: Record<string, string> = {};
+  for (const date of enumerateDateKeys(fromDate, toDate)) {
+    const override = overridesByDate.get(date);
+    dayLoads[date] = unitsLoad(date, override?.capacity ?? defaultCapacityForDate(date, context.config.capacity.default, capacityDefaults));
+  }
   // Strings + day data the admin enhancer needs at runtime, shipped as a non-executable JSON
   // island (same CSP-safe pattern as the manage page's reschedule island).
   const adminIsland = `<script type="application/json" data-reserva-i18n>${JSON.stringify({
@@ -420,6 +432,7 @@ export function adminPage(
     nextMonth: messages['admin.nextMonth'],
     selectHint: messages['admin.selectHint'],
     days: daySummaries,
+    loads: dayLoads,
   }).replace(/</g, '\\u003c')}</script>`;
   // The day panel answers "what does this day actually have" — the bookings on the selected day,
   // rendered server-side for the no-JS path and rebuilt client-side from the island on selection.
@@ -494,11 +507,12 @@ export function adminPage(
     + (defaultEntries ? `<ul class="bk-defaults">${defaultEntries}</ul>` : '')
     + `</div></details>`;
 
-  const legendRow = (color: string, label: string): string =>
-    `<span><i style="background:var(--bk-${color})"></i>${escapeHtml(label)}</span>`;
-  const legend = `<p class="bk-legend">${legendRow('accent', messages['admin.legendBooked'])}`
-    + `${legendRow('warning', messages['admin.stateOverride'])}`
-    + `${legendRow('danger', messages['widget.closed'])}</p>`;
+  // Class-driven dots: a style attribute would be blocked under the strict style-src CSP.
+  const legendRow = (state: 'booked' | 'adjusted' | 'closed', label: string): string =>
+    `<span><i class="bk-legend-dot bk-legend-dot--${state}"></i>${escapeHtml(label)}</span>`;
+  const legend = `<p class="bk-legend">${legendRow('booked', messages['admin.legendBooked'])}`
+    + `${legendRow('adjusted', messages['admin.stateOverride'])}`
+    + `${legendRow('closed', messages['widget.closed'])}</p>`;
   const availabilityPanel = `<div class="bk-days-layout"><div><div class="bk-months">${monthGrids}</div>${legend}</div>`
     + `<div class="bk-day-editor">${overrideForm}${defaultForm}</div></div>`;
 

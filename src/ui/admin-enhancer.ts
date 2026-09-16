@@ -78,6 +78,7 @@ export const adminEnhancerJs = `(() => {
   let i18n = {};
   try { i18n = JSON.parse(island ? island.textContent : '{}'); } catch {}
   const dayData = i18n.days || {};
+  const dayLoads = i18n.loads || {};
   const closeLabel = closeButton ? closeButton.textContent : '';
 
   // --- month pager: one month visible at a time, prev/next buttons ---
@@ -148,6 +149,14 @@ export const adminEnhancerJs = `(() => {
     if (!detail) return;
     detail.textContent = '';
     if (!date) return;
+    // The load line comes first, matching the server render, so the units figure survives a
+    // client-side selection even though the cell itself only shows a dot.
+    if (dayLoads[date]) {
+      const load = document.createElement('p');
+      load.className = 'bk-hint';
+      load.textContent = dayLoads[date];
+      detail.appendChild(load);
+    }
     const rows = dayData[date] || [];
     if (!rows.length) {
       const empty = document.createElement('p');

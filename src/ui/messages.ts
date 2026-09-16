@@ -135,7 +135,7 @@ export const defaultMessages = {
   'admin.overrideTitle': 'Adjust one day',
   'admin.overrideDefault': 'Reset returns the day to the default of {n}.',
   'admin.overrideTo': 'To date (optional)',
-  'admin.selectHint': 'Shift-click for a range, Ctrl/Cmd-click to add days.',
+  'admin.selectHint': 'Shift-click or Shift+Space for a range, Ctrl/Cmd-click or Ctrl/Cmd+Space to add days.',
   'admin.addReason': 'Add a reason (optional)',
   'admin.selectedDays': '{n} days selected',
   'admin.close': 'Close this day',
@@ -164,7 +164,6 @@ export const defaultMessages = {
   'admin.clearFilters': 'Clear filters',
   // Admin settings page
   'admin.settings': 'Settings',
-  'admin.settingsHint': 'Changes apply within a minute and survive deploys.',
   'admin.backToAdmin': 'Back to booking admin',
   'admin.saved': 'Saved. Changes reach the public site within a minute.',
   'admin.sectionPolicy': 'Booking policy',

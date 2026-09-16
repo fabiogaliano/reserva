@@ -138,12 +138,17 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
 
   // One statement row: the sentence, a Change button, and the controls it reveals. `group` is the
   // set of definitions the sentence covers, so a combined statement resets and edits all of them.
+  // Every Change button reads the same, so it points at its own sentence: a screen reader tabbing
+  // through the section otherwise hears twenty identical buttons with no way to tell them apart.
+  let statementCount = 0;
   const statement = (sentenceHtml: string, group: SettingDefinition[]): string => {
     const hints = group.map((definition) => catalog[`${definition.labelKey}.hint`]).filter(Boolean);
     const hint = hints.length === 1 ? `<span class="bk-hint">${escapeHtml(hints[0] as string)}</span>` : '';
+    statementCount += 1;
+    const sentenceId = `bk-stmt-${statementCount}`;
     return `<div class="bk-stmt">`
-      + `<span class="bk-stmt-text">${sentenceHtml}</span>`
-      + `<button type="button" class="bk-stmt-edit" data-reserva-stmt-edit>${escapeHtml(messages['admin.changeValue'])}</button>`
+      + `<span class="bk-stmt-text" id="${sentenceId}">${sentenceHtml}</span>`
+      + `<button type="button" class="bk-stmt-edit" data-reserva-stmt-edit aria-describedby="${sentenceId}">${escapeHtml(messages['admin.changeValue'])}</button>`
       + modifiedBadge(group)
       + `<span class="bk-stmt-editor">${group.map((definition) => controlMarkup(definition) + resetMarkup(definition)).join('')}${hint}</span>`
       + `</div>`;

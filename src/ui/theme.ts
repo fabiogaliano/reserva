@@ -377,7 +377,10 @@ export const themeCss = `
 .bk-booking-detail .bk-sub { display: inline; font-size: inherit; }
 @media (max-width: 560px) {
   .bk-booking > summary { grid-template-columns: max-content minmax(0, 1fr) 1rem; }
-  .bk-booking-status { grid-column: 2; }
+  /* Both pinned: with the status wrapped under the name, auto-placement would otherwise carry
+     the chevron down to the second row beside it instead of keeping it on the name's line. */
+  .bk-booking-status { grid-row: 2; grid-column: 2; }
+  .bk-booking-chevron { grid-row: 1; grid-column: 3; }
   .bk-booking-detail { padding-left: 0.6rem; }
 }
 
@@ -616,16 +619,20 @@ export const themeCss = `
 }
 .bk-day--booked { color: var(--bk-text); font-weight: 600; }
 .bk-day--booked::after { background: var(--bk-accent); }
-.bk-day--adjusted { color: var(--bk-text); font-weight: 600; }
+.bk-day--adjusted { color: var(--bk-text); font-weight: 600; box-shadow: inset 0 0 0 1px var(--bk-warning); }
 .bk-day--adjusted::after { background: var(--bk-warning); }
 .bk-day--closed { color: var(--bk-danger); font-weight: 600; }
 .bk-day--closed::after { background: var(--bk-danger); }
-.bk-day--selected { background: var(--bk-text); color: var(--bk-bg); font-weight: 600; }
+.bk-day--selected { background: var(--bk-text); color: var(--bk-bg); font-weight: 600; box-shadow: none; }
 .bk-day--selected::after { background: var(--bk-bg); }
 .bk-day-num { font-size: 0.875rem; }
 .bk-legend { display: grid; gap: 0.15rem; margin: 1rem 0 0; font-size: 0.8rem; color: var(--bk-text-muted); }
 .bk-legend span { display: flex; align-items: center; gap: 0.5rem; }
 .bk-legend i { width: 0.4rem; height: 0.4rem; border-radius: 50%; }
+.bk-legend-dot--booked { background: var(--bk-accent); }
+/* Hollow so the ring reads as the adjusted mark, matching the ring on the day cell itself. */
+.bk-legend-dot--adjusted { background: transparent; box-shadow: inset 0 0 0 1px var(--bk-warning); }
+.bk-legend-dot--closed { background: var(--bk-danger); }
 .bk-months .bk-disclosure { margin: 0; }
 .bk-selection-hint { margin: -0.25rem 0 0; padding-bottom: 0.25rem; line-height: 1.5; }
 .bk-day-editor { min-width: 0; }
@@ -649,8 +656,7 @@ export const themeCss = `
 @media (prefers-reduced-motion: reduce) { .bk-disclosure--bare > summary::before { transition: none; } }
 .bk-disclosure--bare > div { padding: 0; }
 .bk-day-detail { margin: 0 0 1.5rem; }
-.bk-day-bookings { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; }
-.bk-day-bookings { gap: 0; }
+.bk-day-bookings { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
 .bk-day-bookings li {
   display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;
   padding: 0.6rem 0; font-size: 0.9rem;
@@ -658,8 +664,7 @@ export const themeCss = `
 }
 .bk-day-bookings li a { margin-left: auto; }
 /* Adjacent pager controls reduce pointer travel during repeated month comparison. */
-.bk-pager { display: flex; align-items: center; gap: 0.5rem; }
-.bk-pager { gap: 0.25rem; margin-bottom: 0.9rem; }
+.bk-pager { display: flex; align-items: center; gap: 0.25rem; margin-bottom: 0.9rem; }
 .bk-pager h3 { order: -1; margin: 0 auto 0 0; font-size: 0.95rem; font-weight: 600; letter-spacing: -0.01em; }
 .bk-pager .bk-btn { width: 1.9rem; min-height: 1.9rem; padding: 0; font-size: 1rem; }
 .bk-month[hidden] { display: none; }
@@ -793,9 +798,6 @@ export const themeCss = `
 .bk-fieldset { border: 0; margin: 0; padding: 0; }
 .bk-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .bk-fieldset legend { font-size: 0.85rem; font-weight: 500; margin-bottom: 0.3rem; padding: 0; }
-/* Seven weekday toggles read as one row rather than a seven-item stack. */
-.bk-days { display: flex; flex-wrap: wrap; gap: 0 1rem; }
-.bk-days .bk-check { min-height: 2.25rem; }
 
 .bk-switch { display: flex; align-items: center; gap: 0.6rem; min-height: 2.75rem; font-size: 0.92rem; font-weight: 500; cursor: pointer; }
 .bk-switch input {
@@ -826,7 +828,6 @@ export const themeCss = `
   .bk-switch input, .bk-switch input::after { transition: none; }
 }
 
-.bk-modified { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.35rem; font-size: 0.8rem; color: var(--bk-text-muted); }
 .bk-linkbtn {
   background: none; border: 0; padding: 0;
   color: var(--bk-accent);
