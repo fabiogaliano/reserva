@@ -315,6 +315,13 @@ Subscribe your webhook endpoint to `checkout.session.completed`, `checkout.sessi
 and `priceFor` picks the tightest covering tier regardless of row order, so an unsorted rule array
 prices the same as a sorted one.
 
+## Event hooks
+
+`hooks[].handler` now receives a tuple union: `(event, booking, context)` for booking events and
+`(event, null, context)` for `settings.changed`. Declare all three parameters even if you only read
+the first; a shorter arity no longer type-checks. Hooks that omit `events` still get every booking
+event and never `settings.changed`.
+
 ## Adding a migration (contributors)
 
 Reserva's D1 schema lives in `migrations/*.sql`, numbered `NNNN_<name>.sql` and applied in filename

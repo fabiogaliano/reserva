@@ -33,7 +33,7 @@ same bindings and secrets. `triggers.crons` runs it every 5 minutes.
 so they never sweep concurrently.
 
 ```bash
-bun run cron:dev       # wrangler dev with --test-scheduled, against the demo's D1 state
+bun run cron:dev       # wrangler dev against the demo D1 state; trigger the cron with GET /cdn-cgi/handler/scheduled
 bun run cron:trigger   # fire one sweep, as Cron Triggers would
 bun run cron:deploy    # deploy for real
 ```

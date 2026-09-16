@@ -786,3 +786,31 @@ describe('metadata fields', () => {
     });
   });
 });
+
+describe('schedule lastEnd', () => {
+  const eightHourTour = { ...service, durationMin: 480 };
+
+  it('derives the last departure from the closing time, floored to the interval grid', () => {
+    const resolved = validateConfig({
+      ...config,
+      services: { vintage: { ...eightHourTour, schedule: [{ days: [1], firstStart: '09:00', lastEnd: '19:00', intervalMin: 60 }] } },
+    } as never);
+    const rule = resolved.services.vintage!.schedule[0]!;
+    expect(rule.lastStart).toBe('11:00');
+    expect(rule.lastEnd).toBe('19:00');
+  });
+
+  it('rejects a rule that declares an inconsistent lastStart alongside lastEnd', () => {
+    expect(() => validateConfig({
+      ...config,
+      services: { vintage: { ...eightHourTour, schedule: [{ days: [1], firstStart: '09:00', lastStart: '10:00', lastEnd: '19:00', intervalMin: 60 }] } },
+    } as never)).toThrow(/services\.vintage\.schedule\.0: declare lastStart or lastEnd, not both/);
+  });
+
+  it('rejects a lastEnd that cannot fit one booking after firstStart', () => {
+    expect(() => validateConfig({
+      ...config,
+      services: { vintage: { ...eightHourTour, schedule: [{ days: [1], firstStart: '09:00', lastEnd: '12:00', intervalMin: 60 }] } },
+    } as never)).toThrow(/services\.vintage\.schedule\.0: lastEnd 12:00/);
+  });
+});
