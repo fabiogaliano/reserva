@@ -1,5 +1,5 @@
 import { ZodError } from 'astro/zod';
-import { validateConfig, type ResolvedClientConfig } from './config.js';
+import { validateConfig, type ResolvedClientConfig, type ScheduleRule } from './config.js';
 
 // Operator-editable settings: the runtime-safe scalar dials of ClientConfig, stored as JSON and
 // merged over the file config per request. A row equal to the file value is deleted, so a later
@@ -7,7 +7,7 @@ import { validateConfig, type ResolvedClientConfig } from './config.js';
 
 export type SettingValue = string | number | boolean | null;
 
-export type SettingSection = 'policy' | 'capacity' | 'contact' | 'legal';
+export type SettingSection = 'policy' | 'hours' | 'capacity' | 'contact' | 'legal';
 
 export type SettingKind =
   // `optional: true` lets an empty submission clear the field to null, merged as `undefined`.
@@ -18,7 +18,17 @@ export type SettingKind =
   | { type: 'boolean' }
   | { type: 'text'; optional?: boolean }
   | { type: 'email' }
-  | { type: 'url'; optional?: boolean };
+  | { type: 'url'; optional?: boolean }
+  // Wall-clock 'HH:MM', the same shape scheduleSchema accepts.
+  | { type: 'time' };
+
+// Which schedule rule a service-hours definition belongs to; the settings page turns it into a
+// human heading (service title, weekdays, season) instead of exposing the raw slug/index key.
+export interface ScheduleRuleGroup {
+  serviceSlug: string;
+  serviceTitle: string;
+  rule: ScheduleRule;
+}
 
 export interface SettingDefinition {
   key: string;
@@ -29,6 +39,8 @@ export interface SettingDefinition {
   // Message key for a subheading rendered above the first field of each run sharing the same
   // group; definitions in a section must keep grouped keys adjacent.
   groupKey?: string;
+  // Set on definitions generated per schedule rule; the page prefers it over groupKey's message.
+  scheduleRule?: ScheduleRuleGroup;
   kind: SettingKind;
   get(config: ResolvedClientConfig): SettingValue;
   set(config: ResolvedClientConfig, value: SettingValue): void;
@@ -142,7 +154,46 @@ export const settingDefinitions: readonly SettingDefinition[] = [
   },
 ];
 
-export const settingSections: readonly SettingSection[] = ['policy', 'capacity', 'contact', 'legal'];
+export const settingSections: readonly SettingSection[] = ['policy', 'hours', 'capacity', 'contact', 'legal'];
+
+const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+// First/last departure per service schedule rule. Services are deploy-time (their set can't change
+// from the admin) but their hours are a daily dial, so definitions are generated from the file
+// config rather than listed statically. Keys mirror the config path so validateConfig's issue
+// paths attribute a rejected merge to the row that caused it.
+function scheduleRuleDefinitions(config: ResolvedClientConfig): SettingDefinition[] {
+  const definitions: SettingDefinition[] = [];
+  for (const [slug, service] of Object.entries(config.services)) {
+    service.schedule.forEach((rule, index) => {
+      const prefix = `services.${slug}.schedule.${index}`;
+      const scheduleRule: ScheduleRuleGroup = { serviceSlug: slug, serviceTitle: service.title ?? slug, rule };
+      const ruleOf = (target: ResolvedClientConfig): ScheduleRule | undefined => target.services[slug]?.schedule[index];
+      definitions.push(
+        {
+          key: `${prefix}.firstStart`, section: 'hours', labelKey: 'setting.firstStart', groupKey: prefix, scheduleRule,
+          kind: { type: 'time' },
+          get: (target) => ruleOf(target)?.firstStart ?? null,
+          set: (target, value) => { const found = ruleOf(target); if (found) found.firstStart = value as string; },
+        },
+        {
+          key: `${prefix}.lastStart`, section: 'hours', labelKey: 'setting.lastStart', groupKey: prefix, scheduleRule,
+          kind: { type: 'time' },
+          get: (target) => ruleOf(target)?.lastStart ?? null,
+          set: (target, value) => { const found = ruleOf(target); if (found) found.lastStart = value as string; },
+        },
+      );
+    });
+  }
+  return definitions;
+}
+
+// The complete definition list for a deployment: the static dials plus one first/last departure
+// pair per schedule rule of every configured service. Pass the file config so the set of services
+// (and therefore of keys) is the same on the load path, the save path, and the rendered page.
+export function settingDefinitionsFor(config: ResolvedClientConfig): SettingDefinition[] {
+  return [...settingDefinitions, ...scheduleRuleDefinitions(config)];
+}
 
 function isValidHttpUrl(value: string): boolean {
   try {
@@ -175,6 +226,8 @@ function decodeStoredValue(definition: SettingDefinition, raw: unknown): Setting
     case 'url':
       if (raw === null) return kind.optional ? null : undefined;
       return typeof raw === 'string' && isValidHttpUrl(raw) ? raw : undefined;
+    case 'time':
+      return typeof raw === 'string' && TIME_PATTERN.test(raw) ? raw : undefined;
   }
 }
 
@@ -195,8 +248,12 @@ export function applySettingOverrides(
     business: { ...config.business, contact: { ...config.business.contact } },
     booking: { ...config.booking, reschedule: { ...config.booking.reschedule } },
     legal: { ...config.legal },
+    services: Object.fromEntries(Object.entries(config.services).map(([slug, service]) => [
+      slug,
+      { ...service, schedule: service.schedule.map((rule) => ({ ...rule })) },
+    ])),
   };
-  for (const definition of settingDefinitions) {
+  for (const definition of settingDefinitionsFor(config)) {
     const stored = rows[definition.key];
     if (stored === undefined) continue;
     let raw: unknown;
@@ -261,8 +318,11 @@ export function loadMergedConfig(
       return validateConfig(merged);
     } catch (error) {
       const issues = zodIssues(error);
-      const offendingKeys = [...new Set(issues.map((issue) => issue.path.join('.')))]
-        .filter((key) => candidateRows[key] !== undefined);
+      // An issue may sit on a parent path (a schedule rule's "firstStart must not be after
+      // lastStart" is reported on the rule, not a field), so every stored row under it is blamed.
+      const issuePaths = [...new Set(issues.map((issue) => issue.path.join('.')))];
+      const offendingKeys = Object.keys(candidateRows)
+        .filter((key) => issuePaths.some((path) => key === path || key.startsWith(`${path}.`)));
       if (offendingKeys.length === 0) {
         onWarn?.({ key: '*', reason: `merged config failed validation: ${issues.map((issue) => issue.message).join('; ')}` });
         return config;
@@ -318,6 +378,9 @@ export function parseSettingForm(definition: SettingDefinition, form: FormLike):
       if (!isValidHttpUrl(text)) throw new SettingParseError(`${definition.key}: must be a valid http(s) URL`);
       return text;
     case 'text':
+      return text;
+    case 'time':
+      if (!TIME_PATTERN.test(text)) throw new SettingParseError(`${definition.key}: must be a time in HH:MM (24-hour)`);
       return text;
   }
 }

@@ -8,12 +8,13 @@ import {
   mergeAndValidateSettings,
   parseSettingForm,
   settingDefinitions,
+  settingDefinitionsFor,
   type SettingsLoadWarning,
 } from '../src/core/settings';
 import { config } from './fixtures';
 
 function definition(key: string) {
-  const found = settingDefinitions.find((entry) => entry.key === key);
+  const found = settingDefinitionsFor(config).find((entry) => entry.key === key);
   if (!found) throw new Error(`unknown setting ${key}`);
   return found;
 }
@@ -162,5 +163,51 @@ describe('merge-then-validate backstop', () => {
     const merged = loadMergedConfig(brokenLocalesConfig, { 'booking.minNoticeHours': '2' }, (warning) => warnings.push(warning));
     expect(merged).toBe(brokenLocalesConfig);
     expect(warnings).toEqual([{ key: '*', reason: expect.stringContaining('must be included in locales.supported') }]);
+  });
+});
+
+describe('service opening hours (per schedule rule first/last departure)', () => {
+  const FIRST = 'services.vintage.schedule.0.firstStart';
+  const LAST = 'services.vintage.schedule.0.lastStart';
+
+  it('generates one first/last departure pair per schedule rule, in the hours section', () => {
+    const hours = settingDefinitionsFor(config).filter((entry) => entry.section === 'hours');
+    expect(hours.map((entry) => entry.key)).toEqual([FIRST, LAST]);
+    expect(hours[0]?.scheduleRule).toMatchObject({ serviceSlug: 'vintage', rule: config.services.vintage?.schedule[0] });
+    // The static list stays free of per-deployment keys.
+    expect(settingDefinitions.some((entry) => entry.section === 'hours')).toBe(false);
+  });
+
+  it('applies stored hours to the rule without mutating the file config', () => {
+    const merged = applySettingOverrides(config, { [FIRST]: '"10:00"', [LAST]: '"15:30"' });
+    expect(merged.services.vintage?.schedule[0]).toMatchObject({ firstStart: '10:00', lastStart: '15:30' });
+    expect(config.services.vintage?.schedule[0]).toMatchObject({ firstStart: '09:00', lastStart: '12:00' });
+    // Function-valued service fields survive the shallow clone.
+    expect(merged.services.vintage?.occupancyFor).toBe(config.services.vintage?.occupancyFor);
+  });
+
+  it('ignores stored hours that are not HH:MM', () => {
+    const merged = applySettingOverrides(config, { [FIRST]: '"9am"', [LAST]: '"25:00"' });
+    expect(merged.services.vintage?.schedule[0]).toMatchObject({ firstStart: '09:00', lastStart: '12:00' });
+  });
+
+  it('parses HH:MM form values and rejects anything else', () => {
+    expect(parseSettingForm(definition(FIRST), form({ [FIRST]: '08:30' }))).toBe('08:30');
+    for (const bad of ['', '8:30', '08:30:00', '24:00', 'noon']) {
+      expect(() => parseSettingForm(definition(FIRST), form({ [FIRST]: bad }))).toThrow(SettingParseError);
+    }
+  });
+
+  it('save path rejects a first departure after the last departure', () => {
+    expect(() => mergeAndValidateSettings(config, { [FIRST]: '"14:00"' })).toThrow(SettingsMergeError);
+    expect(mergeAndValidateSettings(config, { [FIRST]: '"11:00"' }).services.vintage?.schedule[0]?.firstStart).toBe('11:00');
+  });
+
+  it('load path drops only the hours rows behind an invalid rule and keeps the rest', () => {
+    const warnings: SettingsLoadWarning[] = [];
+    const merged = loadMergedConfig(config, { [FIRST]: '"14:00"', 'booking.minNoticeHours': '2' }, (warning) => warnings.push(warning));
+    expect(merged.services.vintage?.schedule[0]?.firstStart).toBe('09:00');
+    expect(merged.booking.minNoticeHours).toBe(2);
+    expect(warnings).toEqual([{ key: FIRST, reason: expect.stringContaining('validateConfig rejected') }]);
   });
 });

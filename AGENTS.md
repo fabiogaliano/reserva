@@ -66,7 +66,7 @@ receive once the defaults below have been applied.
 |---|---|---|
 | `title` | no | display name; falls back to the slug |
 | `durationMin` / `turnaroundMin` | yes | slot length and the gap Reserva keeps after it |
-| `schedule` | yes | `Array<{ from?, to?, days: number[], firstStart, lastStart, intervalMin }>` (`days`: 0 = Sunday) |
+| `schedule` | yes | `Array<{ from?, to?, days: number[], firstStart?, lastStart?, intervalMin }>` (`days`: 0 = Sunday; `firstStart`/`lastStart` default to `'09:00'`/`'18:00'`) |
 | `pricing` | yes | `Array<{ maxQuantity, pickup?, priceMinor }>` — first row whose `maxQuantity` covers the request wins. `pickup` names one of the service's pickup options; it may be omitted when the service resolves to exactly one, and must be absent when the service declares no `location` |
 | `occupancyFor` | no | `(quantity) => number` — how many capacity units a booking of N consumes |
 | `location` | no | `{ meetingPoints?: Array<{ id, label, mapsUrl }>, pickupOptions?: Array<{ id, label?, hint?, requiresAddress, usesMeetingPoint }> }` — declare at least one of the two. `meetingPoints` on its own implies the single option `{ id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true }`. Omit `location` for a service with no pickup axis at all |
@@ -119,9 +119,11 @@ much) → `checkout` (hold + payment session) → the payment provider redirects
 Two endpoints let a deployment describe itself without source access:
 
 - `GET /api/booking/catalog?locale=` — public. Services with locale-resolved titles,
-  duration, declared location options, declared metadata fields, plus `locales`,
-  `currency`, `maxHorizonDays`. Never exposes pricing rules, schedules, turnaround, or
-  capacity. Build a booking UI from this; do not hardcode config in the consumer.
+  duration, declared location options, declared metadata fields, the service's `pricing`
+  rules (`{ maxQuantity, pickup, priceMinor }`, `pickup` null without a pickup axis) and its
+  `fromPriceMinor`, plus `locales`,
+  `currency`, `maxHorizonDays`. Never exposes schedules, turnaround, or capacity. Build a
+  booking UI from this; do not hardcode config or prices in the consumer.
 - `GET /api/booking/ops/health` — admin-authenticated. `schema` (migrations applied +
   fingerprint match), `outbox` (pending/abandoned counts by family, oldest pending age),
   `incidents` (open count). Takes no parameters, mutates nothing.

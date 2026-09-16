@@ -234,14 +234,26 @@ export interface CatalogMetadataField {
   maxLength: number | null;
 }
 
-// Everything a consumer needs before a date is chosen. Excludes schedule, pricing, capacity, and
-// occupancy — those live in the quote and availability endpoints.
+// The published projection of a configured pricing rule. `pickup` is null for a location-less
+// service, whose rows carry no pickup axis — always present, like every other catalog field.
+export interface CatalogPricingRule {
+  maxQuantity: number;
+  pickup: string | null;
+  priceMinor: number;
+}
+
+// Everything a consumer needs before a date is chosen. Excludes schedule, turnaround, capacity,
+// and occupancy — those live in the quote and availability endpoints.
 export interface CatalogService {
   slug: string;
   title: string;
   durationMin: number;
   location: CatalogLocation | null;
   metadataFields: CatalogMetadataField[];
+  // The rules as configured, so a consumer can render a price table without a second request.
+  pricing: CatalogPricingRule[];
+  // The "from €X" figure: the lowest price across every rule of the service.
+  fromPriceMinor: number;
 }
 
 export interface CatalogResponse {

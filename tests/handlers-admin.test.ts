@@ -576,6 +576,36 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     expect(repo.settings.has('booking.holdMinutes')).toBe(false);
   });
 
+  it('renders an opening-hours tab with a time input per schedule rule and saves it', async () => {
+    const repo = fakeRepository();
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+    const body = await (await handleAdminGet(settingsGetRequest(), context)).text();
+    expect(body).toContain('data-reserva-tab="hours"');
+    expect(body).toContain('<h3 class="bk-setting-group">vintage · Every day</h3>');
+    expect(body).toContain('type="time" name="services.vintage.schedule.0.firstStart" value="09:00" required');
+    expect(body).toContain('type="time" name="services.vintage.schedule.0.lastStart" value="12:00" required');
+
+    const save = await handleAdminPost(adminPostRequest({
+      action: 'settings-save', section: 'hours',
+      'services.vintage.schedule.0.firstStart': '10:00', 'services.vintage.schedule.0.lastStart': '12:00',
+    }), context);
+    expect(save.status).toBe(303);
+    expect(repo.settings.get('services.vintage.schedule.0.firstStart')).toBe('"10:00"');
+    expect(repo.settings.has('services.vintage.schedule.0.lastStart')).toBe(false);
+
+    // Cross-field rule from validateConfig surfaces as a 400 naming the rule.
+    const inverted = await handleAdminPost(adminPostRequest({
+      action: 'settings-save', section: 'hours',
+      'services.vintage.schedule.0.firstStart': '13:00', 'services.vintage.schedule.0.lastStart': '12:00',
+    }), context);
+    expect(inverted.status).toBe(400);
+    await expect(inverted.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('firstStart must not be after lastStart') } });
+
+    const reset = await handleAdminPost(adminPostRequest({ action: 'settings-reset:services.vintage.schedule.0.firstStart' }), context);
+    expect(reset.status).toBe(303);
+    expect(repo.settings.has('services.vintage.schedule.0.firstStart')).toBe(false);
+  });
+
   it('settings-reset deletes every key in the section', async () => {
     const repo = fakeRepository();
     repo.settings.set('booking.minNoticeHours', '2');

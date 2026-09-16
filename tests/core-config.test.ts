@@ -19,6 +19,16 @@ describe('core config and pricing validation', () => {
 
   // Absent `location` is a fully valid, ordinary service — no pickup dimension anywhere. This
   // is the tiers-only case core-pricing.test.ts prices.
+  it('defaults a schedule rule to 09:00–18:00 when firstStart/lastStart are omitted', () => {
+    const [rule] = service.schedule;
+    const { firstStart: _first, lastStart: _last, ...bare } = rule!;
+    const resolved = validateConfig({ ...config, services: { vintage: { ...service, schedule: [bare] } } } as never);
+    expect(resolved.services.vintage?.schedule[0]).toMatchObject({ firstStart: '09:00', lastStart: '18:00' });
+    // One side given keeps the other side's default.
+    const late = validateConfig({ ...config, services: { vintage: { ...service, schedule: [{ ...bare, firstStart: '11:00' }] } } } as never);
+    expect(late.services.vintage?.schedule[0]).toMatchObject({ firstStart: '11:00', lastStart: '18:00' });
+  });
+
   it('accepts a service with no location module at all', () => {
     const noLocation = {
       ...config,

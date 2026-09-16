@@ -1,6 +1,7 @@
 import type {
   CatalogLocation,
   CatalogMetadataField,
+  CatalogPricingRule,
   CatalogResponse,
   CatalogService,
 } from '../core/api.js';
@@ -16,8 +17,8 @@ import { HttpError, json } from '../http.js';
 import { resolveMessages, type ReservaMessages } from '../ui/messages.js';
 import { run } from './shared.js';
 
-// Customer-facing catalog contract. Must never expose turnaroundMin, the raw schedule, pricing
-// rules, capacity, or any occupancy number — adding a field here declares it customer-facing.
+// Customer-facing catalog contract. Must never expose turnaroundMin, the raw schedule, capacity,
+// or any occupancy number — adding a field here declares it customer-facing.
 
 // `label`/`hint` stay optional, falling back to the message catalog for `default`/`custom` ids,
 // so every consumer resolves the same copy from one place.
@@ -61,15 +62,31 @@ function catalogMetadataFields(service: ResolvedServiceConfig, locale: string, d
   }));
 }
 
-export function catalogPayload(config: ResolvedClientConfig, locale: string, messages: ReservaMessages): CatalogResponse {
-  const services: CatalogService[] = Object.entries(config.services).map(([slug, service]) => ({
-    slug,
-    // A service with no declared title is identified by its slug — the same fallback emails use.
-    title: service.title ?? slug,
-    durationMin: service.durationMin,
-    location: catalogLocation(service, messages),
-    metadataFields: catalogMetadataFields(service, locale, config.locales.default),
+// Projected field by field rather than spread, so a future private column on a pricing rule does
+// not become customer-facing by accident.
+function catalogPricing(service: ResolvedServiceConfig): CatalogPricingRule[] {
+  return service.pricing.map((rule) => ({
+    maxQuantity: rule.maxQuantity,
+    pickup: rule.pickup ?? null,
+    priceMinor: rule.priceMinor,
   }));
+}
+
+export function catalogPayload(config: ResolvedClientConfig, locale: string, messages: ReservaMessages): CatalogResponse {
+  const services: CatalogService[] = Object.entries(config.services).map(([slug, service]) => {
+    const pricing = catalogPricing(service);
+    return {
+      slug,
+      // A service with no declared title is identified by its slug — the same fallback emails use.
+      title: service.title ?? slug,
+      durationMin: service.durationMin,
+      location: catalogLocation(service, messages),
+      metadataFields: catalogMetadataFields(service, locale, config.locales.default),
+      pricing,
+      // `pricing` is non-empty by schema (min(1)), so this is never Infinity.
+      fromPriceMinor: Math.min(...pricing.map((rule) => rule.priceMinor)),
+    };
+  });
   return {
     services,
     locales: { supported: config.locales.supported, default: config.locales.default },

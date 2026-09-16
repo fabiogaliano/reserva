@@ -18,8 +18,11 @@ table inside the published tarball.
   consumer that shows a price never computes one.
 - `GET /api/booking/catalog?locale=` — everything needed to build a booking flow before a date
   is chosen: per service `slug`, locale-resolved `title`, `durationMin`, `location` (or
-  `null`), `metadataFields` (`[]` for none); top-level `locales`, `currency`,
-  `maxHorizonDays`. Never exposes schedules, pricing rules, capacity, or occupancy.
+  `null`), `metadataFields` (`[]` for none), `pricing` (the configured rules, each
+  `{ maxQuantity, pickup, priceMinor }`, `pickup` null where the service has no pickup axis)
+  and `fromPriceMinor` (the lowest of them, for a "from" price); top-level
+  `locales`, `currency`, `maxHorizonDays`. Never exposes schedules, turnaround, capacity, or
+  occupancy — a charged price still comes from `/api/booking/quote`.
   `Cache-Control: public, max-age=60`.
 - `POST /api/booking/checkout` —
   `{ serviceSlug, start, quantity, pickupType?, locale, meetingPointId?, metadata? }`.

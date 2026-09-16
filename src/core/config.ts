@@ -20,6 +20,9 @@ export function adminLocaleFor(config: ResolvedClientConfig): string {
 // without being effectively unlimited.
 export const DEFAULT_TOKEN_EXPIRY_DAYS = 60;
 
+export const DEFAULT_FIRST_START = '09:00';
+export const DEFAULT_LAST_START = '18:00';
+
 const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/;
 const monthDayPattern = /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 
@@ -27,8 +30,10 @@ const scheduleSchema = z.object({
   from: z.string().regex(monthDayPattern).optional(),
   to: z.string().regex(monthDayPattern).optional(),
   days: z.array(z.number().int().min(0).max(6)).min(1),
-  firstStart: z.string().regex(timePattern),
-  lastStart: z.string().regex(timePattern),
+  // A conventional 09:00–18:00 day so a minimal config only has to say which days it operates;
+  // both remain per-rule overridable here and per-deployment from the admin settings page.
+  firstStart: z.string().regex(timePattern).default(DEFAULT_FIRST_START),
+  lastStart: z.string().regex(timePattern).default(DEFAULT_LAST_START),
   intervalMin: z.number().int().positive(),
 });
 

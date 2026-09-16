@@ -1,7 +1,8 @@
 import { adminLocaleFor } from '../../core/config.js';
 import {
-  settingDefinitions,
+  settingDefinitionsFor,
   settingSections,
+  type ScheduleRuleGroup,
   type SettingDefinition,
   type SettingSection,
   type SettingValue,
@@ -28,17 +29,35 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
     : settingSections[0] ?? 'policy';
   // What the operator's values fall back to: the pristine file config when overrides are active.
   const base = context.baseConfig ?? context.config;
+  const definitions = settingDefinitionsFor(base);
   const sectionTitles: Record<SettingSection, string> = {
     policy: messages['admin.sectionPolicy'],
+    hours: messages['admin.sectionHours'],
     capacity: messages['admin.sectionCapacity'],
     contact: messages['admin.sectionContact'],
     legal: messages['admin.sectionLegal'],
   };
   const sectionHints: Record<SettingSection, string> = {
     policy: messages['admin.sectionPolicyHint'],
+    hours: messages['admin.sectionHoursHint'],
     capacity: messages['admin.sectionCapacityHint'],
     contact: messages['admin.sectionContactHint'],
     legal: messages['admin.sectionLegalHint'],
+  };
+  // 2024-01-07 is a Sunday, so day index 0..6 (config convention: 0 = Sunday) maps onto it directly.
+  const weekdayName = (day: number): string =>
+    new Intl.DateTimeFormat(locale, { weekday: 'short', timeZone: 'UTC' }).format(new Date(Date.UTC(2024, 0, 7 + day)));
+  const monthDayName = (monthDay: string): string => {
+    const [month = 1, day = 1] = monthDay.split('-').map(Number);
+    return new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(Date.UTC(2024, month - 1, day)));
+  };
+  const scheduleRuleHeading = ({ serviceTitle, rule }: ScheduleRuleGroup): string => {
+    const days = rule.days.length === 7
+      ? messages['settingGroup.everyDay']
+      : [...rule.days].sort((a, b) => a - b).map(weekdayName).join(', ');
+    return rule.from || rule.to
+      ? formatMessage(messages['settingGroup.scheduleRuleSeason'], { service: serviceTitle, days, from: monthDayName(rule.from ?? '01-01'), to: monthDayName(rule.to ?? '12-31') })
+      : formatMessage(messages['settingGroup.scheduleRule'], { service: serviceTitle, days });
   };
   const displayValue = (value: SettingValue): string => {
     if (value === null) return messages['admin.none'];
@@ -62,7 +81,7 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
     if (kind.type === 'boolean') {
       return `<div class="bk-setting"><label class="bk-switch"><input type="checkbox" name="${escapeHtml(definition.key)}"${effective ? ' checked' : ''}><span>${escapeHtml(label)}</span></label>${help}${modified}</div>`;
     }
-    const inputType = kind.type === 'int' || kind.type === 'number' ? 'number' : kind.type === 'email' ? 'email' : kind.type === 'url' ? 'url' : 'text';
+    const inputType = kind.type === 'int' || kind.type === 'number' ? 'number' : kind.type === 'email' ? 'email' : kind.type === 'url' ? 'url' : kind.type === 'time' ? 'time' : 'text';
     const constraints = kind.type === 'int' ? ` min="${kind.min}"${kind.max !== undefined ? ` max="${kind.max}"` : ''} step="1"${kind.optional ? '' : ' required'}`
       : kind.type === 'number' ? ` min="${kind.min}" step="any" required`
       : (kind.type === 'text' || kind.type === 'url') && kind.optional ? '' : ' required';
@@ -72,14 +91,15 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
 
   const sections = settingSections.map((section) => {
     let lastGroup: string | undefined;
-    const fields = settingDefinitions.filter((definition) => definition.section === section).map((definition) => {
+    const fields = definitions.filter((definition) => definition.section === section).map((definition) => {
+      const groupTitle = definition.scheduleRule ? scheduleRuleHeading(definition.scheduleRule) : catalog[definition.groupKey ?? ''] ?? definition.groupKey;
       const heading = definition.groupKey && definition.groupKey !== lastGroup
-        ? `<h3 class="bk-setting-group">${escapeHtml(catalog[definition.groupKey] ?? definition.groupKey)}</h3>`
+        ? `<h3 class="bk-setting-group">${escapeHtml(groupTitle ?? '')}</h3>`
         : '';
       lastGroup = definition.groupKey;
       return heading + fieldMarkup(definition);
     }).join('');
-    const hasOverrides = settingDefinitions.some((definition) => definition.section === section && storedRows[definition.key] !== undefined);
+    const hasOverrides = definitions.some((definition) => definition.section === section && storedRows[definition.key] !== undefined);
     // formnovalidate on resets: emptied required fields must not block returning to config values.
     const sectionReset = hasOverrides
       ? `<button type="submit" class="bk-linkbtn" name="action" value="settings-reset" formnovalidate>${escapeHtml(messages['admin.resetSection'])}</button>`

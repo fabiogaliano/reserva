@@ -1,5 +1,6 @@
 // The catalog endpoint is the deployment describing itself: the shape is always-present-nullable
-// (no branching on key presence), and it never leaks facts that belong to quote/availability.
+// (no branching on key presence), it publishes the price table, and it still never leaks the
+// scheduling and capacity facts that belong to availability.
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createReservaContext, type ReservaContext } from '../src/context';
@@ -78,6 +79,15 @@ describe('GET /api/booking/catalog', () => {
         ],
       },
       metadataFields: [],
+      // Published as configured, pickup axis included: the price table a consumer renders is the
+      // same table the quote endpoint charges from.
+      pricing: [
+        { maxQuantity: 4, pickup: 'default', priceMinor: 10000 },
+        { maxQuantity: 4, pickup: 'custom', priceMinor: 12000 },
+        { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
+        { maxQuantity: 8, pickup: 'custom', priceMinor: 20000 },
+      ],
+      fromPriceMinor: 10000,
     });
   });
 
@@ -101,7 +111,28 @@ describe('GET /api/booking/catalog', () => {
           maxLength: null,
         },
       ],
+      // A location-less service has no pickup axis; the key stays present as null.
+      pricing: [{ maxQuantity: 6, pickup: null, priceMinor: 4200 }],
+      fromPriceMinor: 4200,
     });
+  });
+
+  it('publishes pickup as null on a location-less service rule and as a string on a location-ful one', async () => {
+    const { payload } = await catalog();
+    const cruiseRule = payload.services.find((entry: any) => entry.slug === 'cruise').pricing[0];
+    expect(cruiseRule).toEqual({ maxQuantity: 6, pickup: null, priceMinor: 4200 });
+    expect(payload.services.find((entry: any) => entry.slug === 'vintage').pricing.every((rule: any) => typeof rule.pickup === 'string')).toBe(true);
+  });
+
+  it('derives fromPriceMinor as the lowest rule price, not the first or the last', async () => {
+    const shuffled = context({
+      services: {
+        ...catalogConfig.services,
+        cruise: { ...cruise, pricing: [{ maxQuantity: 2, priceMinor: 9900 }, { maxQuantity: 6, priceMinor: 3300 }, { maxQuantity: 10, priceMinor: 7700 }] },
+      },
+    });
+    const { payload } = await catalog('https://example.test/api/booking/catalog', shuffled);
+    expect(payload.services.find((entry: any) => entry.slug === 'cruise').fromPriceMinor).toBe(3300);
   });
 
   it('resolves declared labels into the negotiated locale', async () => {
@@ -121,19 +152,19 @@ describe('GET /api/booking/catalog', () => {
     expect(payload.maxHorizonDays).toBe(180);
   });
 
-  it('never exposes turnaround, schedule, pricing, capacity, or occupancy', async () => {
+  it('never exposes turnaround, schedule, capacity, or occupancy', async () => {
     const { response, payload } = await catalog();
     const keys = allKeys(payload);
     for (const forbidden of [
-      'turnaroundMin', 'schedule', 'pricing', 'priceMinor', 'maxQuantity', 'occupancyFor',
+      'turnaroundMin', 'schedule', 'occupancyFor',
       'capacity', 'occupancy', 'remaining', 'limitedThreshold', 'minNoticeHours', 'holdMinutes',
     ]) {
       expect(keys, `catalog leaked ${forbidden}`).not.toContain(forbidden);
     }
-    // Values, not just keys: the fixture's prices, schedule times, and turnaround must not appear
-    // anywhere in the serialized payload under any other name.
+    // Values, not just keys: the fixture's schedule times and turnaround must not appear anywhere
+    // in the serialized payload under any other name. Prices are published now; the times are not.
     const serialized = JSON.stringify(payload);
-    for (const value of ['10000', '12000', '4200', '09:00', '10:00', '16:00']) {
+    for (const value of ['09:00', '10:00', '16:00']) {
       expect(serialized, `catalog leaked the value ${value}`).not.toContain(value);
     }
     expect(response.status).toBe(200);

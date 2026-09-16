@@ -33,6 +33,7 @@ export type {
   CatalogLocation,
   CatalogMetadataFieldOption,
   CatalogMetadataField,
+  CatalogPricingRule,
   CatalogService,
   CatalogResponse,
   OpsHealthSchema,

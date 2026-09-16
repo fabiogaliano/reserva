@@ -5,7 +5,7 @@ import {
   mergeAndValidateSettings,
   parseSettingForm,
   serializeSettingValue,
-  settingDefinitions,
+  settingDefinitionsFor,
   settingValuesEqual,
   type SettingValue,
 } from '../core/settings.js';
@@ -176,20 +176,22 @@ export function handleAdminPost(request: Request, context: ReservaContext): Prom
       // Redirect target carries saved=1 so the settings page can confirm the change visibly.
       const location = new URL(request.url);
       location.searchParams.set('saved', '1');
+      // Compare against the file config, not the merged one: a value equal to the file default deletes
+      // the row, keeping "follow the config" the resting state. It also fixes which services (and so
+      // which hours keys) exist.
+      const base = context.baseConfig ?? context.config;
+      const allDefinitions = settingDefinitionsFor(base);
       if (action.startsWith('settings-reset:')) {
         const key = action.slice('settings-reset:'.length);
-        const definition = settingDefinitions.find((entry) => entry.key === key);
+        const definition = allDefinitions.find((entry) => entry.key === key);
         if (!definition) throw new HttpError(400, 'validation_failed', 'Unknown setting');
         await context.repo.deleteSetting(definition.key, audit);
         return new Response(null, { status: 303, headers: { location: location.toString(), 'cache-control': 'no-store' } });
       }
       if (action !== 'settings-save' && action !== 'settings-reset') throw new HttpError(400, 'validation_failed', 'Unknown admin action');
       const section = requireString(form.get('section'), 'section');
-      const definitions = settingDefinitions.filter((definition) => definition.section === section);
+      const definitions = allDefinitions.filter((definition) => definition.section === section);
       if (definitions.length === 0) throw new HttpError(400, 'validation_failed', 'Unknown settings section');
-      // Compare against the file config, not the merged one: a value equal to the file default deletes
-      // the row, keeping "follow the config" the resting state.
-      const base = context.baseConfig ?? context.config;
       // candidateRows starts from every currently stored override (not just this section) so the
       // merge-then-validate check below sees the config the way a request would actually merge it,
       // catching cross-field rules that no single field's SettingKind bound can.
