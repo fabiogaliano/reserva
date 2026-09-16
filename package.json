@@ -88,7 +88,7 @@
     "docs:contract": "bun scripts/contract-docs.ts",
     "docs:contract:check": "bun scripts/contract-docs.ts --check",
     "changeset": "changeset",
-    "release:version": "changeset version",
+    "release:version": "changeset version && bun install --lockfile-only",
     "release:publish": "changeset publish",
     "verify": "bun run typecheck && bun run docs:contract:check && bun run test && bun run test:workers",
     "verify:packaged": "bun run test:preview && bun run test:scheduled && bun run test:pack && bun run test:quickstart",
