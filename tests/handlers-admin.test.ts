@@ -606,6 +606,50 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     expect(repo.settings.has('services.vintage.schedule.0.firstStart')).toBe(false);
   });
 
+  it('renders a pricing tab with a major-unit amount per tier and saves it in minor units', async () => {
+    const repo = fakeRepository();
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+    const body = await (await handleAdminGet(settingsGetRequest(), context)).text();
+    expect(body).toContain('data-reserva-tab="pricing"');
+    // One group heading per service; the tier is described by its quantity band and pickup option.
+    expect(body).toContain('<h3 class="bk-setting-group">vintage</h3>');
+    expect(body).toContain('Up to 4 · Meeting point');
+    expect(body).toContain('Up to 8 · Custom pickup');
+    expect(body).toContain('name="services.vintage.pricing.0.priceMinor" value="100.00" min="0" step="0.01" required');
+    expect(body).toContain('name="services.vintage.pricing.3.priceMinor" value="200.00"');
+
+    const save = await handleAdminPost(adminPostRequest({
+      action: 'settings-save', section: 'pricing',
+      'services.vintage.pricing.0.priceMinor': '160',
+      'services.vintage.pricing.1.priceMinor': '120',
+      'services.vintage.pricing.2.priceMinor': '180',
+      'services.vintage.pricing.3.priceMinor': '200',
+    }), context);
+    expect(save.status).toBe(303);
+    expect(repo.settings.get('services.vintage.pricing.0.priceMinor')).toBe('16000');
+    // Tiers submitted at their file value store no row.
+    expect(repo.settings.has('services.vintage.pricing.1.priceMinor')).toBe(false);
+
+    // The overridden tier is flagged, with its file-config default shown in major units.
+    const overridden = await (await handleAdminGet(settingsGetRequest(), context)).text();
+    expect(overridden).toContain('Default: 100.00');
+    expect(overridden).toContain('value="settings-reset:services.vintage.pricing.0.priceMinor"');
+
+    const invalid = await handleAdminPost(adminPostRequest({
+      action: 'settings-save', section: 'pricing',
+      'services.vintage.pricing.0.priceMinor': '160.005',
+      'services.vintage.pricing.1.priceMinor': '120',
+      'services.vintage.pricing.2.priceMinor': '180',
+      'services.vintage.pricing.3.priceMinor': '200',
+    }), context);
+    expect(invalid.status).toBe(400);
+    await expect(invalid.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('services.vintage.pricing.0.priceMinor') } });
+
+    const reset = await handleAdminPost(adminPostRequest({ action: 'settings-reset:services.vintage.pricing.0.priceMinor' }), context);
+    expect(reset.status).toBe(303);
+    expect(repo.settings.has('services.vintage.pricing.0.priceMinor')).toBe(false);
+  });
+
   it('settings-reset deletes every key in the section', async () => {
     const repo = fakeRepository();
     repo.settings.set('booking.minNoticeHours', '2');

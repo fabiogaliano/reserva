@@ -1,7 +1,9 @@
 import { adminLocaleFor } from '../../core/config.js';
+import { minorUnitDigits, toMajorUnits } from '../../core/currency.js';
 import {
   settingDefinitionsFor,
   settingSections,
+  type PricingTierGroup,
   type ScheduleRuleGroup,
   type SettingDefinition,
   type SettingSection,
@@ -33,6 +35,7 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
   const sectionTitles: Record<SettingSection, string> = {
     policy: messages['admin.sectionPolicy'],
     hours: messages['admin.sectionHours'],
+    pricing: messages['admin.sectionPricing'],
     capacity: messages['admin.sectionCapacity'],
     contact: messages['admin.sectionContact'],
     legal: messages['admin.sectionLegal'],
@@ -40,6 +43,7 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
   const sectionHints: Record<SettingSection, string> = {
     policy: messages['admin.sectionPolicyHint'],
     hours: messages['admin.sectionHoursHint'],
+    pricing: messages['admin.sectionPricingHint'],
     capacity: messages['admin.sectionCapacityHint'],
     contact: messages['admin.sectionContactHint'],
     legal: messages['admin.sectionLegalHint'],
@@ -59,14 +63,27 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
       ? formatMessage(messages['settingGroup.scheduleRuleSeason'], { service: serviceTitle, days, from: monthDayName(rule.from ?? '01-01'), to: monthDayName(rule.to ?? '12-31') })
       : formatMessage(messages['settingGroup.scheduleRule'], { service: serviceTitle, days });
   };
-  const displayValue = (value: SettingValue): string => {
+  // A tier's own description, since its label can't be a static message key: the quantity band and,
+  // where the service has a pickup axis, the pickup option's own copy (same fallbacks as the catalog).
+  const pricingTierLabel = ({ rule, service }: PricingTierGroup): string => {
+    const option = service.location?.pickupOptions.find((candidate) => candidate.id === rule.pickup);
+    if (!option) return formatMessage(messages['setting.priceTierNoPickup'], { n: rule.maxQuantity });
+    const pickup = option.label
+      ?? (option.id === 'default' ? messages['widget.pickupDefault'] : option.id === 'custom' ? messages['widget.pickupCustom'] : option.id);
+    return formatMessage(messages['setting.priceTier'], { n: rule.maxQuantity, pickup });
+  };
+  // Money is stored in minor units but only ever shown to an operator in major ones.
+  const majorUnits = (value: number, currency: string): string =>
+    toMajorUnits(value, currency).toFixed(minorUnitDigits(currency));
+  const displayValue = (definition: SettingDefinition, value: SettingValue): string => {
     if (value === null) return messages['admin.none'];
     if (typeof value === 'boolean') return value ? messages['admin.on'] : messages['admin.off'];
+    if (definition.kind.type === 'money') return majorUnits(value as number, definition.kind.currency);
     return String(value);
   };
 
   const fieldMarkup = (definition: SettingDefinition): string => {
-    const label = catalog[definition.labelKey] ?? definition.key;
+    const label = definition.pricingTier ? pricingTierLabel(definition.pricingTier) : catalog[definition.labelKey] ?? definition.key;
     const helpText = catalog[`${definition.labelKey}.hint`];
     const help = helpText ? `<span class="bk-hint">${escapeHtml(helpText)}</span>` : '';
     const effective = definition.get(context.config);
@@ -74,25 +91,31 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
     // clicking it never toggles or focuses the control it belongs to.
     const modified = storedRows[definition.key] !== undefined
       ? `<span class="bk-modified"><span class="bk-badge bk-badge--accent">${escapeHtml(messages['admin.modified'])}</span>`
-        + `<span>${escapeHtml(formatMessage(messages['admin.default'], { v: displayValue(definition.get(base)) }))}</span>`
+        + `<span>${escapeHtml(formatMessage(messages['admin.default'], { v: displayValue(definition, definition.get(base)) }))}</span>`
         + `<button type="submit" class="bk-linkbtn" name="action" value="settings-reset:${escapeHtml(definition.key)}" formnovalidate>${escapeHtml(messages['admin.resetField'])}</button></span>`
       : '';
     const kind = definition.kind;
     if (kind.type === 'boolean') {
       return `<div class="bk-setting"><label class="bk-switch"><input type="checkbox" name="${escapeHtml(definition.key)}"${effective ? ' checked' : ''}><span>${escapeHtml(label)}</span></label>${help}${modified}</div>`;
     }
-    const inputType = kind.type === 'int' || kind.type === 'number' ? 'number' : kind.type === 'email' ? 'email' : kind.type === 'url' ? 'url' : kind.type === 'time' ? 'time' : 'text';
+    const inputType = kind.type === 'int' || kind.type === 'number' || kind.type === 'money' ? 'number' : kind.type === 'email' ? 'email' : kind.type === 'url' ? 'url' : kind.type === 'time' ? 'time' : 'text';
+    const moneyStep = kind.type === 'money' ? (minorUnitDigits(kind.currency) === 0 ? '1' : `0.${'0'.repeat(minorUnitDigits(kind.currency) - 1)}1`) : '';
     const constraints = kind.type === 'int' ? ` min="${kind.min}"${kind.max !== undefined ? ` max="${kind.max}"` : ''} step="1"${kind.optional ? '' : ' required'}`
       : kind.type === 'number' ? ` min="${kind.min}" step="any" required`
+      : kind.type === 'money' ? ` min="0" step="${moneyStep}" required`
       : (kind.type === 'text' || kind.type === 'url') && kind.optional ? '' : ' required';
-    const value = effective === null ? '' : String(effective);
+    const value = effective === null ? ''
+      : kind.type === 'money' ? majorUnits(effective as number, kind.currency)
+      : String(effective);
     return `<div class="bk-setting"><label class="bk-field"><span>${escapeHtml(label)}</span><input class="bk-input" type="${inputType}" name="${escapeHtml(definition.key)}" value="${escapeHtml(value)}"${constraints}></label>${help}${modified}</div>`;
   };
 
   const sections = settingSections.map((section) => {
     let lastGroup: string | undefined;
     const fields = definitions.filter((definition) => definition.section === section).map((definition) => {
-      const groupTitle = definition.scheduleRule ? scheduleRuleHeading(definition.scheduleRule) : catalog[definition.groupKey ?? ''] ?? definition.groupKey;
+      const groupTitle = definition.scheduleRule ? scheduleRuleHeading(definition.scheduleRule)
+        : definition.pricingTier ? definition.pricingTier.serviceTitle
+        : catalog[definition.groupKey ?? ''] ?? definition.groupKey;
       const heading = definition.groupKey && definition.groupKey !== lastGroup
         ? `<h3 class="bk-setting-group">${escapeHtml(groupTitle ?? '')}</h3>`
         : '';

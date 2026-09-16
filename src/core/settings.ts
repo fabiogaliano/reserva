@@ -1,5 +1,6 @@
 import { ZodError } from 'astro/zod';
-import { validateConfig, type ResolvedClientConfig, type ScheduleRule } from './config.js';
+import { validateConfig, type PricingRule, type ResolvedClientConfig, type ResolvedServiceConfig, type ScheduleRule } from './config.js';
+import { minorUnitDigits, minorUnitFactor } from './currency.js';
 
 // Operator-editable settings: the runtime-safe scalar dials of ClientConfig, stored as JSON and
 // merged over the file config per request. A row equal to the file value is deleted, so a later
@@ -7,7 +8,7 @@ import { validateConfig, type ResolvedClientConfig, type ScheduleRule } from './
 
 export type SettingValue = string | number | boolean | null;
 
-export type SettingSection = 'policy' | 'hours' | 'capacity' | 'contact' | 'legal';
+export type SettingSection = 'policy' | 'hours' | 'pricing' | 'capacity' | 'contact' | 'legal';
 
 export type SettingKind =
   // `optional: true` lets an empty submission clear the field to null, merged as `undefined`.
@@ -20,7 +21,10 @@ export type SettingKind =
   | { type: 'email' }
   | { type: 'url'; optional?: boolean }
   // Wall-clock 'HH:MM', the same shape scheduleSchema accepts.
-  | { type: 'time' };
+  | { type: 'time' }
+  // Stored (and set on the config) as the integer minor-unit amount config itself holds; only the
+  // form representation is in major units, so a currency change never rewrites stored rows.
+  | { type: 'money'; currency: string };
 
 // Which schedule rule a service-hours definition belongs to; the settings page turns it into a
 // human heading (service title, weekdays, season) instead of exposing the raw slug/index key.
@@ -28,6 +32,15 @@ export interface ScheduleRuleGroup {
   serviceSlug: string;
   serviceTitle: string;
   rule: ScheduleRule;
+}
+
+// Which pricing rule a tier-amount definition belongs to. Carries the service so the page can
+// resolve the rule's pickup id to its declared (or message-catalog) label without re-reading config.
+export interface PricingTierGroup {
+  serviceSlug: string;
+  serviceTitle: string;
+  rule: PricingRule;
+  service: ResolvedServiceConfig;
 }
 
 export interface SettingDefinition {
@@ -41,6 +54,9 @@ export interface SettingDefinition {
   groupKey?: string;
   // Set on definitions generated per schedule rule; the page prefers it over groupKey's message.
   scheduleRule?: ScheduleRuleGroup;
+  // Set on definitions generated per pricing rule; the page builds the field label from it, since
+  // no static message key can describe a per-deployment tier.
+  pricingTier?: PricingTierGroup;
   kind: SettingKind;
   get(config: ResolvedClientConfig): SettingValue;
   set(config: ResolvedClientConfig, value: SettingValue): void;
@@ -154,7 +170,7 @@ export const settingDefinitions: readonly SettingDefinition[] = [
   },
 ];
 
-export const settingSections: readonly SettingSection[] = ['policy', 'hours', 'capacity', 'contact', 'legal'];
+export const settingSections: readonly SettingSection[] = ['policy', 'hours', 'pricing', 'capacity', 'contact', 'legal'];
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -188,11 +204,35 @@ function scheduleRuleDefinitions(config: ResolvedClientConfig): SettingDefinitio
   return definitions;
 }
 
+// The amount of every pricing tier. Only the price moves: a tier's maxQuantity and pickup decide
+// which rule a quote picks, so changing them from the admin would silently re-shape the catalog.
+function pricingRuleDefinitions(config: ResolvedClientConfig): SettingDefinition[] {
+  const definitions: SettingDefinition[] = [];
+  const currency = config.business.currency;
+  for (const [slug, service] of Object.entries(config.services)) {
+    service.pricing.forEach((rule, index) => {
+      const ruleOf = (target: ResolvedClientConfig): PricingRule | undefined => target.services[slug]?.pricing[index];
+      definitions.push({
+        key: `services.${slug}.pricing.${index}.priceMinor`,
+        section: 'pricing',
+        labelKey: 'setting.priceTier',
+        groupKey: `services.${slug}.pricing`,
+        pricingTier: { serviceSlug: slug, serviceTitle: service.title ?? slug, rule, service },
+        kind: { type: 'money', currency },
+        get: (target) => ruleOf(target)?.priceMinor ?? null,
+        set: (target, value) => { const found = ruleOf(target); if (found) found.priceMinor = value as number; },
+      });
+    });
+  }
+  return definitions;
+}
+
 // The complete definition list for a deployment: the static dials plus one first/last departure
-// pair per schedule rule of every configured service. Pass the file config so the set of services
-// (and therefore of keys) is the same on the load path, the save path, and the rendered page.
+// pair per schedule rule and one amount per pricing tier of every configured service. Pass the file
+// config so the set of services (and therefore of keys) is the same on the load path, the save
+// path, and the rendered page.
 export function settingDefinitionsFor(config: ResolvedClientConfig): SettingDefinition[] {
-  return [...settingDefinitions, ...scheduleRuleDefinitions(config)];
+  return [...settingDefinitions, ...scheduleRuleDefinitions(config), ...pricingRuleDefinitions(config)];
 }
 
 function isValidHttpUrl(value: string): boolean {
@@ -228,6 +268,8 @@ function decodeStoredValue(definition: SettingDefinition, raw: unknown): Setting
       return typeof raw === 'string' && isValidHttpUrl(raw) ? raw : undefined;
     case 'time':
       return typeof raw === 'string' && TIME_PATTERN.test(raw) ? raw : undefined;
+    case 'money':
+      return typeof raw === 'number' && Number.isInteger(raw) && raw >= 0 ? raw : undefined;
   }
 }
 
@@ -250,7 +292,7 @@ export function applySettingOverrides(
     legal: { ...config.legal },
     services: Object.fromEntries(Object.entries(config.services).map(([slug, service]) => [
       slug,
-      { ...service, schedule: service.schedule.map((rule) => ({ ...rule })) },
+      { ...service, schedule: service.schedule.map((rule) => ({ ...rule })), pricing: service.pricing.map((rule) => ({ ...rule })) },
     ])),
   };
   for (const definition of settingDefinitionsFor(config)) {
@@ -382,6 +424,23 @@ export function parseSettingForm(definition: SettingDefinition, form: FormLike):
     case 'time':
       if (!TIME_PATTERN.test(text)) throw new SettingParseError(`${definition.key}: must be a time in HH:MM (24-hour)`);
       return text;
+    case 'money': {
+      // Operators type an amount the way they price it (major units), and a Portuguese keyboard
+      // produces ',' as the decimal separator.
+      const normalized = text.replace(',', '.');
+      if (!/^\d+(\.\d+)?$/.test(normalized)) {
+        throw new SettingParseError(`${definition.key}: must be an amount of at least 0, e.g. 150.00`);
+      }
+      const digits = minorUnitDigits(kind.currency);
+      const fraction = normalized.split('.')[1] ?? '';
+      if (fraction.length > digits) {
+        throw new SettingParseError(digits === 0
+          ? `${definition.key}: ${kind.currency.toUpperCase()} amounts have no decimal places`
+          : `${definition.key}: must have at most ${digits} decimal places`);
+      }
+      // Rounds rather than truncates: 1.15 * 100 is 114.99999999999999 in binary floating point.
+      return Math.round(Number(normalized) * minorUnitFactor(kind.currency));
+    }
   }
 }
 
