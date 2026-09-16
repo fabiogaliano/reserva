@@ -3,12 +3,11 @@ import { GoogleCalendarProvider } from '@reservajs/astro/providers/calendar-goog
 import { defineCloudflareReservaRuntime, type ReservaProviders } from '@reservajs/astro/runtime';
 import { stripe } from '@reservajs/stripe';
 import { consoleEmailProvider } from './email-provider';
-import config from './reserva.config';
 
 // The official-adapter consumer: both packages installed, payments wired through the one exported
 // factory. Every credential used by reconciliation is represented in the Env contract, so the
 // scheduled Worker never relies on secrets attached only to the HTTP Worker.
-interface Env {
+export interface Env {
   RESERVA_DB: D1Database;
   RESERVA_TOKEN_ENC_KEY: string;
   RESERVA_CSRF_SECRET: string;
@@ -25,12 +24,11 @@ interface Env {
 
 function providers(env: Env): ReservaProviders {
   return {
+    // Payment methods come from the Stripe dashboard now; the adapter's remaining options are the
+    // credentials and the URL/label overrides, and a packed consumer has to reach them here.
     payments: stripe({
       secretKey: env.STRIPE_SECRET_KEY,
       webhookSecret: env.STRIPE_WEBHOOK_SECRET,
-      // Payment methods are the adapter's option, not a core config key — a packed consumer has
-      // to be able to reach them from the factory.
-      paymentMethods: ['card', 'mb_way'],
     }),
     calendar: new GoogleCalendarProvider({
       calendarId: env.GOOGLE_CALENDAR_ID,
@@ -55,6 +53,8 @@ function providers(env: Env): ReservaProviders {
   };
 }
 
-export default defineCloudflareReservaRuntime<Env>(config, {
+// No config argument: the runtime reads the validated config from `virtual:reserva/config`,
+// which the integration emits from the same `reserva.config.ts` astro.config.ts passes it.
+export default defineCloudflareReservaRuntime<Env>({
   providers: ({ env }) => providers(env),
 });

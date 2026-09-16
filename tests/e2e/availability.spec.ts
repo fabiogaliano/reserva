@@ -13,7 +13,7 @@ function dateRange() {
 
 async function fetchAvailability(request: import('@playwright/test').APIRequestContext, quantity = PEOPLE) {
   const { from, to } = dateRange();
-  const res = await request.get(`/api/booking/availability?service=${TOUR}&quantity=${quantity}&from=${from}&to=${to}`);
+  const res = await request.get(`/api/booking/availability?serviceSlug=${TOUR}&quantity=${quantity}&from=${from}&to=${to}`);
   return res.json();
 }
 
@@ -35,6 +35,10 @@ test('availability response carries the exact fields the widget consumes', async
 
   const slot = openDay.slots[0];
   expect(typeof slot.start).toBe('string');
+  // Business-local `YYYY-MM-DD` / `HH:MM`, so the widget renders the label the deployment's
+  // timezone means instead of slicing the UTC instant.
+  expect(slot.date).toBe(openDay.date);
+  expect(slot.time).toMatch(/^\d{2}:\d{2}$/);
   // Structured scarcity — a number only inside the threshold band,
   // null above it, and never a rendered status string.
   expect(slot.remaining === null || typeof slot.remaining === 'number').toBe(true);

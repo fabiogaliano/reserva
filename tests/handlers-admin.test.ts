@@ -293,7 +293,7 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
       const multiBody = await multiResponse.text();
       // The row summary names one place: the resolved meeting point, since this service has more
       // than one to choose between.
-      expect(multiBody).toContain('bk-booking-sub">vintage · 2 people · The Station');
+      expect(multiBody).toContain('bk-booking-sub">Vintage Tour · 2 people · The Station');
 
       const singleRepo = fakeRepository([booking({
         id: 'b-admin-single-point', reference: 'LVT-2026-401', startsAt: '2026-06-21T09:00:00.000Z', endsAt: '2026-06-21T10:00:00.000Z',
@@ -304,7 +304,7 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
       const singleBody = await singleResponse.text();
       expect(singleBody).not.toContain('The Station');
       // One declared point is not a choice, so the row names the pickup option instead.
-      expect(singleBody).toContain('bk-booking-sub">vintage · 2 people · Meeting point');
+      expect(singleBody).toContain('bk-booking-sub">Vintage Tour · 2 people · Meeting point');
     });
 
     it('finds a booking by its resolved meeting-point label via the search filter', async () => {
@@ -334,9 +334,9 @@ describe('pickup option label + sub-lines', () => {
     location: {
       meetingPoints: points,
       pickupOptions: [
-        { id: 'default', requiresAddress: false, usesMeetingPoint: true },
+        { id: 'default', label: 'Default', requiresAddress: false, usesMeetingPoint: true },
         { id: 'custom_dropoff', label: 'Custom pickup & drop-off', requiresAddress: true, usesMeetingPoint: true },
-        { id: 'meet_elsewhere', requiresAddress: false, usesMeetingPoint: true },
+        { id: 'meet_elsewhere', label: 'Meet elsewhere', requiresAddress: false, usesMeetingPoint: true },
       ],
     },
     pricing: [
@@ -359,12 +359,14 @@ describe('pickup option label + sub-lines', () => {
     const body = await response.text();
     // The summary names the meeting point; the option's own label and the address are facts in
     // the row's disclosure, where the detail that only matters sometimes belongs.
-    expect(body).toContain('bk-booking-sub">vintage · 2 people · The Station');
+    expect(body).toContain('bk-booking-sub">Vintage Tour · 2 people · The Station');
     expect(body).toContain('<dd>Custom pickup &amp; drop-off</dd>');
     expect(body).toContain('<dd>Hotel Avenida</dd>');
   });
 
-  it('falls back to the message-catalog labels for the default/custom ids when a config declares no pickupOptions', async () => {
+  // Ids are opaque: 'default' and 'custom' are named by their declared labels like any other id,
+  // never by a message key the library picks for them.
+  it('names the default/custom ids from their declared labels, with no magic-id copy', async () => {
     const defaultSeeded = booking({
       id: 'b-admin-catalog-default', reference: 'LVT-2026-501', startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
       operatorToken: 'op-catalog-default', cancelToken: 'cancel-catalog-default', pickupType: 'default',
@@ -377,24 +379,37 @@ describe('pickup option label + sub-lines', () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminGet(adminGetRequest(), context);
     const body = await response.text();
-    expect(body).toContain('Meeting point');
-    expect(body).toContain('Custom pickup');
+    // The fixture's own declared labels for the two ids.
+    expect(body).toContain('bk-booking-sub">Vintage Tour · 2 people · Meeting point');
+    expect(body).toContain('bk-booking-sub">Vintage Tour · 2 people · Hotel pickup');
+    // requiresAddress drives the address fact now, and 'custom' declares it.
+    expect(body).toContain('<dd>Hotel Avenida</dd>');
   });
 
-  it('falls back to the raw id for a declared option with no label', async () => {
+  // Labels are required of every declared option, so the only nameless case left is a stale
+  // booking whose stored id the service no longer declares.
+  it('falls back to the raw id for a stored option the service no longer declares', async () => {
     const seeded = booking({
       id: 'b-admin-raw-id', reference: 'LVT-2026-503', startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
       operatorToken: 'op-raw-id', cancelToken: 'cancel-raw-id',
-      pickupType: 'meet_elsewhere', meetingPointId: 'square', meetingPointLabel: 'The Square',
+      pickupType: 'meet_elsewhere', pickupAddress: 'Hotel Avenida', meetingPointId: 'square', meetingPointLabel: 'The Square',
     });
+    const withoutMeetElsewhere: ResolvedServiceConfig = {
+      ...mazeTour,
+      location: {
+        meetingPoints: points,
+        pickupOptions: mazeTour.location!.pickupOptions.filter((option) => option.id !== 'meet_elsewhere'),
+      },
+      pricing: mazeTour.pricing.filter((rule) => rule.pickup !== 'meet_elsewhere'),
+    };
     const repo = fakeRepository([seeded]);
-    const context = createReservaContext({ config: mazeConfig, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+    const context = createReservaContext({ config: { ...config, services: { ...config.services, vintage: withoutMeetElsewhere } }, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminGet(adminGetRequest(), context);
     const body = await response.text();
     expect(body).toContain('<dd>meet_elsewhere</dd>');
-    // usesMeetingPoint: true, requiresAddress: false — the meeting point names the row, and no
-    // pickup-address fact is rendered at all.
-    expect(body).toContain('bk-booking-sub">vintage · 2 people · The Square');
+    // An unknown option has no requiresAddress flag to key off, so the stored address stays
+    // withheld while the meeting point still names the row.
+    expect(body).toContain('bk-booking-sub">Vintage Tour · 2 people · The Square');
     expect(body).not.toContain('Hotel Avenida');
   });
 
@@ -404,8 +419,8 @@ describe('pickup option label + sub-lines', () => {
       location: {
         meetingPoints: mazeTour.location!.meetingPoints!,
         pickupOptions: [
-          { id: 'default', requiresAddress: false, usesMeetingPoint: true },
-          { id: 'hotel_pickup', requiresAddress: true, usesMeetingPoint: false },
+          { id: 'default', label: 'Default', requiresAddress: false, usesMeetingPoint: true },
+          { id: 'hotel_pickup', label: 'Hotel pickup', requiresAddress: true, usesMeetingPoint: false },
         ],
       },
       pricing: [
@@ -606,6 +621,7 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
       'booking.cancelCutoffHours': String(config.booking.cancelCutoffHours),
       'booking.reschedule.cutoffHours': String(config.booking.reschedule.cutoffHours),
       'booking.limitedThreshold': String(config.booking.limitedThreshold),
+      'booking.reminderHoursBefore': String(config.booking.reminderHoursBefore),
       'booking.maxHoldsPerIp': '',
       // reschedule.enabled checkbox absent => false
     });
@@ -623,7 +639,7 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const body = await (await handleAdminGet(settingsGetRequest(), context)).text();
     expect(body).toContain('data-reserva-tab="hours"');
-    expect(body).toContain('<h3 class="bk-setting-group">vintage</h3>');
+    expect(body).toContain('<h3 class="bk-setting-group">Vintage Tour</h3>');
     // The three departure fields read as one statement; the weekdays are their own.
     expect(body).toContain('Departs <b>09:00</b> to <b>12:00</b>, every <b>30</b> minutes');
     expect(body).toContain('Runs <b>Every day</b>');
@@ -686,9 +702,9 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     const body = await (await handleAdminGet(settingsGetRequest(), context)).text();
     expect(body).toContain('data-reserva-tab="pricing"');
     // One group heading per service; the tier is described by its quantity band and pickup option.
-    expect(body).toContain('<h3 class="bk-setting-group">vintage</h3>');
+    expect(body).toContain('<h3 class="bk-setting-group">Vintage Tour</h3>');
     expect(body).toContain('Up to 4 · Meeting point');
-    expect(body).toContain('Up to 8 · Custom pickup');
+    expect(body).toContain('Up to 8 · Hotel pickup');
     expect(body).toContain('name="services.vintage.pricing.0.priceMinor" value="100.00" min="0" step="0.01" required');
     expect(body).toContain('name="services.vintage.pricing.3.priceMinor" value="200.00"');
 
@@ -761,6 +777,7 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
       'booking.cancelCutoffHours': String(config.booking.cancelCutoffHours),
       'booking.reschedule.cutoffHours': String(config.booking.reschedule.cutoffHours),
       'booking.limitedThreshold': String(config.booking.limitedThreshold),
+      'booking.reminderHoursBefore': String(config.booking.reminderHoursBefore),
       'booking.maxHoldsPerIp': '',
       ...overrides,
     };
@@ -904,6 +921,7 @@ describe('admin mutation origin + CSRF guard (src/admin-csrf.ts)', () => {
       'booking.cancelCutoffHours': String(config.booking.cancelCutoffHours),
       'booking.reschedule.cutoffHours': String(config.booking.reschedule.cutoffHours),
       'booking.limitedThreshold': String(config.booking.limitedThreshold),
+      'booking.reminderHoursBefore': String(config.booking.reminderHoursBefore),
       'booking.maxHoldsPerIp': '',
     }, { csrfToken: match![1]! }), context);
     expect(response.status).toBe(303);

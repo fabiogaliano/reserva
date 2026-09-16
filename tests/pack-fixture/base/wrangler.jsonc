@@ -2,6 +2,13 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "reserva-pack-fixture",
   "compatibility_date": "2026-07-21",
+  // The consumer's own entry rather than the adapter's default, so `scheduled` ships beside
+  // `fetch` in one Worker — see src/worker.ts. No second Worker, no duplicated secrets.
+  "main": "./src/worker.ts",
+  "triggers": {
+    // Every 5 minutes, matching RECONCILIATION_CADENCE_MINUTES.
+    "crons": ["*/5 * * * *"]
+  },
   // No migrations_dir on purpose: this proves `reserva-migrate` derives the packaged
   // migrations directory from the *installed* package on its own, rather than relying on a
   // hand-configured relative path like examples/smoke-site's wrangler.jsonc has today.

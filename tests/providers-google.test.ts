@@ -3,7 +3,7 @@ import type { ResolvedClientConfig, ResolvedServiceConfig } from '../src/core/co
 import { booking, config, service } from './fixtures';
 import { ProviderFailure } from '../src/provider-failure';
 import { clearGoogleTokenCache, GoogleServiceAccountAuth } from '../src/providers/calendar-google/auth';
-import { GoogleCalendarProvider, mapGoogleCalendarEvent } from '../src/providers/calendar-google/calendar';
+import { GoogleCalendarProvider } from '../src/providers/calendar-google/calendar';
 
 // Canonical (post-validateConfig-shaped) multi-point service, built inline — fixtures.ts stays
 // a single-point service for other suites.
@@ -26,9 +26,9 @@ const bothFlagsTour: ResolvedServiceConfig = {
   location: {
     meetingPoints: multiPointTour.location!.meetingPoints!,
     pickupOptions: [
-      { id: 'default', requiresAddress: false, usesMeetingPoint: true },
-      { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
-      { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
+      { id: 'default', label: 'Default', requiresAddress: false, usesMeetingPoint: true },
+      { id: 'custom_dropoff', label: 'Custom dropoff', requiresAddress: true, usesMeetingPoint: true },
+      { id: 'custom_pickup', label: 'Custom pickup', requiresAddress: true, usesMeetingPoint: false },
     ],
   },
   pricing: [
@@ -51,7 +51,7 @@ describe('Google Calendar provider', () => {
   it('creates and caches a service-account access token', async () => {
     clearGoogleTokenCache();
     const request = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ access_token: 'token-1', expires_in: 3600 }), { headers: { 'content-type': 'application/json' } }));
-    const auth = new GoogleServiceAccountAuth({ serviceAccountEmail: 'sa@example.test', privateKey: fakePem, impersonateEmail: 'owner@example.test', fetch: request, crypto: fakeCrypto, now: () => Date.parse('2026-07-21T12:00:00Z') });
+    const auth = new GoogleServiceAccountAuth({ serviceAccountEmail: 'sa@example.test', serviceAccountPrivateKey: fakePem, impersonateEmail: 'owner@example.test', fetch: request, crypto: fakeCrypto, now: () => Date.parse('2026-07-21T12:00:00Z') });
     await expect(auth.getAccessToken()).resolves.toBe('token-1');
     await expect(auth.getAccessToken()).resolves.toBe('token-1');
     expect(request).toHaveBeenCalledTimes(1);
@@ -75,7 +75,7 @@ describe('Google Calendar provider', () => {
     // Unique cacheKey so this test's in-flight/cache state can never leak into (or be leaked into
     // by) another test sharing the module-level tokenCache/tokenRequestsInFlight maps.
     const auth = new GoogleServiceAccountAuth({
-      serviceAccountEmail: 'sa@example.test', privateKey: fakePem, impersonateEmail: 'owner@example.test',
+      serviceAccountEmail: 'sa@example.test', serviceAccountPrivateKey: fakePem, impersonateEmail: 'owner@example.test',
       fetch: request, crypto: fakeCrypto, now: () => Date.parse('2026-07-21T12:00:00Z'),
       cacheKey: 'single-flight-test',
     });
@@ -87,9 +87,22 @@ describe('Google Calendar provider', () => {
     expect(posts).toBe(1);
   });
 
-  it('maps timed and all-day Calendar events while preserving Reserva ownership metadata', () => {
-    expect(mapGoogleCalendarEvent({ id: 'event-1', start: { dateTime: '2026-07-21T09:00:00Z' }, end: { dateTime: '2026-07-21T10:00:00Z' }, extendedProperties: { private: { reservaBookingId: 'booking-1' } } })).toEqual(expect.objectContaining({ id: 'event-1', start: '2026-07-21T09:00:00Z', end: '2026-07-21T10:00:00Z', reservaBookingId: 'booking-1' }));
-    expect(mapGoogleCalendarEvent({ id: 'day-1', start: { date: '2026-07-21' }, end: { date: '2026-07-22' } })).toEqual(expect.objectContaining({ allDay: true, start: '2026-07-21', end: '2026-07-22' }));
+  // The mapping has no standalone export any more; listEvents on the named provider is the only
+  // public path to it.
+  it('maps timed and all-day Calendar events while preserving Reserva ownership metadata', async () => {
+    const auth = { getAccessToken: vi.fn(async () => 'token') } as unknown as GoogleServiceAccountAuth;
+    const request = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
+      items: [
+        { id: 'event-1', start: { dateTime: '2026-07-21T09:00:00Z' }, end: { dateTime: '2026-07-21T10:00:00Z' }, extendedProperties: { private: { reservaBookingId: 'booking-1' } } },
+        { id: 'day-1', start: { date: '2026-07-21' }, end: { date: '2026-07-22' } },
+      ],
+    })));
+    const provider = new GoogleCalendarProvider({ calendarId: 'primary@example.test', auth, fetch: request, timezone: 'Europe/Lisbon' });
+
+    const [timed, allDay] = await provider.listEvents('2026-07-21T00:00:00Z', '2026-07-22T00:00:00Z');
+
+    expect(timed).toEqual(expect.objectContaining({ id: 'event-1', start: '2026-07-21T09:00:00Z', end: '2026-07-21T10:00:00Z', allDay: false, reservaBookingId: 'booking-1' }));
+    expect(allDay).toEqual(expect.objectContaining({ id: 'day-1', allDay: true, start: '2026-07-21', end: '2026-07-22' }));
   });
 
   it('lists only valid event records and sends Calendar REST requests with bearer auth', async () => {
@@ -216,7 +229,7 @@ describe('Google Calendar provider', () => {
     clearGoogleTokenCache();
     const request = vi.fn<typeof fetch>(async () => new Response('invalid_grant', { status: 401 }));
     const auth = new GoogleServiceAccountAuth({
-      serviceAccountEmail: 'sa@example.test', privateKey: fakePem, impersonateEmail: 'owner@example.test',
+      serviceAccountEmail: 'sa@example.test', serviceAccountPrivateKey: fakePem, impersonateEmail: 'owner@example.test',
       fetch: request, crypto: fakeCrypto, now: () => Date.parse('2026-07-21T12:00:00Z'), cacheKey: 'plan-016-auth-failure',
     });
     let caught: unknown;

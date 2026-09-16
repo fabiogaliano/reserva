@@ -115,7 +115,7 @@ describe('non-durable booking event hooks', () => {
       config, db: {} as D1Database, repo, clock,
       waitUntil: (task) => pending.push(task),
       providers: providers(),
-      hooks: [{ name: 'rescheduled-only', events: ['booking.rescheduled'], handler: async (event) => { received.push(event); } }],
+      hooks: [{ name: 'rescheduled-only', events: ['booking.rescheduled'], handler: async (event, _booking, _hookContext) => { received.push(event); } }],
     });
 
     await expect(handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, '2026-06-15T10:00:00.000Z'), context)).resolves.toMatchObject({ status: 200 });
@@ -128,7 +128,7 @@ describe('non-durable booking event hooks', () => {
       config, db: {} as D1Database, repo, clock,
       waitUntil: (task) => pending.push(task),
       providers: paidWebhookProviders(held.id, 'cs_hook_subscription'),
-      hooks: [{ name: 'rescheduled-only', events: ['booking.rescheduled'], handler: async (event) => { received.push(event); } }],
+      hooks: [{ name: 'rescheduled-only', events: ['booking.rescheduled'], handler: async (event, _booking, _hookContext) => { received.push(event); } }],
     }))).resolves.toMatchObject({ status: 200 });
     await Promise.all(pending.splice(0));
     // booking.confirmed happened, but this hook never subscribed to it.
@@ -164,24 +164,28 @@ describe('subscriber registration validation', () => {
   const runtimeOptions = { providers: providers() };
 
   it('rejects an unknown event name in hooks at startup, listing the whole valid vocabulary', () => {
-    expect(() => defineCloudflareReservaRuntime(config, {
+    expect(() => defineCloudflareReservaRuntime({
       ...runtimeOptions,
       hooks: [{ name: 'typo', events: ['booking.canceled'] as never, handler: async () => undefined }],
-    })).toThrow(/Unknown booking event "booking\.canceled"\. Valid events: booking\.confirmed, booking\.cancelled_by_customer, booking\.cancelled_by_operator, booking\.rescheduled, booking\.no_show, payment\.dispute_created\./);
+    })).toThrow(/Unknown booking event "booking\.canceled"\. Valid events: booking\.confirmed, booking\.cancelled_by_customer, booking\.cancelled_by_operator, booking\.rescheduled, booking\.no_show, booking\.reminder, payment\.dispute_created, settings\.changed\./);
   });
 
   it('rejects an invalid or duplicated hook name at startup', () => {
-    expect(() => defineCloudflareReservaRuntime(config, {
+    expect(() => defineCloudflareReservaRuntime({
       ...runtimeOptions,
       hooks: [{ name: 'Not Valid', handler: async () => undefined }],
     })).toThrow(/Invalid name "Not Valid"/);
-    expect(() => defineCloudflareReservaRuntime(config, {
+    expect(() => defineCloudflareReservaRuntime({
       ...runtimeOptions,
       hooks: [
         { name: 'twice', handler: async () => undefined },
         { name: 'twice', handler: async () => undefined },
       ] satisfies BookingEventHook[],
     })).toThrow(/registered twice/);
+  });
+
+  it('accepts settings.changed, which is subscribable but carries no booking payload', () => {
+    expect(() => webhookConfig(['settings.changed'])).not.toThrow();
   });
 
   it('rejects an unknown event name in config.webhooks with the same vocabulary', () => {
@@ -362,6 +366,8 @@ describe('durable in-process hooks', () => {
       durable: true,
       handler: async (_event, wireBooking, hookContext) => {
         if (!subscriberUp) throw new Error('subscriber unavailable');
+        // Only settings.changed delivers a null booking, and this hook never subscribes to it.
+        if (!wireBooking) throw new Error('booking event hook received no booking');
         delivered.push({ id: hookContext.id, startsAt: wireBooking.startsAt, status: wireBooking.status });
       },
     };

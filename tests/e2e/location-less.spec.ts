@@ -4,7 +4,7 @@ import { createBooking } from './helpers';
 // riverCruise declares no location module — quantity-tier pricing only. Proves the whole funnel
 // never surfaces a pickup/meeting-point axis for it, and checkout still rejects one anyway.
 
-test('booking a service with no location module carries no pickup/meeting-point fields through checkout, confirmation, or admin', async ({ page }) => {
+test('booking a service with no location module carries no pickup/meeting-point fields through checkout, confirmation, or admin', async ({ page, request }) => {
   let checkoutBody: Record<string, unknown> | undefined;
   page.on('request', (request) => {
     if (request.method() === 'POST' && request.url().includes('/api/booking/checkout')) {
@@ -22,8 +22,9 @@ test('booking a service with no location module carries no pickup/meeting-point 
   const { reference, outboxEntry } = await createBooking(page, { service: 'riverCruise', quantity: 2, path: '/river-cruise' });
   expect(reference).toBeTruthy();
 
-  // The widget renders no pickupType radios at all for this service, so the submitted checkout
-  // body never carries the fields.
+  // The widget renders no pickup radios at all for this service, so the submitted checkout body
+  // never carries the fields — under either spelling.
+  expect(checkoutBody).not.toHaveProperty('pickup');
   expect(checkoutBody).not.toHaveProperty('pickupType');
   expect(checkoutBody).not.toHaveProperty('meetingPointId');
 
@@ -31,31 +32,37 @@ test('booking a service with no location module carries no pickup/meeting-point 
   await expect(page.locator('.bk-facts')).not.toContainText('Pickup');
   await expect(page.locator('.bk-facts')).not.toContainText('Meeting point');
 
-  expect(outboxEntry.pickupType ?? null).toBeNull();
+  // The dev email log carries only the manage links, so the persisted pickup axis is asserted where
+  // it actually lives: the token-protected manage response.
+  const manageUrl = new URL(outboxEntry.operatorManageUrl);
+  const token = manageUrl.searchParams.get('token');
+  const manageJson = await (await request.get(`/api/booking/manage?token=${encodeURIComponent(token ?? '')}`)).json();
+  expect(manageJson.booking).toMatchObject({ pickup: null, pickupAddress: null, meetingPoint: null });
 
   await page.goto('/booking/admin');
   const row = page.locator('.bk-booking', { hasText: reference });
   await expect(row).toBeVisible();
   // A location-less booking has no place to name, so the row summary stops at the party size and
-  // the opened row carries no pickup facts at all.
-  await expect(row.locator('.bk-booking-sub')).toHaveText('riverCruise · 2 people');
+  // the opened row carries no pickup facts at all. The service reads as its localized title now;
+  // the slug fallback is gone.
+  await expect(row.locator('.bk-booking-sub')).toHaveText('River Cruise · 2 people');
   await row.locator('summary').click();
   await expect(row.locator('.bk-facts')).not.toContainText('Pickup');
   await expect(row.locator('.bk-facts')).not.toContainText('Meeting point');
 });
 
-// Checkout rejects pickupType/meetingPointId for a location-less
+// Checkout rejects pickup/meetingPointId for a location-less
 // service even if a client sends them anyway — the widget is not the enforcement boundary.
-test('checkout rejects a pickupType field for a location-less service', async ({ request }) => {
+test('checkout rejects a pickup field for a location-less service', async ({ request }) => {
   const from = new Date().toISOString().slice(0, 10);
   const to = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
-  const availability = await (await request.get(`/api/booking/availability?service=riverCruise&quantity=2&from=${from}&to=${to}`)).json();
+  const availability = await (await request.get(`/api/booking/availability?serviceSlug=riverCruise&quantity=2&from=${from}&to=${to}`)).json();
   const openDay = availability.days.find((d: any) => d.slots.length > 0);
   const start = openDay?.slots?.[0]?.start;
   expect(start).toBeTruthy();
 
   const response = await request.post('/api/booking/checkout', {
-    data: { serviceSlug: 'riverCruise', start, quantity: 2, pickupType: 'default', locale: 'en' },
+    data: { serviceSlug: 'riverCruise', start, quantity: 2, pickup: 'default', locale: 'en' },
   });
   expect(response.status()).toBe(400);
 });

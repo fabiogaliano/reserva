@@ -53,8 +53,9 @@ describe('currency plumbing', () => {
   });
 
   it('formats a zero-decimal price as whole units, not one-hundredth of it', () => {
-    // 12000 minor units is ¥12,000 — a hard-coded `/ 100` would have rendered ¥120.
-    expect(formatPrice(12000, 'en', 'jpy')).toBe('¥12,000');
+    // 12000 minor units is 12,000 yen — a hard-coded `/ 100` would have rendered 120. Bare 'en'
+    // formats through en-GB, which qualifies a non-local currency symbol as "JP¥".
+    expect(formatPrice(12000, 'en', 'jpy')).toBe('JP¥12,000');
     expect(formatPrice(12000, 'en', 'eur')).toBe('€120.00');
     expect(toMajorUnits(12000, 'jpy')).toBe(12000);
   });
@@ -65,8 +66,8 @@ describe('currency plumbing', () => {
     const provider = stripe({
       secretKey: 'sk_test', webhookSecret: 'whsec_test', client,
       now: () => new Date('2026-06-14T08:00:00.000Z'),
-      getSuccessUrl: () => 'https://example.test/booking-confirmation?session_id={CHECKOUT_SESSION_ID}',
-      getCancelUrl: () => 'https://example.test/',
+      successUrl: () => 'https://example.test/booking-confirmation?sessionId={CHECKOUT_SESSION_ID}',
+      cancelUrl: () => 'https://example.test/',
     });
     const repo = fakeRepository();
     const context = createReservaContext({
@@ -92,7 +93,7 @@ describe('currency plumbing', () => {
     // can never re-interpret the amount under a different one.
     const held = [...repo.rows.values()][0];
     expect(held).toMatchObject({ priceMinor: 10000, currency: 'jpy' });
-    expect(formatPrice(held?.priceMinor ?? 0, 'en', held?.currency ?? '')).toBe('¥10,000');
+    expect(formatPrice(held?.priceMinor ?? 0, 'en', held?.currency ?? '')).toBe('JP¥10,000');
   });
 
   it('rejects a currency the Stripe adapter cannot present, without touching core validation', () => {

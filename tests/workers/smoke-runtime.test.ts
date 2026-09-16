@@ -1,7 +1,16 @@
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import smokeRuntime from '../../examples/smoke-site/src/runtime';
 import { handleAdminGet, handleCheckout, handleManage, handleStatus } from '../../src/handlers';
+import virtualConfig from 'virtual:reserva/config';
+import smokeConfig from '../../examples/smoke-site/src/config';
+import { validateConfig } from '../../src/core/config';
+
+// The smoke runtime takes no config argument any more: it reads `virtual:reserva/config`, which in
+// the workers project is the shared tests/fixtures.ts stand-in. Swapped for the smoke site's own
+// config (resolved the same way the integration resolves it) before the runtime module is
+// evaluated — hence the dynamic import below — so this test drives the real smoke services.
+virtualConfig.config = validateConfig(smokeConfig);
+const { default: smokeRuntime } = await import('../../examples/smoke-site/src/runtime');
 
 function isD1Database(value: unknown): value is D1Database {
   return typeof value === 'object' && value !== null && typeof Reflect.get(value, 'prepare') === 'function';
@@ -59,7 +68,7 @@ describe('local smoke runtime', () => {
           serviceSlug: 'oldTown',
           start: nextSmokeSlot(),
           quantity: 2,
-          pickupType: 'default',
+          pickup: 'default',
           locale: 'en',
           // The smoke-site's oldTown service declares two meeting
           // points (examples/smoke-site/src/config.ts), so a default-pickup checkout must supply
@@ -69,8 +78,8 @@ describe('local smoke runtime', () => {
       }), context);
       expect(checkout.status).toBe(201);
       const checkoutUrl = requireStringProperty(await checkout.json(), 'checkoutUrl');
-      const sessionRef = new URL(checkoutUrl, 'http://localhost:4321').searchParams.get('session_id');
-      if (!sessionRef) throw new Error('Smoke checkout did not return a session_id');
+      const sessionRef = new URL(checkoutUrl, 'http://localhost:4321').searchParams.get('sessionId');
+      if (!sessionRef) throw new Error('Smoke checkout did not return a sessionId');
 
       const held = await context.repo.getBookingBySessionRef(sessionRef);
       if (!held) throw new Error('Smoke checkout did not persist its booking');
@@ -82,7 +91,7 @@ describe('local smoke runtime', () => {
       });
 
       const status = await handleStatus(new Request(
-        `http://localhost:4321/api/booking/status?session_id=${encodeURIComponent(sessionRef)}`,
+        `http://localhost:4321/api/booking/status?sessionId=${encodeURIComponent(sessionRef)}`,
       ), context);
       expect(status.status).toBe(200);
       await expect(status.json()).resolves.toMatchObject({ status: 'confirmed' });
@@ -106,7 +115,11 @@ describe('local smoke runtime', () => {
       expect(manage.status).toBe(200);
       await expect(manage.json()).resolves.toMatchObject({ role: 'operator' });
 
-      const admin = await handleAdminGet(new Request('http://localhost:4321/api/booking/admin'), context);
+      // The smoke site's only admin auth is Cloudflare Access, which cannot issue an assertion for
+      // localhost; `astro dev` output is let through by the routeConfig.dev bypass instead, so the
+      // local posture this test stands for is a dev route config, not a hand-written adminAuth.
+      const devContext = { ...context, routeConfig: { ...context.routeConfig, dev: true } };
+      const admin = await handleAdminGet(new Request('http://localhost:4321/api/booking/admin'), devContext);
       expect(admin.status).toBe(200);
       await expect(admin.text()).resolves.toContain(
         `/booking/manage?token=${encodeURIComponent(confirmed.operatorToken)}`,

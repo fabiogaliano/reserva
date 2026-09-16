@@ -62,7 +62,7 @@ const providers: ReservaProviders = {
   email: fakeEmailProvider,
 };
 
-const runtime = defineCloudflareReservaRuntime(baseConfig, { providers });
+const runtime = defineCloudflareReservaRuntime({ providers });
 
 function buildContext(request: Request) {
   return runtime.createContext({ request, locals: { env: { RESERVA_DB: db } } });

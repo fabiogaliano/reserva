@@ -8,4 +8,6 @@ export const workspaceAlias = [
   { find: /^@reservajs\/astro\/runtime$/, replacement: fileURLToPath(new URL('./src/runtime.ts', import.meta.url)) },
   { find: /^@reservajs\/astro\/email$/, replacement: fileURLToPath(new URL('./src/email/index.ts', import.meta.url)) },
   { find: /^@reservajs\/stripe$/, replacement: fileURLToPath(new URL('./packages/stripe/src/index.ts', import.meta.url)) },
+  // The unit and workers projects have no Astro pipeline to emit the virtual module.
+  { find: /^virtual:reserva\/config$/, replacement: fileURLToPath(new URL('./tests/virtual-config.ts', import.meta.url)) },
 ];

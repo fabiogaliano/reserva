@@ -32,7 +32,7 @@ test.describe('booking funnel in a timezone behind UTC (regression: BookingWidge
 
     const from = new Date().toISOString().slice(0, 10);
     const to = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
-    const availability = await (await request.get(`/api/booking/availability?service=oldTown&quantity=2&from=${from}&to=${to}`)).json();
+    const availability = await (await request.get(`/api/booking/availability?serviceSlug=oldTown&quantity=2&from=${from}&to=${to}`)).json();
     const openDay = availability.days.find((d: any) => d.slots.length > 0);
     if (!openDay) throw new Error('No available day found to probe isDateDisallowed against');
 

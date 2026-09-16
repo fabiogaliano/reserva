@@ -15,11 +15,13 @@ test('a stale availability response cannot overwrite a newer party-size selectio
     // size gets a distinct, immediately-resolved fake slot so the displayed time unambiguously
     // reveals which response actually won.
     const startTime = quantity === '3' ? '14:00' : '09:00';
+    // `date`/`time` are part of the slot shape the widget renders from — it reads `slot.time` for
+    // the button label rather than slicing the UTC instant, so a fake without them renders blank.
     const body = JSON.stringify({
       days: [{
         date: from,
         status: 'open',
-        slots: [{ start: `${from}T${startTime}:00.000Z`, remaining: null }],
+        slots: [{ start: `${from}T${startTime}:00.000Z`, date: from, time: startTime, remaining: null }],
       }],
     });
     if (quantity === '2') await staleGate;

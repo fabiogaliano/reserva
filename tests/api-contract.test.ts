@@ -77,7 +77,7 @@ describe('the error envelope (src/http.ts errorResponse)', () => {
 describe('exported wire types', () => {
   it('pins the response envelopes the handlers return', () => {
     expectTypeOf<QuoteResponse>().toEqualTypeOf<{ priceMinor: number; currency: string }>();
-    expectTypeOf<CheckoutResponse>().toEqualTypeOf<{ checkoutUrl: string; bookingId: string; reference: string }>();
+    expectTypeOf<CheckoutResponse>().toEqualTypeOf<{ checkoutUrl: string; bookingId: string; reference: string; paymentDeadline: string }>();
     expectTypeOf<ManageActionResponse>().toEqualTypeOf<{ ok: true }>();
     // The empty-value rule: a status with no booking detail carries `null`, never a missing key.
     expectTypeOf<StatusResponse['booking']>().toBeNullable();

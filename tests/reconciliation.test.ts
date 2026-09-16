@@ -344,7 +344,7 @@ describe('runReconciliation', () => {
     expect((await repo.getIncidentBySource('side_effect', `${seeded.id}:email_confirmation`))?.alertedRevision).toBe(0);
   });
 
-  it('honors a bounded sourceLimit and remains resumable across invocations', async () => {
+  it('loops bounded sourceLimit batches until the backlog is drained, and reports the batch count', async () => {
     const seeds = Array.from({ length: 3 }, (_, index) => booking({ id: `recon-bounded-${index}`, status: 'confirmed' }));
     const repo = fakeRepository(seeds);
     for (const seeded of seeds) seedSideEffect(repo, seeded.id, { family: 'calendar_create' }, { status: 'pending' });
@@ -354,12 +354,16 @@ describe('runReconciliation', () => {
       providers: providers({ calendar: { listEvents: async () => [], createEvent: async () => { calendarCalls += 1; return `cal_${calendarCalls}`; }, deleteEvent: async () => undefined, patchEvent: async () => undefined } }),
     });
 
+    // One run now drains the whole backlog: a full batch means more debt may exist, so the sweep
+    // takes another one. The bound is per query, not per invocation.
     const first = await runReconciliation(context, { sourceLimit: 2 });
-    expect(first.sideEffectBookingsProcessed).toBe(2);
-    expect(calendarCalls).toBe(2);
+    expect(first.sideEffectBookingsProcessed).toBe(3);
+    expect(first.batches).toBe(2);
+    expect(calendarCalls).toBe(3);
 
     const second = await runReconciliation(context, { sourceLimit: 2 });
-    expect(second.sideEffectBookingsProcessed).toBe(1);
+    expect(second.sideEffectBookingsProcessed).toBe(0);
+    expect(second.batches).toBe(1);
     expect(calendarCalls).toBe(3);
   });
 });

@@ -45,7 +45,7 @@ test('consumer-declared metadata survives checkout, renders labeled on confirmat
 test('checkout rejects a missing required metadata field with a remediating 400', async ({ request }) => {
   const from = new Date().toISOString().slice(0, 10);
   const to = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
-  const availability = await (await request.get(`/api/booking/availability?service=riverCruise&quantity=2&from=${from}&to=${to}`)).json();
+  const availability = await (await request.get(`/api/booking/availability?serviceSlug=riverCruise&quantity=2&from=${from}&to=${to}`)).json();
   const openDay = availability.days.find((d: any) => d.slots.length > 0);
   const start = openDay?.slots?.[0]?.start;
   expect(start).toBeTruthy();

@@ -9,6 +9,7 @@ import { booking, config } from './fixtures';
 // the template system into src/email/, then left untouched by that move -- proving it
 // byte-identical -- and only updated deliberately, never as an accidental side effect of a refactor.
 const locationLessService: ResolvedServiceConfig = {
+  title: { en: 'River Cruise', 'pt-PT': 'Cruzeiro no Rio' },
   durationMin: 90,
   turnaroundMin: 15,
   schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], firstStart: '10:00', lastStart: '16:00', intervalMin: 60 }],
@@ -27,6 +28,8 @@ const EVENTS: EmailBookingEvent[] = [
   'booking.cancelled_by_operator',
   'booking.rescheduled',
   'booking.no_show',
+  'booking.reminder',
+  'payment.dispute_created',
 ];
 
 interface CapturedEmail { subject: string; htmlContent: string; textContent?: string }

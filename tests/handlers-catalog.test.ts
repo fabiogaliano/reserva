@@ -70,12 +70,12 @@ describe('GET /api/booking/catalog', () => {
       title: 'Vintage Tour',
       durationMin: 60,
       location: {
-        meetingPoints: [{ id: 'default', label: 'Praça do Comércio', mapsUrl: 'https://maps.google.com/?q=Praca+do+Comercio' }],
+        meetingPoints: [{ id: 'default', label: 'Praça do Comércio', mapsUrl: 'https://maps.google.com/?q=Praca+do+Comercio', meta: {} }],
         pickupOptions: [
-          // Labels/hints unset in config fall back to the message catalog for the historical
-          // default/custom ids — resolved here, once, instead of in every consumer.
-          { id: 'default', label: 'Meeting point', hint: 'Meet us at the starting point', requiresAddress: false, usesMeetingPoint: true },
-          { id: 'custom', label: 'Custom pickup', hint: 'We pick you up at your address', requiresAddress: true, usesMeetingPoint: false },
+          // Ids are opaque: each option is named by its own declared label, and an option that
+          // declares no hint publishes null rather than borrowing message-catalog copy.
+          { id: 'default', label: 'Meeting point', hint: null, requiresAddress: false, usesMeetingPoint: true },
+          { id: 'custom', label: 'Hotel pickup', hint: null, requiresAddress: true, usesMeetingPoint: false },
         ],
       },
       metadataFields: [],
@@ -88,6 +88,8 @@ describe('GET /api/booking/catalog', () => {
         { maxQuantity: 8, pickup: 'custom', priceMinor: 20000 },
       ],
       fromPriceMinor: 10000,
+      // Opaque passthrough, always present: a service declaring no `meta` publishes {}.
+      meta: {},
     });
   });
 
@@ -114,6 +116,7 @@ describe('GET /api/booking/catalog', () => {
       // A location-less service has no pickup axis; the key stays present as null.
       pricing: [{ maxQuantity: 6, pickup: null, priceMinor: 4200 }],
       fromPriceMinor: 4200,
+      meta: {},
     });
   });
 

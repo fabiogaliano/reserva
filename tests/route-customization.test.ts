@@ -10,6 +10,7 @@ import {
   resolveRouteConfig,
   routeManifest,
   validateRouteOptions,
+  type ReservaResolvedRouteConfig,
 } from '../src/routes-manifest';
 import clientConfig from '../examples/minimal/client-config';
 import { validateConfig } from '../src/core/config';
@@ -20,7 +21,7 @@ const config = validateConfig(clientConfig);
 
 // Mirrors tests/integration-entry.test.ts's harness: invoke the astro:config:setup hook directly
 // (no real Astro build needed to observe injectRoute calls / the registered vite plugins).
-function setup(options: Record<string, unknown>) {
+function setup(options: Record<string, unknown>, command: 'dev' | 'build' | 'preview' = 'build') {
   const routes: Array<Record<string, unknown>> = [];
   let viteConfig: Record<string, unknown> = {};
   const integration = reserva(options as never);
@@ -28,7 +29,7 @@ function setup(options: Record<string, unknown>) {
   if (!hook) throw new Error('setup hook is missing');
   hook({
     config: { root: new URL('../', import.meta.url) } as never,
-    command: 'build',
+    command,
     isRestart: false,
     injectRoute: (route: any) => routes.push(route),
     updateConfig: (next: any) => {
@@ -40,7 +41,7 @@ function setup(options: Record<string, unknown>) {
   return { routes, viteConfig };
 }
 
-const baseOptions = { config, runtimeEntrypoint: './examples/minimal/runtime.ts' };
+const baseOptions = { config: clientConfig, runtimeEntrypoint: './examples/minimal/runtime.ts' };
 
 describe('normalizeRoutePrefix', () => {
   it.each([
@@ -108,15 +109,15 @@ describe('requireEnabledRoutePath', () => {
 describe('route table generation (astro:config:setup)', () => {
   // Hard requirement: a consumer passing no new options must see the exact same route table as
   // before this feature existed — same patterns, same order.
-  it('no options: default injected route patterns are byte-identical to the current 18', () => {
+  it('no options: default injected route patterns are byte-identical to the current 19', () => {
     const { routes } = setup(baseOptions);
     expect(routes.map((route) => route.pattern)).toEqual(routeManifest.map((entry) => entry.pattern));
-    expect(routes).toHaveLength(18);
+    expect(routes).toHaveLength(19);
   });
 
   it('routePrefix mounts every route under the prefix, in the same order', () => {
     const { routes } = setup({ ...baseOptions, routePrefix: '/en' });
-    expect(routes).toHaveLength(18);
+    expect(routes).toHaveLength(19);
     expect(routes.map((route) => route.pattern)).toEqual(routeManifest.map((entry) => `/en${entry.pattern}`));
   });
 
@@ -129,10 +130,10 @@ describe('route table generation (astro:config:setup)', () => {
   // integration reads the same validated config the runtime factory reads for admin-auth
   // selection, instead of two independently-settable options.
   it('config.routes: { ops: false } omits every operator route and nothing else', () => {
-    const { routes } = setup({ ...baseOptions, config: { ...config, routes: { ops: false } } });
+    const { routes } = setup({ ...baseOptions, config: { ...clientConfig, routes: { ops: false } } });
     const patterns = routes.map((route) => route.pattern);
     expect(patterns).toHaveLength(14);
-    for (const opsPattern of ['/api/booking/operator/cancel', '/api/booking/operator/reschedule', '/api/booking/operator/no-show']) {
+    for (const opsPattern of ['/api/booking/operator/cancel', '/api/booking/operator/reschedule', '/api/booking/operator/no-show', '/api/booking/ops/reconcile']) {
       expect(patterns).not.toContain(opsPattern);
     }
     // Customer + webhook + admin routes are unaffected.
@@ -141,9 +142,9 @@ describe('route table generation (astro:config:setup)', () => {
   });
 
   it('config.routes: { admin: false } omits only the admin dashboard route', () => {
-    const { routes } = setup({ ...baseOptions, config: { ...config, routes: { admin: false } } });
+    const { routes } = setup({ ...baseOptions, config: { ...clientConfig, routes: { admin: false } } });
     const patterns = routes.map((route) => route.pattern);
-    expect(patterns).toHaveLength(17);
+    expect(patterns).toHaveLength(18);
     expect(patterns).not.toContain('/booking/admin');
   });
 
@@ -151,16 +152,30 @@ describe('route table generation (astro:config:setup)', () => {
     expect(() => setup({ ...baseOptions, routePrefix: '/en service' })).toThrow(/whitespace/);
   });
 
-  it('exposes the resolved (prefixed) paths and group flags through virtual:reserva/config', () => {
-    const { viteConfig } = setup({ ...baseOptions, routePrefix: '/en', config: { ...config, routes: { ops: false } } });
+  function loadVirtualConfig(viteConfig: Record<string, unknown>): { config: unknown; routes: ReservaResolvedRouteConfig } {
     const plugins = (viteConfig.vite as { plugins: Array<{ resolveId(id: string): string | undefined; load(id: string): string | undefined }> }).plugins;
     const plugin = plugins.find((candidate) => candidate.resolveId(virtualConfigId) !== undefined);
     if (!plugin) throw new Error('route-config plugin not registered');
     const resolved = plugin.resolveId(virtualConfigId) as string;
     const source = plugin.load(resolved) as string;
-    const loaded = JSON.parse(source.slice(source.indexOf('{'), source.lastIndexOf('}') + 1));
-    expect(loaded).toEqual(resolveRouteConfig('/en', { admin: true, ops: false, manage: true }));
-    expect(loaded.paths.checkout).toBe('/en/api/booking/checkout');
+    return JSON.parse(source.slice(source.indexOf('{'), source.lastIndexOf('}') + 1));
+  }
+
+  it('exposes the validated config and the resolved (prefixed) paths and group flags through virtual:reserva/config', () => {
+    const loaded = loadVirtualConfig(setup({ ...baseOptions, routePrefix: '/en', config: { ...clientConfig, routes: { ops: false } } }).viteConfig);
+    expect(loaded.routes).toEqual(resolveRouteConfig('/en', { admin: true, ops: false, manage: true }));
+    expect(loaded.routes.paths.checkout).toBe('/en/api/booking/checkout');
+    // The config travels through the same module (plan item 12), so a runtime module no longer
+    // imports reserva.config.ts itself. JSON round-tripped because that is how it reaches a reader.
+    expect(loaded.config).toEqual(JSON.parse(JSON.stringify(validateConfig({ ...clientConfig, routes: { ops: false } }))));
+  });
+
+  // The admin gate's dev bypass (plan item 11) keys off this flag, so it must come from the build
+  // command and nothing else: `astro build` and `astro preview` output can never carry it.
+  it('marks the route config dev only for astro dev', () => {
+    expect(loadVirtualConfig(setup(baseOptions, 'dev').viteConfig).routes.dev).toBe(true);
+    expect(loadVirtualConfig(setup(baseOptions, 'build').viteConfig).routes.dev).toBe(false);
+    expect(loadVirtualConfig(setup(baseOptions, 'preview').viteConfig).routes.dev).toBe(false);
   });
 });
 
@@ -230,7 +245,7 @@ describe('createRouteContext (route entrypoint seam)', () => {
         },
       },
     }));
-    vi.doMock('virtual:reserva/config', () => ({ default: prefixedFromIntegration }));
+    vi.doMock('virtual:reserva/config', () => ({ default: { config, routes: prefixedFromIntegration } }));
 
     const { createRouteContext } = await import('../src/routes/route-context');
     const context = await createRouteContext({ request: new Request('https://example.test/en/booking/admin') });

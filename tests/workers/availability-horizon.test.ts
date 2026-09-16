@@ -1,12 +1,12 @@
 // Proves a full 365-day availability request completes inside a Worker, against real D1 — the
 // old fixed 62-day limit forced callers to chunk-and-merge their requests.
 import { env } from 'cloudflare:workers';
+import virtualConfig from 'virtual:reserva/config';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { ReservaContext } from '../../src/context';
 import type { AvailabilityResponse } from '../../src/core/api';
 import { handleAvailability } from '../../src/handlers';
 import { defineCloudflareReservaRuntime } from '../../src/runtime-context';
-import { config as baseConfig } from '../fixtures';
 import { providers } from '../fakes';
 
 interface TestEnv {
@@ -17,15 +17,19 @@ const db = (env as unknown as TestEnv).RESERVA_DB;
 const HORIZON_DAYS = 365;
 
 // minNoticeHours: 0 so today's slots are in range too — the point is the size of the window, not
-// the notice policy.
-const horizonConfig = {
-  ...baseConfig,
-  booking: { ...baseConfig.booking, maxHorizonDays: HORIZON_DAYS, minNoticeHours: 0 },
+// the notice policy. The runtime takes no config argument any more, so the widened horizon is
+// written into `virtual:reserva/config` itself. `vi.mock` cannot reach it here: the workers pool
+// evaluates its `main` entry (tests/workers/worker.ts) before the test module, so
+// src/runtime-context is already bound to the real virtual module by the time a mock could be
+// registered.
+virtualConfig.config = {
+  ...virtualConfig.config,
+  booking: { ...virtualConfig.config.booking, maxHorizonDays: HORIZON_DAYS, minNoticeHours: 0 },
 };
 
-// Cloudflare Access stays configured (baseConfig's admin.access) — this test only drives the
+// Cloudflare Access stays configured (the fixture's admin.access) — this test only drives the
 // public availability endpoint, and only one admin auth path is allowed.
-const runtime = defineCloudflareReservaRuntime(horizonConfig, {
+const runtime = defineCloudflareReservaRuntime({
   providers: providers(),
   secretBindings: ['RESERVA_OPERATOR_SECRET'],
 });

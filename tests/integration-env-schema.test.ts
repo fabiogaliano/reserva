@@ -30,17 +30,16 @@ function envSchemaFrom(calls: Array<Record<string, unknown>>): Record<string, un
 const baseOptions = { config, runtimeEntrypoint: './examples/minimal/runtime.ts' };
 
 describe('reserva() astro:env schema contribution', () => {
-  it('declares every provider secret as an optional server secret string field by default', () => {
+  // Vendor names are gone (plan item 12): a consumer who wants typed access to STRIPE_*/BREVO_*/
+  // GOOGLE_* adds those entries to their own `env.schema`, so the core schema only declares the
+  // secrets reserva itself reads.
+  it("declares reserva's own secrets as optional server secret string fields by default", () => {
     const schema = envSchemaFrom(updateConfigCalls(baseOptions));
     expect(schema).toBeDefined();
     const expectedNames = [
-      'STRIPE_SECRET_KEY',
-      'STRIPE_WEBHOOK_SECRET',
-      'BREVO_API_KEY',
       'RESERVA_OPERATOR_SECRET',
-      'GOOGLE_SA_EMAIL',
-      'GOOGLE_SA_PRIVATE_KEY',
-      'GOOGLE_IMPERSONATE_EMAIL',
+      'RESERVA_CSRF_SECRET',
+      'RESERVA_TOKEN_ENC_KEY',
     ];
     expect(Object.keys(schema!).sort()).toEqual([...expectedNames].sort());
     for (const name of expectedNames) {

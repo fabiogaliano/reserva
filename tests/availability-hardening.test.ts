@@ -229,10 +229,10 @@ describe('calendar availability hardening', () => {
             location: {
               meetingPoints: config.services.vintage!.location!.meetingPoints!,
               pickupOptions: [
-                { id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true },
-                { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
-                { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
-                { id: 'custom_both', requiresAddress: true, usesMeetingPoint: false },
+                { id: 'meeting_point', label: 'Meeting point', requiresAddress: false, usesMeetingPoint: true },
+                { id: 'custom_dropoff', label: 'Custom dropoff', requiresAddress: true, usesMeetingPoint: true },
+                { id: 'custom_pickup', label: 'Custom pickup', requiresAddress: true, usesMeetingPoint: false },
+                { id: 'custom_both', label: 'Custom both', requiresAddress: true, usesMeetingPoint: false },
               ],
             },
           },

@@ -5,6 +5,8 @@ import type { ClientConfig } from '@reservajs/astro';
 import type { ServiceConfig } from '@reservajs/astro/core';
 
 const demoTour: ServiceConfig = {
+  // Required, and localized everywhere a human reads it.
+  title: { en: 'Demo Tour' },
   durationMin: 60,
   turnaroundMin: 15,
   schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], firstStart: '09:00', lastStart: '17:00', intervalMin: 60 }],
@@ -16,9 +18,11 @@ const demoTour: ServiceConfig = {
   ],
   location: {
     meetingPoints: [{ id: 'default', label: 'Fixture meeting point', mapsUrl: 'https://example.test/map' }],
+    // Ids are opaque: every option declares its own label, and address handling keys off
+    // `requiresAddress` alone.
     pickupOptions: [
-      { id: 'default', requiresAddress: false, usesMeetingPoint: true },
-      { id: 'custom', requiresAddress: true, usesMeetingPoint: false },
+      { id: 'default', label: { en: 'Meet us there' }, requiresAddress: false, usesMeetingPoint: true },
+      { id: 'custom', label: { en: 'Hotel pickup' }, requiresAddress: true, usesMeetingPoint: false },
     ],
   },
 };

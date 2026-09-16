@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import { afterEach, describe, expect, it } from 'vitest';
-import { RESERVA_MIGRATIONS } from '../src/migrations-manifest';
+import { RESERVA_MIGRATIONS } from '../src/generated/schema-fingerprint';
 
 const scriptPath = resolve(process.cwd(), 'scripts/reserva-migrate.ts');
 // Both computed the same way the CLI itself does: resolvePackagedMigrationsDir() resolves
@@ -19,6 +19,9 @@ function fixtureDirectory(options: { failWrangler?: boolean } = {}): string {
   const wranglerPath = resolve(directory, 'wrangler');
   writeFileSync(wranglerPath, [
     '#!/bin/sh',
+    // The CLI's `wrangler --version` preflight answers "is wrangler installed", so the stub answers
+    // it before anything else -- and without recording it as an invocation the tests then inspect.
+    'if [ "$1" = "--version" ]; then echo "wrangler 0.0.0-fixture"; exit 0; fi',
     'printf "%s\\n" "$@" >> "$RESERVA_MIGRATE_ARGS"',
     // Snapshot the config reserva-migrate actually invoked wrangler with, so tests can inspect a
     // derived config's content -- reserva-migrate deletes it in its own `finally` right after this
@@ -69,6 +72,7 @@ function run(
     },
     capturedConfigSnapshot: () => readFileSync(capturedConfigPath, 'utf8'),
     wranglerInvoked: () => existsSync(capturedArgsPath),
+    // Nothing derived may ever be written beside the consumer's own config (plan item 28).
     derivedFiles: () => readdirSync(cwd).filter((name) => name.startsWith('.reserva-migrate.')),
   };
 }
@@ -370,6 +374,14 @@ describe('reserva-migrate derived config cleanup', () => {
     const result = run(noMigrationsDirConfig, ['--local']);
 
     expect(result.status).toBe(0);
+    const derived = result.capturedConfigArg();
+    // Written under os.tmpdir() now (plan item 28), so cleanup is asked of the path wrangler was
+    // handed rather than of the consumer's own directory.
+    expect(derived).toMatch(/\.reserva-migrate\./);
+    // The point of the move is that it is not beside the consumer's config; os.tmpdir() reports a
+    // symlinked path on macOS, so "outside the project" is the assertion that actually holds.
+    expect(derived?.startsWith(realpathSync(result.cwd))).toBe(false);
+    expect(existsSync(derived!)).toBe(false);
     expect(result.derivedFiles()).toEqual([]);
   });
 
@@ -377,6 +389,9 @@ describe('reserva-migrate derived config cleanup', () => {
     const result = run(noMigrationsDirConfig, ['--local'], undefined, { failWrangler: true });
 
     expect(result.status).toBe(7);
+    const derived = result.capturedConfigArg();
+    expect(derived).toMatch(/\.reserva-migrate\./);
+    expect(existsSync(derived!)).toBe(false);
     expect(result.derivedFiles()).toEqual([]);
   });
 

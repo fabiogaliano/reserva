@@ -68,7 +68,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     // projection plus presentation, and every key is always present (null when empty) — this list
     // is the leak guard: no ids, no tokens, no customer contact details.
     expect(Object.keys(payload.booking).sort()).toEqual([
-      'currency', 'end', 'locale', 'meetingPoint', 'metadataRows', 'priceMinor', 'quantity', 'reference', 'serviceSlug', 'start',
+      'currency', 'end', 'locale', 'meetingPoint', 'metadataRows', 'priceMinor', 'quantity', 'reference', 'serviceSlug', 'serviceTitle', 'start',
     ]);
     expect(payload.booking).not.toHaveProperty('customerEmail');
     expect(payload.booking).not.toHaveProperty('customerPhone');
@@ -138,9 +138,9 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
           location: {
             meetingPoints: points,
             pickupOptions: [
-              { id: 'default', requiresAddress: false, usesMeetingPoint: true },
-              { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
-              { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
+              { id: 'default', label: 'Default', requiresAddress: false, usesMeetingPoint: true },
+              { id: 'custom_pickup', label: 'Custom pickup', requiresAddress: true, usesMeetingPoint: false },
+              { id: 'custom_dropoff', label: 'Custom dropoff', requiresAddress: true, usesMeetingPoint: true },
             ],
           },
           pricing: [
@@ -173,7 +173,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       // Present-as-null rather than absent, so a consumer never branches on key presence.
       expect(payload.booking.meetingPoint).toBeNull();
       expect(payload.booking).not.toHaveProperty('pickupAddress');
-      expect(Object.keys(payload.booking).sort()).toEqual(['currency', 'end', 'locale', 'meetingPoint', 'metadataRows', 'priceMinor', 'quantity', 'reference', 'serviceSlug', 'start']);
+      expect(Object.keys(payload.booking).sort()).toEqual(['currency', 'end', 'locale', 'meetingPoint', 'metadataRows', 'priceMinor', 'quantity', 'reference', 'serviceSlug', 'serviceTitle', 'start']);
     });
 
     it('includes the chosen point for a declared usesMeetingPoint: true option (custom_dropoff)', async () => {
@@ -342,7 +342,10 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     expect(repo.rows.get(seeded.id)?.status).toBe('expired');
   });
 
-  it('reports pending when a completed expired session fails payment verification', async () => {
+  // A completed session that will never verify is a dead end: the customer is told so instead of
+  // polling forever, and the operator gets an incident because money may have moved for a booking
+  // that does not exist.
+  it('reports failed and opens an incident when a completed session fails payment verification', async () => {
     const seeded = booking({
       id: 'b-status-expired-mismatch',
       status: 'expired',
@@ -376,12 +379,19 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_expired_mismatch'), context);
     expect(response.status).toBe(200);
     expectSensitiveHeaders(response);
-    await expect(response.json()).resolves.toEqual({ status: 'pending', booking: null });
+    await expect(response.json()).resolves.toEqual({ status: 'failed', booking: null });
     expect(warnings).toEqual([{
       message: 'payment verification rejected',
       data: { bookingId: seeded.id, reason: 'amount_mismatch' },
     }]);
     expect(repo.rows.get(seeded.id)?.status).toBe('expired');
+    // Keyed by reason, so a later rejection for a different reason is its own incident.
+    expect(await repo.getIncidentBySource('payment_verification', `${seeded.id}:amount_mismatch`)).toMatchObject({
+      bookingId: seeded.id,
+      action: 'payment_verification_rejected',
+      severity: 'action_required',
+      status: 'open',
+    });
   });
 
   it('reports not_found for an unknown session_id', async () => {
@@ -438,7 +448,9 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     expect(repo.rows.get(seeded.id)?.status).toBe('hold');
   });
 
-  it('withholds confirmed details after the status detail grace window', async () => {
+  // After the grace window the payload narrows to the bare summary — enough for a returning visitor
+  // to recognize the booking, with the personal details, price and pickup left to the email.
+  it('narrows confirmed details to the summary after the status detail grace window', async () => {
     const seeded = booking({
       id: 'b-status-confirmed-aged',
       paymentSessionRef: 'cs_status_confirmed_aged',
@@ -459,7 +471,19 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     expect(response.status).toBe(200);
     expectSensitiveHeaders(response);
     const payload = await response.json() as Record<string, unknown>;
-    expect(payload).toEqual({ status: 'confirmed', booking: null });
+    expect(payload).toEqual({
+      status: 'confirmed',
+      booking: {
+        reference: seeded.reference,
+        serviceTitle: 'Vintage Tour',
+        start: utcToLocalIso(seeded.startsAt, config.business.timezone),
+        end: utcToLocalIso(seeded.endsAt, config.business.timezone),
+        locale: seeded.locale,
+      },
+    });
+    // The summary is the leak guard's other half: no price, no quantity, no pickup, no metadata.
+    expect(payload.booking).not.toHaveProperty('priceMinor');
+    expect(payload.booking).not.toHaveProperty('metadataRows');
   });
 
   it('does not renew confirmed details when fulfillment updates the booking', async () => {
@@ -490,7 +514,20 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_confirmed_renewal'), context);
     expect(response.status).toBe(200);
     expectSensitiveHeaders(response);
-    await expect(response.json()).resolves.toEqual({ status: 'confirmed', booking: null });
+    // The grace window is measured from createdAt, so a fulfillment write bumping updatedAt does not
+    // hand the full details back — the caller still gets the narrowed summary.
+    const payload = await response.json() as Record<string, unknown>;
+    expect(payload).toEqual({
+      status: 'confirmed',
+      booking: {
+        reference: seeded.reference,
+        serviceTitle: 'Vintage Tour',
+        start: utcToLocalIso(seeded.startsAt, config.business.timezone),
+        end: utcToLocalIso(seeded.endsAt, config.business.timezone),
+        locale: seeded.locale,
+      },
+    });
+    expect(payload.booking).not.toHaveProperty('metadataRows');
     expect(repo.rows.get(seeded.id)).toMatchObject({ createdAt: seeded.createdAt, updatedAt: now });
     expect(sideEffectOperation(repo, seeded.id, { family: 'calendar_create' })).toMatchObject({ status: 'succeeded' });
   });
