@@ -12,6 +12,7 @@ import { fakeRepository, providers } from './fakes';
 // A second, location-less service so the matrix covers both pricing axes: quantity
 // tiers alone, and quantity tiers x declared pickup ids.
 const cruise: ResolvedServiceConfig = {
+  title: 'River Cruise',
   durationMin: 60,
   turnaroundMin: 30,
   schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], firstStart: '09:00', lastStart: '12:00', intervalMin: 30 }],
@@ -106,7 +107,13 @@ describe('POST /api/booking/quote', () => {
   it('rejects an unknown service and an unpriceable party size', async () => {
     const unknownService = await quote({ serviceSlug: 'nope', quantity: 2, pickup: 'default' });
     expect(unknownService.status).toBe(400);
-    await expect(unknownService.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: 'Unknown service' } });
+    await expect(unknownService.json()).resolves.toMatchObject({
+      error: {
+        code: 'validation_failed',
+        message: 'serviceSlug must be one of: vintage, cruise',
+        details: { field: 'serviceSlug', allowed: ['vintage', 'cruise'] },
+      },
+    });
 
     const tooLarge = await quote({ serviceSlug: 'vintage', quantity: 9, pickup: 'default' });
     expect(tooLarge.status).toBe(400);
@@ -117,9 +124,16 @@ describe('POST /api/booking/quote', () => {
     await expect(zero.json()).resolves.toMatchObject({ error: { code: 'validation_failed' } });
   });
 
-  it('accepts a locale for payload symmetry with checkout and still rejects a non-string one', async () => {
-    await expect((await quote({ serviceSlug: 'cruise', quantity: 2, locale: 'pt' })).status).toBe(200);
-    expect((await quote({ serviceSlug: 'cruise', quantity: 2, locale: 42 })).status).toBe(400);
+  // A price never varies by locale, so the field is no longer part of QuoteRequest. It is dropped
+  // without a word — including a malformed one — so a payload builder shared with checkout keeps working.
+  it('ignores a locale sent for payload symmetry with checkout, whatever its type', async () => {
+    const accepted = await quote({ serviceSlug: 'cruise', quantity: 2, locale: 'pt' });
+    expect(accepted.status).toBe(200);
+    await expect(accepted.json()).resolves.toEqual({ priceMinor: 4200, currency: 'eur' });
+
+    const malformed = await quote({ serviceSlug: 'cruise', quantity: 2, locale: 42 });
+    expect(malformed.status).toBe(200);
+    await expect(malformed.json()).resolves.toEqual({ priceMinor: 4200, currency: 'eur' });
   });
 
   it('is POST-only', async () => {

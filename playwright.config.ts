@@ -30,7 +30,7 @@ export default defineConfig({
     command: 'bun e2e-dev-server.ts',
     cwd: 'examples/smoke-site',
     env: { RESERVA_E2E_PERSIST: '.wrangler-e2e' },
-    url: `http://localhost:4399/api/booking/availability?tour=oldTown&people=2&from=${readinessFrom}&to=${readinessTo}`,
+    url: `http://localhost:4399/api/booking/availability?serviceSlug=oldTown&quantity=2&from=${readinessFrom}&to=${readinessTo}`,
     reuseExistingServer: false,
     timeout: 120_000,
     // Without this, Playwright's default teardown is an immediate SIGKILL to the process group,

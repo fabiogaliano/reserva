@@ -73,11 +73,12 @@ test('a one-shot provider failure opens an incident, "Try again" resolves it, a 
   await expect(oversellCard).toContainText('no automatic retry is available');
   await expect(oversellCard.getByRole('button', { name: 'I handled this manually' })).toBeVisible();
 
-  // --- "Try again": the forced failure was one-shot, so the row recovers immediately, but the
-  // incident itself only re-resolves on the next reconciliation pass — a second
-  // /dev/reconcile.json call stands in for that next tick.
+  // --- "Try again": the forced failure was one-shot, so the row recovers immediately and the
+  // redirect reports the real outcome ('Marked as handled.') instead of a generic "retry attempted"
+  // that said nothing about whether it worked. A further reconciliation pass must leave it resolved.
   await retryCard.getByRole('button', { name: 'Try again' }).click();
-  await expect(page.locator('#bk-incidents')).toContainText('Retry attempted');
+  await expect(page.locator('#bk-incidents')).toContainText('Marked as handled');
+  await expect(page.locator('.bk-incident-card', { hasText: retryTarget.reference })).toHaveCount(0);
   await request.post('/dev/reconcile.json', { headers: DEV_POST_HEADERS });
   await page.reload();
   await expect(page.locator('.bk-incident-card', { hasText: retryTarget.reference })).toHaveCount(0);

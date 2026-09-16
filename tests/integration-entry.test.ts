@@ -29,7 +29,7 @@ function setup(options: Record<string, unknown> = { config, runtimeEntrypoint: '
 describe('Astro integration entry', () => {
   it('validates at setup and injects every non-prerendered route', () => {
     const { routes } = setup();
-    expect(routes).toHaveLength(18);
+    expect(routes).toHaveLength(19);
     expect(routes.every((route) => route.prerender === false)).toBe(true);
     expect(routes.map((route) => route.pattern)).toEqual(expect.arrayContaining([
       '/api/booking/availability',
@@ -42,6 +42,8 @@ describe('Astro integration entry', () => {
       '/api/booking/operator/cancel',
       '/api/booking/operator/reschedule',
       '/api/booking/operator/no-show',
+      // The ops reconcile route (plan item 13) replaces the second cron Worker.
+      '/api/booking/ops/reconcile',
       '/booking/admin',
       '/booking/manage',
       '/booking-confirmation',

@@ -2,6 +2,7 @@ import type { Booking } from '../src/core/booking';
 import type { ResolvedClientConfig, ResolvedServiceConfig } from '../src/core/config';
 
 export const service: ResolvedServiceConfig = {
+  title: 'Vintage Tour',
   durationMin: 60,
   turnaroundMin: 30,
   schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], firstStart: '09:00', lastStart: '12:00', intervalMin: 30 }],
@@ -11,15 +12,15 @@ export const service: ResolvedServiceConfig = {
     { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
     { maxQuantity: 8, pickup: 'custom', priceMinor: 20000 },
   ],
-  occupancyFor: (quantity) => quantity > 4 ? 2 : 1,
+  occupancy: { seatsPerUnit: 4 },
   // The v1 top-level meetingPoint shorthand and injected DEFAULT_PICKUP_OPTIONS pair, inlined
   // explicitly under `location` — every existing test that books 'default'/'custom' keeps
   // working unchanged.
   location: {
     meetingPoints: [{ id: 'default', label: 'Praça do Comércio', mapsUrl: 'https://maps.google.com/?q=Praca+do+Comercio' }],
     pickupOptions: [
-      { id: 'default', requiresAddress: false, usesMeetingPoint: true },
-      { id: 'custom', requiresAddress: true, usesMeetingPoint: false },
+      { id: 'default', label: 'Meeting point', requiresAddress: false, usesMeetingPoint: true },
+      { id: 'custom', label: 'Hotel pickup', requiresAddress: true, usesMeetingPoint: false },
     ],
   },
 };
@@ -43,6 +44,7 @@ export const config: ResolvedClientConfig = {
     cancelCutoffHours: 24,
     reschedule: { enabled: true, cutoffHours: 24 },
     limitedThreshold: 2,
+    reminderHoursBefore: 24,
     calendarMaxStaleSeconds: 15 * 60,
   },
   locales: { supported: ['en', 'pt-BR'], default: 'en' },

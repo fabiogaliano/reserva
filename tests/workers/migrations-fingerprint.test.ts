@@ -1,11 +1,13 @@
 // checkReservaMigrationsApplied's filename ledger alone is fooled by a consumer migration reusing
 // reserva's filename without running its SQL. These tests prove the schema fingerprint catches that
-// against real D1: the shipped schema passes, and every clause the fingerprint asserts -- columns,
-// CHECKs, and indexes -- is pinned by damaging exactly that one thing while the ledger stays complete.
+// against real D1: the shipped schema passes, and every clause the fingerprint asserts -- the
+// per-table column and index names replayed from migrations/*.sql into
+// src/generated/schema-fingerprint.ts -- is pinned by damaging exactly that one thing while the
+// ledger stays complete.
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
-import { RESERVA_MIGRATIONS } from '../../src/migrations-manifest';
+import { RESERVA_MIGRATIONS } from '../../src/generated/schema-fingerprint';
 import { checkReservaMigrationsApplied } from '../../src/schema-check';
 
 interface TestEnv {
@@ -19,7 +21,7 @@ const db = bindings.RESERVA_DB;
 // Every table reserva's schema creates, so each test can tear the schema back to nothing before
 // rebuilding exactly the state its scenario needs -- self-contained regardless of whether the pool
 // isolates storage per test.
-const RESERVA_TABLES = ['admin_change_history', 'operational_incidents', 'side_effect_operations', 'refund_operations', 'settings', 'capacity_defaults', 'day_overrides', 'bookings'];
+const RESERVA_TABLES = ['admin_change_history', 'operational_incidents', 'side_effect_operations', 'refund_operations', 'reconciliation_lease', 'settings', 'capacity_defaults', 'day_overrides', 'bookings'];
 
 async function resetSchema() {
   for (const table of RESERVA_TABLES) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
@@ -31,23 +33,6 @@ async function resetSchema() {
 async function applyRealSchema() {
   await resetSchema();
   await applyD1Migrations(db, bindings.TEST_MIGRATIONS, 'd1_migrations');
-}
-
-// SQLite can't ALTER a CHECK constraint and the fingerprint reads sqlite_master text, so damage to a
-// constraint has to be baked into the DDL: rewrite the CREATE TABLE, then restore every explicitly
-// created index (auto-indexes from UNIQUE/PRIMARY KEY have a NULL sql and come back with the table).
-async function rewriteTable(table: string, edit: (createTableSql: string) => string) {
-  const schema = await db.prepare(`SELECT type, sql FROM sqlite_master WHERE tbl_name = '${table}'`)
-    .all<{ type: string; sql: string | null }>();
-  const createTable = schema.results.find((row) => row.type === 'table')?.sql;
-  if (!createTable) throw new Error(`${table} is not in sqlite_master`);
-  const indexes = schema.results.filter((row) => row.type === 'index' && row.sql !== null).map((row) => row.sql as string);
-  const rewritten = edit(createTable);
-  if (rewritten === createTable) throw new Error(`rewriteTable(${table}) changed nothing`);
-
-  await db.prepare(`DROP TABLE ${table}`).run();
-  await db.prepare(rewritten).run();
-  for (const indexSql of indexes) await db.prepare(indexSql).run();
 }
 
 async function expectFingerprintCollision() {
@@ -77,8 +62,8 @@ describe('checkReservaMigrationsApplied schema fingerprint against real D1', () 
 // Each case below applies reserva's real schema, damages exactly one thing the fingerprint asserts,
 // and leaves the ledger complete -- so the test goes green only while that specific clause exists.
 describe('schema fingerprint catches targeted drift in `bookings`', () => {
-  // The token-hash columns carry unique indexes the fingerprint never inspects, and SQLite refuses
-  // to drop an indexed column, so the index goes first -- the fingerprint still sees one change.
+  // SQLite refuses to drop an indexed column, so the index has to go first; the generated
+  // fingerprint lists both the column and the index, so it still fails on the column alone.
   const BOOKINGS_COLUMN_INDEX: Record<string, string | undefined> = {
     cancel_token_hash: 'idx_bookings_cancel_token_hash',
     operator_token_hash: 'idx_bookings_operator_token_hash',
@@ -106,40 +91,9 @@ describe('schema fingerprint catches targeted drift in `bookings`', () => {
     await expectFingerprintCollision();
   });
 
-  it.each([
-    'CHECK (quantity > 0)',
-    'CHECK (ends_at > starts_at)',
-    'CHECK (price_minor >= 0)',
-    "CHECK (status IN ('hold','confirmed','cancelled','expired','no_show'))",
-    "CHECK (cancelled_by IN ('customer','operator') OR cancelled_by IS NULL)",
-  ])('a CHECK constraint absent: %s', async (check) => {
-    await applyRealSchema();
-    await rewriteTable('bookings', (sql) => sql.replace(check, ''));
-
-    await expectFingerprintCollision();
-  });
-
-  it('the retired pickup_type CHECK back in place', async () => {
-    await applyRealSchema();
-    await rewriteTable('bookings', (sql) =>
-      sql.replace(/pickup_type\s+TEXT,/, "pickup_type TEXT CHECK (pickup_type IN ('default','custom')),"));
-
-    await expectFingerprintCollision();
-  });
-
-  it('pickup_type NOT NULL again', async () => {
-    await applyRealSchema();
-    await rewriteTable('bookings', (sql) => sql.replace(/pickup_type\s+TEXT,/, 'pickup_type TEXT NOT NULL,'));
-
-    await expectFingerprintCollision();
-  });
-
-  it('idx_bookings_payment_ref present but no longer partial', async () => {
+  it('an index missing: idx_bookings_payment_ref', async () => {
     await applyRealSchema();
     await db.prepare('DROP INDEX idx_bookings_payment_ref').run();
-    // Name and uniqueness alone aren't enough: without the WHERE clause every NULL payment_ref
-    // would collide, so the fingerprint has to compare the index SQL, not just find the name.
-    await db.prepare('CREATE UNIQUE INDEX idx_bookings_payment_ref ON bookings (payment_ref)').run();
 
     await expectFingerprintCollision();
   });
@@ -157,32 +111,11 @@ describe('schema fingerprint catches targeted drift in `side_effect_operations`'
     await expectFingerprintCollision();
   });
 
-  it('the retired `kind` identity column still present', async () => {
-    await applyRealSchema();
-    await db.prepare('ALTER TABLE side_effect_operations ADD COLUMN kind TEXT').run();
-
-    await expectFingerprintCollision();
-  });
-
   // The other identity columns are all bound into idx_side_effect_operations_identity, so removing
   // one would damage that clause too; these two are the only ones a single change can reach.
   it.each(['event_payload_json', 'failure_started_at'])('a required column missing: %s', async (column) => {
     await applyRealSchema();
     await db.prepare(`ALTER TABLE side_effect_operations DROP COLUMN ${column}`).run();
-
-    await expectFingerprintCollision();
-  });
-
-  it('a family missing from the family CHECK', async () => {
-    await applyRealSchema();
-    await rewriteTable('side_effect_operations', (sql) => sql.replace(/,\s*'webhook'/, ''));
-
-    await expectFingerprintCollision();
-  });
-
-  it("'abandoned' missing from the status CHECK", async () => {
-    await applyRealSchema();
-    await rewriteTable('side_effect_operations', (sql) => sql.replace(/,'abandoned'/, ''));
 
     await expectFingerprintCollision();
   });
@@ -210,13 +143,6 @@ describe('schema fingerprint catches targeted drift in `refund_operations`', () 
       await expectFingerprintCollision();
     },
   );
-
-  it("'abandoned' missing from the widened status CHECK", async () => {
-    await applyRealSchema();
-    await rewriteTable('refund_operations', (sql) => sql.replace(/,'abandoned'/, ''));
-
-    await expectFingerprintCollision();
-  });
 });
 
 describe('schema fingerprint catches targeted drift in `operational_incidents`', () => {
@@ -227,11 +153,43 @@ describe('schema fingerprint catches targeted drift in `operational_incidents`',
     await expectFingerprintCollision();
   });
 
+  // 0003 rebuilt the table to let a deployment-wide incident (`reconciliation_stale`) carry no
+  // booking; a database still on 0002's NOT NULL rebuild has the same columns, so the ledger is
+  // what catches that -- this pins the columns the rebuild kept.
+  it.each(['alert_claim_token', 'resolution_kind'])('a required column missing: %s', async (column) => {
+    await applyRealSchema();
+    await db.prepare(`ALTER TABLE operational_incidents DROP COLUMN ${column}`).run();
+
+    await expectFingerprintCollision();
+  });
+
   it.each(['idx_operational_incidents_open', 'idx_operational_incidents_alert'])(
     'an index missing: %s',
     async (index) => {
       await applyRealSchema();
       await db.prepare(`DROP INDEX ${index}`).run();
+
+      await expectFingerprintCollision();
+    },
+  );
+});
+
+// 0003's own table: a database migrated only as far as 0002 has a complete-looking schema apart
+// from this, and the reconciliation lease is what keeps the cron and the ops route from
+// double-claiming the same rows.
+describe('schema fingerprint catches targeted drift in `reconciliation_lease`', () => {
+  it('the table missing entirely', async () => {
+    await applyRealSchema();
+    await db.prepare('DROP TABLE reconciliation_lease').run();
+
+    await expectFingerprintCollision();
+  });
+
+  it.each(['lease_token', 'lease_until', 'last_run_at', 'last_summary'])(
+    'a required column missing: %s',
+    async (column) => {
+      await applyRealSchema();
+      await db.prepare(`ALTER TABLE reconciliation_lease DROP COLUMN ${column}`).run();
 
       await expectFingerprintCollision();
     },

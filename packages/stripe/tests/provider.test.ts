@@ -2,7 +2,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 import Stripe from 'stripe';
 import { describe, expect, it, vi } from 'vitest';
 import { stripe, type StripeClient } from '../src/index';
-import { sessionStatusFromStripe, stripeEventToParsed, stripePaymentMethodTypes } from '../src/provider';
+import { sessionStatusFromStripe, stripeEventToParsed, STRIPE_DELAYED_PAYMENT_METHOD_TYPES } from '../src/provider';
 import type { ResolvedClientConfig, ResolvedServiceConfig } from '@reservajs/astro/core';
 
 // This suite additionally drives the library's internal checkout handler (not just the adapter's
@@ -20,10 +20,10 @@ const mazeTour: ResolvedServiceConfig = {
   location: {
     meetingPoints: service.location!.meetingPoints!,
     pickupOptions: [
-      { id: 'default', requiresAddress: false, usesMeetingPoint: true },
-      { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
-      { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
-      { id: 'meet_elsewhere', requiresAddress: false, usesMeetingPoint: true },
+      { id: 'default', label: 'Default', requiresAddress: false, usesMeetingPoint: true },
+      { id: 'custom_pickup', label: 'Custom pickup', requiresAddress: true, usesMeetingPoint: false },
+      { id: 'custom_dropoff', label: 'Custom dropoff', requiresAddress: true, usesMeetingPoint: true },
+      { id: 'meet_elsewhere', label: 'Meet elsewhere', requiresAddress: false, usesMeetingPoint: true },
     ],
   },
   pricing: [
@@ -101,17 +101,19 @@ describe('stripe() adapter', () => {
     const { client, sessions } = makeClient();
     const provider = stripe({
       secretKey: 'sk_test', webhookSecret: 'whsec_test', client,
-      // The method list is the Stripe adapter's own option, not core config — passed here so
-      // this contract test still covers a multi-method session.
-      paymentMethods: ['card', 'mb_way'],
       now: () => new Date('2026-01-01T00:00:00.000Z'),
-      getServiceName: (b) => `Vintage service (${b.locale})`,
-      getSuccessUrl: () => 'https://example.test/booking-confirmation?session_id={CHECKOUT_SESSION_ID}',
-      getCancelUrl: (b) => `https://example.test/services/${b.serviceSlug}`,
+      lineItemName: (b) => `Vintage service (${b.locale})`,
+      successUrl: () => 'https://example.test/booking-confirmation?sessionId={CHECKOUT_SESSION_ID}',
+      cancelUrl: (b) => `https://example.test/services/${b.serviceSlug}`,
     });
-    await expect(provider.createCheckout(booking({ pickupType: 'custom' }), config)).resolves.toEqual({ url: 'https://checkout.test/cs_created', sessionRef: 'cs_created' });
+    await expect(provider.createCheckout(booking({ pickupType: 'custom' }), config)).resolves.toEqual({
+      url: 'https://checkout.test/cs_created', sessionRef: 'cs_created', expiresAt: '2026-01-01T00:30:00.000Z',
+    });
     expect(sessions.create).toHaveBeenCalledWith(expect.objectContaining({
-      mode: 'payment', expires_at: 1767227400, locale: 'en', payment_method_types: ['card', 'mb_way'],
+      mode: 'payment', expires_at: 1767227400, locale: 'en', submit_type: 'book',
+      // Methods are dashboard-managed: the session must not pin a list, only exclude the
+      // delayed-notification ones Reserva cannot honour.
+      excluded_payment_method_types: [...STRIPE_DELAYED_PAYMENT_METHOD_TYPES],
       phone_number_collection: { enabled: true }, consent_collection: { terms_of_service: 'required' }, metadata: { bookingId: 'booking-1' },
       payment_intent_data: { metadata: { bookingId: 'booking-1' } },
       custom_fields: [{ key: 'pickup_address', label: { type: 'custom', custom: 'Pickup address' }, type: 'text' }],
@@ -151,13 +153,13 @@ describe('stripe() adapter', () => {
     const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client: prefixed.client });
     await provider.createCheckout(booking(), config, resolveRouteConfig('/en').paths);
     const prefixedParams = prefixed.sessions.create.mock.calls[0]?.[0];
-    expect(prefixedParams?.success_url).toContain('/en/booking-confirmation?session_id=');
-    expect(prefixedParams?.success_url).not.toContain(`${config.business.url}/booking-confirmation?session_id=`);
+    expect(prefixedParams?.success_url).toContain('/en/booking-confirmation?sessionId=');
+    expect(prefixedParams?.success_url).not.toContain(`${config.business.url}/booking-confirmation?sessionId=`);
 
     const unprefixed = makeClient();
     const fallbackProvider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client: unprefixed.client });
     await fallbackProvider.createCheckout(booking(), config);
-    expect(unprefixed.sessions.create.mock.calls[0]?.[0].success_url).toContain('/booking-confirmation?session_id=');
+    expect(unprefixed.sessions.create.mock.calls[0]?.[0].success_url).toContain('/booking-confirmation?sessionId=');
   });
 
   it('omits pickup custom fields for the default pickup', async () => {
@@ -536,8 +538,10 @@ describe('Checkout idempotency', () => {
     const now = () => new Date('2026-06-15T08:00:00.000Z').getTime() + (tick++) * 60_000;
     const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client, now });
 
+    // The replayed session carries no expires_at of its own, so the deadline falls back to the
+    // one the (unchanged) params asked for.
     await expect(provider.createCheckout(booking(), config)).resolves.toEqual({
-      url: 'https://checkout.test/cs_original', sessionRef: 'cs_original',
+      url: 'https://checkout.test/cs_original', sessionRef: 'cs_original', expiresAt: '2026-06-15T08:30:00.000Z',
     });
     expect(create).toHaveBeenCalledTimes(2);
     // Param drift (e.g. a recomputed expires_at) would make a real Stripe retry 409 instead of
@@ -662,12 +666,23 @@ describe('stripe() validateConfig', () => {
 });
 
 describe('Stripe mapping helpers', () => {
-  it('maps payment methods and full-refund charge amounts', () => {
-    expect(stripePaymentMethodTypes(['card', 'mb_way'])).toEqual(['card', 'mb_way']);
+  it('curates the delayed-method exclusion list without the wallets Stripe rejects there', () => {
+    expect(STRIPE_DELAYED_PAYMENT_METHOD_TYPES).toContain('multibanco');
+    expect(STRIPE_DELAYED_PAYMENT_METHOD_TYPES).toContain('sepa_debit');
+    for (const wallet of ['apple_pay', 'google_pay', 'link']) {
+      expect(STRIPE_DELAYED_PAYMENT_METHOD_TYPES).not.toContain(wallet);
+    }
+  });
+
+  it('maps full-refund charge amounts, leaving the refund id unread', () => {
+    // Stripe stopped expanding `charge.refunds` (API 2022-11-15), so the cancel-on-full-refund
+    // path keys off the amounts and carries no refundRef.
     expect(stripeEventToParsed({ id: 'evt_refund', type: 'charge.refunded', data: { object: {
       metadata: { bookingId: 'booking-1' }, payment_intent: { id: 'pi_1' }, amount_captured: 10000, amount_refunded: 10000,
-      refunds: { data: [{ id: 're_1' }] },
-    } } } as unknown as Stripe.Event)).toMatchObject({ bookingId: 'booking-1', paymentRef: 'pi_1', amountCaptured: 10000, amountRefunded: 10000, refundRef: 're_1' });
+    } } } as unknown as Stripe.Event)).toMatchObject({ bookingId: 'booking-1', paymentRef: 'pi_1', amountCaptured: 10000, amountRefunded: 10000 });
+    expect(stripeEventToParsed({ id: 'evt_refund', type: 'charge.refunded', data: { object: {
+      metadata: { bookingId: 'booking-1' }, payment_intent: { id: 'pi_1' }, amount_captured: 10000, amount_refunded: 10000,
+    } } } as unknown as Stripe.Event).refundRef).toBeUndefined();
   });
 
   it('maps a session to the public status shape', () => {

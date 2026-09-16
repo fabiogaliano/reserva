@@ -103,7 +103,12 @@ describe('payment verification parity', () => {
     const statusResponse = await handleStatus(new Request('https://example.test/status?session_id=cs_1'), statusContext);
     const statusPayload = await statusResponse.json() as { status: string };
 
-    expect(webhookResponse.status).toBe(scenario.allowed ? 200 : 409);
+    // An unpaid completed session is a delayed payment method, which Reserva refuses by releasing
+    // the hold and acknowledging the event — a 409 would only make the provider redeliver something
+    // that can never become acceptable. Every other rejection still answers 409.
+    const refusedDelayed = scenario.paymentStatus === 'unpaid';
+    expect(webhookResponse.status).toBe(scenario.allowed || refusedDelayed ? 200 : 409);
+    if (refusedDelayed) expect(webhookRepo.rows.get(current.id)?.status).toBe('expired');
     expect(statusPayload.status === 'confirmed').toBe(scenario.allowed);
     expect(webhookRepo.rows.get(current.id)?.status === 'confirmed').toBe(statusRepo.rows.get(current.id)?.status === 'confirmed');
   });

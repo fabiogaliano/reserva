@@ -5,7 +5,7 @@ import { format } from 'date-fns';
 // literal rather than imported so this spec doesn't reach into smoke-site internals.
 const SMOKE_TEST_PICKUP_ADDRESS = '42 Fixture Lane, Testville';
 
-async function bookMaze(page: import('@playwright/test').Page, pickupType: string, meetingPointId?: string) {
+async function bookMaze(page: import('@playwright/test').Page, pickup: string, meetingPointId?: string) {
   await page.goto('/maze');
   await page.getByLabel('How many people?').selectOption('2');
 
@@ -14,7 +14,7 @@ async function bookMaze(page: import('@playwright/test').Page, pickupType: strin
   // mid-flow, right after selecting the option, before submitting.
   const from = format(new Date(), 'yyyy-MM-dd');
   const to = format(new Date(Date.now() + 30 * 86_400_000), 'yyyy-MM-dd');
-  const res = await page.request.get(`/api/booking/availability?service=mazeRiverside&quantity=2&from=${from}&to=${to}`);
+  const res = await page.request.get(`/api/booking/availability?serviceSlug=mazeRiverside&quantity=2&from=${from}&to=${to}`);
   const availability = await res.json();
   const openDay = availability.days.find((d: any) => d.slots.length > 0);
   if (!openDay) throw new Error('No available days found for service mazeRiverside with 2 quantity');
@@ -28,7 +28,7 @@ async function bookMaze(page: import('@playwright/test').Page, pickupType: strin
   }, openDay.date);
   await page.getByRole('radiogroup').getByRole('radio').first().check();
 
-  await page.locator(`input[name="pickupType"][value="${pickupType}"]`).check();
+  await page.locator(`input[name="pickup"][value="${pickup}"]`).check();
   if (meetingPointId) {
     await page.locator(`input[name="meetingPointId"][value="${meetingPointId}"]`).check();
   }
@@ -41,7 +41,7 @@ async function bookMaze(page: import('@playwright/test').Page, pickupType: strin
   });
 
   await page.getByRole('button', { name: 'Continue to payment' }).click();
-  await page.waitForURL(/\/booking-confirmation\?session_id=/);
+  await page.waitForURL(/\/booking-confirmation\?sessionId=/);
 
   const reference = await page.locator('.bk-ticket-ref .bk-mono').innerText();
   expect(reference).toBeTruthy();
@@ -69,7 +69,7 @@ test('booking the 210 € custom pick-up & drop-off option shows the server-stor
 
   const from = format(new Date(), 'yyyy-MM-dd');
   const to = format(new Date(Date.now() + 30 * 86_400_000), 'yyyy-MM-dd');
-  const res = await page.request.get(`/api/booking/availability?service=mazeRiverside&quantity=2&from=${from}&to=${to}`);
+  const res = await page.request.get(`/api/booking/availability?serviceSlug=mazeRiverside&quantity=2&from=${from}&to=${to}`);
   const availability = await res.json();
   const openDay = availability.days.find((d: any) => d.slots.length > 0);
   if (!openDay) throw new Error('No available days found for service mazeRiverside with 2 quantity');
@@ -83,7 +83,7 @@ test('booking the 210 € custom pick-up & drop-off option shows the server-stor
   }, openDay.date);
   await page.getByRole('radiogroup').getByRole('radio').first().check();
 
-  await page.locator('input[name="pickupType"][value="custom_both"]').check();
+  await page.locator('input[name="pickup"][value="custom_both"]').check();
   // This number now comes from POST /api/booking/quote — the widget has no price table of its
   // own — so seeing 210 here proves the quote endpoint prices the same combination checkout
   // charges for below.
@@ -97,7 +97,7 @@ test('booking the 210 € custom pick-up & drop-off option shows the server-stor
   });
 
   await page.getByRole('button', { name: 'Continue to payment' }).click();
-  await page.waitForURL(/\/booking-confirmation\?session_id=/);
+  await page.waitForURL(/\/booking-confirmation\?sessionId=/);
   expect(checkoutBody).not.toHaveProperty('meetingPointId');
 
   const reference = await page.locator('.bk-ticket-ref .bk-mono').innerText();
@@ -129,7 +129,7 @@ test('booking the 210 € custom pick-up & drop-off option shows the server-stor
   const token = manageUrl.searchParams.get('token');
   const manageJson = await (await request.get(`/api/booking/manage?token=${encodeURIComponent(token ?? '')}`)).json();
   expect(manageJson.booking).toMatchObject({
-    pickupType: 'custom_both',
+    pickup: 'custom_both',
     pickupAddress: SMOKE_TEST_PICKUP_ADDRESS,
     pickupRequiresAddress: true,
     pickupUsesMeetingPoint: false,
@@ -163,7 +163,7 @@ test('custom drop-off carries the selected second meeting point and the collecte
   const token = manageUrl.searchParams.get('token');
   const manageJson = await (await request.get(`/api/booking/manage?token=${encodeURIComponent(token ?? '')}`)).json();
   expect(manageJson.booking).toMatchObject({
-    pickupType: 'custom_dropoff',
+    pickup: 'custom_dropoff',
     pickupAddress: SMOKE_TEST_PICKUP_ADDRESS,
     pickupRequiresAddress: true,
     pickupUsesMeetingPoint: true,
@@ -185,7 +185,7 @@ test('custom pick-up hides and disables the meeting-point group, and the checkou
   await expect(group).toBeVisible();
   await expect(points.first()).toBeChecked();
 
-  await page.locator('input[name="pickupType"][value="custom_pickup"]').check();
+  await page.locator('input[name="pickup"][value="custom_pickup"]').check();
   await expect(group).toBeHidden();
   await expect(points.first()).toBeDisabled();
 

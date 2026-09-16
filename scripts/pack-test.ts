@@ -187,12 +187,6 @@ function typecheck(consumerDir: string, subpaths: string[]): void {
   }
 }
 
-// `astro build` compiles the `.astro` exports via the fixture's own pages, and proves the injected
-// routes are actually mounted in the built worker entry.
-function scheduledWorkerBuild(consumerDir: string): void {
-  const result = run('bunx', ['wrangler', 'deploy', '--dry-run', '--config', 'wrangler.scheduled.jsonc', '--outdir', 'dist-scheduled'], { cwd: consumerDir });
-  if (result.status !== 0) fail('scheduled-build', `packed consumer scheduled Worker build failed:\n${result.stdout}\n${result.stderr}`);
-}
 
 function findMjsFilesRecursive(dir: string): string[] {
   const files: string[] = [];
@@ -246,6 +240,34 @@ function astroBuild(consumerDir: string): void {
       );
     }
   }
+
+  assertSingleWorkerEntry(consumerDir, entryPath);
+}
+
+// One Worker, not two: the fixture points `main` at its own `src/worker.ts`, so the adapter builds
+// that file as the entry and `scheduled` has to ship beside `fetch` — the cron no longer needs a
+// second Worker with a duplicated copy of every secret.
+function assertSingleWorkerEntry(consumerDir: string, entryPath: string): void {
+  const builtConfigPath = resolve(consumerDir, 'dist/server/wrangler.json');
+  if (!existsSync(builtConfigPath)) fail('build', `expected generated Worker config missing: ${builtConfigPath}`);
+  const builtConfig = JSON.parse(readFileSync(builtConfigPath, 'utf8')) as { triggers?: { crons?: string[] } };
+  if (!builtConfig.triggers?.crons?.length) {
+    fail('build', 'the generated Worker config carries no `triggers.crons`, so the reconciliation sweep would never run');
+  }
+
+  // The adapter re-exports the consumer entry's default object under a generated name; read that
+  // object literal rather than grepping the whole bundle, which also contains the library's own
+  // `fetch`/`scheduled` identifiers.
+  const entry = readFileSync(entryPath, 'utf8');
+  const defaultExport = /export\s*\{[^}]*?(\w+)\s+as\s+default[^}]*\}/.exec(entry)?.[1];
+  if (!defaultExport) fail('build', `could not find the default export of ${entryPath}`);
+  const handlerObject = new RegExp(`(?:var|const|let)\\s+${defaultExport}\\s*=\\s*\\{([\\s\\S]*?)\\n\\}`).exec(entry)?.[1];
+  if (handlerObject === undefined) fail('build', `the default export of ${entryPath} is not an exported-handler object literal`);
+  for (const handler of ['fetch', 'scheduled']) {
+    if (!new RegExp(`(^|\\s)${handler}\\s*:`).test(handlerObject)) {
+      fail('build', `the built Worker entry does not export \`${handler}\`; found: ${handlerObject.trim()}`);
+    }
+  }
 }
 
 // An installed consumer with no `migrations_dir` must still get reserva's packaged migrations
@@ -294,10 +316,7 @@ function buildConsumer(workDir: string, spec: ConsumerSpec): void {
   const subpaths = writeImportAll(consumerDir, spec.extraImports);
   typecheck(consumerDir, subpaths);
 
-  console.log(`pack-test: [${spec.name}] building the packed consumer scheduled Worker`);
-  scheduledWorkerBuild(consumerDir);
-
-  console.log(`pack-test: [${spec.name}] astro build (compiles .astro exports, mounts injected routes)`);
+  console.log(`pack-test: [${spec.name}] astro build (compiles .astro exports, mounts injected routes, bundles fetch + scheduled)`);
   astroBuild(consumerDir);
 
   console.log(`pack-test: [${spec.name}] bunx reserva-migrate --local (packaged migrations)`);

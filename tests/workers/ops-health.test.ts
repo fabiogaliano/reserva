@@ -1,27 +1,30 @@
 // Tests the ops-health endpoint against real D1 — the aggregate is SQL (a GROUP BY over the
 // `family` column), so a fake repository would prove nothing about it.
 import { env } from 'cloudflare:workers';
+import virtualConfig from 'virtual:reserva/config';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { AdminIdentity } from '../../src/access';
 import type { ReservaContext } from '../../src/context';
 import type { OpsHealthResponse } from '../../src/core/api';
 import { handleOpsHealth } from '../../src/handlers';
 import { defineCloudflareReservaRuntime } from '../../src/runtime-context';
-import { config as baseConfig } from '../fixtures';
 import { providers } from '../fakes';
 
 interface TestEnv {
   RESERVA_DB: D1Database;
 }
 
+// The runtime takes no config argument any more, so dropping `admin.access` — the whole point of
+// the custom-adminAuth path below — has to happen in `virtual:reserva/config` itself. Swapped in
+// place rather than with `vi.mock`, which cannot reach it here: the workers pool evaluates its
+// `main` entry (tests/workers/worker.ts) before the test module, so src/runtime-context is already
+// bound to the real virtual module by the time a mock could be registered.
+const { access: _omitAccess, ...adminWithoutAccess } = virtualConfig.config.admin;
+virtualConfig.config = { ...virtualConfig.config, admin: adminWithoutAccess };
+
 const db = (env as unknown as TestEnv).RESERVA_DB;
 const ADMIN_TOKEN_SECRET = 'TEST_OPS_HEALTH_TOKEN';
 const ADMIN_TOKEN_VALUE = 'ops-health-admin-secret';
-
-function configWithoutAccess(): typeof baseConfig {
-  const { access: _omit, ...adminWithoutAccess } = baseConfig.admin;
-  return { ...baseConfig, admin: adminWithoutAccess };
-}
 
 async function headerTokenAdminAuth(request: Request, context: ReservaContext): Promise<AdminIdentity | null> {
   const expected = await context.secrets?.(ADMIN_TOKEN_SECRET);
@@ -30,7 +33,7 @@ async function headerTokenAdminAuth(request: Request, context: ReservaContext): 
   return { subject: 'ops-health-admin' };
 }
 
-const runtime = defineCloudflareReservaRuntime(configWithoutAccess(), {
+const runtime = defineCloudflareReservaRuntime({
   providers: providers(),
   adminAuth: headerTokenAdminAuth,
   secretBindings: ['RESERVA_OPERATOR_SECRET', ADMIN_TOKEN_SECRET],
@@ -102,6 +105,9 @@ async function seedDebt(context: ReservaContext): Promise<void> {
 
 beforeEach(async () => {
   await db.prepare('DELETE FROM operational_incidents').run();
+  // The sweep's lease row is deployment-wide state: left over from another file it would make
+  // `reconciliation.lastRunAt` — and the staleness verdict derived from it — order-dependent.
+  await db.prepare("UPDATE reconciliation_lease SET lease_token = NULL, lease_until = NULL, last_run_at = NULL, last_summary = NULL WHERE id = 'singleton'").run();
   await db.prepare('DELETE FROM side_effect_operations').run();
   await db.prepare('DELETE FROM refund_operations').run();
   await db.prepare('DELETE FROM bookings').run();
@@ -141,7 +147,12 @@ describe('GET /api/booking/ops/health', () => {
     expect(payload.outbox.oldestPendingAgeSeconds).toBeGreaterThanOrEqual(3 * 3600 - 60);
     expect(payload.outbox.oldestPendingAgeSeconds).toBeLessThan(3 * 3600 + 60);
 
-    expect(payload.incidents).toEqual({ open: 1 });
+    // Two: the seeded confirmation-email incident, plus the `reconciliation_stale` one this very
+    // read opens because the sweep has never run in this database.
+    expect(payload.incidents).toEqual({ open: 2 });
+    expect(payload.reconciliation).toEqual({ lastRunAt: null, lastSummary: null });
+    // Secrets are wired for the header-token identity only, so both optional layers report `off`.
+    expect(payload.security).toEqual({ csrfTokenLayer: 'off', tokenEncryption: 'off', adminAuth: 'custom' });
   });
 
   it('reports a fully drained deployment with empty collections, not missing keys', async () => {
@@ -149,7 +160,10 @@ describe('GET /api/booking/ops/health', () => {
     const response = await handleOpsHealth(healthRequest({ 'x-admin-token': ADMIN_TOKEN_VALUE }), context);
     const payload = await response.json() as OpsHealthResponse;
     expect(payload.outbox).toEqual({ pending: 0, abandoned: 0, oldestPendingAgeSeconds: null, families: [] });
-    expect(payload.incidents.open).toBe(0);
+    // Drained of booking-level debt, but a deployment whose sweep has never run is still not
+    // healthy — the read opens `reconciliation_stale` and counts it.
+    expect(payload.incidents.open).toBe(1);
+    expect(payload.reconciliation).toEqual({ lastRunAt: null, lastSummary: null });
   });
 
   it('carries no booking data and accepts no parameters', async () => {

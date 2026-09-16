@@ -68,6 +68,8 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
   const holdIps = new Map<string, string>();
   const settings = new Map<string, string>();
   const leases = new Map<string, { token: string; until: string }>();
+  // The deployment-wide reconciliation_lease singleton row.
+  const reconciliationLease: { token: string | null; until: string | null; lastRunAt: string | null; lastSummary: string | null } = { token: null, until: null, lastRunAt: null, lastSummary: null };
   // Mirrors day_overrides / capacity_defaults (src/repo.ts:1425-1458): date/from_date -> row.
   const dayOverrides = new Map<string, { capacity: number; reason: string | null }>();
   const capacityDefaults = new Map<string, { capacity: number; reason: string | null }>();
@@ -171,7 +173,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
   // overlap calc that could drift from src/repo.ts's own guard. occupancyMeta's per-row units/
   // endsAt are smuggled through a trivial zero-turnaround service so getOccupancyIntervals does
   // the real bookkeeping instead of a second, parallel implementation of it.
-  const zeroTurnaroundTour: OccupancyService = { turnaroundMin: 0, occupancyFor: (units) => units };
+  const zeroTurnaroundTour: OccupancyService = { turnaroundMin: 0, occupancy: { seatsPerUnit: 1 } };
   const toOccupancyBooking = (item: Booking): OccupancyBooking => {
     const meta = occupancyMeta.get(item.id);
     return {
@@ -652,11 +654,47 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       .filter((item) => item.startsAt >= now && (item.status === 'confirmed' || (item.status === 'hold' && item.holdExpiresAt !== null && item.holdExpiresAt > now)))
       .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
       .map(hydrateBooking),
+    // Mirrors src/repo.ts: the list queries leave tokens as stored and the caller hydrates only the
+    // rows it renders. Idempotent, so a row that arrived hydrated stays correct.
+    hydrateBookingTokens: async (bookings) => bookings.map(hydrateBooking),
     // Mirrors src/repo.ts listAllFrom — starts_at >= bound, any status, ordered by starts_at.
     listAllFrom: async (startsAtFrom) => [...rows.values()]
       .filter((item) => item.startsAt >= startsAtFrom)
       .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
       .map(hydrateBooking),
+    // Mirrors src/repo.ts's reminder query: confirmed, starting inside (now, until], booked before
+    // the window opened, and with no reminder row for that exact start yet.
+    listReminderCandidates: async (now, until, reminderHours, limit) => [...rows.values()]
+      .filter((item) => item.status === 'confirmed'
+        && item.startsAt > now && item.startsAt <= until
+        && Date.parse(item.createdAt) < Date.parse(item.startsAt) - reminderHours * 3_600_000
+        && ![...sideEffectOperations.values()].some((operation) => operation.bookingId === item.id
+          && operation.family === 'email' && operation.event === 'booking.reminder'
+          && operation.discriminator === item.startsAt))
+      .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
+      .slice(0, limit)
+      .map(hydrateBooking),
+    // Mirrors the single-row reconciliation_lease compare-and-set: an expired lease is takeable, a
+    // live one is not, and only the holder may release it.
+    acquireReconciliationLease: async (token, now, leaseUntil) => {
+      if (reconciliationLease.token !== null && reconciliationLease.until !== null && reconciliationLease.until > now) return false;
+      reconciliationLease.token = token;
+      reconciliationLease.until = leaseUntil;
+      return true;
+    },
+    releaseReconciliationLease: async (token, completion) => {
+      if (reconciliationLease.token !== token) return;
+      reconciliationLease.token = null;
+      reconciliationLease.until = null;
+      if (completion) {
+        reconciliationLease.lastRunAt = completion.lastRunAt;
+        reconciliationLease.lastSummary = completion.lastSummary;
+      }
+    },
+    readReconciliationLease: async () => ({
+      lastRunAt: reconciliationLease.lastRunAt,
+      lastSummary: reconciliationLease.lastSummary,
+    }),
     // Mirrors src/repo.ts:1425-1428 — exact-date lookup.
     getDayOverride: async (date) => {
       const found = dayOverrides.get(date);

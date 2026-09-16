@@ -31,8 +31,13 @@ describe('Astro smoke fixture', () => {
     const fixture = resolve(import.meta.dirname, '../examples/smoke-site');
     const runtime = readFileSync(resolve(fixture, 'src/runtime.ts'), 'utf8');
     const wrangler = readFileSync(resolve(fixture, 'wrangler.jsonc'), 'utf8');
-    expect(runtime).toContain('amountTotal: session.amountTotal');
-    expect(runtime).toContain('currency: session.currency');
+    // The fakes moved into the library's `./dev` entry (plan item 15), so the reference consumer
+    // wires them rather than hand-rolling them -- the payment fields the workers smoke test reads
+    // are now the shipped provider's.
+    expect(runtime).toContain('devProviders(');
+    const devProviders = readFileSync(resolve(import.meta.dirname, '../src/dev/index.ts'), 'utf8');
+    expect(devProviders).toContain('amountTotal: session.amountTotal');
+    expect(devProviders).toContain('currency: session.currency');
     // Reserva's own secret names are readable without being restated, so the reference consumer must not list them.
     expect(runtime).not.toContain('secretBindings');
     expect(wrangler).toContain('"RESERVA_TOKEN_ENC_KEY"');

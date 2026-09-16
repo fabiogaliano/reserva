@@ -27,9 +27,9 @@ const bothFlagsTour: ResolvedServiceConfig = {
   location: {
     meetingPoints: multiPointTour.location!.meetingPoints!,
     pickupOptions: [
-      { id: 'default', requiresAddress: false, usesMeetingPoint: true },
-      { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
-      { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
+      { id: 'default', label: 'Default', requiresAddress: false, usesMeetingPoint: true },
+      { id: 'custom_dropoff', label: 'Custom dropoff', requiresAddress: true, usesMeetingPoint: true },
+      { id: 'custom_pickup', label: 'Custom pickup', requiresAddress: true, usesMeetingPoint: false },
     ],
   },
   pricing: [

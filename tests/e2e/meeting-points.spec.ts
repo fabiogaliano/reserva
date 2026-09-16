@@ -28,7 +28,7 @@ test('custom pickup hides and disables the meeting-point group, and the checkout
   await expect(group).toBeVisible();
   await expect(points.first()).toBeChecked();
 
-  await page.locator('input[name="pickupType"][value="custom"]').check();
+  await page.locator('input[name="pickup"][value="custom"]').check();
   // hidden, not just visually collapsed (see the CSS trap this guards against in
   // src/ui/components.css) — and its radios disabled, which is what actually drops them from the
   // submitted FormData below.
@@ -42,7 +42,7 @@ test('custom pickup hides and disables the meeting-point group, and the checkout
     }
   });
   await page.getByRole('button', { name: 'Continue to payment' }).click();
-  await page.waitForURL(/\/booking-confirmation\?session_id=/);
+  await page.waitForURL(/\/booking-confirmation\?sessionId=/);
 
   expect(checkoutBody).toBeDefined();
   expect(checkoutBody).not.toHaveProperty('meetingPointId');

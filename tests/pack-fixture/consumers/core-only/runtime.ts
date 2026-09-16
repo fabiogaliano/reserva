@@ -3,12 +3,11 @@ import type { PaymentProvider } from '@reservajs/astro/core';
 import { GoogleCalendarProvider } from '@reservajs/astro/providers/calendar-google';
 import { defineCloudflareReservaRuntime, type ReservaProviders } from '@reservajs/astro/runtime';
 import { consoleEmailProvider } from './email-provider';
-import config from './reserva.config';
 
 // The core-only consumer: @reservajs/astro alone, with a payment provider written from the public
 // port. `stripe` is not installed anywhere in this project — if the library still reached for the
 // SDK, this build could not succeed.
-interface Env {
+export interface Env {
   RESERVA_DB: D1Database;
   RESERVA_TOKEN_ENC_KEY: string;
   RESERVA_CSRF_SECRET: string;
@@ -62,6 +61,8 @@ function providers(env: Env): ReservaProviders {
   };
 }
 
-export default defineCloudflareReservaRuntime<Env>(config, {
+// No config argument: the runtime reads the validated config from `virtual:reserva/config`,
+// which the integration emits from the same `reserva.config.ts` astro.config.ts passes it.
+export default defineCloudflareReservaRuntime<Env>({
   providers: ({ env }) => providers(env),
 });

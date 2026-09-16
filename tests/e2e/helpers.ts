@@ -23,7 +23,7 @@ export async function createBooking(page: Page, opts: BookingOpts) {
   // the fixture's schedule and cutoffs are relative to "today", so a fixed date would drift stale.
   const from = format(new Date(), 'yyyy-MM-dd');
   const to = format(new Date(Date.now() + 30 * 86_400_000), 'yyyy-MM-dd');
-  const res = await page.request.get(`/api/booking/availability?service=${opts.service}&quantity=${opts.quantity}&from=${from}&to=${to}`);
+  const res = await page.request.get(`/api/booking/availability?serviceSlug=${opts.service}&quantity=${opts.quantity}&from=${from}&to=${to}`);
   const availability = await res.json();
   const openDay = availability.days.find((d: any) => d.slots.length > 0);
   if (!openDay) {
@@ -44,8 +44,8 @@ export async function createBooking(page: Page, opts: BookingOpts) {
   await page.getByRole('radiogroup').getByRole('radio').first().check();
 
   // 5. Pick pickup — omitted entirely for a location-less service, whose widget renders no
-  // pickupType radios at all.
-  const pickupRadio = page.locator('input[name="pickupType"][value="default"]');
+  // pickup radios at all.
+  const pickupRadio = page.locator('input[name="pickup"][value="default"]');
   if (await pickupRadio.count() > 0) await pickupRadio.check();
 
   // 5b. Pick a non-default meeting point when asked (see BookingOpts.meetingPointId) — the widget
@@ -58,7 +58,7 @@ export async function createBooking(page: Page, opts: BookingOpts) {
   await page.getByRole('button', { name: 'Continue to payment' }).click();
 
   // Wait for redirect to confirmation page
-  await page.waitForURL(/\/booking-confirmation\?session_id=/);
+  await page.waitForURL(/\/booking-confirmation\?sessionId=/);
 
   // Get the booking reference from the confirmation page. No fallback here: a missing reference
   // means the funnel didn't actually complete, which is a failure the caller must see, not paper
@@ -92,13 +92,13 @@ export async function rescheduleViaManagePage(page: Page, currentStart: string):
   const to = await form.getAttribute('data-to');
   if (!service || !quantity || !from || !to) throw new Error('Reschedule form is missing its availability data attributes');
 
-  const res = await page.request.get(`/api/booking/availability?service=${service}&quantity=${quantity}&from=${from}&to=${to}`);
+  const res = await page.request.get(`/api/booking/availability?serviceSlug=${service}&quantity=${quantity}&from=${from}&to=${to}`);
   const availability = await res.json();
-  let target: { date: string; start: string } | undefined;
+  let target: { date: string; start: string; time: string } | undefined;
   for (const day of availability.days) {
     const slot = day.slots.find((candidate: any) => candidate.start !== currentStart);
     if (slot) {
-      target = { date: day.date, start: slot.start };
+      target = { date: day.date, start: slot.start, time: slot.time };
       break;
     }
   }
@@ -115,7 +115,9 @@ export async function rescheduleViaManagePage(page: Page, currentStart: string):
     }
   }, target.date);
 
-  const timeLabel = target.start.slice(11, 16);
+  // The slot's own business-local `HH:MM`, which is exactly what the enhancer renders on the
+  // button — slicing the UTC instant only agrees while the deployment's timezone is UTC.
+  const timeLabel = target.time;
   await page.getByRole('button', { name: timeLabel }).click();
   await page.getByRole('button', { name: 'Reschedule booking' }).click();
 

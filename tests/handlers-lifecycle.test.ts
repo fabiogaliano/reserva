@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { createReservaContext } from '../src/context';
 import type { Booking } from '../src/core/booking';
 import type { ResolvedClientConfig, ResolvedServiceConfig } from '../src/core/config';
+import type { BookingEventHookArgs } from '../src/core/events';
 import { handleAvailability, handleCheckout, handleOperatorNoShow, handlePaymentWebhook } from '../src/handlers';
 import { booking, config, service } from './fixtures';
+import { ReferenceConflictError } from '../src/repo';
 import { fakeRepository, providers, sideEffectOperation } from './fakes';
 
 describe('Reserva handlers', () => {
@@ -146,11 +148,15 @@ describe('Reserva handlers', () => {
     expect(response.status).toBe(409);
   });
 
-  it('does not confirm a paid booking from an unpaid completed event', async () => {
+  // A completed session that is not paid means a delayed payment method got past the dashboard.
+  // Reserva does not support them: the hold is released, the payment is cancelled best-effort, and
+  // the event is acknowledged so the provider stops redelivering something that will never confirm.
+  function refusedDelayedPaymentContext(cancelPayment?: (paymentRef: string) => Promise<void>) {
     const seeded = booking({
       id: 'b-unpaid',
       status: 'hold',
       paymentSessionRef: 'cs_unpaid',
+      paymentRef: 'pi_unpaid',
       holdExpiresAt: '2026-06-14T09:00:00.000Z',
     });
     const repo = fakeRepository([seeded]);
@@ -163,9 +169,10 @@ describe('Reserva handlers', () => {
       providers: providers({
         payments: {
           createCheckout: async () => ({ url: '', sessionRef: '' }),
-          parseWebhook: async () => ({ id: 'evt_unpaid', type: 'checkout_completed', bookingId: seeded.id, sessionRef: 'cs_unpaid', paid: false, amountCaptured: seeded.priceMinor, currency: config.business.currency }),
+          parseWebhook: async () => ({ id: 'evt_unpaid', type: 'checkout_completed', bookingId: seeded.id, sessionRef: 'cs_unpaid', paid: false, paymentStatus: 'unpaid', paymentRef: 'pi_unpaid', amountCaptured: seeded.priceMinor, currency: config.business.currency }),
           getSession: async () => ({ status: 'open' }),
           refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
+          ...(cancelPayment ? { cancelPayment } : {}),
         },
         calendar: {
           listEvents: async () => [],
@@ -175,11 +182,26 @@ describe('Reserva handlers', () => {
         },
       }),
     });
+    return { seeded, repo, context, calendarCreates: () => calendarCreates };
+  }
+
+  it('refuses an unpaid completed event: expires the hold, cancels the payment, and acknowledges', async () => {
+    const cancelled: string[] = [];
+    const { seeded, repo, context, calendarCreates } = refusedDelayedPaymentContext(async (paymentRef) => { cancelled.push(paymentRef); });
 
     const response = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), context);
-    expect(response.status).toBe(409);
-    expect(repo.rows.get(seeded.id)?.status).toBe('hold');
-    expect(calendarCreates).toBe(0);
+    expect(response.status).toBe(200);
+    expect(repo.rows.get(seeded.id)?.status).toBe('expired');
+    expect(cancelled).toEqual(['pi_unpaid']);
+    expect(calendarCreates()).toBe(0);
+  });
+
+  it('still acknowledges a refused unpaid event when cancelling the payment throws', async () => {
+    const { seeded, repo, context } = refusedDelayedPaymentContext(async () => { throw new Error('stripe refused the cancel'); });
+
+    const response = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), context);
+    expect(response.status).toBe(200);
+    expect(repo.rows.get(seeded.id)?.status).toBe('expired');
   });
 
   // A dispute is not a booking transition, so its durable row is written directly and
@@ -207,8 +229,10 @@ describe('Reserva handlers', () => {
       hooks: [{
         name: 'ops',
         durable: true,
-        handler: async (event) => {
-          deliveredEvent = event;
+        // The handler signature is a tuple union now (`settings.changed` carries no booking), so the
+        // parameter list is spelled out rather than narrowed to a single argument.
+        handler: async (...args: BookingEventHookArgs) => {
+          deliveredEvent = args[0];
           await blockedHook;
         },
       }],
@@ -274,23 +298,23 @@ describe('Reserva handlers', () => {
     expect(noShow.status).toBe(403);
   });
 
-  it('recovers from 11 consecutive reference collisions — beyond the old retry cap of 8 — without changing the reference format', async () => {
+  // The pre-read is gone: a taken reference now comes back from the insert itself as a
+  // ReferenceConflictError, which the checkout loop answers by regenerating the sequence. Hooked at
+  // insertHoldWithCapacity (the atomic capacity-guarded INSERT) because that is the entry point
+  // handleCheckout writes through.
+  function collidingCheckout(collisions: number) {
     const repo = fakeRepository();
-    // handleCheckout writes through insertHoldWithCapacity (the atomic
-    // capacity-guarded INSERT), not an unconditional insertHold — hook that entry point so
-    // this still exercises the real retry loop instead of silently no-op-ing.
     const realInsertHold = repo.insertHoldWithCapacity;
     let insertAttempts = 0;
-    // 11 forced collisions exceeds the old retry cap of 8, proving the cap was actually raised to
-    // 12. Marking whatever reference was just attempted as taken (rather than a fixed sequence
-    // range) keeps this deterministic despite the random 1-5 jump.
+    // Marking whatever reference was just attempted as taken (rather than a fixed sequence range)
+    // keeps this deterministic despite the random 1-5 jump between attempts.
     repo.insertHoldWithCapacity = async (input) => {
       insertAttempts += 1;
-      if (insertAttempts <= 11) {
+      if (insertAttempts <= collisions) {
         // Simulate concurrent requests winning each candidate before this request can insert it.
         const winner: Booking = { ...booking(), id: `winner-${insertAttempts}`, reference: input.reference, status: 'hold' };
         repo.rows.set(winner.id, winner);
-        throw new Error('UNIQUE constraint failed: bookings.reference');
+        throw new ReferenceConflictError(input.reference);
       }
       return realInsertHold(input);
     };
@@ -301,17 +325,30 @@ describe('Reserva handlers', () => {
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: providers(),
     });
-
-    const response = await handleCheckout(new Request('https://example.test/api/booking/checkout', {
+    const response = handleCheckout(new Request('https://example.test/api/booking/checkout', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity: 2, pickupType: 'default', locale: 'en' }),
     }), context);
+    return { response, attempts: () => insertAttempts };
+  }
 
-    expect(response.status).toBe(201);
-    expect(insertAttempts).toBe(12);
-    const payload = await response.json() as { reference: string };
+  it('regenerates the reference after consecutive collisions, up to the retry cap, without changing its format', async () => {
+    const { response, attempts } = collidingCheckout(4);
+    const resolved = await response;
+
+    expect(resolved.status).toBe(201);
+    expect(attempts()).toBe(5);
+    const payload = await resolved.json() as { reference: string };
     expect(payload.reference).toMatch(/^LVT-2026-\d{3,}$/);
+  });
+
+  it('gives up rather than looping when the regenerated reference keeps colliding', async () => {
+    const { response, attempts } = collidingCheckout(5);
+    const resolved = await response;
+
+    expect(resolved.status).toBe(500);
+    expect(attempts()).toBe(5);
   });
 
   it('logs a warning when a payment confirms an expired hold, but not on the normal hold path', async () => {
@@ -403,12 +440,20 @@ describe('checkout meetingPointId', () => {
     const { context: defaultContext } = checkoutContext(multiPointConfig);
     const defaultResponse = await handleCheckout(checkoutRequest({ meetingPointId: 'bogus' }), defaultContext);
     expect(defaultResponse.status).toBe(400);
-    await expect(defaultResponse.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('Unknown meetingPointId') } });
+    await expect(defaultResponse.json()).resolves.toMatchObject({
+      error: {
+        code: 'validation_failed',
+        message: 'meetingPointId must be one of: square, station',
+        details: { field: 'meetingPointId', allowed: ['square', 'station'] },
+      },
+    });
 
     const { context: customContext } = checkoutContext(multiPointConfig);
     const customResponse = await handleCheckout(checkoutRequest({ pickupType: 'custom', meetingPointId: 'bogus' }), customContext);
     expect(customResponse.status).toBe(400);
-    await expect(customResponse.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('Unknown meetingPointId') } });
+    await expect(customResponse.json()).resolves.toMatchObject({
+      error: { code: 'validation_failed', message: 'meetingPointId must be one of: square, station' },
+    });
   });
 
   it('stores the single declared point\'s id for a single-point service when the field is omitted', async () => {
@@ -451,10 +496,10 @@ describe('checkout pickupType', () => {
     location: {
       meetingPoints: points,
       pickupOptions: [
-        { id: 'default', requiresAddress: false, usesMeetingPoint: true },
-        { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
-        { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
-        { id: 'meet_elsewhere', requiresAddress: false, usesMeetingPoint: true },
+        { id: 'default', label: 'Default', requiresAddress: false, usesMeetingPoint: true },
+        { id: 'custom_pickup', label: 'Custom pickup', requiresAddress: true, usesMeetingPoint: false },
+        { id: 'custom_dropoff', label: 'Custom dropoff', requiresAddress: true, usesMeetingPoint: true },
+        { id: 'meet_elsewhere', label: 'Meet elsewhere', requiresAddress: false, usesMeetingPoint: true },
       ],
     },
     pricing: [
@@ -513,27 +558,32 @@ describe('checkout pickupType', () => {
 
   // DEFAULT_PICKUP_OPTIONS injection (and its pinned error message) is gone — every
   // location-ful service now declares its own options explicitly, so an invalid or missing
-  // pickupType always gets the generic "must be one of" / "is required" wording.
-  it('names the declared ids for an invalid pickupType, and reports missing separately', async () => {
+  // pickup always gets the generic "must be one of" / "is required" wording. The diagnostics name
+  // `pickup`, the one spelling, even when the request used the accepted `pickupType` fallback.
+  it('names the declared ids for an invalid pickup, and reports missing separately', async () => {
     const { context } = checkoutContext(config);
     const invalidResponse = await handleCheckout(checkoutRequest({ pickupType: 'bogus' }), context);
     expect(invalidResponse.status).toBe(400);
     await expect(invalidResponse.json()).resolves.toMatchObject({
-      error: { code: 'validation_failed', message: 'pickupType must be one of: default, custom' },
+      error: {
+        code: 'validation_failed',
+        message: 'pickup must be one of: default, custom',
+        details: { field: 'pickup', allowed: ['default', 'custom'] },
+      },
     });
     const missingResponse = await handleCheckout(checkoutRequest({ pickupType: undefined }), context);
     expect(missingResponse.status).toBe(400);
     await expect(missingResponse.json()).resolves.toMatchObject({
-      error: { code: 'validation_failed', message: 'pickupType is required' },
+      error: { code: 'validation_failed', message: 'pickup is required' },
     });
   });
 
-  it('a declared service distinguishes a missing pickupType from an undeclared one', async () => {
+  it('a declared service distinguishes a missing pickup from an undeclared one', async () => {
     const { context } = checkoutContext();
     const response = await handleCheckout(checkoutRequest({ pickupType: undefined }), context);
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({
-      error: { code: 'validation_failed', message: 'pickupType is required' },
+      error: { code: 'validation_failed', message: 'pickup is required' },
     });
   });
 
@@ -556,11 +606,11 @@ describe('checkout pickupType', () => {
     const { context: dropoffContext } = checkoutContext();
     const dropoffResponse = await handleCheckout(checkoutRequest({ pickupType: 'custom_dropoff', meetingPointId: 'bogus' }), dropoffContext);
     expect(dropoffResponse.status).toBe(400);
-    await expect(dropoffResponse.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('Unknown meetingPointId') } });
+    await expect(dropoffResponse.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: 'meetingPointId must be one of: square, station' } });
 
     const { context: pickupContext } = checkoutContext();
     const pickupResponse = await handleCheckout(checkoutRequest({ pickupType: 'custom_pickup', meetingPointId: 'bogus' }), pickupContext);
     expect(pickupResponse.status).toBe(400);
-    await expect(pickupResponse.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('Unknown meetingPointId') } });
+    await expect(pickupResponse.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: 'meetingPointId must be one of: square, station' } });
   });
 });

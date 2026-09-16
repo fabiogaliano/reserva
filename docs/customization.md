@@ -32,6 +32,33 @@ stylesheet both source their defaults from it, so overriding one token reaches b
 table below is generated from that file by `bun run docs:contract`.
 
 <!-- generated:ui-tokens -->
+| Token | Light default | Dark default |
+|---|---|---|
+| `--bk-font` | `"Inter", "Inter Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif` | same as light |
+| `--bk-bg` | `#f3f4f6` | `#0a0a0c` |
+| `--bk-surface` | `#ffffff` | `#141517` |
+| `--bk-surface-2` | `#eceef1` | `#1d1e21` |
+| `--bk-text` | `#282a30` | `#ededef` |
+| `--bk-text-muted` | `#63666d` | `#8a8f98` |
+| `--bk-border` | `#e0e2e6` | `#2b2c30` |
+| `--bk-accent` | `#5e6ad2` | `#7c86e2` |
+| `--bk-accent-contrast` | `#ffffff` | `#14162b` |
+| `--bk-accent-soft` | `#eceefb` | `#232647` |
+| `--bk-danger` | `#b3261e` | `#f2a099` |
+| `--bk-danger-contrast` | `#ffffff` | `#2a100e` |
+| `--bk-danger-soft` | `#fbeae9` | `#3a201e` |
+| `--bk-warning` | `#8a5a00` | `#e0b568` |
+| `--bk-warning-soft` | `#f9efd8` | `#362a13` |
+| `--bk-ok` | `#1d7a3f` | `#8fd0a0` |
+| `--bk-ok-soft` | `#e4f2e9` | `#1c3123` |
+| `--bk-masthead-text` | `#ededef` | same as light |
+| `--bk-masthead-muted` | `#8a8f98` | same as light |
+| `--bk-masthead-brand` | `#a9b1ef` | same as light |
+| `--bk-radius` | `12px` | same as light |
+| `--bk-radius-sm` | `8px` | same as light |
+| `--bk-shadow` | `0 1px 2px rgb(20 21 26 / 0.05), 0 8px 28px rgb(20 21 26 / 0.05)` | `0 1px 2px rgb(0 0 0 / 0.5), 0 8px 28px rgb(0 0 0 / 0.4)` |
+| `--bk-focus` | `0 0 0 3px color-mix(in srgb, var(--bk-accent) 50%, transparent)` | same as light |
+| `--bk-ease` | `cubic-bezier(0.16, 1, 0.3, 1)` | same as light |
 <!-- /generated:ui-tokens -->
 
 ### Head and favicon

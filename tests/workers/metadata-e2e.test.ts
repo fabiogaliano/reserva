@@ -1,7 +1,16 @@
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import smokeRuntime from '../../examples/smoke-site/src/runtime';
 import { handleCheckout, handleManage, handleStatus } from '../../src/handlers';
+import virtualConfig from 'virtual:reserva/config';
+import smokeConfig from '../../examples/smoke-site/src/config';
+import { validateConfig } from '../../src/core/config';
+
+// The smoke runtime takes no config argument any more: it reads `virtual:reserva/config`, which in
+// the workers project is the shared tests/fixtures.ts stand-in. Swapped for the smoke site's own
+// config (resolved the same way the integration resolves it) before the runtime module is
+// evaluated — hence the dynamic import below — so this test drives the real smoke services.
+virtualConfig.config = validateConfig(smokeConfig);
+const { default: smokeRuntime } = await import('../../examples/smoke-site/src/runtime');
 
 // The workers-level end-to-end proof — real D1, the real smoke runtime, and riverCruise's real
 // declared metadata fields — that consumer-declared metadata survives checkout -> D1 ->
@@ -63,8 +72,8 @@ describe('consumer-declared metadata through the real smoke runtime + D1', () =>
       }), context);
       expect(checkout.status).toBe(201);
       const checkoutUrl = requireStringProperty(await checkout.json(), 'checkoutUrl');
-      const sessionRef = new URL(checkoutUrl, 'http://localhost:4321').searchParams.get('session_id');
-      if (!sessionRef) throw new Error('Smoke checkout did not return a session_id');
+      const sessionRef = new URL(checkoutUrl, 'http://localhost:4321').searchParams.get('sessionId');
+      if (!sessionRef) throw new Error('Smoke checkout did not return a sessionId');
 
       // Real D1 round trip: the JSON survives the actual INSERT/SELECT, not a fake's in-memory map.
       const held = await context.repo.getBookingBySessionRef(sessionRef);
@@ -72,7 +81,7 @@ describe('consumer-declared metadata through the real smoke runtime + D1', () =>
       expect(held.metadata).toEqual({ dietary_notes: 'Vegan, no nuts', seat_pref: 'window' });
 
       const status = await handleStatus(new Request(
-        `http://localhost:4321/api/booking/status?session_id=${encodeURIComponent(sessionRef)}`,
+        `http://localhost:4321/api/booking/status?sessionId=${encodeURIComponent(sessionRef)}`,
       ), context);
       expect(status.status).toBe(200);
       const statusPayload = await status.json() as { status: string; booking: { metadataRows?: Array<{ key: string; label: string; value: unknown }> } };

@@ -105,7 +105,7 @@ test.describe('reschedule calendar in a timezone behind UTC (regression: manage-
     const to = await form.getAttribute('data-to');
     if (!service || !quantity || !from || !to) throw new Error('Reschedule form is missing its availability data attributes');
 
-    const availability = await (await request.get(`/api/booking/availability?service=${service}&quantity=${quantity}&from=${from}&to=${to}`)).json();
+    const availability = await (await request.get(`/api/booking/availability?serviceSlug=${service}&quantity=${quantity}&from=${from}&to=${to}`)).json();
     const openDay = availability.days.find((d: any) => d.slots.length > 0);
     if (!openDay) throw new Error('No available day found to probe isDateDisallowed against');
 

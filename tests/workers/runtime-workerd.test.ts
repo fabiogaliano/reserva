@@ -1,6 +1,5 @@
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
-import config from '../../examples/minimal/client-config';
 import { defineCloudflareReservaRuntime } from '../../src/runtime-context';
 
 const payments = {
@@ -12,7 +11,7 @@ const payments = {
 
 describe('Cloudflare runtime bindings', () => {
   it('loads D1 from cloudflare:workers without legacy Astro locals', async () => {
-    const runtime = defineCloudflareReservaRuntime(config, { providers: { payments } });
+    const runtime = defineCloudflareReservaRuntime({ providers: { payments } });
     const context = await runtime.createContext({
       request: new Request('https://example.test/api/booking/status'),
     });

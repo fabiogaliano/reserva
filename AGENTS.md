@@ -126,6 +126,7 @@ The `customer` and `webhook` groups are load-bearing and cannot be disabled.
 | `operatorReschedule` | `/api/booking/operator/reschedule` | ops |
 | `operatorNoShow` | `/api/booking/operator/no-show` | ops |
 | `opsHealth` | `/api/booking/ops/health` | ops |
+| `reconcile` | `/api/booking/ops/reconcile` | ops |
 | `assetsCss` | `/booking/assets/reserva.css` | customer |
 | `assetsJs` | `/booking/assets/reserva.js` | customer |
 | `adminPage` | `/booking/admin` | admin |
@@ -178,7 +179,7 @@ Two endpoints let a deployment describe itself without source access:
 Every failure at every status is `{ error: { code, message, details? } }`, where `code` is one of:
 
 <!-- generated:error-codes -->
-`validation_failed`, `method_not_allowed`, `payload_too_large`, `forbidden`, `not_found`, `past_cutoff`, `invalid_transition`, `slot_unavailable`, `too_many_holds`, `payment_session_mismatch`, `payment_amount_mismatch`, `invalid_payment_signature`, `duplicate_payment_ref`, `confirmation_in_progress`, `refund_conflict`, `refund_payment_ref_missing`, `refund_failed`, `calendar_unavailable`, `internal_error`
+`validation_failed`, `method_not_allowed`, `payload_too_large`, `forbidden`, `not_found`, `past_cutoff`, `invalid_transition`, `slot_unavailable`, `too_many_holds`, `payment_session_mismatch`, `payment_amount_mismatch`, `invalid_payment_signature`, `duplicate_payment_ref`, `confirmation_in_progress`, `reconciliation_in_progress`, `refund_conflict`, `refund_payment_ref_missing`, `refund_failed`, `calendar_unavailable`, `internal_error`
 <!-- /generated:error-codes -->
 
 `validation_failed` messages always name the offending field and the rule that rejected

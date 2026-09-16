@@ -206,17 +206,28 @@ describe('listUpcoming(now) against real D1', () => {
       cancelToken: 'plain-cancel', operatorToken: 'plain-operator',
     });
 
-    const [result] = await repo.listUpcoming(now);
+    const listed = await repo.listUpcoming(now);
+    expect(listed[0]?.cancelToken).toMatch(/^nohash:/);
+    expect(listed[0]?.operatorToken).toMatch(/^nohash:/);
+
+    // Nothing to decrypt with, so the explicit hydration pass leaves the placeholders in place.
+    const [result] = await repo.hydrateBookingTokens(listed);
     expect(result?.cancelToken).toMatch(/^nohash:/);
     expect(result?.operatorToken).toMatch(/^nohash:/);
   });
 
-  it('with a token encryption key configured, hydrates the real presented tokens (full encrypt-at-insert/decrypt-at-read round trip)', async () => {
+  it('with a token encryption key configured, hydrateBookingTokens restores the real presented tokens (full encrypt-at-insert/decrypt-at-read round trip)', async () => {
     await seedHold(encRepo, 'token-enc', '2026-08-05T09:00:00.000Z', '2026-08-05T10:00:00.000Z', '2026-12-31T00:00:00.000Z', {
       cancelToken: 'real-cancel', operatorToken: 'real-operator',
     });
 
-    const [result] = await encRepo.listUpcoming(now);
+    // The list query itself no longer decrypts — an AES-GCM pass per row the renderer may never
+    // emit is waste — so the placeholders survive until the caller asks for the real tokens.
+    const listed = await encRepo.listUpcoming(now);
+    expect(listed[0]?.cancelToken).toMatch(/^nohash:/);
+    expect(listed[0]?.operatorToken).toMatch(/^nohash:/);
+
+    const [result] = await encRepo.hydrateBookingTokens(listed);
     expect(result?.cancelToken).toBe('real-cancel');
     expect(result?.operatorToken).toBe('real-operator');
   });

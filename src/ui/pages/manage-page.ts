@@ -209,7 +209,9 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
         title: options.businessName ? `${options.businessName} — ${booking.serviceTitle ?? ''}` : String(booking.serviceTitle ?? ''),
         start,
         end,
-        location: booking.meetingPoint?.label ?? '',
+        // Same gate as the meeting-point fact row above: a pickup that does not use the meeting
+        // point must not put one in the customer's calendar entry.
+        location: booking.pickupUsesMeetingPoint !== false ? booking.meetingPoint?.label ?? '' : '',
         description: `${messages['common.reference']}: ${booking.reference ?? ''}`,
       };
       return `<div class="bk-actions"><span class="bk-sub">${escapeHtml(messages['confirmation.addToCalendar'])}</span>`

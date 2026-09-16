@@ -150,9 +150,16 @@ function uniqueDerivedConfigPath(configPath: string): string {
 
 // Wrangler resolves `--cwd`-relative paths and its local persistence directory from the config's
 // own location, so a config moved to the tmpdir must pin both back to the consumer's project.
+// `--cwd` alone does not move the persistence root: without `--persist-to`, every project on the
+// machine would share one `<tmpdir>/.wrangler/state`, so a fresh project would find its migrations
+// already applied by an unrelated one.
 function derivedConfigCwdArgs(originalConfigPath: string, passthrough: readonly string[]): string[] {
-  const hasCwd = passthrough.some((argument) => argument === '--cwd' || argument.startsWith('--cwd='));
-  return hasCwd ? [] : ['--cwd', dirname(originalConfigPath)];
+  const has = (name: string) => passthrough.some((argument) => argument === name || argument.startsWith(`${name}=`));
+  const projectRoot = dirname(originalConfigPath);
+  return [
+    ...(has('--cwd') ? [] : ['--cwd', projectRoot]),
+    ...(has('--persist-to') ? [] : ['--persist-to', resolve(projectRoot, '.wrangler/state')]),
+  ];
 }
 
 type DatabaseSelection =

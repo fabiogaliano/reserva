@@ -4,7 +4,9 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { defaultMessages } from '../src/ui/messages';
+// The funnel's copy lives with the funnel: `widget.*` keys the library never renders itself moved
+// out of `@reservajs/astro/ui` into the example's own catalog.
+import { defaultWidgetMessages } from '../examples/smoke-site/src/components/widget-messages';
 
 const widgetPath = resolve(import.meta.dirname, '..', 'examples/smoke-site/src/components/BookingWidget.astro');
 const widgetSource = readFileSync(widgetPath, 'utf8');
@@ -81,21 +83,20 @@ describe('BookingWidget.astro (no-JS degradation)', () => {
     expect(widgetSource).toMatch(/disabled=\{usesAvailability\}[^<]*>\{usesAvailability \? t\['widget\.loadingSlots'\] : t\['widget\.submit'\]\}/);
   });
 
-  it('ships the new widget.noscript i18n key in the English fallback catalog', () => {
-    // Catalog parity for bundled translations is covered in ui-messages.test.ts.
-    // `'widget.noscript' in defaultMessages` (not toHaveProperty, which treats the dot as a nested
-    // path) checks the literal flat key this catalog actually uses.
-    expect('widget.noscript' in defaultMessages).toBe(true);
-    expect(typeof defaultMessages['widget.noscript']).toBe('string');
-    expect(defaultMessages['widget.noscript'].length).toBeGreaterThan(0);
+  it('ships the widget.noscript i18n key in the example widget catalog', () => {
+    // `'widget.noscript' in defaultWidgetMessages` (not toHaveProperty, which treats the dot as a
+    // nested path) checks the literal flat key this catalog actually uses.
+    expect('widget.noscript' in defaultWidgetMessages).toBe(true);
+    expect(typeof defaultWidgetMessages['widget.noscript']).toBe('string');
+    expect(defaultWidgetMessages['widget.noscript'].length).toBeGreaterThan(0);
   });
 });
 
 describe('BookingWidget.astro', () => {
-  it('ships the widget.meetingPoint legend key in the shipped English catalog', () => {
-    expect('widget.meetingPoint' in defaultMessages).toBe(true);
-    expect(typeof defaultMessages['widget.meetingPoint']).toBe('string');
-    expect(defaultMessages['widget.meetingPoint'].length).toBeGreaterThan(0);
+  it('ships the widget.meetingPoint legend key in the example widget catalog', () => {
+    expect('widget.meetingPoint' in defaultWidgetMessages).toBe(true);
+    expect(typeof defaultWidgetMessages['widget.meetingPoint']).toBe('string');
+    expect(defaultWidgetMessages['widget.meetingPoint'].length).toBeGreaterThan(0);
   });
 
   it('toggles the group on pickupType change and at init, disabling (not just hiding) its inputs so they drop out of FormData', () => {

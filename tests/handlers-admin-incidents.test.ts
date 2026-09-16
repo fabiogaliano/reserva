@@ -85,7 +85,7 @@ describe('admin incidents', () => {
     expect(html).not.toContain('abandoned');
   });
 
-  it('does not render a Retry button for an oversell incident, and the server rejects the action even if forged', async () => {
+  it('does not render a Retry button for an oversell incident, and a forged action is told it is unavailable', async () => {
     const seeded = booking({ id: 'inc-oversell', status: 'confirmed' });
     const repo = fakeRepository([seeded]);
     await repo.upsertOpenIncident({
@@ -105,8 +105,11 @@ describe('admin incidents', () => {
       adminPostRequest({ action: 'incident-retry', source_type: 'oversell', source_key: seeded.id }),
       context,
     );
-    expect(postResponse.status).toBe(400);
-    await expect(postResponse.json()).resolves.toMatchObject({ error: { code: 'validation_failed' } });
+    // Told, not errored: the button is omitted for this source type, so a request that gets here
+    // is a stale page rather than an attack, and the incident is left exactly as it was.
+    expect(postResponse.status).toBe(303);
+    expect(postResponse.headers.get('location')).toContain('saved=incident-retry-unavailable');
+    expect(await repo.getIncidentBySource('oversell', seeded.id)).toMatchObject({ status: 'open' });
   });
 
   it('incident-retry dispatches a side_effect incident to retrySideEffectOperation and redirects with a notice', async () => {
@@ -129,7 +132,8 @@ describe('admin incidents', () => {
       context,
     );
     expect(response.status).toBe(303);
-    expect(response.headers.get('location')).toContain('saved=incident-retried');
+    // The retry outcome is reported, not just the fact that a retry ran: this one succeeded.
+    expect(response.headers.get('location')).toContain('saved=incident-resolved');
     expect(response.headers.get('location')).toContain('#bk-incidents');
     expect(calendarCalls).toBe(1);
     // The calendar event id the retry wrote IS the record that the event exists.

@@ -1,8 +1,18 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import { describe, expectTypeOf, it } from 'vitest';
-import config from '../examples/minimal/client-config';
+import { describe, expectTypeOf, it, vi } from 'vitest';
 import type { ReservaCache } from '../src/context';
 import { defineCloudflareReservaRuntime, type CloudflareRuntimeBindings } from '../src/runtime-context';
+
+// The factory no longer takes a config argument (plan item 12): it reads the build-time config from
+// `virtual:reserva/config`. Kept pointed at the published minimal example so these compile-time
+// assertions run against a config a consumer could actually ship.
+vi.mock('virtual:reserva/config', async () => {
+  const [{ default: config }, { resolveRouteConfig }] = await Promise.all([
+    import('../examples/minimal/client-config'),
+    import('../src/routes-manifest'),
+  ]);
+  return { default: { config, routes: resolveRouteConfig() } };
+});
 
 // Deliberately no index signature: this stands in for a `wrangler types`-generated Env, which is
 // the shape consumers actually pass as the TEnv type argument.
@@ -26,7 +36,7 @@ const payments = {
 
 describe('defineCloudflareReservaRuntime Env typing (compile-time)', () => {
   it('threads an explicit TEnv into bindings.env and constrains binding-name options to its keys', () => {
-    defineCloudflareReservaRuntime<TestEnv>(config, {
+    defineCloudflareReservaRuntime<TestEnv>({
       providers: (bindings) => {
         expectTypeOf(bindings).toEqualTypeOf<CloudflareRuntimeBindings<TestEnv>>();
         expectTypeOf(bindings.env).toEqualTypeOf<TestEnv>();
@@ -37,7 +47,7 @@ describe('defineCloudflareReservaRuntime Env typing (compile-time)', () => {
       secretBindings: ['MY_SECRET'],
     });
 
-    defineCloudflareReservaRuntime<TestEnv>(config, {
+    defineCloudflareReservaRuntime<TestEnv>({
       providers: { payments },
       // @ts-expect-error 'NOT_A_BINDING' is not a key of TestEnv, catching a typo'd binding name at compile time.
       db: 'NOT_A_BINDING',
@@ -45,13 +55,13 @@ describe('defineCloudflareReservaRuntime Env typing (compile-time)', () => {
   });
 
   it('accepts a custom-binding-only Env while preserving keyof binding checks', () => {
-    defineCloudflareReservaRuntime<CustomEnv>(config, {
+    defineCloudflareReservaRuntime<CustomEnv>({
       providers: { payments },
       db: 'MY_DB',
       secretBindings: ['MY_SECRET'],
     });
 
-    defineCloudflareReservaRuntime<CustomEnv>(config, {
+    defineCloudflareReservaRuntime<CustomEnv>({
       providers: { payments },
       // @ts-expect-error 'RESERVA_DB' is not a key of CustomEnv.
       db: 'RESERVA_DB',
@@ -59,7 +69,7 @@ describe('defineCloudflareReservaRuntime Env typing (compile-time)', () => {
   });
 
   it('keeps the zero-config path (no explicit TEnv) accepting arbitrary binding names', () => {
-    defineCloudflareReservaRuntime(config, {
+    defineCloudflareReservaRuntime({
       providers: { payments },
       db: 'ANY_BINDING_NAME',
       secretBindings: ['ANY_SECRET_NAME'],

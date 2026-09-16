@@ -49,13 +49,17 @@ describe('GET /manage (spec §11)', () => {
     expect(payload.canCancel).toBe(true);
     expect(payload.canReschedule).toBe(true);
     expect(payload.canNoShow).toBe(false);
-    // Deadline is startsAt minus the configured cancel cutoff, independent of "now".
-    expect(payload.deadline).toBe('2026-06-14T09:00:00.000Z');
+    // Each deadline is startsAt minus its own configured cutoff, independent of "now". The two are
+    // separate policies; `deadline` survives only as an alias of `cancelDeadline`.
+    expect(payload.cancelDeadline).toBe('2026-06-14T09:00:00.000Z');
+    expect(payload.rescheduleDeadline).toBe('2026-06-14T09:00:00.000Z');
+    expect(payload.deadline).toBe(payload.cancelDeadline);
     expect(payload.booking).toMatchObject({
       reference: seeded.reference,
       serviceSlug: seeded.serviceSlug,
+      serviceTitle: 'Vintage Tour',
       quantity: seeded.quantity,
-      pickupType: seeded.pickupType,
+      pickup: seeded.pickupType,
       pickupAddress: seeded.pickupAddress,
       start: utcToLocalIso(seeded.startsAt, config.business.timezone),
       end: utcToLocalIso(seeded.endsAt, config.business.timezone),
@@ -122,9 +126,9 @@ describe('GET /manage (spec §11)', () => {
           location: {
             meetingPoints: points,
             pickupOptions: [
-              { id: 'default', requiresAddress: false, usesMeetingPoint: true },
-              { id: 'custom_pickup', requiresAddress: true, usesMeetingPoint: false },
-              { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: true },
+              { id: 'default', label: 'Default', requiresAddress: false, usesMeetingPoint: true },
+              { id: 'custom_pickup', label: 'Custom pickup', requiresAddress: true, usesMeetingPoint: false },
+              { id: 'custom_dropoff', label: 'Custom dropoff', requiresAddress: true, usesMeetingPoint: true },
             ],
           },
           pricing: [
@@ -175,8 +179,11 @@ describe('GET /manage (spec §11)', () => {
     });
 
     it('renderManagePage gates the address and meeting-point facts on the flags, independently', () => {
+      // Local-offset instants, the shape manageBookingPayload actually emits: the page now builds
+      // Google/ICS calendar links from start/end, which parse them.
       const base = {
-        reference: 'LVT-2026-800', serviceSlug: 'vintage', start: '2026-06-20T09:00', quantity: 2, status: 'confirmed',
+        reference: 'LVT-2026-800', serviceSlug: 'vintage', serviceTitle: 'Vintage Tour',
+        start: '2026-06-20T10:00:00.000+01:00', end: '2026-06-20T11:00:00.000+01:00', quantity: 2, status: 'confirmed',
         pickupAddress: 'Hotel Mundial, Lisbon', meetingPoint: { label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
       };
       const addressOnly = renderManagePage({
@@ -191,14 +198,40 @@ describe('GET /manage (spec §11)', () => {
       expect(bothFlags).toContain('Hotel Mundial, Lisbon');
       expect(bothFlags).toContain('The Square');
 
-      // A payload without the flags (a direct caller predating them) keeps the pre-018 behavior:
-      // address only for the literal 'custom' id, meeting point whenever one resolved.
-      const legacy = renderManagePage({ booking: { ...base, pickupType: 'custom' } }, '/manage');
-      expect(legacy).toContain('Hotel Mundial, Lisbon');
-      expect(legacy).toContain('The Square');
-      const legacyNonCustom = renderManagePage({ booking: { ...base, pickupType: 'default' } }, '/manage');
-      expect(legacyNonCustom).not.toContain('Hotel Mundial, Lisbon');
+      // Ids are opaque now: a payload carrying no flags shows no address at all, for the id
+      // 'custom' exactly as for any other. The meeting point still renders whenever one resolved,
+      // since only an explicit `false` suppresses it.
+      const noFlagsCustom = renderManagePage({ booking: { ...base, pickupType: 'custom' } }, '/manage');
+      expect(noFlagsCustom).not.toContain('Hotel Mundial, Lisbon');
+      expect(noFlagsCustom).toContain('The Square');
+      const noFlagsOtherId = renderManagePage({ booking: { ...base, pickupType: 'default' } }, '/manage');
+      expect(noFlagsOtherId).not.toContain('Hotel Mundial, Lisbon');
+      expect(noFlagsOtherId).toContain('The Square');
     });
+  });
+
+  // Cancellation and reschedule are independent policies, so one `deadline` a consumer has to guess
+  // the meaning of is not enough: a deployment that lets customers move a booking later than it
+  // lets them cancel reports two different instants.
+  it('reports the cancel and reschedule deadlines separately when the cutoffs differ', async () => {
+    const seeded = booking({
+      id: 'b-manage-two-deadlines',
+      startsAt: '2026-06-15T09:00:00.000Z',
+      endsAt: '2026-06-15T10:00:00.000Z',
+    });
+    const context = createReservaContext({
+      config: { ...config, booking: { ...config.booking, cancelCutoffHours: 24, reschedule: { enabled: true, cutoffHours: 6 } } },
+      db: {} as D1Database,
+      repo: fakeRepository([seeded]),
+      clock,
+      providers: providers(),
+    });
+
+    const response = await handleManage(manageRequest(seeded.cancelToken), context);
+    const payload = await response.json() as Record<string, unknown>;
+    expect(payload.cancelDeadline).toBe('2026-06-14T09:00:00.000Z');
+    expect(payload.rescheduleDeadline).toBe('2026-06-15T03:00:00.000Z');
+    expect(payload.deadline).toBe(payload.cancelDeadline);
   });
 
   it('customer token inside the cutoff cannot cancel or reschedule', async () => {

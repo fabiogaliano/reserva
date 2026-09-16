@@ -34,6 +34,7 @@ describe('core config and pricing validation', () => {
       ...config,
       services: {
         vintage: {
+          title: service.title,
           durationMin: service.durationMin,
           turnaroundMin: service.turnaroundMin,
           schedule: service.schedule,
@@ -54,6 +55,7 @@ describe('core config and pricing validation', () => {
       ...config,
       services: {
         vintage: {
+          title: service.title,
           durationMin: service.durationMin,
           turnaroundMin: service.turnaroundMin,
           schedule: service.schedule,
@@ -83,7 +85,7 @@ describe('core config and pricing validation', () => {
         vintage: {
           ...service,
           location: {
-            pickupOptions: [{ id: 'meet_here', requiresAddress: false, usesMeetingPoint: true }],
+            pickupOptions: [{ id: 'meet_here', label: 'Meet here', requiresAddress: false, usesMeetingPoint: true }],
           },
           pricing: [
             { maxQuantity: 4, pickup: 'meet_here', priceMinor: 10000 },
@@ -103,7 +105,7 @@ describe('core config and pricing validation', () => {
         vintage: {
           ...service,
           location: {
-            pickupOptions: [{ id: 'hotel_pickup', requiresAddress: true, usesMeetingPoint: false }],
+            pickupOptions: [{ id: 'hotel_pickup', label: 'Hotel pickup', requiresAddress: true, usesMeetingPoint: false }],
           },
           pricing: [
             { maxQuantity: 4, pickup: 'hotel_pickup', priceMinor: 10000 },
@@ -218,7 +220,7 @@ describe('core config and pricing validation', () => {
         ...config.services,
         vintage: {
           ...service,
-          location: { pickupOptions: [{ id: 'meeting_point', requiresAddress: false, usesMeetingPoint: false }] },
+          location: { pickupOptions: [{ id: 'meeting_point', label: 'Meeting point', requiresAddress: false, usesMeetingPoint: false }] },
           pricing: [
             { maxQuantity: 4, pickup: 'meeting_point', priceMinor: 18000 },
             { maxQuantity: 8, pickup: 'meeting_point', priceMinor: 20000 },
@@ -241,8 +243,8 @@ describe('core config and pricing validation', () => {
           ...service,
           location: {
             pickupOptions: [
-              { id: 'meeting_point', requiresAddress: false, usesMeetingPoint: false },
-              { id: 'custom_dropoff', requiresAddress: true, usesMeetingPoint: false },
+              { id: 'meeting_point', label: 'Meeting point', requiresAddress: false, usesMeetingPoint: false },
+              { id: 'custom_dropoff', label: 'Custom dropoff', requiresAddress: true, usesMeetingPoint: false },
             ],
           },
           pricing: [
@@ -265,8 +267,8 @@ describe('core config and pricing validation', () => {
           ...service,
           location: {
             pickupOptions: [
-              { id: 'meeting_point', requiresAddress: false, usesMeetingPoint: false },
-              { id: 'meeting_point', requiresAddress: true, usesMeetingPoint: false },
+              { id: 'meeting_point', label: 'Meeting point', requiresAddress: false, usesMeetingPoint: false },
+              { id: 'meeting_point', label: 'Meeting point', requiresAddress: true, usesMeetingPoint: false },
             ],
           },
           pricing: [
@@ -287,7 +289,7 @@ describe('core config and pricing validation', () => {
           ...config.services,
           vintage: {
             ...service,
-            location: { pickupOptions: [{ id, requiresAddress: false, usesMeetingPoint: false }] },
+            location: { pickupOptions: [{ id, label: 'Pickup', requiresAddress: false, usesMeetingPoint: false }] },
             pricing: [
               { maxQuantity: 4, pickup: id, priceMinor: 10000 },
               { maxQuantity: 8, pickup: id, priceMinor: 18000 },
@@ -378,15 +380,13 @@ describe('core config and pricing validation', () => {
     expect(() => validateConfig(oneDay)).not.toThrow();
   });
 
-  it('surfaces a throwing occupancy resolver as a path-specific validation issue', () => {
+  it('rejects the removed occupancyFor resolver by name instead of silently dropping it', () => {
     const invalid = {
       ...config,
       services: {
         vintage: {
           ...service,
-          occupancyFor: () => {
-            throw new Error('resolver failed');
-          },
+          occupancyFor: (quantity: number) => (quantity > 4 ? 2 : 1),
         },
       },
     };
@@ -396,8 +396,13 @@ describe('core config and pricing validation', () => {
     } catch (error) {
       const issues = (error as { issues?: Array<{ path: (string | number)[]; message: string }> }).issues ?? [];
       expect(issues[0]?.path).toEqual(['services', 'vintage', 'occupancyFor']);
-      expect(issues[0]?.message).toContain('resolver failed');
+      expect(issues[0]?.message).toContain('replaced by occupancy.seatsPerUnit');
     }
+  });
+
+  it('accepts declarative occupancy and carries seatsPerUnit through to the resolved service', () => {
+    const declarative = { ...config, services: { vintage: { ...service, occupancy: { seatsPerUnit: 6 } } } };
+    expect(validateConfig(declarative).services.vintage?.occupancy).toEqual({ seatsPerUnit: 6 });
   });
 
   it('allows a season range that wraps across year-end', () => {
@@ -427,6 +432,7 @@ describe('booking, locales, legal, and admin defaults', () => {
       cancelCutoffHours: 24,
       reschedule: { enabled: true, cutoffHours: 24 },
       limitedThreshold: 2,
+      reminderHoursBefore: 24,
       calendarMaxStaleSeconds: 900,
     });
     expect(validated.locales).toEqual({ supported: ['en'], default: 'en' });
@@ -453,6 +459,7 @@ describe('booking, locales, legal, and admin defaults', () => {
       cancelCutoffHours: 24,
       reschedule: { enabled: true, cutoffHours: 24 },
       limitedThreshold: 2,
+      reminderHoursBefore: 24,
       calendarMaxStaleSeconds: 900,
     });
   });
@@ -474,6 +481,7 @@ describe('meeting-point-only location shorthand', () => {
       ...config,
       services: {
         vintage: {
+          title: service.title,
           durationMin: service.durationMin,
           turnaroundMin: service.turnaroundMin,
           schedule: service.schedule,
@@ -499,7 +507,7 @@ describe('meeting-point-only location shorthand', () => {
       services: {
         vintage: {
           ...service,
-          location: { pickupOptions: [{ id: 'hotel_pickup', requiresAddress: true, usesMeetingPoint: false }] },
+          location: { pickupOptions: [{ id: 'hotel_pickup', label: 'Hotel pickup', requiresAddress: true, usesMeetingPoint: false }] },
           pricing: [
             { maxQuantity: 4, priceMinor: 10000 },
             { maxQuantity: 8, priceMinor: 18000 },
@@ -543,7 +551,7 @@ describe('resolveMeetingPoint', () => {
   });
 
   it('throws for a service that declares no meeting points at all', () => {
-    const noPoints: ResolvedServiceConfig = { ...service, location: { pickupOptions: [{ id: 'hotel', requiresAddress: true, usesMeetingPoint: false }] } };
+    const noPoints: ResolvedServiceConfig = { ...service, location: { pickupOptions: [{ id: 'hotel', label: 'Hotel', requiresAddress: true, usesMeetingPoint: false }] } };
     expect(() => resolveMeetingPoint(noPoints)).toThrow(/declares no meeting points/);
   });
 });
@@ -555,8 +563,18 @@ describe('meetingPointForBooking', () => {
   ];
   const multiPointTour: ResolvedServiceConfig = { ...service, location: { ...service.location!, meetingPoints: points } };
 
+  // A per-locale label resolves for the booking's locale, with the usual default-locale fallback.
+  it('resolves a localized meeting point label for the requested locale', () => {
+    const localized: ResolvedServiceConfig = {
+      ...service,
+      location: { ...service.location!, meetingPoints: [{ id: 'square', label: { en: 'The Square', 'pt-PT': 'A Praça' }, mapsUrl: 'https://maps.google.com/?q=square' }] },
+    };
+    expect(meetingPointForBooking(localized, 'square', null, 'pt-PT', 'en').label).toBe('A Praça');
+    expect(meetingPointForBooking(localized, 'square', null, 'fr', 'en').label).toBe('The Square');
+  });
+
   it('resolves a declared id to its live label and maps link', () => {
-    expect(meetingPointForBooking(multiPointTour, 'station', 'stale stored label')).toEqual({
+    expect(meetingPointForBooking(multiPointTour, 'station', 'stale stored label', 'en', 'en')).toEqual({
       label: 'The Station',
       mapsUrl: 'https://maps.google.com/?q=station',
     });
@@ -566,14 +584,14 @@ describe('meetingPointForBooking', () => {
   // link — validateConfig can't cross-check the DB, and an operator may remove a point that
   // existing bookings still reference.
   it('falls back to the stored label snapshot, with no maps link, for a since-removed id', () => {
-    expect(meetingPointForBooking(multiPointTour, 'no-longer-declared', 'The Old Dock')).toEqual({
+    expect(meetingPointForBooking(multiPointTour, 'no-longer-declared', 'The Old Dock', 'en', 'en')).toEqual({
       label: 'The Old Dock',
       mapsUrl: null,
     });
   });
 
   it('falls back to the id itself when a removed id has no stored label snapshot', () => {
-    expect(meetingPointForBooking(multiPointTour, 'no-longer-declared', null)).toEqual({
+    expect(meetingPointForBooking(multiPointTour, 'no-longer-declared', null, 'en', 'en')).toEqual({
       label: 'no-longer-declared',
       mapsUrl: null,
     });
@@ -582,7 +600,7 @@ describe('meetingPointForBooking', () => {
   // A NULL id is a pre-0014 row (before the meeting-point columns existed) and keeps today's
   // first/only-declared-point behavior.
   it('resolves a null id to the first declared point', () => {
-    expect(meetingPointForBooking(multiPointTour, null, null)).toEqual({
+    expect(meetingPointForBooking(multiPointTour, null, null, 'en', 'en')).toEqual({
       label: 'The Square',
       mapsUrl: 'https://maps.google.com/?q=square',
     });
@@ -592,8 +610,8 @@ describe('meetingPointForBooking', () => {
   // (never throw) for a pre-v2 row that still references one.
   it('degrades gracefully, never throwing, for a service that no longer declares any location at all', () => {
     const { location: _location, ...noLocation }: ResolvedServiceConfig = service;
-    expect(meetingPointForBooking(noLocation, null, null)).toEqual({ label: '', mapsUrl: null });
-    expect(meetingPointForBooking(noLocation, 'square', 'Stored Label')).toEqual({ label: 'Stored Label', mapsUrl: null });
+    expect(meetingPointForBooking(noLocation, null, null, 'en', 'en')).toEqual({ label: '', mapsUrl: null });
+    expect(meetingPointForBooking(noLocation, 'square', 'Stored Label', 'en', 'en')).toEqual({ label: 'Stored Label', mapsUrl: null });
   });
 });
 
@@ -601,8 +619,8 @@ describe('pickupOptionFor', () => {
   it('returns the declared option matching a given id', () => {
     const validated = validateConfig(config);
     const vintage = validated.services.vintage!;
-    expect(pickupOptionFor(vintage, 'custom')).toEqual({ id: 'custom', requiresAddress: true, usesMeetingPoint: false });
-    expect(pickupOptionFor(vintage, 'default')).toEqual({ id: 'default', requiresAddress: false, usesMeetingPoint: true });
+    expect(pickupOptionFor(vintage, 'custom')).toEqual({ id: 'custom', label: 'Hotel pickup', requiresAddress: true, usesMeetingPoint: false });
+    expect(pickupOptionFor(vintage, 'default')).toEqual({ id: 'default', label: 'Meeting point', requiresAddress: false, usesMeetingPoint: true });
   });
 
   it('returns undefined for an id the service has not declared', () => {

@@ -18,7 +18,8 @@ One service, a fixed-duration slot, a headcount against a capacity counter, hold
 confirm, cancel/reschedule with cutoffs. That covers tours, classes, workshops, restaurant
 reservations, court/room/venue hire, general-admission events, and appointments with
 interchangeable staff. [`examples/configs/`](./examples/configs) has complete configs for
-several of these shapes.
+several of these shapes. All services draw from one capacity pool; independent fleets are not
+modelled.
 
 Out of scope:
 
@@ -216,6 +217,7 @@ package's route manifest:
 | `operatorReschedule` | `/api/booking/operator/reschedule` | ops |
 | `operatorNoShow` | `/api/booking/operator/no-show` | ops |
 | `opsHealth` | `/api/booking/ops/health` | ops |
+| `reconcile` | `/api/booking/ops/reconcile` | ops |
 | `assetsCss` | `/booking/assets/reserva.css` | customer |
 | `assetsJs` | `/booking/assets/reserva.js` | customer |
 | `adminPage` | `/booking/admin` | admin |
@@ -228,7 +230,7 @@ failure is `{ error: { code, message } }` whose `code` comes from the closed `AP
 set:
 
 <!-- generated:error-codes -->
-`validation_failed`, `method_not_allowed`, `payload_too_large`, `forbidden`, `not_found`, `past_cutoff`, `invalid_transition`, `slot_unavailable`, `too_many_holds`, `payment_session_mismatch`, `payment_amount_mismatch`, `invalid_payment_signature`, `duplicate_payment_ref`, `confirmation_in_progress`, `refund_conflict`, `refund_payment_ref_missing`, `refund_failed`, `calendar_unavailable`, `internal_error`
+`validation_failed`, `method_not_allowed`, `payload_too_large`, `forbidden`, `not_found`, `past_cutoff`, `invalid_transition`, `slot_unavailable`, `too_many_holds`, `payment_session_mismatch`, `payment_amount_mismatch`, `invalid_payment_signature`, `duplicate_payment_ref`, `confirmation_in_progress`, `reconciliation_in_progress`, `refund_conflict`, `refund_payment_ref_missing`, `refund_failed`, `calendar_unavailable`, `internal_error`
 <!-- /generated:error-codes -->
 
 One vocabulary across the routes: `serviceSlug`, `pickup`, `start` and `sessionId`. The previous

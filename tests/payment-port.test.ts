@@ -108,13 +108,13 @@ describe('a payment provider rejects an incompatible config at runtime-definitio
   }
 
   it('fails while the Cloudflare runtime definition is built, before any request is served', () => {
-    expect(() => defineCloudflareReservaRuntime(config, {
+    expect(() => defineCloudflareReservaRuntime({
       providers: { payments: providerRejecting('usd') },
     })).toThrow(/business\.currency "eur" is not supported by this provider; use "usd"\./);
   });
 
   it('accepts a config the provider supports', () => {
-    expect(() => defineCloudflareReservaRuntime(config, {
+    expect(() => defineCloudflareReservaRuntime({
       providers: { payments: providerRejecting('eur') },
     })).not.toThrow();
   });
@@ -126,7 +126,6 @@ describe('a payment provider rejects an incompatible config at runtime-definitio
       validateConfig() { validations += 1; },
     };
     const runtime = defineReservaRuntime({
-      config,
       createContext: ({ config: validated }) => ({
         config: validated, db: {} as D1Database, repo: fakeRepository(), providers: providers({ payments }),
       }),

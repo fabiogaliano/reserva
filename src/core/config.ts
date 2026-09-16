@@ -54,7 +54,7 @@ function timeOfMinutes(minutes: number): string {
 // Floored to the interval grid anchored at `firstStart`, so the derived value is a start time the
 // slot generator would actually produce rather than an arbitrary instant. Clamped at `firstStart`;
 // `validateService` is what rejects a `lastEnd` that cannot fit a single booking.
-function derivedLastStart(rule: { firstStart: string; lastEnd?: string; intervalMin: number }, durationMin: number): string {
+function derivedLastStart(rule: { firstStart: string; lastEnd?: string | undefined; intervalMin: number }, durationMin: number): string {
   const first = minutesOfDay(rule.firstStart);
   const latest = minutesOfDay(rule.lastEnd ?? rule.firstStart) - durationMin;
   if (latest <= first) return rule.firstStart;
@@ -121,7 +121,10 @@ const pickupOptionIdPattern = /^[a-z0-9_-]+$/;
 // to the library, so `label` is required: nothing else can name the option to a customer.
 const pickupOptionSchema = z.object({
   id: z.string().min(1).regex(pickupOptionIdPattern),
-  label: localizedTextSchema,
+  // Optional here, required by `locationSchema`'s refinement below for every option a consumer
+  // declares: the one implied `meeting_point` option carries no label, and validating an already
+  // resolved config (which `createReservaContext` does on every request) must stay a no-op.
+  label: localizedTextSchema.optional(),
   hint: localizedTextSchema.optional(),
   requiresAddress: z.boolean(),
   usesMeetingPoint: z.boolean(),
@@ -162,6 +165,14 @@ const locationSchema = z.object({
   meetingPoints: z.array(meetingPointSchema).min(1).optional(),
   pickupOptions: z.array(pickupOptionSchema).min(1).optional(),
 }).superRefine((location, ctx) => {
+  location.pickupOptions?.forEach((option, index) => {
+    // Ids are opaque, so nothing but a declared label can name an option to a customer. The implied
+    // meeting-point option is the one exception: renderers name it from the `pickup.meetingPoint`
+    // message key, so a resolved config round-trips through this check unchanged.
+    if (option.label === undefined && option.id !== IMPLIED_MEETING_POINT_PICKUP_ID) {
+      ctx.addIssue({ code: 'custom', path: ['pickupOptions', index, 'label'], message: 'required' });
+    }
+  });
   if (!location.meetingPoints && !location.pickupOptions) {
     ctx.addIssue({
       code: 'custom',
@@ -357,9 +368,9 @@ export type MeetingPoint = z.output<typeof meetingPointSchema>;
 // options. It is the one option with no declared label: renderers name it from the
 // `pickup.meetingPoint` message key, resolved per request locale.
 export const IMPLIED_MEETING_POINT_PICKUP_ID = 'meeting_point';
-// `label` is required of everything a consumer declares (the schema enforces it) but optional on
-// the resolved shape, because the implied option above carries none.
-export type PickupOption = Omit<z.output<typeof pickupOptionSchema>, 'label'> & { label?: LocalizedText };
+// `label` is required of everything a consumer declares (`locationSchema`'s refinement enforces it)
+// but optional on the resolved shape, because the implied option above carries none.
+export type PickupOption = z.output<typeof pickupOptionSchema>;
 export type MetadataField = z.output<typeof metadataFieldSchema>;
 export type MetadataFieldOption = z.output<typeof metadataFieldOptionSchema>;
 export type LocalizedText = z.output<typeof localizedTextSchema>;

@@ -187,8 +187,9 @@ describe('service opening hours (per schedule rule departures, interval and days
     const merged = applySettingOverrides(config, { [FIRST]: '"10:00"', [LAST]: '"15:30"' });
     expect(merged.services.vintage?.schedule[0]).toMatchObject({ firstStart: '10:00', lastStart: '15:30' });
     expect(config.services.vintage?.schedule[0]).toMatchObject({ firstStart: '09:00', lastStart: '12:00' });
-    // Function-valued service fields survive the shallow clone.
-    expect(merged.services.vintage?.occupancyFor).toBe(config.services.vintage?.occupancyFor);
+    // Service fields the overrides don't touch come through the clone unchanged; occupancy is
+    // declarative data now, not a function the clone had to preserve by reference.
+    expect(merged.services.vintage?.occupancy).toEqual(config.services.vintage?.occupancy);
   });
 
   it('ignores stored hours that are not HH:MM', () => {
@@ -273,7 +274,8 @@ describe('service pricing (per tier amount)', () => {
       TIER0, 'services.vintage.pricing.1.priceMinor', 'services.vintage.pricing.2.priceMinor', TIER3,
     ]);
     expect(pricing.every((entry) => entry.groupKey === 'services.vintage.pricing')).toBe(true);
-    expect(pricing[0]?.pricingTier).toMatchObject({ serviceSlug: 'vintage', serviceTitle: 'vintage', rule: config.services.vintage?.pricing[0] });
+    // The resolved localized title names the group now; the slug fallback is gone.
+    expect(pricing[0]?.pricingTier).toMatchObject({ serviceSlug: 'vintage', serviceTitle: 'Vintage Tour', rule: config.services.vintage?.pricing[0] });
     expect(pricing[0]?.kind).toEqual({ type: 'money', currency: 'eur' });
     // maxQuantity and pickup stay deploy-time: only the amount is editable.
     expect(pricing.map((entry) => entry.key.endsWith('.priceMinor'))).toEqual([true, true, true, true]);

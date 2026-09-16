@@ -69,7 +69,7 @@ describe('Cloudflare Access JWT verification', () => {
     const { fetcher, token } = await fixture();
     const claims = await verifyAccessJwt(requestWithToken(await token()), admin, {
       fetch: fetcher,
-      clock: () => now,
+      now: () => now,
     });
 
     expect(claims.iss).toBe(teamDomain);
@@ -79,7 +79,7 @@ describe('Cloudflare Access JWT verification', () => {
   it('caches the team JWKS until the injected TTL expires', async () => {
     const { fetchCalls, fetcher, token } = await fixture();
     let currentTime = now;
-    const options = { fetch: fetcher, clock: () => currentTime, jwksTtlMs: 1_000 };
+    const options = { fetch: fetcher, now: () => currentTime, jwksTtlMs: 1_000 };
 
     await verifyAccessJwt(requestWithToken(await token()), admin, options);
     await verifyAccessJwt(requestWithToken(await token()), admin, options);
@@ -107,7 +107,7 @@ describe('Cloudflare Access JWT verification', () => {
     const { fetcher, token } = await fixture();
     await expect(verifyAccessJwt(requestWithToken(await token(claims)), admin, {
       fetch: fetcher,
-      clock: () => now,
+      now: () => now,
     })).rejects.toBeInstanceOf(AccessVerificationError);
   });
 
@@ -120,7 +120,7 @@ describe('Cloudflare Access JWT verification', () => {
 
     await expect(verifyAccessJwt(requestWithToken(tampered), admin, {
       fetch: fetcher,
-      clock: () => now,
+      now: () => now,
     })).rejects.toThrow('signature mismatch');
   });
 });

@@ -2,7 +2,7 @@ import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test'
 import { env } from 'cloudflare:workers';
 import Stripe from 'stripe';
 import { beforeEach, describe, expect, it } from 'vitest';
-import config from '../../examples/minimal/client-config';
+import { config } from '../fixtures';
 import type { Booking } from '../../src/core/booking';
 import { createBookingRepository, sideEffectOperationKey, type SideEffectOperationRecord } from '../../src/repo';
 import worker, { WEBHOOK_SECRET, calendarEvents, emailOutbox, hookOutbox, resetWebhookWorkerOutboxes } from './worker';
@@ -33,7 +33,7 @@ async function seedHeldBooking(id: string): Promise<Booking> {
   return repo.insertHold({
     id,
     reference: `WHT-2026-${id}`,
-    serviceSlug: 'oldTown',
+    serviceSlug: 'vintage',
     quantity: 2,
     pickupType: 'default',
     startsAt: futureIso(30 * 24 * 60 * 60_000),

@@ -12,6 +12,7 @@ describe('booking confirmation page', () => {
         booking: {
           reference: 'LVT-2026-001',
           serviceSlug: 'vintage',
+          serviceTitle: 'Vintage Tour',
           start: '2026-06-15T09:00:00.000+01:00',
           end: '2026-06-15T10:00:00.000+01:00',
           quantity: 2,
@@ -27,6 +28,9 @@ describe('booking confirmation page', () => {
     );
 
     expect(html).toContain('LVT-2026-001');
+    // The service row names the service, never its slug (item 3).
+    expect(html).toContain('Vintage Tour');
+    expect(html).not.toContain('>vintage<');
     expect(html).toContain('2 people');
     expect(html).toContain('€100.00');
     expect(html).toContain('Praça do Comércio');
@@ -40,6 +44,7 @@ describe('booking confirmation page', () => {
         booking: {
           reference: 'LVT-2026-002',
           serviceSlug: 'vintage',
+          serviceTitle: 'Vintage Tour',
           start: '2026-06-15T09:00:00.000+01:00',
           end: '2026-06-15T10:00:00.000+01:00',
           quantity: 2,
@@ -106,6 +111,7 @@ describe('booking confirmation page', () => {
         booking: {
           reference: 'LVT-2026-003',
           serviceSlug: 'vintage',
+          serviceTitle: 'Vintage Tour',
           start: '2026-06-15T09:00:00.000+01:00',
           end: '2026-06-15T10:00:00.000+01:00',
           quantity: 2,

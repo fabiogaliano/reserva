@@ -1,12 +1,12 @@
 // Proves the whole admin surface — dashboard and operator actions — works end to end against
 // real D1 with a fully custom, non-Access `adminAuth`; nothing here references Cloudflare Access.
 import { env } from 'cloudflare:workers';
+import virtualConfig from 'virtual:reserva/config';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { AdminIdentity } from '../../src/access';
 import type { ReservaContext } from '../../src/context';
 import { handleAdminGet, handleAdminPost, handleOperatorNoShow } from '../../src/handlers';
 import { defineCloudflareReservaRuntime } from '../../src/runtime-context';
-import { config as baseConfig } from '../fixtures';
 import { providers } from '../fakes';
 
 interface TestEnv {
@@ -19,11 +19,13 @@ const ADMIN_TOKEN_VALUE = 'header-token-admin-secret';
 const CSRF_SECRET_VALUE = 'admin-auth-port-csrf-secret';
 const TOKEN_ENC_KEY_VALUE = 'admin-auth-port-token-enc-key';
 
-// Real fixture config with `admin.access` dropped entirely — the point of this test.
-function configWithoutAccess(): typeof baseConfig {
-  const { access: _omit, ...adminWithoutAccess } = baseConfig.admin;
-  return { ...baseConfig, admin: adminWithoutAccess };
-}
+// Real fixture config with `admin.access` dropped entirely — the point of this test. The runtime
+// takes no config argument any more, so the drop happens in `virtual:reserva/config` itself.
+// `vi.mock` cannot reach it here: the workers pool evaluates its `main` entry
+// (tests/workers/worker.ts) before the test module, so src/runtime-context is already bound to the
+// real virtual module by the time a mock could be registered.
+const { access: _omitAccess, ...adminWithoutAccess } = virtualConfig.config.admin;
+virtualConfig.config = { ...virtualConfig.config, admin: adminWithoutAccess };
 
 // A plausible custom admin auth strategy: compares a caller-supplied header against a secret
 // resolved through `context.secrets` (proving the port's `context` argument is real and usable,
@@ -35,7 +37,7 @@ async function headerTokenAdminAuth(request: Request, context: ReservaContext): 
   return { subject: 'header-token-admin' };
 }
 
-const runtime = defineCloudflareReservaRuntime(configWithoutAccess(), {
+const runtime = defineCloudflareReservaRuntime({
   providers: providers(),
   adminAuth: headerTokenAdminAuth,
   secretBindings: ['RESERVA_OPERATOR_SECRET', ADMIN_TOKEN_SECRET, 'RESERVA_CSRF_SECRET', 'RESERVA_TOKEN_ENC_KEY'],

@@ -259,7 +259,7 @@ describe('stale compare-and-set transitions', () => {
           },
         },
       }),
-      hooks: [{ name: 'ops', durable: true, handler: async (event) => { opsEvents.push(event); } }],
+      hooks: [{ name: 'ops', durable: true, handler: async (...args) => { opsEvents.push(args[0]); } }],
     });
     const request = new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' });
 

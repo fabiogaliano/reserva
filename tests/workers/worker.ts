@@ -4,7 +4,6 @@ import type { CalEvent } from '../../src/core/occupancy';
 import { handlePaymentWebhook } from '../../src/handlers';
 import { stripe } from '@reservajs/stripe';
 import { defineCloudflareReservaRuntime, type ReservaProviders } from '../../src/runtime';
-import config from '../../examples/minimal/client-config';
 
 // `main` in wrangler.test.jsonc: a real worker entrypoint assembling the production stack and
 // dispatching the real route to handlePaymentWebhook, so webhook.test.ts exercises runtime +
@@ -54,12 +53,17 @@ const providers: ReservaProviders = {
 const hooks: BookingEventHook[] = [{
   name: 'ops',
   durable: true,
-  async handler(event, booking) {
+  async handler(event, booking, _hookContext) {
+    // `booking` is null for settings.changed, the one event with no booking behind it — and the
+    // one this worker's outbox has nothing to say about.
+    if (!booking) return;
     hookOutbox.push({ event, bookingId: booking.id });
   },
 }];
 
-const runtime = defineCloudflareReservaRuntime(config, { providers, hooks });
+// No config argument: the runtime reads `virtual:reserva/config`, which the workers project
+// aliases to tests/virtual-config.ts (the shared tests/fixtures.ts config).
+const runtime = defineCloudflareReservaRuntime({ providers, hooks });
 
 export default {
   // Standard modules-format signature (env/ctx unused) — kept so webhook.test.ts can dispatch
