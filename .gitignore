@@ -24,4 +24,3 @@ playwright-report/
 .wrangler-scheduled-test/
 
 # scratch analysis notes and prototypes
-docs/tmp/
