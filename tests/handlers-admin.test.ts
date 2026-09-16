@@ -133,20 +133,36 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
     expect(bySearch).toContain(pastConfirmed.reference);
   });
 
-  it('separates page destinations from the dashboard’s in-page section menu', async () => {
+  it('separates page destinations from the dashboard’s own tab strip', async () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
     const response = await handleAdminGet(adminGetRequest(), context);
     const body = await response.text();
 
-    expect(body).toContain('data-reserva-section-nav');
-    expect(body).toContain('<p class="bk-section-nav-title">On this page</p>');
-    expect(body).toContain('href="#bk-bookings" data-reserva-section-link');
-    expect(body).toContain('href="#bk-days" data-reserva-section-link');
-    expect(body).not.toContain('/booking/admin#bk-bookings');
-    expect(body).not.toContain('/booking/admin#bk-days');
+    // Tabs are ?tab= links so they work with scripting off; every panel is rendered and all but
+    // the current one carries [hidden].
+    expect(body).toContain('href="?tab=upcoming" data-reserva-admin-tab="upcoming" aria-current="page"');
+    expect(body).toContain('href="?tab=availability" data-reserva-admin-tab="availability"');
+    expect(body).toContain('<section class="bk-panel" id="bk-upcoming">');
+    expect(body).toContain('<section class="bk-panel" id="bk-availability" hidden>');
+    // Sidebar entries replace the page; tab links never do.
     expect(body).toContain('href="/booking/admin" class="bk-active" aria-current="page"');
     expect(body).toContain('href="/booking/admin?view=settings"');
+  });
+
+  it('opens on the panel the URL implies, so a day link and a capacity save both land on availability', async () => {
+    const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+
+    const byDate = await (await handleAdminGet(new Request(`${ADMIN_URL}?date=2026-06-20`), context)).text();
+    expect(byDate).toContain('<section class="bk-panel" id="bk-availability">');
+    expect(byDate).toContain('<section class="bk-panel" id="bk-upcoming" hidden>');
+
+    const bySave = await (await handleAdminGet(new Request(`${ADMIN_URL}?saved=day`), context)).text();
+    expect(bySave).toContain('<section class="bk-panel" id="bk-availability">');
+
+    // An unknown ?tab must not leave every panel hidden.
+    const bogus = await (await handleAdminGet(new Request(`${ADMIN_URL}?tab=nonsense`), context)).text();
+    expect(bogus).toContain('<section class="bk-panel" id="bk-upcoming">');
   });
 
   it('uses an operator locale without changing the customer default', async () => {
@@ -162,8 +178,8 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
     const dashboardBody = await dashboard.text();
     expect(dashboardBody).toContain('<html lang="pt-PT">');
     expect(dashboardBody).toContain('<title>Administração de reservas — Example City Tours</title>');
-    expect(dashboardBody).toContain('<p class="bk-section-nav-title">Nesta página</p>');
-    expect(dashboardBody).toContain('data-label="Cliente"');
+    expect(dashboardBody).toContain('>Próximas<');
+    expect(dashboardBody).toContain('>Disponibilidade<');
 
     const settings = await handleAdminGet(new Request(`${ADMIN_URL}?view=settings`), context);
     const settingsBody = await settings.text();
@@ -230,10 +246,11 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers() });
     const response = await handleAdminGet(adminGetRequest(), context);
     const body = await response.text();
-    // One booking, two capacity units, capacity 2 (fixture's capacity.defaultCapacity) — the label must
-    // read the unit count against capacity, not "1/2" (which is what a raw booking count would show).
-    expect(body).toContain('units 2/2');
-    expect(body).not.toMatch(/bk-day-load">1\/2</);
+    // One booking, two capacity units, capacity 2 (fixture's capacity.defaultCapacity) — the load
+    // must read the unit count against capacity, not "1/2" (a raw booking count). It lives in the
+    // cell's accessible name and tooltip rather than as printed text under every number.
+    expect(body).toContain('2/2 units booked');
+    expect(body).not.toContain('1/2 units booked');
   });
 
   // The meeting-point sub-line only renders for a default pickup on a service that actually
@@ -256,7 +273,9 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
       const multiContext = createReservaContext({ config: multiPointConfig, db: {} as D1Database, repo: multiRepo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
       const multiResponse = await handleAdminGet(adminGetRequest(), multiContext);
       const multiBody = await multiResponse.text();
-      expect(multiBody).toContain('<span class="bk-sub">The Station</span>');
+      // The row summary names one place: the resolved meeting point, since this service has more
+      // than one to choose between.
+      expect(multiBody).toContain('bk-booking-sub">vintage · 2 people · The Station');
 
       const singleRepo = fakeRepository([booking({
         id: 'b-admin-single-point', reference: 'LVT-2026-401', startsAt: '2026-06-21T09:00:00.000Z', endsAt: '2026-06-21T10:00:00.000Z',
@@ -265,7 +284,9 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
       const singleContext = createReservaContext({ config, db: {} as D1Database, repo: singleRepo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
       const singleResponse = await handleAdminGet(adminGetRequest(), singleContext);
       const singleBody = await singleResponse.text();
-      expect(singleBody).not.toContain('bk-sub">The Station');
+      expect(singleBody).not.toContain('The Station');
+      // One declared point is not a choice, so the row names the pickup option instead.
+      expect(singleBody).toContain('bk-booking-sub">vintage · 2 people · Meeting point');
     });
 
     it('finds a booking by its resolved meeting-point label via the search filter', async () => {
@@ -318,10 +339,11 @@ describe('pickup option label + sub-lines', () => {
     const context = createReservaContext({ config: mazeConfig, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminGet(adminGetRequest(), context);
     const body = await response.text();
-    expect(body).toContain('Custom pickup &amp; drop-off');
-    // Both flags declared: the address AND the resolved meeting-point sub-line both render.
-    expect(body).toContain('<span class="bk-sub">Hotel Avenida</span>');
-    expect(body).toContain('<span class="bk-sub">The Station</span>');
+    // The summary names the meeting point; the option's own label and the address are facts in
+    // the row's disclosure, where the detail that only matters sometimes belongs.
+    expect(body).toContain('bk-booking-sub">vintage · 2 people · The Station');
+    expect(body).toContain('<dd>Custom pickup &amp; drop-off</dd>');
+    expect(body).toContain('<dd>Hotel Avenida</dd>');
   });
 
   it('falls back to the message-catalog labels for the default/custom ids when a config declares no pickupOptions', async () => {
@@ -351,9 +373,11 @@ describe('pickup option label + sub-lines', () => {
     const context = createReservaContext({ config: mazeConfig, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminGet(adminGetRequest(), context);
     const body = await response.text();
-    expect(body).toContain('>meet_elsewhere<');
-    // usesMeetingPoint: true, requiresAddress: false — meeting-point sub-line, no address sub-line.
-    expect(body).toContain('<span class="bk-sub">The Square</span>');
+    expect(body).toContain('<dd>meet_elsewhere</dd>');
+    // usesMeetingPoint: true, requiresAddress: false — the meeting point names the row, and no
+    // pickup-address fact is rendered at all.
+    expect(body).toContain('bk-booking-sub">vintage · 2 people · The Square');
+    expect(body).not.toContain('Hotel Avenida');
   });
 
   it('search cannot match a meeting-point label the row does not display (usesMeetingPoint: false)', async () => {
@@ -581,7 +605,10 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const body = await (await handleAdminGet(settingsGetRequest(), context)).text();
     expect(body).toContain('data-reserva-tab="hours"');
-    expect(body).toContain('<h3 class="bk-setting-group">vintage · Every day</h3>');
+    expect(body).toContain('<h3 class="bk-setting-group">vintage</h3>');
+    // The three departure fields read as one statement; the weekdays are their own.
+    expect(body).toContain('Departs <b>09:00</b> to <b>12:00</b>, every <b>30</b> minutes');
+    expect(body).toContain('Runs <b>Every day</b>');
     expect(body).toContain('type="time" name="services.vintage.schedule.0.firstStart" value="09:00" required');
     expect(body).toContain('type="time" name="services.vintage.schedule.0.lastStart" value="12:00" required');
     expect(body).toContain('name="services.vintage.schedule.0.intervalMin" value="30" min="1" max="1440" step="1" required');

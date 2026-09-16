@@ -80,8 +80,8 @@ describe('admin incidents', () => {
     const html = await response.text();
     expect(html).toContain('Calendar booking not created');
     expect(html).toContain(seeded.reference);
-    expect(html).toContain('href="#bk-incidents" data-reserva-section-link');
-    expect(html).toContain('<span class="bk-section-nav-count">1</span>');
+    expect(html).toContain('data-reserva-admin-tab="attention"');
+    expect(html).toContain('<span class="bk-tab-count">1</span>');
     expect(html).not.toContain('abandoned');
   });
 

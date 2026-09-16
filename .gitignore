@@ -22,3 +22,6 @@ playwright-report/
 
 # smoke-scheduled-test database
 .wrangler-scheduled-test/
+
+# scratch analysis notes and prototypes
+docs/tmp/

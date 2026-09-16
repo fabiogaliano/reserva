@@ -34,11 +34,14 @@ test('booking a service with no location module carries no pickup/meeting-point 
   expect(outboxEntry.pickupType ?? null).toBeNull();
 
   await page.goto('/booking/admin');
-  const row = page.locator('tr', { hasText: reference });
+  const row = page.locator('.bk-booking', { hasText: reference });
   await expect(row).toBeVisible();
-  // The pickup sub-label column stays empty for a location-less booking.
-  const pickupCell = row.locator('td').nth(3);
-  await expect(pickupCell).toHaveText('');
+  // A location-less booking has no place to name, so the row summary stops at the party size and
+  // the opened row carries no pickup facts at all.
+  await expect(row.locator('.bk-booking-sub')).toHaveText('riverCruise · 2 people');
+  await row.locator('summary').click();
+  await expect(row.locator('.bk-facts')).not.toContainText('Pickup');
+  await expect(row.locator('.bk-facts')).not.toContainText('Meeting point');
 });
 
 // Checkout rejects pickupType/meetingPointId for a location-less

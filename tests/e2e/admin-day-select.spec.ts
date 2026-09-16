@@ -31,7 +31,7 @@ test('a contiguous 3-day pointer selection gets button semantics, aria-pressed, 
   const day2 = format(addDays(new Date(), 61), 'yyyy-MM-dd');
   const day3 = format(addDays(new Date(), 62), 'yyyy-MM-dd');
 
-  await page.goto('/booking/admin');
+  await page.goto('/booking/admin?tab=availability');
   const cell1 = await revealDay(page, day1);
   await expect(cell1).toHaveAttribute('role', 'button');
   await cell1.click();
@@ -67,7 +67,7 @@ test('a scattered ctrl/cmd-click selection keeps repeated hidden date fields, bl
   const gap = format(addDays(new Date(), 66), 'yyyy-MM-dd');
   const day3 = format(addDays(new Date(), 67), 'yyyy-MM-dd');
 
-  await page.goto('/booking/admin');
+  await page.goto('/booking/admin?tab=availability');
   const cell1 = await revealDay(page, day1);
   await cell1.click();
   const cell3 = await revealDay(page, day3);
@@ -98,7 +98,7 @@ test('a scattered ctrl/cmd-click selection keeps repeated hidden date fields, bl
 test('toggling the final selected day off clears every submitted date field', async ({ page }) => {
   const day = format(addDays(new Date(), 69), 'yyyy-MM-dd');
 
-  await page.goto('/booking/admin');
+  await page.goto('/booking/admin?tab=availability');
   const cell = await revealDay(page, day);
   await cell.click();
   await expect(cell).toHaveAttribute('aria-pressed', 'true');
@@ -118,7 +118,7 @@ test('keyboard-only: Space toggles a day, and typing a range into the two date i
   const rangeMid = format(addDays(new Date(), 76), 'yyyy-MM-dd');
   const rangeEnd = format(addDays(new Date(), 77), 'yyyy-MM-dd');
 
-  await page.goto('/booking/admin');
+  await page.goto('/booking/admin?tab=availability');
 
   // Part 1: Space toggles a single day (no mouse), matching a plain pointer click's result.
   const soloCell = await revealDay(page, soloDay);
@@ -134,7 +134,7 @@ test('keyboard-only: Space toggles a day, and typing a range into the two date i
   // Part 2: a 3-day range typed directly into the visible date/toDate inputs — no calendar
   // interaction at all — must reach the enhanced selection (title/aria-pressed follow the typed
   // values) and close the same three days a pointer shift-click range would.
-  await page.goto('/booking/admin');
+  await page.goto('/booking/admin?tab=availability');
   const rangeStartCell = await revealDay(page, rangeStart);
   const form2 = page.locator('#bk-override');
   await form2.locator('input[name="date"]').fill(rangeStart);

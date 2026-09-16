@@ -1,48 +1,65 @@
-// Progressive enhancement for the admin section nav and calendar: adds current-section tracking,
-// a month pager, and multi-day selection. IIFE so nothing leaks into the concatenated bundle.
+// Progressive enhancement for the admin dashboard: in-place tab switching, one booking row open
+// at a time, a deferred incident resolve note, a month pager, and multi-day calendar selection.
+// Every one of these is an upgrade over markup that already works without it. IIFE so nothing
+// leaks into the concatenated bundle.
 
 export const adminEnhancerJs = `(() => {
-  const sectionNav = document.querySelector('[data-reserva-section-nav]');
-  if (sectionNav) {
-    const links = [...sectionNav.querySelectorAll('[data-reserva-section-link]')];
-    const entries = links.map((link) => {
-      const href = link.getAttribute('href') || '';
-      return { link, section: href.startsWith('#') ? document.getElementById(href.slice(1)) : null };
-    }).filter((entry) => entry.section);
-    const setCurrent = (current) => {
-      for (const entry of entries) {
-        if (entry === current) entry.link.setAttribute('aria-current', 'location');
-        else entry.link.removeAttribute('aria-current');
+  // --- tabs: the server already rendered every panel, with all but the current one hidden ---
+  const tabStrip = document.querySelector('nav.bk-tabs');
+  const panelBox = document.querySelector('.bk-panels');
+  if (tabStrip && panelBox) {
+    const panelIds = { upcoming: 'bk-upcoming', availability: 'bk-availability', attention: 'bk-attention' };
+    tabStrip.addEventListener('click', (event) => {
+      const link = event.target.closest('a[data-reserva-admin-tab]');
+      if (!link) return;
+      const wanted = panelIds[link.dataset.reservaAdminTab];
+      if (!wanted || !document.getElementById(wanted)) return;
+      event.preventDefault();
+      for (const tab of tabStrip.querySelectorAll('a[data-reserva-admin-tab]')) {
+        if (tab === link) tab.setAttribute('aria-current', 'page');
+        else tab.removeAttribute('aria-current');
       }
-    };
-    let frame = 0;
-    const updateCurrent = () => {
-      frame = 0;
-      if (!entries.length) return;
-      const marker = Math.min(220, window.innerHeight * 0.3);
-      let current = entries[0];
-      for (const entry of entries) {
-        if (entry.section.getBoundingClientRect().top <= marker) current = entry;
+      for (const panel of panelBox.children) panel.hidden = panel.id !== wanted;
+      history.replaceState(null, '', link.href);
+    });
+    // The header's attention link is a shortcut to the same panel, so it switches in place too.
+    const attentionLink = document.querySelector('.bk-admin-attention');
+    if (attentionLink) attentionLink.addEventListener('click', (event) => {
+      const target = tabStrip.querySelector('a[data-reserva-admin-tab="attention"]');
+      if (!target) return;
+      event.preventDefault();
+      target.click();
+      const panel = document.getElementById('bk-attention');
+      if (panel) panel.scrollIntoView({ block: 'start' });
+    });
+  }
+
+  // --- booking rows: keeping one open stops the list collapsing back into a wall of detail ---
+  const bookingList = document.getElementById('bk-upcoming');
+  if (bookingList) {
+    bookingList.addEventListener('toggle', (event) => {
+      const row = event.target;
+      if (!row.matches || !row.matches('.bk-booking[open]')) return;
+      for (const other of bookingList.querySelectorAll('.bk-booking[open]')) {
+        if (other !== row) other.open = false;
       }
-      if (window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2) current = entries[entries.length - 1];
-      setCurrent(current);
-    };
-    const queueUpdate = () => {
-      if (!frame) frame = window.requestAnimationFrame(updateCurrent);
-    };
-    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    for (const entry of entries) {
-      entry.link.addEventListener('click', (event) => {
-        event.preventDefault();
-        history.pushState(null, '', entry.link.hash);
-        setCurrent(entry);
-        entry.section.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
-      });
-    }
-    window.addEventListener('scroll', queueUpdate, { passive: true });
-    window.addEventListener('resize', queueUpdate);
-    window.addEventListener('hashchange', queueUpdate);
-    updateCurrent();
+    }, true);
+  }
+
+  // --- incident resolve note: asking "what did you do?" before Resolve is even pressed puts an
+  // empty textarea on every open incident at once, so the first press reveals it instead ---
+  for (const noteField of document.querySelectorAll('[data-reserva-resolve-note]')) {
+    const form = noteField.closest('form');
+    const submit = form && form.querySelector('button[value="incident-resolve"]');
+    if (!submit) continue;
+    noteField.hidden = true;
+    submit.addEventListener('click', (event) => {
+      if (!noteField.hidden) return;
+      event.preventDefault();
+      noteField.hidden = false;
+      const textarea = noteField.querySelector('textarea');
+      if (textarea) textarea.focus();
+    });
   }
 
   const form = document.getElementById('bk-override');

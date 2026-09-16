@@ -22,7 +22,7 @@ import type {
 import { reprojectIncidentAfterAdminRetry, sideEffectIncidentSourceKey } from '../reconciliation.js';
 import { attemptRefund } from '../refund-executor.js';
 import { resolveMessages } from '../ui/messages.js';
-import { adminPage, incidentsSection, type AdminFilters } from '../ui/pages/admin-page.js';
+import { adminPage, adminTabs, incidentsSection, type AdminFilters, type AdminTab } from '../ui/pages/admin-page.js';
 import { settingsPage } from '../ui/pages/settings-page.js';
 import {
   html,
@@ -71,6 +71,14 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
       : bookings;
     const editDate = url.searchParams.get('date')?.trim() ?? '';
     const saved = url.searchParams.get('saved') ?? '';
+    // An explicit ?tab wins; otherwise the URL's own shape picks the panel, so a day link, a
+    // capacity save and an incident action all land the operator where they just acted.
+    const requestedTab = url.searchParams.get('tab')?.trim() ?? '';
+    const activeTab: AdminTab = adminTabs.includes(requestedTab as AdminTab)
+      ? requestedTab as AdminTab
+      : saved.startsWith('incident-') ? 'attention'
+      : editDate || saved === 'day' || saved === 'default' ? 'availability'
+      : 'upcoming';
     const messages = resolveMessages(context.config, adminLocaleFor(context.config));
     // incidentsSince is a fixed 30-day lookback from the render clock, not a config option.
     const incidentsSince = new Date(parseUtcInstant(now).getTime() - 30 * 86_400_000).toISOString();
@@ -101,6 +109,7 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
       csrfToken,
       incidentsHtml,
       openIncidents.length,
+      activeTab,
     ), 200, {
       'cache-control': 'no-store',
       // `no-referrer` would null the Origin header on this page's own same-origin POSTs, tripping

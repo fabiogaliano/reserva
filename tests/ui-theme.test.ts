@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createReservaContext } from '../src/context';
 import { handleAdminGet } from '../src/handlers';
 import { adminEnhancerJs } from '../src/ui/admin-enhancer';
+import { settingsEnhancerJs } from '../src/ui/settings-enhancer';
 import { pageShell, themeToggle } from '../src/ui/layout';
 import { defaultMessages, type ReservaMessages } from '../src/ui/messages';
 import { readThemePreference, themeCss, themeCookieName } from '../src/ui/theme';
@@ -53,18 +54,37 @@ describe('themeCss (OS default + forced overrides)', () => {
     expect(themeCss).toContain('.bk-theme-toggle[hidden] { display: none; }');
   });
 
-  it('places the dashboard section menu in a sticky right rail on wide screens', () => {
-    expect(themeCss).toContain('.bk-admin-body { grid-template-columns: minmax(0, 1fr) 11rem;');
-    expect(themeCss).toContain('.bk-section-nav {\n    position: sticky;');
-    expect(themeCss).toContain('.bk-section-nav a[aria-current="location"]');
+  it('caps the booking list at a reading measure and lets the calendar panel run wider', () => {
+    expect(themeCss).toContain('.bk-panel { min-width: 0; max-width: 62rem; }');
+    expect(themeCss).toContain('#bk-availability { max-width: none; }');
+    // Panels are server-rendered with [hidden] on all but the current tab, so this rule is what
+    // makes the no-script tab links show one panel at a time.
+    expect(themeCss).toContain('.bk-panels > [hidden] { display: none; }');
   });
 });
 
-describe('admin section navigation enhancement', () => {
-  it('tracks the visible section and respects reduced-motion preferences when scrolling', () => {
-    expect(adminEnhancerJs).toContain("setAttribute('aria-current', 'location')");
-    expect(adminEnhancerJs).toContain("matchMedia('(prefers-reduced-motion: reduce)')");
-    expect(adminEnhancerJs).toContain("scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth'");
+describe('admin dashboard enhancement', () => {
+  it('switches tabs in place and keeps one booking row open at a time', () => {
+    expect(adminEnhancerJs).toContain("a[data-reserva-admin-tab]");
+    expect(adminEnhancerJs).toContain("panel.hidden = panel.id !== wanted");
+    expect(adminEnhancerJs).toContain("for (const other of bookingList.querySelectorAll('.bk-booking[open]'))");
+  });
+
+  // The note is only required once the operator has decided to resolve, so it must not be a
+  // textarea sitting open on every incident at once.
+  it('defers the incident resolve note until the first press of Resolve', () => {
+    expect(adminEnhancerJs).toContain("[data-reserva-resolve-note]");
+    expect(adminEnhancerJs).toContain('noteField.hidden = true;');
+  });
+});
+
+describe('admin settings enhancement', () => {
+  // The stylesheet keys every collapse rule off this attribute, so a browser that never runs the
+  // enhancer keeps the controls visible and the page stays a plain form.
+  it('marks the document as scripted before collapsing any setting behind its sentence', () => {
+    expect(settingsEnhancerJs).toContain("document.documentElement.setAttribute('data-bk-js', '')");
+    expect(themeCss).toContain(':root[data-bk-js] .bk-stmt-editor { display: none; }');
+    expect(themeCss).toContain(':root:not([data-bk-js]) .bk-stmt-edit { display: none; }');
   });
 });
 

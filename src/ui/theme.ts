@@ -252,7 +252,7 @@ export const themeCss = `
 }
 .bk-shell-main {
   width: 100%;
-  max-width: 88rem;
+  max-width: 76rem;
   min-width: 0;
   margin: 0 auto;
   padding: 1.5rem 1rem 4rem;
@@ -279,127 +279,106 @@ export const themeCss = `
 .bk-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin: 0 0 1.25rem; }
 .bk-toolbar h1 { margin: 0; font-size: 1.25rem; font-weight: 600; letter-spacing: -0.01em; }
 .bk-toolbar .bk-lead { margin: 0.15rem 0 0; font-size: 0.9rem; }
-.bk-admin-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin: 0 0 1.5rem; }
-.bk-admin-header h1 { margin: 0.15rem 0 0.35rem; font-size: clamp(1.75rem, 1.45rem + 1vw, 2.25rem); line-height: 1.1; letter-spacing: -0.035em; text-wrap: balance; }
-.bk-admin-header .bk-lead { max-width: 42rem; margin: 0; font-size: 0.95rem; }
-.bk-eyebrow { margin: 0; color: var(--bk-accent); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.11em; text-transform: uppercase; }
-.bk-admin-stats {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin: 0 0 1.5rem;
-  padding: 0;
-  overflow: hidden;
-  border: 1px solid var(--bk-border);
-  border-radius: var(--bk-radius);
-  background: var(--bk-surface);
-  box-shadow: 0 1px 2px rgb(20 21 26 / 0.04);
-}
-.bk-stat { min-width: 0; padding: 1rem; border-right: 1px solid var(--bk-border); border-bottom: 1px solid var(--bk-border); }
-.bk-stat:nth-child(2n) { border-right: 0; }
-.bk-stat:nth-last-child(-n + 2) { border-bottom: 0; }
-.bk-stat dt { color: var(--bk-text-muted); font-size: 0.75rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
-.bk-stat dd { margin: 0.2rem 0 0; font-size: 1.55rem; font-weight: 650; line-height: 1; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
-.bk-stat--attention dd { color: var(--bk-danger); }
-.bk-admin-body { display: grid; gap: 1rem; }
-.bk-admin-stack { display: grid; gap: 1.5rem; }
-.bk-admin-stack > .bk-card { margin: 0; }
-.bk-admin-stack > [id] { scroll-margin-top: 7.5rem; }
-.bk-section-nav { min-width: 0; }
-.bk-section-nav-title {
-  margin: 0 0 0.45rem;
-  color: var(--bk-text-muted);
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-}
-.bk-section-nav-links {
-  display: flex;
-  gap: 0.35rem;
-  min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.bk-section-nav-links::-webkit-scrollbar { display: none; }
-.bk-section-nav a {
+/* Bookings dashboard. The operator opens this many times a day, so the page states what it is and
+   then gets out of the way: a title row, a tab strip, and one panel on screen at a time. */
+.bk-admin-header { display: flex; align-items: center; gap: 0.75rem 1rem; flex-wrap: wrap; margin: 0 0 1.25rem; }
+.bk-admin-header h1 { margin: 0; font-size: 1.5rem; font-weight: 600; line-height: 1.2; letter-spacing: -0.025em; }
+.bk-admin-attention {
+  margin-left: auto;
   display: inline-flex;
   align-items: center;
-  gap: 0.45rem;
   min-height: 2.75rem;
-  box-sizing: border-box;
-  padding: 0.55rem 0.75rem;
-  border-radius: var(--bk-radius-sm);
-  color: var(--bk-text-muted);
+  color: var(--bk-danger);
+  font-size: 0.9rem;
+  font-weight: 500;
   text-decoration: none;
-  font-size: 0.85rem;
-  font-weight: 550;
-  white-space: nowrap;
-  transition: background-color 120ms ease, color 120ms ease;
 }
-.bk-section-nav a[aria-current="location"] { background: var(--bk-accent-soft); color: var(--bk-accent); }
-.bk-section-nav a:focus-visible { outline: none; box-shadow: var(--bk-focus); }
-.bk-section-nav-count {
-  display: inline-grid;
-  place-items: center;
-  min-width: 1.25rem;
-  height: 1.25rem;
-  padding-inline: 0.25rem;
-  box-sizing: border-box;
+.bk-admin-attention:hover { text-decoration: underline; }
+.bk-admin-attention:focus-visible { outline: none; box-shadow: var(--bk-focus); border-radius: 4px; }
+/* Panels are all server-rendered and all but one carry [hidden], so the tab strip works as plain
+   links before the enhancer upgrades it to an in-page toggle. */
+.bk-panels > [hidden] { display: none; }
+/* The list is a reading measure, not a spreadsheet: past roughly 60rem the chevron drifts so far
+   from the name that a row stops reading as one thing. The calendar earns the extra width. */
+.bk-panel { min-width: 0; max-width: 62rem; }
+#bk-availability { max-width: none; }
+.bk-tab-count {
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.4rem;
   border-radius: 999px;
   background: var(--bk-danger-soft);
   color: var(--bk-danger);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
+
+/* One search control, no field label: the placeholder already says what it searches. */
+.bk-searchbar { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; margin: 0 0 1.5rem; }
+.bk-searchbar .bk-input, .bk-searchbar .bk-select { width: auto; min-height: 2.6rem; }
+.bk-searchbar .bk-input[type=search] { flex: 1 1 16rem; max-width: 24rem; }
+.bk-searchbar .bk-select { flex: 0 0 auto; }
+.bk-searchbar .bk-btn { min-height: 2.6rem; }
+.bk-searchbar .bk-filter-clear { min-height: 2.6rem; }
+
+/* Day-grouped booking list. Every row is a native <details>: the summary holds what an operator
+   scans by and the panel holds the rest, so the list never grows a column for a detail that only
+   matters on one booking in twenty. Works with scripting off; the enhancer only adds
+   one-open-at-a-time. */
+.bk-daygroup { margin: 0 0 1.75rem; }
+.bk-daygroup > h3 {
+  margin: 0 0 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--bk-text-muted);
+}
+.bk-booking { border-bottom: 1px solid color-mix(in srgb, var(--bk-border) 55%, transparent); }
+.bk-booking > summary {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) auto 1rem;
+  align-items: center;
+  gap: 0.2rem 1rem;
+  min-height: 3.25rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: var(--bk-radius-sm);
+  list-style: none;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+.bk-booking > summary::-webkit-details-marker { display: none; }
 @media (hover: hover) and (pointer: fine) {
-  .bk-section-nav a:hover { background: var(--bk-surface-2); color: var(--bk-text); }
+  .bk-booking > summary:hover { background: color-mix(in srgb, var(--bk-surface-2) 55%, transparent); }
 }
-@media (min-width: 1180px) {
-  .bk-admin-body { grid-template-columns: minmax(0, 1fr) 11rem; gap: clamp(1.5rem, 2.5vw, 2.5rem); align-items: start; }
-  .bk-admin-stack { grid-column: 1; grid-row: 1; }
-  .bk-section-nav {
-    position: sticky;
-    top: 2rem;
-    grid-column: 2;
-    grid-row: 1;
-    padding: 0.25rem 0 0.25rem 1rem;
-    border-left: 1px solid var(--bk-border);
-  }
-  .bk-section-nav-links { flex-direction: column; overflow: visible; }
-  .bk-section-nav a { position: relative; width: 100%; min-height: 2.4rem; padding: 0.45rem 0.6rem; white-space: normal; }
-  .bk-section-nav a[aria-current="location"]::before {
-    content: '';
-    position: absolute;
-    top: 0.55rem;
-    bottom: 0.55rem;
-    left: -1.07rem;
-    width: 2px;
-    border-radius: 999px;
-    background: var(--bk-accent);
-  }
-  .bk-admin-stack > [id] { scroll-margin-top: 2rem; }
+.bk-booking > summary:focus-visible { outline: none; box-shadow: var(--bk-focus); }
+.bk-booking[open] > summary { background: color-mix(in srgb, var(--bk-surface-2) 45%, transparent); }
+@media (prefers-reduced-motion: reduce) { .bk-booking > summary { transition: none; } }
+.bk-booking-time { min-width: 3.25rem; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bk-booking-who { font-weight: 500; }
+.bk-booking-sub { display: block; margin-top: 0.15rem; font-size: 0.85rem; color: var(--bk-text-muted); }
+/* Only a status that is not the happy path earns text; a list of confirmed bookings stays quiet. */
+.bk-booking-status { font-size: 0.85rem; white-space: nowrap; color: var(--bk-text-muted); }
+.bk-booking-status--warn { color: var(--bk-warning); }
+.bk-booking-status--danger { color: var(--bk-danger); }
+.bk-booking-chevron { justify-self: end; color: var(--bk-text-muted); transition: rotate 160ms var(--bk-ease); }
+.bk-booking[open] > summary .bk-booking-chevron { rotate: 90deg; }
+@media (prefers-reduced-motion: reduce) { .bk-booking-chevron { transition: none; } }
+.bk-booking-detail {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem 2rem;
+  flex-wrap: wrap;
+  padding: 0.25rem 0.6rem 1.15rem 4.5rem;
 }
-@media (prefers-reduced-motion: reduce) {
-  .bk-section-nav a { transition: none; }
-}
-.bk-admin-panel {
-  min-width: 0;
-  padding: 1.25rem;
-  scroll-margin-top: 7.5rem;
-  border: 1px solid var(--bk-border);
-  border-radius: var(--bk-radius);
-  background: var(--bk-surface);
-  box-shadow: var(--bk-shadow);
-}
-.bk-section-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin: 0 0 1.25rem; }
-.bk-section-head h2 { margin: 0; color: var(--bk-text); font-size: 1.05rem; font-weight: 650; letter-spacing: -0.015em; text-transform: none; }
-.bk-section-head .bk-hint { margin: 0.3rem 0 0; max-width: 44rem; font-size: 0.85rem; text-wrap: pretty; }
-@media (min-width: 640px) {
-  .bk-admin-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .bk-stat { padding: 1.15rem 1.25rem; border-right: 1px solid var(--bk-border); border-bottom: 0; }
-  .bk-stat:nth-child(2n) { border-right: 1px solid var(--bk-border); }
-  .bk-stat:last-child { border-right: 0; }
-  .bk-admin-panel { padding: 1.5rem; }
+.bk-booking-detail .bk-facts { gap: 0.35rem 1.25rem; font-size: 0.875rem; }
+.bk-booking-detail .bk-facts dd { font-weight: 400; }
+.bk-booking-detail .bk-booking-open { align-self: flex-start; }
+.bk-booking-detail .bk-sub { display: inline; font-size: inherit; }
+@media (max-width: 560px) {
+  .bk-booking > summary { grid-template-columns: max-content minmax(0, 1fr) 1rem; }
+  .bk-booking-status { grid-column: 2; }
+  .bk-booking-detail { padding-left: 0.6rem; }
 }
 
 /* Confirmation ticket: date block | facts, with a tear-off footer row for reference + calendar */
@@ -564,44 +543,21 @@ export const themeCss = `
 .bk-alert--warn { background: var(--bk-warning-soft); color: var(--bk-warning); border-color: color-mix(in srgb, var(--bk-warning) 25%, transparent); }
 .bk-alert--ok { background: var(--bk-ok-soft); color: var(--bk-ok); border-color: color-mix(in srgb, var(--bk-ok) 25%, transparent); }
 
-.bk-table-wrap { overflow-x: auto; margin: 0; }
-.bk-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
-.bk-table th, .bk-table td { text-align: left; padding: 0.75rem; border-bottom: 1px solid var(--bk-border); white-space: nowrap; }
-.bk-table td { font-variant-numeric: tabular-nums; }
-.bk-table th { color: var(--bk-text-muted); font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; background: color-mix(in srgb, var(--bk-surface-2) 72%, var(--bk-surface)); }
-.bk-table th:first-child { border-top-left-radius: 8px; }
-.bk-table th:last-child { border-top-right-radius: 8px; }
-.bk-table tbody tr { transition: background-color 100ms ease; }
-@media (hover: hover) and (pointer: fine) {
-  .bk-table tbody tr:hover { background: color-mix(in srgb, var(--bk-surface-2) 65%, transparent); }
-}
-.bk-table a { color: var(--bk-accent); font-weight: 600; text-underline-offset: 0.18em; }
-.bk-table-action { text-align: right; }
-.bk-table-action a { display: inline-flex; align-items: center; min-height: 2.75rem; padding-inline: 0.35rem; }
 .bk-sub { display: block; font-size: 0.78rem; font-weight: 400; color: var(--bk-text-muted); }
 .bk-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; }
 .bk-empty-state { display: grid; min-height: 7rem; place-items: center; border-radius: var(--bk-radius-sm); background: color-mix(in srgb, var(--bk-surface-2) 55%, transparent); color: var(--bk-text-muted); text-align: center; }
 .bk-empty-state p { margin: 0; text-wrap: pretty; }
-@media (max-width: 720px) {
-  .bk-table-wrap { overflow: visible; }
-  .bk-table, .bk-table tbody, .bk-table tr, .bk-table td { display: block; width: 100%; box-sizing: border-box; }
-  .bk-table thead { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
-  .bk-table tbody { display: grid; gap: 0.75rem; }
-  .bk-table tr { overflow: hidden; border: 1px solid var(--bk-border); border-radius: var(--bk-radius-sm); background: var(--bk-surface); }
-  .bk-table td { display: grid; grid-template-columns: minmax(5.75rem, 0.38fr) minmax(0, 1fr); gap: 0.75rem; align-items: start; min-height: 2.75rem; padding: 0.65rem 0.75rem; white-space: normal; overflow-wrap: anywhere; }
-  .bk-table td::before { content: attr(data-label); color: var(--bk-text-muted); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
-  .bk-table td > * { min-width: 0; }
-  .bk-table td:last-child { border-bottom: 0; }
-  .bk-table-action { text-align: left; }
-}
-
 .bk-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
+.bk-actions--split { justify-content: space-between; margin-top: 1.5rem; }
 .bk-incident-list, .bk-incident-history { list-style: none; margin: 1rem 0; padding: 0; display: grid; gap: 0.75rem; }
 .bk-incident-card { margin: 0; padding: 1.1rem; border-color: color-mix(in srgb, var(--bk-danger) 30%, var(--bk-border)); box-shadow: none; }
-.bk-incident-card h3 { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin: 0 0 0.65rem; font-size: 1rem; text-wrap: balance; }
-.bk-incident-card .bk-actions { align-items: flex-start; }
-.bk-incident-action { flex: 1 1 16rem; }
-.bk-incident-action .bk-btn { width: 100%; }
+.bk-incident-card h3 { display: flex; align-items: center; gap: 0.6rem; margin: 0 0 0.4rem; font-size: 0.98rem; font-weight: 600; text-wrap: balance; }
+.bk-incident-card .bk-actions { align-items: center; }
+.bk-incident-action { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap-reverse; }
+.bk-incident-action > .bk-hint { flex-basis: 100%; margin: 0; }
+/* The note only has to be filled in when the operator has actually decided to resolve, so the
+   enhancer hides it until the first click on Resolve and this keeps it full width once shown. */
+.bk-incident-action .bk-field { flex-basis: 100%; margin: 0 0 0.6rem; }
 .bk-incident-history li { padding: 0.7rem 0; border-bottom: 1px solid var(--bk-border); }
 .bk-incident-history li:last-child { border-bottom: 0; }
 .bk-spinner {
@@ -618,106 +574,94 @@ export const themeCss = `
 .bk-disclosure > summary:focus-visible { outline: none; box-shadow: var(--bk-focus); border-radius: var(--bk-radius-sm); }
 .bk-disclosure > div { padding: 0 1rem 1rem; }
 
-.bk-filters { display: grid; gap: 0.75rem; grid-template-columns: 1fr; margin: 0 0 1.25rem; padding: 1rem; border-radius: var(--bk-radius-sm); background: color-mix(in srgb, var(--bk-surface-2) 58%, transparent); }
-.bk-filters .bk-field { margin: 0; }
-.bk-filter-actions { display: flex; align-items: center; gap: 0.75rem; }
-.bk-filter-actions .bk-btn { flex: 1; }
-.bk-filter-clear { display: inline-flex; align-items: center; min-height: 2.75rem; color: var(--bk-text-muted); font-size: 0.85rem; font-weight: 500; text-underline-offset: 0.18em; }
+.bk-filter-clear { display: inline-flex; align-items: center; color: var(--bk-text-muted); font-size: 0.85rem; font-weight: 500; text-underline-offset: 0.18em; }
 .bk-filter-clear:focus-visible { outline: none; box-shadow: var(--bk-focus); border-radius: 3px; }
-@media (min-width: 720px) {
-  .bk-filters { grid-template-columns: minmax(14rem, 2fr) minmax(10rem, 1fr) auto; align-items: end; }
-  .bk-filter-actions .bk-btn { flex: none; }
-}
 
-/* Admin availability calendar: month grids of day cells linking to the adjust-day form */
-.bk-days-layout { display: grid; gap: 1.25rem; align-items: start; }
-.bk-months {
-  display: grid;
-  gap: 1rem;
-  min-width: 0;
-  padding: 1rem;
-  border-radius: calc(var(--bk-radius) - 2px);
-  background: color-mix(in srgb, var(--bk-surface-2) 58%, transparent);
-}
-.bk-month h3 { margin: 0 0 0.75rem; font-size: 1rem; font-weight: 650; letter-spacing: -0.015em; }
-.bk-monthgrid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.4rem; }
-.bk-dow { text-align: center; font-size: 0.68rem; font-weight: 600; color: var(--bk-text-muted); text-transform: uppercase; letter-spacing: 0.06em; align-self: end; padding: 0.1rem 0 0.25rem; }
+/* Availability calendar. A tinted tile per day plus a used/capacity label under every number read
+   as a heat map the operator had to decode; the number carries the day and a single dot carries
+   its state, so a normal month is almost entirely plain text. */
+.bk-days-layout { display: grid; gap: 2rem; align-items: start; }
+.bk-months { display: grid; gap: 1rem; min-width: 0; }
+.bk-month h3 { margin: 0 0 0.75rem; font-size: 0.95rem; font-weight: 600; letter-spacing: -0.01em; }
+.bk-monthgrid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.2rem; }
+.bk-dow { text-align: center; font-size: 0.68rem; font-weight: 500; color: var(--bk-text-muted); padding: 0.1rem 0 0.4rem; }
 .bk-day {
+  position: relative;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.08rem;
-  min-height: 3.5rem;
-  border: 1px solid var(--bk-border);
-  border-radius: var(--bk-radius-sm);
-  background: var(--bk-surface);
-  color: var(--bk-text);
+  min-height: 2.6rem;
+  border-radius: 8px;
+  color: var(--bk-text-muted);
   text-decoration: none;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
-  box-shadow: 0 1px 1px rgb(20 21 26 / 0.03);
-  transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+  transition: background-color 120ms ease;
 }
 @media (hover: hover) and (pointer: fine) {
-  .bk-day:hover { border-color: var(--bk-accent); }
+  .bk-day:hover { background: var(--bk-surface-2); }
 }
 .bk-day:focus-visible { outline: none; box-shadow: var(--bk-focus); }
 @media (prefers-reduced-motion: reduce) { .bk-day { transition: none; } }
 .bk-day--empty { visibility: hidden; }
-.bk-day--quiet { color: var(--bk-text-muted); background: transparent; }
-.bk-day--booked { border-color: color-mix(in srgb, var(--bk-accent) 45%, var(--bk-border)); background: var(--bk-accent-soft); }
-.bk-day--adjusted { border-color: color-mix(in srgb, var(--bk-warning) 45%, var(--bk-border)); background: var(--bk-warning-soft); }
-.bk-day--closed { border-color: color-mix(in srgb, var(--bk-danger) 35%, var(--bk-border)); background: var(--bk-danger-soft); color: var(--bk-danger); }
-.bk-day--selected { border-color: var(--bk-accent); box-shadow: inset 0 0 0 1px var(--bk-accent), var(--bk-focus); }
-.bk-day-num { font-weight: 650; font-size: 0.9rem; }
-/* Adjusted days get a dot next to the number so the state survives without color vision. */
-.bk-day--adjusted .bk-day-num::after {
-  content: ''; display: inline-block;
-  width: 0.28rem; height: 0.28rem; margin-left: 0.18rem;
-  border-radius: 50%; background: var(--bk-warning); vertical-align: 0.18em;
+/* The dot is the whole state vocabulary: present means something is true of this day, and its
+   color says which. A quiet day has no dot at all. */
+.bk-day::after {
+  content: '';
+  position: absolute;
+  bottom: 0.3rem;
+  width: 0.28rem;
+  height: 0.28rem;
+  border-radius: 50%;
 }
-.bk-day-load { font-size: 0.75rem; color: var(--bk-text-muted); }
-.bk-day--closed .bk-day-load { color: inherit; }
-.bk-legend { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0; }
+.bk-day--booked { color: var(--bk-text); font-weight: 600; }
+.bk-day--booked::after { background: var(--bk-accent); }
+.bk-day--adjusted { color: var(--bk-text); font-weight: 600; }
+.bk-day--adjusted::after { background: var(--bk-warning); }
+.bk-day--closed { color: var(--bk-danger); font-weight: 600; }
+.bk-day--closed::after { background: var(--bk-danger); }
+.bk-day--selected { background: var(--bk-text); color: var(--bk-bg); font-weight: 600; }
+.bk-day--selected::after { background: var(--bk-bg); }
+.bk-day-num { font-size: 0.875rem; }
+.bk-legend { display: grid; gap: 0.15rem; margin: 1rem 0 0; font-size: 0.8rem; color: var(--bk-text-muted); }
+.bk-legend span { display: flex; align-items: center; gap: 0.5rem; }
+.bk-legend i { width: 0.4rem; height: 0.4rem; border-radius: 50%; }
 .bk-months .bk-disclosure { margin: 0; }
 .bk-selection-hint { margin: -0.25rem 0 0; padding-bottom: 0.25rem; line-height: 1.5; }
-.bk-day-editor {
-  min-width: 0;
-  padding: 1.1rem;
-  border: 1px solid var(--bk-border);
-  border-radius: calc(var(--bk-radius) - 2px);
-  background: var(--bk-surface);
-  box-shadow: 0 1px 2px rgb(20 21 26 / 0.04);
-}
-.bk-day-form h2 { margin: 0 0 1rem; color: var(--bk-text); font-size: 1rem; font-weight: 650; letter-spacing: -0.015em; text-transform: none; }
-.bk-day-form .bk-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
-.bk-day-form .bk-actions .bk-btn:first-child { grid-column: 1 / -1; }
-@media (min-width: 1080px) {
-  .bk-days-layout { grid-template-columns: minmax(29rem, 1fr) minmax(20rem, 23rem); }
-  .bk-day-editor { position: sticky; top: 2rem; }
+.bk-day-editor { min-width: 0; }
+.bk-day-form h2 { margin: 0 0 1rem; color: var(--bk-text); font-size: 1.1rem; font-weight: 600; letter-spacing: -0.02em; text-transform: none; }
+.bk-day-form .bk-field { display: inline-block; margin: 0 0.75rem 1rem 0; }
+.bk-day-form .bk-field .bk-input { width: auto; min-width: 8rem; }
+.bk-day-form .bk-field .bk-input[type=number] { min-width: 5.5rem; width: 5.5rem; }
+.bk-day-form .bk-actions { gap: 0.6rem; }
+@media (min-width: 1024px) {
+  .bk-days-layout { grid-template-columns: minmax(16rem, 20rem) minmax(0, 1fr); gap: 3rem; }
 }
 @media (max-width: 520px) {
-  .bk-section-head--availability { align-items: flex-start; flex-direction: column; }
-  .bk-months, .bk-day-editor { margin-inline: -0.25rem; padding: 0.9rem; }
-  .bk-monthgrid { gap: 0.28rem; }
-  .bk-day { min-height: 3.25rem; }
+  .bk-monthgrid { gap: 0.15rem; }
+  .bk-day { min-height: 2.75rem; }
 }
 .bk-disclosure--bare { border: none; background: none; margin: 0 0 0.75rem; }
-.bk-disclosure--bare > summary { display: flex; align-items: center; min-height: 2.75rem; box-sizing: border-box; padding: 0 0 0.5rem; color: var(--bk-text-muted); font-size: 0.85rem; }
+.bk-disclosure--bare > summary { display: flex; align-items: center; gap: 0.35rem; min-height: 2.5rem; box-sizing: border-box; padding: 0 0 0.4rem; color: var(--bk-text-muted); font-size: 0.85rem; list-style: none; }
+.bk-disclosure--bare > summary::-webkit-details-marker { display: none; }
+.bk-disclosure--bare > summary::before { content: '\\203a'; display: inline-block; transition: rotate 140ms var(--bk-ease); }
+.bk-disclosure--bare[open] > summary::before { rotate: 90deg; }
+@media (prefers-reduced-motion: reduce) { .bk-disclosure--bare > summary::before { transition: none; } }
 .bk-disclosure--bare > div { padding: 0; }
-.bk-day-detail { margin: 0 0 1rem; }
+.bk-day-detail { margin: 0 0 1.5rem; }
 .bk-day-bookings { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; }
+.bk-day-bookings { gap: 0; }
 .bk-day-bookings li {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem;
-  padding: 0.45rem 0.6rem; font-size: 0.88rem;
-  border: 1px solid var(--bk-border); border-radius: var(--bk-radius-sm);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;
+  padding: 0.6rem 0; font-size: 0.9rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--bk-border) 55%, transparent);
 }
 .bk-day-bookings li a { margin-left: auto; }
 /* Adjacent pager controls reduce pointer travel during repeated month comparison. */
 .bk-pager { display: flex; align-items: center; gap: 0.5rem; }
-.bk-pager h3 { order: -1; margin: 0 auto 0 0; font-size: 1rem; font-weight: 650; letter-spacing: -0.015em; }
-.bk-pager .bk-btn { width: 2.75rem; padding: 0; font-size: 1.15rem; }
+.bk-pager { gap: 0.25rem; margin-bottom: 0.9rem; }
+.bk-pager h3 { order: -1; margin: 0 auto 0 0; font-size: 0.95rem; font-weight: 600; letter-spacing: -0.01em; }
+.bk-pager .bk-btn { width: 1.9rem; min-height: 1.9rem; padding: 0; font-size: 1rem; }
 .bk-month[hidden] { display: none; }
 #bk-default { margin-top: 1.25rem; }
 .bk-btn--sm { min-height: 2.75rem; padding: 0.4rem 0.75rem; font-size: 0.85rem; }
@@ -743,43 +687,111 @@ export const themeCss = `
 
 /* Settings keep one section visible at a time; the tab strip scrolls on narrow screens rather
    than wrapping into a second navigation hierarchy. */
-.bk-tabs { display: flex; flex-wrap: nowrap; gap: 0.25rem; margin: 0 0 1.25rem; overflow-x: auto; border-bottom: 1px solid var(--bk-border); scrollbar-width: none; }
+.bk-tabs { display: flex; flex-wrap: nowrap; gap: 1.5rem; margin: 0 0 2rem; overflow-x: auto; border-bottom: 1px solid var(--bk-border); scrollbar-width: none; }
 .bk-tabs::-webkit-scrollbar { display: none; }
 .bk-tabs a {
   display: inline-flex;
   align-items: center;
   min-height: 2.75rem;
   box-sizing: border-box;
-  padding: 0.55rem 0.95rem;
+  padding: 0 0 0.7rem;
+  margin-bottom: -1px;
   white-space: nowrap;
   color: var(--bk-text-muted);
   text-decoration: none;
   font-weight: 500;
   font-size: 0.92rem;
   border-bottom: 2px solid transparent;
-  border-radius: var(--bk-radius-sm) var(--bk-radius-sm) 0 0;
-  transition: background-color 100ms ease, color 100ms ease;
+  transition: color 100ms ease;
 }
-.bk-tabs a:hover { background: var(--bk-surface-2); color: var(--bk-text); }
+.bk-tabs a:hover { color: var(--bk-text); }
 .bk-tabs a:focus-visible { outline: none; box-shadow: var(--bk-focus); }
-.bk-tabs a[aria-current="page"] { color: var(--bk-text); border-bottom-color: var(--bk-accent); }
-.bk-settings-sections { display: grid; gap: 1.25rem; min-width: 0; }
-.bk-settings-sections .bk-card { margin: 0; }
+.bk-tabs a[aria-current="page"] { color: var(--bk-text); border-bottom-color: var(--bk-text); }
+.bk-settings-sections { min-width: 0; }
 .bk-settings-sections > [hidden] { display: none; }
-.bk-section-hint { margin: -0.5rem 0 1.1rem; }
-.bk-setting { margin: 0 0 1.15rem; }
-.bk-setting:last-of-type { margin-bottom: 1.4rem; }
-.bk-setting .bk-field, .bk-setting .bk-fieldset, .bk-setting .bk-switch { margin-bottom: 0.2rem; }
-/* Numeric dials hold 2-4 digit values; full-width boxes read as free-text fields. */
-.bk-setting .bk-input[type=number] { width: 7rem; }
-.bk-setting-group { font-size: 0.95rem; font-weight: 600; margin: 1.6rem 0 0.95rem; }
-.bk-setting-group:first-of-type { margin-top: 0.25rem; }
-.bk-actions--split { justify-content: space-between; }
+.bk-settings-form { max-width: 46rem; }
+.bk-settings-form > h2 { margin: 0 0 0.25rem; font-size: 1.05rem; font-weight: 600; letter-spacing: -0.02em; text-transform: none; color: var(--bk-text); }
+.bk-setting-group {
+  margin: 2rem 0 0.25rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--bk-text);
+}
+.bk-setting-group:first-of-type { margin-top: 1.25rem; }
+
+/* A setting reads as a statement about the business, not as a form field: the value is the
+   sentence, and the control only appears once the operator asks to change it. Without scripting
+   the sentence and the control are both rendered, so the page still works as a plain form. */
+.bk-stmt {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem 1rem;
+  flex-wrap: wrap;
+  padding: 0.85rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--bk-border) 60%, transparent);
+}
+.bk-stmt-text { font-size: 0.95rem; text-wrap: pretty; }
+.bk-stmt-text b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.bk-stmt-edit {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--bk-accent);
+  font: inherit;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+.bk-stmt-edit:hover { text-decoration: underline; }
+.bk-stmt-edit:focus-visible { outline: none; box-shadow: var(--bk-focus); border-radius: 4px; }
+.bk-stmt-editor { display: flex; align-items: flex-end; gap: 0.6rem; flex-wrap: wrap; width: 100%; }
+.bk-stmt-editor .bk-field { margin: 0; }
+.bk-stmt-editor .bk-field > span { font-size: 0.78rem; color: var(--bk-text-muted); }
+.bk-stmt-editor .bk-input { width: auto; min-height: 2.5rem; }
+.bk-stmt-editor .bk-input[type=time] { width: 8rem; }
+.bk-stmt-editor .bk-input[type=number] { width: 6.5rem; }
+.bk-stmt-editor .bk-hint { flex-basis: 100%; margin: 0; }
+.bk-stmt-editor .bk-fieldset { margin: 0; }
+/* Set by the settings enhancer on first run; its absence is how the no-script path opts out of
+   every reveal rule below. */
+:root[data-bk-js] .bk-stmt-editor { display: none; }
+:root[data-bk-js] .bk-stmt[data-bk-open] .bk-stmt-editor { display: flex; }
+:root[data-bk-js] .bk-stmt[data-bk-open] > .bk-stmt-text,
+:root[data-bk-js] .bk-stmt[data-bk-open] > .bk-stmt-edit { display: none; }
+:root:not([data-bk-js]) .bk-stmt-edit { display: none; }
+.bk-modified { display: inline-flex; align-items: baseline; gap: 0.5rem; font-size: 0.8rem; color: var(--bk-text-muted); }
+
+/* Weekday pills: seven checkboxes read as a form, seven toggles read as a week. */
+.bk-days { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.bk-days .bk-check {
+  justify-content: center;
+  min-width: 3rem;
+  min-height: 2.4rem;
+  margin: 0;
+  padding: 0 0.6rem;
+  border: 1px solid var(--bk-border);
+  border-radius: 8px;
+  background: var(--bk-surface);
+  font-size: 0.85rem;
+  color: var(--bk-text-muted);
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.bk-days .bk-check:has(input:checked) {
+  background: var(--bk-accent);
+  border-color: var(--bk-accent);
+  color: var(--bk-accent-contrast);
+  font-weight: 500;
+}
+.bk-days .bk-check:has(input:focus-visible) { box-shadow: var(--bk-focus); }
+.bk-days .bk-check input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .bk-days .bk-check { transition: none; } }
 
 .bk-check { display: flex; align-items: center; gap: 0.5rem; min-height: 2.75rem; margin: 0 0 0.25rem; font-size: 0.92rem; cursor: pointer; }
 .bk-check input { width: 1.1rem; height: 1.1rem; accent-color: var(--bk-accent); }
 .bk-check input:focus-visible { outline: none; box-shadow: var(--bk-focus); border-radius: 2px; }
 .bk-fieldset { border: 0; margin: 0; padding: 0; }
+.bk-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .bk-fieldset legend { font-size: 0.85rem; font-weight: 500; margin-bottom: 0.3rem; padding: 0; }
 /* Seven weekday toggles read as one row rather than a seven-item stack. */
 .bk-days { display: flex; flex-wrap: wrap; gap: 0 1rem; }

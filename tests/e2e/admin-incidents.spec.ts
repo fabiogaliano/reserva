@@ -56,7 +56,7 @@ test('a one-shot provider failure opens an incident, "Try again" resolves it, a 
   expect(alertsAfterSecondPass.filter((a: any) => a.reference === oversellTarget.reference)).toHaveLength(1);
 
   // --- The admin page renders the three cards.
-  await page.goto('/booking/admin');
+  await page.goto('/booking/admin?tab=attention');
   const pageText = await page.locator('#bk-incidents').innerText();
   // Never the internal word "abandoned" anywhere in the section.
   expect(pageText.toLowerCase()).not.toContain('abandoned');
@@ -85,6 +85,8 @@ test('a one-shot provider failure opens an incident, "Try again" resolves it, a 
   // --- Manual resolution on the manual-target card: requires the note, resolves synchronously
   // (no reconciliation pass needed), records who/when, and survives a reload in history.
   const manualForm = manualCard.locator('form', { hasText: 'What did you do' });
+  // First press reveals the note instead of submitting; the fill below then has somewhere to go.
+  await manualForm.getByRole('button', { name: 'I handled this manually' }).click();
   await manualForm.getByLabel('What did you do?').fill('Called the customer and confirmed the slot by phone.');
   await manualForm.getByRole('button', { name: 'I handled this manually' }).click();
   await expect(page.locator('#bk-incidents')).toContainText('Marked as handled');

@@ -10,8 +10,12 @@ test('admin dashboard lists a booking by reference, and its operator manage link
   await page.goto('/booking/admin');
   await expect(page.locator('h1')).toContainText('Booking admin', { ignoreCase: true });
 
-  const row = page.locator('tr', { hasText: reference });
+  // A booking row is a disclosure: the summary carries the customer and the panel carries the
+  // reference, so the row has to be opened before either is on screen.
+  const row = page.locator('.bk-booking', { hasText: reference });
   await expect(row).toBeVisible();
+  await row.locator('summary').click();
+  await expect(row.getByText(reference)).toBeVisible();
 
   await row.getByRole('link', { name: 'Manage' }).click();
   await expect(page.locator('h1')).toContainText(reference);
@@ -31,7 +35,7 @@ test('closing a day override removes it from availability, and clearing the over
   const dayBefore = availabilityBefore.days.find((d: any) => d.date === targetDate);
   expect(dayBefore?.slots.length).toBeGreaterThan(0);
 
-  await page.goto('/booking/admin');
+  await page.goto('/booking/admin?tab=availability');
   const overrideForm = page.locator('#bk-override');
   await overrideForm.locator('input[name="date"]').fill(targetDate);
   await overrideForm.getByRole('button', { name: 'Close this day' }).click();
