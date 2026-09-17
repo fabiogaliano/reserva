@@ -357,7 +357,8 @@ Order of operations:
    must handle the formula object.
 2. Optionally move shared values out of the services: `hours` at the top level for opening hours,
    `pricing: { surcharges, maxUnits, surchargeScope }` at the top level and
-   `pricing: { baseMinor }` per service for formula pricing.
+   `pricing: { baseMinor }` per service for formula pricing. A formula service must declare
+   `occupancy: { seatsPerUnit }`; without it there is no unit count for the formula to multiply.
 3. Redeploy. Stored admin overrides keyed to a formula service's old rows
    (`services.<slug>.pricing.<i>.priceMinor`) no longer match a setting and are dropped with a
    load warning; the operator re-enters the base price and surcharges on the Pricing tab.

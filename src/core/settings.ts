@@ -2,6 +2,7 @@ import { ZodError } from 'astro/zod';
 import {
   adminLocaleFor,
   resolveServiceTitle,
+  surchargesFor,
   validateConfig,
   type PricingRule,
   type ResolvedClientConfig,
@@ -499,6 +500,18 @@ export function applySettingOverrides(
     const value = decodeStoredValue(definition, raw);
     if (value !== undefined) definition.set(next, value);
     else onInvalidRow?.(definition.key, 'stored value fails its current bounds');
+  }
+  // A shared `pricing.*` edit has to reach every service that inherits it before re-validation:
+  // `validateConfig` trusts a service's `inherited` flag only while its materialized value still
+  // matches the shared block, so a stale copy would read as a declaration and stop following.
+  for (const service of Object.values(next.services)) {
+    if (Array.isArray(service.pricing)) continue;
+    const formula = service.pricing;
+    if (formula.inherited.surcharges) {
+      formula.surcharges = surchargesFor(next.pricing.surcharges, (service.location?.pickupOptions ?? []).map((option) => option.id));
+    }
+    if (formula.inherited.maxUnits) formula.maxUnits = next.pricing.maxUnits;
+    if (formula.inherited.surchargeScope) formula.surchargeScope = next.pricing.surchargeScope;
   }
   return next;
 }

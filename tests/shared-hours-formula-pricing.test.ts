@@ -146,6 +146,24 @@ describe('formula pricing', () => {
     const ownPartial = { ...fleet, services: { ...fleet.services, private: { ...fleet.services.private, pricing: { ...fleet.services.private.pricing, surcharges: { meeting_point: 0 } } } } };
     expect(() => validateConfig(ownPartial)).toThrow(/custom_dropoff, so services\.private\.pricing\.surcharges must price it/);
   });
+
+  it('a formula service must declare occupancy, since that is what checkout counts units with', () => {
+    const { occupancy: _dropped, ...noOccupancy } = fleet.services['old-city'];
+    expect(() => validateConfig({ ...fleet, services: { ...fleet.services, 'old-city': noOccupancy } }))
+      .toThrow(/services\.old-city\.occupancy\.seatsPerUnit must be declared/);
+  });
+
+  it('a config that writes amounts and also claims them inherited gets the amounts it wrote', () => {
+    const claimed = {
+      ...fleet.services.private,
+      pricing: { ...fleet.services.private.pricing, maxUnits: 2, inherited: { surcharges: true, maxUnits: true, surchargeScope: true } },
+    };
+    const config = validateConfig({ ...fleet, services: { ...fleet.services, private: claimed } });
+    expect(config.services.private?.pricing).toMatchObject({
+      surcharges: { custom_both: 800 }, surchargeScope: 'booking', maxUnits: 2,
+      inherited: { surcharges: false, maxUnits: true, surchargeScope: false },
+    });
+  });
 });
 
 describe('catalog projection', () => {

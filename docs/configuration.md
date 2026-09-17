@@ -56,7 +56,8 @@ so an admin edit of the shared surcharge reaches every service that inherits it.
 `occupancy: { seatsPerUnit }` maps a headcount onto capacity units when they are not 1:1: a
 booking takes `ceil(quantity / seatsPerUnit)` units, so a party of 5 on a 4-seat vehicle holds
 two of them. Omit the key and every booking takes exactly one unit, which is what most
-deployments want.
+deployments want. A formula-priced service must declare it: the formula multiplies by the same
+units checkout reserves, and a headcount with no `seatsPerUnit` has no unit count to multiply by.
 
 ## Opening hours
 
