@@ -1,7 +1,8 @@
 # Migrating
 
-Two breaking cuts so far. [Migrating to 0.5.0](#migrating-to-050) is at the end of this file;
-0.2.0 (the first public release) is below.
+Three breaking cuts so far. [Migrating to 0.6.0](#migrating-to-060) and
+[Migrating to 0.5.0](#migrating-to-050) are at the end of this file; 0.2.0 (the first public
+release) is below.
 
 # Migrating to 0.2.0
 
@@ -341,3 +342,44 @@ order. To add one:
 
 Migrations are append-only: an already-published file is never edited, because `d1_migrations`
 records only filenames and would report the edited migration as applied.
+
+# Migrating to 0.6.0
+
+0.6.0 adds a second pricing shape and business-wide opening hours. Nothing is renamed; the
+breaking part is the catalog's `pricing` field, which is now a union, and the admin override rows
+of any service that moves to the formula.
+
+Order of operations:
+
+1. Update the funnel wherever it reads `catalog.services[i].pricing` as an array. The library
+   helpers already accept both shapes, so a funnel built on `resolvedPriceTableFor` or
+   `pricingCombinations` needs no change; a hand-written projection (an offline catalog fallback)
+   must handle the formula object.
+2. Optionally move shared values out of the services: `hours` at the top level for opening hours,
+   `pricing: { surcharges, maxUnits, surchargeScope }` at the top level and
+   `pricing: { baseMinor }` per service for formula pricing.
+3. Redeploy. Stored admin overrides keyed to a formula service's old rows
+   (`services.<slug>.pricing.<i>.priceMinor`) no longer match a setting and are dropped with a
+   load warning; the operator re-enters the base price and surcharges on the Pricing tab.
+
+## Config keys
+
+| 0.5.x | 0.6.0 |
+|---|---|
+| `services.<slug>.schedule` (required) | optional when a top-level `hours` block exists; a service without one inherits it |
+| `services.<slug>.pricing: PricingRule[]` | unchanged, or `{ baseMinor, surcharges?, maxUnits?, surchargeScope? }` |
+| — | `hours: ScheduleRule[]`, `pricing: { surcharges?, maxUnits?, surchargeScope? }` at the top level |
+
+## Catalog
+
+`CatalogService.pricing` is `CatalogPricingRule[] | CatalogPricingFormula`, and every service
+carries `maxQuantity`. `fromPriceMinor` is unchanged in meaning.
+
+## Admin settings
+
+The Hours tab shows the shared block once, with the closing time (`lastEnd`) editable; a service
+that declares its own schedule sits under "Service-specific overrides". The Pricing tab shows the
+shared surcharge table and group-size dials, then one base price per formula service; breakpoint
+services keep one amount per row. New setting keys: `hours.<i>.*`, `pricing.surcharges.<id>`,
+`pricing.maxUnits`, `pricing.surchargeScope`, `services.<slug>.pricing.baseMinor` (and
+`.surcharges.<id>`, `.maxUnits`, `.surchargeScope` for a service that declares them).

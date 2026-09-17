@@ -78,6 +78,8 @@ receive once the defaults below have been applied.
 | `business` | yes | `{ name, shortCode, url, timezone (IANA), currency (ISO 4217, lowercase), contact: { email, phone, phoneSecondary?, whatsapp? } }` |
 | `capacity` | yes | `{ default: number }` — units available per slot |
 | `admin` | no | `{ access?: { teamDomain, aud }, locale? }` — defaults to `{}`. `access` present selects Cloudflare Access; absent requires a custom `adminAuth` while the `admin`/`ops` routes are on |
+| `hours` | no | `Array<ScheduleRule>` (same shape as a service `schedule` rule) — the business's opening hours, inherited by every service that declares no `schedule`; each service derives its own last departure from a shared `lastEnd` |
+| `pricing` | no | `{ surcharges?: Record<pickupId, minor>, maxUnits?, surchargeScope?: 'unit' \| 'booking' }` — defaults to `{ surcharges: {}, maxUnits: 1, surchargeScope: 'unit' }`; the shared half of formula pricing, inherited field by field by every formula service that leaves it undeclared |
 | `services` | yes | `Record<slug, ServiceConfig>` |
 | `booking` | no | `{ minNoticeHours, maxHorizonDays, holdMinutes (≥35), cancelCutoffHours, reschedule: { enabled, cutoffHours }, limitedThreshold, calendarMaxStaleSeconds, reminderHoursBefore, maxHoldsPerIp?, tokenExpiryDays? }` — the whole key defaults, as does each of its own: `0`, `90`, `35`, `24`, `{ enabled: true }` with `cutoffHours` inheriting `cancelCutoffHours`, `2`, `900`, `24` (`reminderHoursBefore: 0` disables the reminder email) |
 | `locales` | no | `{ supported: string[], default: string }` — defaults to `{ supported: ['en'], default: 'en' }` |
@@ -93,8 +95,8 @@ receive once the defaults below have been applied.
 |---|---|---|
 | `title` | yes | customer-facing display name; `LocalizedText` (a string or `Record<locale, string>`) |
 | `durationMin` / `turnaroundMin` | yes | slot length and the gap Reserva keeps after it |
-| `schedule` | yes | `Array<{ from?, to?, days: number[], firstStart?, lastStart?, lastEnd?, intervalMin }>` (`days`: 0 = Sunday; `firstStart` defaults to `'09:00'`). Declare `lastStart` (latest departure) or `lastEnd` (time the last booking must be finished by), never both; `lastEnd` derives the last departure as the latest grid start that still fits `durationMin`. Neither ⇒ `lastStart: '18:00'`. The resolved rule always carries `lastStart` and keeps `lastEnd` for display |
-| `pricing` | yes | `Array<{ maxQuantity, pickup?, priceMinor }>` — the tightest row whose `maxQuantity` covers the request wins, in any row order (`priceFor`, `resolvedPriceTableFor`, `pricingCombinations` on `@reservajs/astro/core`). `pickup` names one of the service's pickup options; it may be omitted when the service resolves to exactly one, and must be absent when the service declares no `location` |
+| `schedule` | no* | `Array<{ from?, to?, days: number[], firstStart?, lastStart?, lastEnd?, intervalMin }>` (`days`: 0 = Sunday; `firstStart` defaults to `'09:00'`). *Required unless a top-level `hours` block exists to inherit. Declare `lastStart` (latest departure) or `lastEnd` (time the last booking must be finished by), never both; `lastEnd` derives the last departure as the latest grid start that still fits `durationMin`. Neither ⇒ `lastStart: '18:00'`. The resolved rule always carries `lastStart` and keeps `lastEnd` for display |
+| `pricing` | yes | Rows `Array<{ maxQuantity, pickup?, priceMinor }>` — the tightest row whose `maxQuantity` covers the request wins, in any row order; `pickup` names one of the service's pickup options, may be omitted when the service resolves to exactly one, and must be absent when the service declares no `location`. Or a formula `{ baseMinor, surcharges?, maxUnits?, surchargeScope? }` — `baseMinor × ceil(quantity / occupancy.seatsPerUnit)` plus the chosen pickup option's surcharge (per unit or per booking), party capped at `maxUnits × seatsPerUnit`; undeclared fields inherit top-level `pricing`, and every declared pickup option must be priced (`0` allowed). `priceFor`, `resolvedPriceTableFor`, `pricingCombinations`, `lowestPriceMinor`, `maxQuantityFor` on `@reservajs/astro/core` take either shape |
 | `occupancy` | no | `{ seatsPerUnit: number }` — a booking takes `ceil(quantity / seatsPerUnit)` capacity units. Absent ⇒ one unit per booking. (Replaces the removed `occupancyFor` function, which is now a validation error) |
 | `meta` | no | `Record<string, unknown>` — opaque JSON reserva never reads, echoed back by the catalog. Must be JSON-serializable and under 8 KB. `MeetingPoint` takes one too |
 | `location` | no | `{ meetingPoints?: Array<{ id, label, mapsUrl }>, pickupOptions?: Array<{ id, label, hint?, requiresAddress, usesMeetingPoint }> }` — declare at least one of the two. Pickup ids are opaque, so `label` is required and localized; address collection keys off `requiresAddress`, never off the id. `meetingPoints` on its own implies the single option `{ id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true }`, the one option named from a message key (`pickup.meetingPoint`). Omit `location` for a service with no pickup axis at all |
@@ -165,8 +167,9 @@ Two endpoints let a deployment describe itself without source access:
 
 - `GET /api/booking/catalog?locale=` — public. Services with locale-resolved titles,
   duration, declared location options, declared metadata fields, the service's `pricing`
-  rules (`{ maxQuantity, pickup, priceMinor }`, `pickup` null without a pickup axis) and its
-  `fromPriceMinor`, plus `locales`, `currency`, `maxHorizonDays` and `policy`
+  (rows `{ maxQuantity, pickup, priceMinor }[]`, `pickup` null without a pickup axis, or a
+  formula `{ baseMinor, surcharges, maxUnits, surchargeScope, seatsPerUnit }`), its
+  `maxQuantity` and `fromPriceMinor`, plus `locales`, `currency`, `maxHorizonDays` and `policy`
   (`cancelCutoffHours`, `reschedule.{enabled,cutoffHours}`). Never exposes schedules, turnaround,
   or capacity. Build a
   booking UI from this; do not hardcode config or prices in the consumer.

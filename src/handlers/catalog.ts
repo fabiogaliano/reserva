@@ -1,11 +1,12 @@
 import type {
   CatalogLocation,
   CatalogMetadataField,
-  CatalogPricingRule,
+  CatalogPricing,
   CatalogResponse,
   CatalogService,
 } from '../core/api.js';
 import {
+  maxQuantityFor,
   resolveLocalizedText,
   resolveServiceTitle,
   type ResolvedClientConfig,
@@ -13,6 +14,7 @@ import {
   type ResolvedServiceConfig,
 } from '../core/config.js';
 import { resolveLocale } from '../core/locale.js';
+import { lowestPriceMinor } from '../core/pricing.js';
 import type { ReservaContext } from '../context.js';
 import { HttpError, json } from '../http.js';
 import { resolveMessages, type ReservaMessages } from '../ui/messages.js';
@@ -66,13 +68,24 @@ function catalogMetadataFields(service: ResolvedServiceConfig, locale: string, d
 }
 
 // Projected field by field rather than spread, so a future private column on a pricing rule does
-// not become customer-facing by accident.
-function catalogPricing(service: ResolvedServiceConfig): CatalogPricingRule[] {
-  return service.pricing.map((rule) => ({
-    maxQuantity: rule.maxQuantity,
-    pickup: rule.pickup ?? null,
-    priceMinor: rule.priceMinor,
-  }));
+// not become customer-facing by accident. A formula's `inherited` flags are config provenance, not
+// a price, and stay out; `seatsPerUnit` is the one occupancy number a formula price depends on.
+function catalogPricing(service: ResolvedServiceConfig): CatalogPricing {
+  if (Array.isArray(service.pricing)) {
+    return service.pricing.map((rule) => ({
+      maxQuantity: rule.maxQuantity,
+      pickup: rule.pickup ?? null,
+      priceMinor: rule.priceMinor,
+    }));
+  }
+  const formula = service.pricing;
+  return {
+    baseMinor: formula.baseMinor,
+    surcharges: { ...formula.surcharges },
+    maxUnits: formula.maxUnits,
+    surchargeScope: formula.surchargeScope,
+    seatsPerUnit: formula.seatsPerUnit,
+  };
 }
 
 export function catalogPayload(config: ResolvedClientConfig, locale: string, messages: ReservaMessages): CatalogResponse {
@@ -86,8 +99,10 @@ export function catalogPayload(config: ResolvedClientConfig, locale: string, mes
       location: catalogLocation(service, locales, messages),
       metadataFields: catalogMetadataFields(service, locale, config.locales.default),
       pricing,
-      // `pricing` is non-empty by schema (min(1)), so this is never Infinity.
-      fromPriceMinor: Math.min(...pricing.map((rule) => rule.priceMinor)),
+      maxQuantity: maxQuantityFor(service),
+      // Pricing always covers quantity 1 (rows by schema `min(1)`, a formula by construction), so
+      // this is never Infinity.
+      fromPriceMinor: lowestPriceMinor(service),
       // Always present, like every other catalog field: a consumer reads `meta.image` without
       // first proving the key exists.
       meta: service.meta ?? {},

@@ -87,6 +87,7 @@ describe('GET /api/booking/catalog', () => {
         { maxQuantity: 8, pickup: 'default', priceMinor: 18000 },
         { maxQuantity: 8, pickup: 'custom', priceMinor: 20000 },
       ],
+      maxQuantity: 8,
       fromPriceMinor: 10000,
       // Opaque passthrough, always present: a service declaring no `meta` publishes {}.
       meta: {},
@@ -115,6 +116,7 @@ describe('GET /api/booking/catalog', () => {
       ],
       // A location-less service has no pickup axis; the key stays present as null.
       pricing: [{ maxQuantity: 6, pickup: null, priceMinor: 4200 }],
+      maxQuantity: 6,
       fromPriceMinor: 4200,
       meta: {},
     });
