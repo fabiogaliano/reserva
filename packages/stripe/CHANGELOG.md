@@ -1,5 +1,12 @@
 # @reservajs/stripe
 
+## 0.4.1
+
+### Patch Changes
+
+- Updated dependencies [f107671]
+  - @reservajs/astro@0.6.0
+
 ## 0.4.0
 
 Breaking release, paired with `@reservajs/astro` 0.5.0. Peer range is now `^0.5.0`.
