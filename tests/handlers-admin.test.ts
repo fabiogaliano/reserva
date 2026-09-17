@@ -133,6 +133,22 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
     expect(bySearch).toContain(pastConfirmed.reference);
   });
 
+  // The search filters in memory, so it has to walk every page of the window: judging only the
+  // earliest 500 rows would make a recent booking unfindable on a busy deployment.
+  it('finds a booking beyond the first page of the search window', async () => {
+    const filler = Array.from({ length: 520 }, (_, index) => booking({
+      id: `b-admin-filler-${index}`, reference: `LVT-2026-F${String(index).padStart(3, '0')}`, status: 'cancelled', cancelledAt: '2026-06-01T08:00:00.000Z', cancelledBy: 'customer',
+      startsAt: `2026-06-0${1 + (index % 9)}T09:00:00.000Z`, endsAt: `2026-06-0${1 + (index % 9)}T10:00:00.000Z`, operatorToken: `op-filler-${index}`, cancelToken: `cancel-filler-${index}`,
+    }));
+    const recent = booking({ id: 'b-admin-recent', reference: 'LVT-2026-999', status: 'confirmed', startsAt: '2026-06-12T09:00:00.000Z', endsAt: '2026-06-12T10:00:00.000Z', operatorToken: 'op-recent', cancelToken: 'cancel-recent' });
+    const repo = fakeRepository([...filler, recent]);
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+
+    const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?q=LVT-2026-999`), context)).text();
+    expect(body).toContain('LVT-2026-999');
+    expect(body).not.toContain('LVT-2026-F000');
+  });
+
   it('separates page destinations from the dashboard’s own tab strip', async () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 

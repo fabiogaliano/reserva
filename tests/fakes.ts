@@ -658,9 +658,10 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     // rows it renders. Idempotent, so a row that arrived hydrated stays correct.
     hydrateBookingTokens: async (bookings) => bookings.map(hydrateBooking),
     // Mirrors src/repo.ts listAllFrom — starts_at >= bound, any status, ordered by starts_at.
-    listAllFrom: async (startsAtFrom) => [...rows.values()]
+    listAllFrom: async (startsAtFrom, options = {}) => [...rows.values()]
       .filter((item) => item.startsAt >= startsAtFrom)
-      .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
+      .sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.id.localeCompare(b.id))
+      .slice(options.offset ?? 0, (options.offset ?? 0) + (options.limit ?? Number.MAX_SAFE_INTEGER))
       .map(hydrateBooking),
     // Mirrors src/repo.ts's reminder query: confirmed, starting inside (now, until], booked before
     // the window opened, and with no reminder row for that exact start yet.

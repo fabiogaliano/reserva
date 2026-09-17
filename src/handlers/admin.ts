@@ -1,3 +1,4 @@
+import type { Booking } from '../core/booking.js';
 import { adminLocaleFor } from '../core/config.js';
 import {
   SettingParseError,
@@ -42,6 +43,24 @@ import { run, runAdminPost, sweepExpiredHoldsThrottled } from './shared.js';
 const ADMIN_DEFAULT_UNTIL_DAYS = 90;
 const ADMIN_MAX_UNTIL_DAYS = 180;
 const ADMIN_LIST_LIMIT = 500;
+// The search matches against config-resolved text (service titles, meeting-point labels, digit-only
+// phones), which no SQL predicate can express, so it walks the window in pages and filters each
+// page in memory. The scan cap bounds a runaway query on a very large deployment; the page cap
+// bounds what the dashboard renders.
+const ADMIN_SEARCH_SCAN_LIMIT = 20_000;
+
+async function searchBookings(context: ReservaContext, startsAtFrom: string, filters: AdminFilters): Promise<Booking[]> {
+  const matches: Booking[] = [];
+  for (let offset = 0; offset < ADMIN_SEARCH_SCAN_LIMIT && matches.length < ADMIN_LIST_LIMIT; offset += ADMIN_LIST_LIMIT) {
+    const page = await context.repo.listAllFrom(startsAtFrom, { limit: ADMIN_LIST_LIMIT, offset });
+    for (const booking of page) {
+      if (matchesAdminFilters(booking, filters, context.config)) matches.push(booking);
+      if (matches.length >= ADMIN_LIST_LIMIT) break;
+    }
+    if (page.length < ADMIN_LIST_LIMIT) break;
+  }
+  return matches;
+}
 
 export function handleAdminGet(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {
@@ -82,13 +101,12 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
     // included), since listUpcoming can't return cancelled/expired/past rows. The unfiltered
     // `bookings` set still backs the occupancy calendar and stat counts, where cancelled rows must not consume capacity.
     const tableBookings = filters.q || filters.status
-      ? await context.repo.listAllFrom(new Date(parseUtcInstant(now).getTime() - 365 * 86_400_000).toISOString(), { limit: ADMIN_LIST_LIMIT })
+      ? await searchBookings(context, new Date(parseUtcInstant(now).getTime() - 365 * 86_400_000).toISOString(), filters)
       : bookings;
     // Token decryption is per-row AES-GCM, so it happens once, here, for exactly the rows the page
     // can emit a manage link for: the upcoming set plus whatever survives the search/status filter.
     const emitted = [...new Map(
-      [...bookings, ...tableBookings.filter((booking) => matchesAdminFilters(booking, filters, context.config))]
-        .map((booking) => [booking.id, booking] as const),
+      [...bookings, ...tableBookings].map((booking) => [booking.id, booking] as const),
     ).values()];
     const hydratedById = new Map((await context.repo.hydrateBookingTokens(emitted)).map((booking) => [booking.id, booking] as const));
     const withTokens = (list: typeof bookings): typeof bookings => list.map((booking) => hydratedById.get(booking.id) ?? booking);

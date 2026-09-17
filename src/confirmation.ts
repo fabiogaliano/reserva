@@ -628,6 +628,26 @@ async function runMutationSideEffect(
 // every actionable row that is not confirmation-lease debt. Called from every mutation handler
 // AFTER its own transition, and from every place a booking is loaded for a mutation-adjacent
 // request, so rows left behind by a dead isolate still get delivered on a LATER request.
+// The rejection reason is the incident's identity, not a detail column: the same booking rejected
+// for the same reason is one incident whether the webhook or a status poll saw it first, and
+// however many times the customer reloads the page, while a different reason is a genuinely
+// different thing for the operator to look at.
+export async function openPaymentVerificationIncident(context: ReservaContext, booking: Booking, reason: string): Promise<void> {
+  const now = nowIso(context);
+  await context.repo.upsertOpenIncident({
+    id: crypto.randomUUID(),
+    bookingId: booking.id,
+    sourceType: 'payment_verification',
+    sourceKey: `${booking.id}:${reason}`,
+    action: 'payment_verification_rejected',
+    severity: 'action_required',
+    attemptCount: 0,
+    now,
+    sourceUpdatedAt: now,
+    escalate: false,
+  });
+}
+
 export async function runOwedMutationSideEffects(context: ReservaContext, booking: Booking): Promise<void> {
   const operations = await context.repo.listSideEffectOperations(booking.id);
   for (const operation of operations) {

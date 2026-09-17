@@ -49,9 +49,11 @@ table inside the published tarball.
 - `GET /api/booking/manage?token=` — `cancelDeadline` and `rescheduleDeadline` are the two
   cutoffs, as UTC instants; they are independent policies. `deadline` remains as an alias of
   `cancelDeadline` for one minor and is then removed.
-- `GET /api/booking/ops/health` — read-only deployment health behind admin auth: `schema`
-  (migrations and fingerprint), `outbox` (pending/abandoned counts by family, oldest pending
-  age), `incidents` (open count).
+- `GET /api/booking/ops/health` — deployment health behind admin auth: `schema` (migrations
+  and fingerprint), `outbox` (pending/abandoned counts by family, oldest pending age),
+  `incidents` (open count), `security`, `reconciliation` (`lastRunAt`, `lastSummary`). Reads
+  everything except the `reconciliation_stale` incident, which it opens when the sweep has
+  stopped running and resolves once it runs again.
 - `GET /booking/assets/reserva.css` and `/booking/assets/reserva.js` — static first-party
   assets for the server-rendered pages; see
   [`customization.md`](./customization.md#components-and-theming).
