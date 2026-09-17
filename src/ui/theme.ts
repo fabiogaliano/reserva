@@ -671,65 +671,52 @@ export const themeCss = `
 .bk-tabs a[aria-current="page"] { color: var(--bk-text); border-bottom-color: var(--bk-text); }
 .bk-settings-sections { min-width: 0; }
 .bk-settings-sections > [hidden] { display: none; }
-.bk-settings-form { max-width: 46rem; }
+/* A settings section is a two-column form: the group's title on the left, its fields on the right,
+   every control open. The gap between groups is the only separator; alignment does the rest. */
+.bk-settings-form { max-width: 52rem; }
 .bk-settings-form > h2 { margin: 0 0 0.25rem; font-size: 1.05rem; font-weight: 600; letter-spacing: -0.02em; text-transform: none; color: var(--bk-text); }
-.bk-setting-group {
-  margin: 2rem 0 0.25rem;
-  font-size: 0.95rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--bk-text);
+.bk-settings-form > .bk-hint { margin-bottom: 0.5rem; }
+.bk-sgroup { display: grid; grid-template-columns: minmax(10rem, 14rem) 1fr; gap: 0.5rem 3rem; padding: 1.75rem 0; align-items: start; }
+.bk-sgroup + .bk-sgroup { border-top: 1px solid var(--bk-border); }
+.bk-sgroup-head h3 { margin: 0; font-size: 0.95rem; font-weight: 600; letter-spacing: -0.01em; color: var(--bk-text); }
+.bk-sgroup-head .bk-hint { margin-top: 0.3rem; }
+.bk-sgroup-fields { display: grid; gap: 1.1rem; max-width: 28rem; min-width: 0; }
+.bk-sfield .bk-field { margin: 0; }
+.bk-sfield .bk-input { width: auto; min-height: 2.5rem; }
+.bk-sfield .bk-input[type=number] { width: 7rem; }
+.bk-sfield .bk-input[type=time] { width: 8rem; }
+.bk-sfield .bk-input--wide { width: 100%; }
+.bk-sfield .bk-hint { margin-top: 0.3rem; }
+.bk-sfield .bk-switch, .bk-sfield .bk-fieldset { margin: 0; }
+.bk-sfield .bk-switch { min-height: 0; }
+.bk-sfield-label { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.bk-sfield .bk-fieldset legend { margin-bottom: 0.4rem; }
+/* The badge's own display would otherwise beat the hidden attribute the enhancer toggles. */
+.bk-sfield-dirty[hidden], .bk-unsaved[hidden] { display: none; }
+.bk-modified { display: inline-flex; align-items: baseline; gap: 0.5rem; font-size: 0.8rem; color: var(--bk-text-muted); margin-top: 0.3rem; }
+@media (max-width: 40rem) {
+  .bk-sgroup { grid-template-columns: 1fr; gap: 0.75rem; padding: 1.25rem 0; }
 }
-.bk-setting-group:first-of-type { margin-top: 1.25rem; }
 
 /* Service-specific values that override a shared block stay folded: the shared dial is the daily
    control, and an override is worth a click only when the operator is looking for it. */
-.bk-overrides { margin-top: 2rem; }
+.bk-overrides { margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--bk-border); }
 .bk-overrides > summary { cursor: pointer; font-size: 0.95rem; font-weight: 600; letter-spacing: -0.01em; color: var(--bk-text); }
 .bk-overrides > .bk-hint { margin-top: 0.35rem; }
-.bk-overrides .bk-setting-group { margin-top: 1.25rem; }
+.bk-overrides .bk-sgroup:first-of-type { border-top: 0; padding-top: 1rem; }
 
-/* A setting reads as a statement about the business, not as a form field: the value is the
-   sentence, and the control only appears once the operator asks to change it. Without scripting
-   the sentence and the control are both rendered, so the page still works as a plain form. */
-.bk-stmt {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem 1rem;
-  flex-wrap: wrap;
-  padding: 0.85rem 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--bk-border) 60%, transparent);
+/* Save is the step operators miss: once anything in the section changes, the bar pins to the
+   bottom of the viewport and says so, and the edited field is flagged until the save lands. */
+.bk-savebar {
+  position: sticky;
+  bottom: 0;
+  margin: 1.5rem -0.85rem 0;
+  padding: 0.75rem 0.85rem;
+  background: var(--bk-bg);
+  border-top: 1px solid var(--bk-border);
 }
-.bk-stmt-text { font-size: 0.95rem; text-wrap: pretty; }
-.bk-stmt-text b { font-weight: 600; font-variant-numeric: tabular-nums; }
-.bk-stmt-edit {
-  margin-left: auto;
-  border: 0;
-  background: none;
-  padding: 0;
-  color: var(--bk-accent);
-  font: inherit;
-  font-size: 0.875rem;
-  cursor: pointer;
-}
-.bk-stmt-edit:hover { text-decoration: underline; }
-.bk-stmt-edit:focus-visible { outline: none; box-shadow: var(--bk-focus); border-radius: 4px; }
-.bk-stmt-editor { display: flex; align-items: flex-end; gap: 0.6rem; flex-wrap: wrap; width: 100%; }
-.bk-stmt-editor .bk-field { margin: 0; }
-.bk-stmt-editor .bk-field > span { font-size: 0.78rem; color: var(--bk-text-muted); }
-.bk-stmt-editor .bk-input { width: auto; min-height: 2.5rem; }
-.bk-stmt-editor .bk-input[type=time] { width: 8rem; }
-.bk-stmt-editor .bk-input[type=number] { width: 6.5rem; }
-.bk-stmt-editor .bk-hint { flex-basis: 100%; margin: 0; }
-.bk-stmt-editor .bk-fieldset { margin: 0; }
-/* Set by the settings enhancer on first run; its absence is how the no-script path opts out of
-   every reveal rule below. */
-:root[data-bk-js] .bk-stmt-editor { display: none; }
-:root[data-bk-js] .bk-stmt[data-bk-open] .bk-stmt-editor { display: flex; }
-:root[data-bk-js] .bk-stmt[data-bk-open] > .bk-stmt-text,
-:root[data-bk-js] .bk-stmt[data-bk-open] > .bk-stmt-edit { display: none; }
-:root:not([data-bk-js]) .bk-stmt-edit { display: none; }
-.bk-modified { display: inline-flex; align-items: baseline; gap: 0.5rem; font-size: 0.8rem; color: var(--bk-text-muted); }
+.bk-savebar-status { display: inline-flex; align-items: center; gap: 0.75rem; }
+.bk-unsaved { font-size: 0.85rem; color: var(--bk-warning); }
 
 /* Weekday pills: seven checkboxes read as a form, seven toggles read as a week. */
 .bk-days { display: flex; flex-wrap: wrap; gap: 0.35rem; }

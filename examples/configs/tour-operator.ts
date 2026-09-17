@@ -68,7 +68,7 @@ export default {
     },
   },
   booking: {
-    minNoticeHours: 2,
+    minNoticeHours: 24,
   },
   locales: { supported: ['en', 'pt-PT'], default: 'en' },
   legal: { termsUrl: 'https://lisbontuktours.example/terms' },

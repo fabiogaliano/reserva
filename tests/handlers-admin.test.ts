@@ -655,16 +655,8 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const body = await (await handleAdminGet(settingsGetRequest(), context)).text();
     expect(body).toContain('data-reserva-tab="hours"');
-    expect(body).toContain('<h3 class="bk-setting-group">Vintage Tour</h3>');
-    // The three departure fields read as one statement; the weekdays are their own.
-    expect(body).toContain('Departs <b>09:00</b> to <b>12:00</b>, every <b>30</b> minutes');
-    expect(body).toContain('Runs <b>Every day</b>');
-    // Each Change button names its own sentence; identical button labels are otherwise indistinguishable.
-    const stmt = /<span class="bk-stmt-text" id="(bk-stmt-\d+)">Departs <b>09:00<\/b>.*?<button type="button" class="bk-stmt-edit" data-reserva-stmt-edit aria-describedby="(bk-stmt-\d+)">/s.exec(body);
-    expect(stmt).not.toBeNull();
-    expect(stmt?.[1]).toBe(stmt?.[2]);
-    const ids = body.match(/id="bk-stmt-\d+"/g) ?? [];
-    expect(new Set(ids).size).toBe(ids.length);
+    // One group per schedule rule, titled by the service, with its four fields always editable.
+    expect(body).toContain('<div class="bk-sgroup"><div class="bk-sgroup-head"><h3>Vintage Tour</h3></div>');
     expect(body).toContain('type="time" name="services.vintage.schedule.0.firstStart" value="09:00" required');
     expect(body).toContain('type="time" name="services.vintage.schedule.0.lastStart" value="12:00" required');
     expect(body).toContain('name="services.vintage.schedule.0.intervalMin" value="30" min="1" max="1440" step="1" required');
@@ -718,7 +710,7 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     const body = await (await handleAdminGet(settingsGetRequest(), context)).text();
     expect(body).toContain('data-reserva-tab="pricing"');
     // One group heading per service; the tier is described by its quantity band and pickup option.
-    expect(body).toContain('<h3 class="bk-setting-group">Vintage Tour</h3>');
+    expect(body).toContain('<h3>Vintage Tour</h3>');
     expect(body).toContain('Up to 4 · Meeting point');
     expect(body).toContain('Up to 8 · Hotel pickup');
     expect(body).toContain('name="services.vintage.pricing.0.priceMinor" value="100.00" min="0" step="0.01" required');

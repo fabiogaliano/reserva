@@ -254,7 +254,7 @@ describe('admin settings over shared blocks', () => {
     const body = await (await handleAdminGet(new Request('https://fleet.example/api/booking/admin?view=settings'), context)).text();
     expect(body).toContain('All services');
     expect(body).toContain('name="hours.0.lastEnd"');
-    expect(body).toContain('closes at <b>19:00</b>');
+    expect(body).toContain('name="hours.0.lastEnd" value="19:00"');
     expect(body).toContain('Custom pick-up and drop-off surcharge');
     expect(body).toContain('name="pricing.surcharges.custom_both"');
     expect(body).toContain('name="services.old-city.pricing.baseMinor"');

@@ -17,11 +17,10 @@ import { factList, pageShell, themeToggle } from '../layout.js';
 import { formatMessage, resolveMessages } from '../messages.js';
 import { adminSidebar } from './admin-page.js';
 
-// The admin settings page (?view=settings). Each setting reads as a statement about the business
-// with its value in the sentence; the control only appears once the operator clicks Change. The
-// server renders sentence and control together, so with scripting off the page is a plain form —
-// the enhancer is what collapses the controls. Sections sit behind a tab bar that degrades to
-// links. csrfToken is undefined when CSRF isn't configured.
+// The admin settings page (?view=settings). A two-column form: each group's title on the left,
+// its always-editable fields on the right, so the control is the value and there is no reveal
+// step. Sections sit behind a tab bar that degrades to links. csrfToken is undefined when CSRF
+// isn't configured.
 export function settingsPage(context: ReservaContext, storedRows: Record<string, string>, saved: boolean, sectionParam: string, csrfToken: string | undefined): string {
   const locale = adminLocaleFor(context.config);
   const messages = resolveMessages(context.config, locale);
@@ -111,19 +110,25 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
     return fallback;
   };
 
-  // The bare control for one definition, without the statement chrome around it.
+  // Every control is rendered open: the input is the value. A field that deviates from the file
+  // config carries a Modified badge, its fallback, and a Reset; the enhancer adds a "not saved"
+  // badge the moment the operator edits it, so the two states never share a look.
+  const badgesFor = (definition: SettingDefinition): string =>
+    (storedRows[definition.key] !== undefined ? `<span class="bk-badge bk-badge--accent">${escapeHtml(messages['admin.modified'])}</span>` : '')
+    + `<span class="bk-badge bk-badge--warn bk-sfield-dirty" hidden>${escapeHtml(messages['admin.unsaved'])}</span>`;
   const controlMarkup = (definition: SettingDefinition): string => {
     const label = labelFor(definition);
     const effective = definition.get(context.config);
     const kind = definition.kind;
+    const heading = `<span class="bk-sfield-label">${escapeHtml(label)}${badgesFor(definition)}</span>`;
     if (kind.type === 'boolean') {
-      return `<label class="bk-switch"><input type="checkbox" name="${escapeHtml(definition.key)}"${effective ? ' checked' : ''}><span>${escapeHtml(label)}</span></label>`;
+      return `<label class="bk-switch"><input type="checkbox" name="${escapeHtml(definition.key)}"${effective ? ' checked' : ''}>${heading}</label>`;
     }
     if (kind.type === 'days') {
       const selected = Array.isArray(effective) ? effective : [];
       const boxes = WEEKDAY_ORDER.map((day) =>
         `<label class="bk-check"><input type="checkbox" name="${escapeHtml(definition.key)}" value="${day}"${selected.includes(day) ? ' checked' : ''}><span>${escapeHtml(weekdayName(day))}</span></label>`).join('');
-      return `<fieldset class="bk-fieldset"><legend class="bk-sr-only">${escapeHtml(label)}</legend><div class="bk-days">${boxes}</div></fieldset>`;
+      return `<fieldset class="bk-fieldset"><legend>${heading}</legend><div class="bk-days">${boxes}</div></fieldset>`;
     }
     const inputType = kind.type === 'int' || kind.type === 'number' || kind.type === 'money' ? 'number' : kind.type === 'email' ? 'email' : kind.type === 'url' ? 'url' : kind.type === 'time' ? 'time' : 'text';
     const moneyStep = kind.type === 'money' ? (minorUnitDigits(kind.currency) === 0 ? '1' : `0.${'0'.repeat(minorUnitDigits(kind.currency) - 1)}1`) : '';
@@ -134,18 +139,10 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
     const value = effective === null ? ''
       : kind.type === 'money' ? majorUnits(effective as number, kind.currency)
       : String(effective);
-    return `<label class="bk-field"><span>${escapeHtml(label)}</span><input class="bk-input" type="${inputType}" name="${escapeHtml(definition.key)}" value="${escapeHtml(value)}"${constraints}></label>`;
+    const wide = inputType === 'text' || inputType === 'email' || inputType === 'url';
+    return `<label class="bk-field">${heading}<input class="bk-input${wide ? ' bk-input--wide' : ''}" type="${inputType}" name="${escapeHtml(definition.key)}" value="${escapeHtml(value)}"${constraints}></label>`;
   };
 
-  // A value that deviates from the file config carries a badge on the sentence, and its own
-  // "what it falls back to" note plus Reset next to the control in the editor — one statement can
-  // cover three fields, so a single shared Reset there would be ambiguous about what it resets.
-  const overriddenIn = (group: SettingDefinition[]): SettingDefinition[] =>
-    group.filter((definition) => storedRows[definition.key] !== undefined);
-  const modifiedBadge = (group: SettingDefinition[]): string =>
-    overriddenIn(group).length === 0
-      ? ''
-      : `<span class="bk-badge bk-badge--accent">${escapeHtml(messages['admin.modified'])}</span>`;
   // The reset button sits outside any <label> so clicking it never toggles the control it belongs to.
   const resetMarkup = (definition: SettingDefinition): string => {
     if (storedRows[definition.key] === undefined) return '';
@@ -155,74 +152,48 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
       + `</span>`;
   };
 
-  // One statement row: the sentence, a Change button, and the controls it reveals. `group` is the
-  // set of definitions the sentence covers, so a combined statement resets and edits all of them.
-  // Every Change button reads the same, so it points at its own sentence: a screen reader tabbing
-  // through the section otherwise hears twenty identical buttons with no way to tell them apart.
-  let statementCount = 0;
-  const statement = (sentenceHtml: string, group: SettingDefinition[]): string => {
-    const hints = group.map((definition) => catalog[`${definition.labelKey}.hint`]).filter(Boolean);
-    const hint = hints.length === 1 ? `<span class="bk-hint">${escapeHtml(hints[0] as string)}</span>` : '';
-    statementCount += 1;
-    const sentenceId = `bk-stmt-${statementCount}`;
-    return `<div class="bk-stmt">`
-      + `<span class="bk-stmt-text" id="${sentenceId}">${sentenceHtml}</span>`
-      + `<button type="button" class="bk-stmt-edit" data-reserva-stmt-edit aria-describedby="${sentenceId}">${escapeHtml(messages['admin.changeValue'])}</button>`
-      + modifiedBadge(group)
-      + `<span class="bk-stmt-editor">${group.map((definition) => controlMarkup(definition) + resetMarkup(definition)).join('')}${hint}</span>`
+  const fieldMarkup = (definition: SettingDefinition, extraHint = ''): string => {
+    const hint = catalog[`${definition.labelKey}.hint`];
+    return `<div class="bk-sfield">${controlMarkup(definition)}${resetMarkup(definition)}`
+      + (hint ? `<span class="bk-hint">${escapeHtml(hint)}</span>` : '')
+      + extraHint
       + `</div>`;
   };
 
-  const plainSentence = (definition: SettingDefinition): string =>
-    `${escapeHtml(labelFor(definition))} <b>${escapeHtml(displayValue(definition, definition.get(context.config)))}</b>`;
+  // One group: its title (and, for a service's own closing-time rule, the departure it derives) on
+  // the left, the fields on the right. The title column is the only structure the page has; there
+  // are no rules between fields.
+  const groupMarkup = (title: string, fields: string, aside = ''): string =>
+    `<div class="bk-sgroup"><div class="bk-sgroup-head"><h3>${escapeHtml(title)}</h3>${aside}</div><div class="bk-sgroup-fields">${fields}</div></div>`;
 
-  // The four opening-hours fields of one schedule rule describe a single fact, so they become one
-  // sentence: three time/interval values in one statement and the weekdays in another.
-  const scheduleStatements = (group: SettingDefinition[]): string => {
-    const byKey = (suffix: string) => group.find((definition) => definition.key.endsWith(`.${suffix}`));
-    const first = byKey('firstStart');
-    const last = byKey('lastStart');
-    const closing = byKey('lastEnd');
-    const interval = byKey('intervalMin');
-    const days = byKey('days');
-    if (!first || !interval || !days || (!last && !closing)) return group.map((definition) => statement(plainSentence(definition), [definition])).join('');
-    const bold = (definition: SettingDefinition) => `<b>${escapeHtml(displayValue(definition, definition.get(context.config)))}</b>`;
-    const departs = closing
-      ? formatMessage(escapeHtml(messages['settingStmt.scheduleClosing']), { from: bold(first), end: bold(closing), n: bold(interval) })
-      : formatMessage(escapeHtml(messages['settingStmt.schedule']), { from: bold(first), to: bold(last as SettingDefinition), n: bold(interval) });
-    // A service's own closing-time rule also shows the departure it derives; the shared block
-    // cannot, since every service derives its own from its duration.
-    const scheduleRule = first.scheduleRule;
+  // The four opening-hours fields of one rule form a single group. A service's own closing-time
+  // rule also shows the departure it derives; the shared block cannot, since every service derives
+  // its own from its duration.
+  const scheduleGroup = (title: string, group: SettingDefinition[]): string => {
+    const closing = group.find((definition) => definition.key.endsWith('.lastEnd'));
+    const scheduleRule = closing?.scheduleRule;
     const derived = closing && scheduleRule?.serviceSlug !== undefined
       ? `<p class="bk-hint">${escapeHtml(formatMessage(messages['setting.lastDeparture'], { time: (ruleFor(scheduleRule) as { lastStart?: string }).lastStart ?? '' }))}</p>`
       : '';
-    const runs = formatMessage(escapeHtml(messages['settingStmt.days']), { days: bold(days) });
-    return statement(departs, [first, (closing ?? last) as SettingDefinition, interval]) + derived + statement(runs, [days]);
+    return groupMarkup(title, group.map((definition) => fieldMarkup(definition)).join(''), derived);
   };
 
-  // One section body: grouped statements, with service-specific overrides of a shared block folded
-  // into a disclosure at the end so the shared dial is what the operator sees first.
+  // One section body: consecutive definitions with the same groupKey share a group.
   const sectionBody = (sectionDefinitions: SettingDefinition[]): string => {
     let body = '';
-    let lastGroup: string | undefined;
     for (let index = 0; index < sectionDefinitions.length;) {
       const definition = sectionDefinitions[index] as SettingDefinition;
       const groupTitle = definition.scheduleRule ? scheduleRuleHeading(definition.scheduleRule)
         : definition.pricingTier ? definition.pricingTier.serviceTitle
         : definition.pricingFormula ? definition.pricingFormula.serviceTitle ?? catalog[`settingGroup.${definition.groupKey?.split('.')[1] ?? ''}`]
         : catalog[definition.groupKey ?? ''] ?? definition.groupKey;
-      if (definition.groupKey && definition.groupKey !== lastGroup) {
-        body += `<h3 class="bk-setting-group">${escapeHtml(groupTitle ?? '')}</h3>`;
-      }
-      lastGroup = definition.groupKey;
-      if (definition.scheduleRule) {
-        const run = sectionDefinitions.filter((candidate) => candidate.groupKey === definition.groupKey);
-        body += scheduleStatements(run);
-        index += run.length;
-        continue;
-      }
-      body += statement(plainSentence(definition), [definition]);
-      index += 1;
+      let next = index + 1;
+      while (definition.groupKey !== undefined && next < sectionDefinitions.length && sectionDefinitions[next]?.groupKey === definition.groupKey) next += 1;
+      const run = sectionDefinitions.slice(index, next);
+      body += definition.scheduleRule
+        ? scheduleGroup(groupTitle ?? '', run)
+        : groupMarkup(groupTitle ?? '', run.map((member) => fieldMarkup(member)).join(''));
+      index += run.length;
     }
     return body;
   };
@@ -245,10 +216,13 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
     const sectionReset = hasOverrides
       ? `<button type="submit" class="bk-linkbtn" name="action" value="settings-reset" formnovalidate>${escapeHtml(messages['admin.resetSection'])}</button>`
       : '';
+    // Save is the step operators miss, so the bar pins to the bottom of the viewport and, once
+    // anything changes, says so beside the button.
     return `<form method="post" class="bk-settings-form" id="bk-s-${section}"${section === activeSection ? '' : ' hidden'}><h2>${escapeHtml(sectionTitles[section])}</h2>`
       + `<p class="bk-hint">${escapeHtml(sectionHints[section])}</p>`
       + `<input type="hidden" name="csrf_token" value="${escapeHtml(csrfToken)}"><input type="hidden" name="section" value="${escapeHtml(section)}">${body}`
-      + `<div class="bk-actions bk-actions--split"><button type="submit" class="bk-btn" name="action" value="settings-save">${escapeHtml(messages['admin.save'])}</button>${sectionReset}</div></form>`;
+      + `<div class="bk-actions bk-actions--split bk-savebar"><span class="bk-savebar-status"><button type="submit" class="bk-btn" name="action" value="settings-save">${escapeHtml(messages['admin.save'])}</button>`
+      + `<span class="bk-unsaved" role="status" hidden>${escapeHtml(messages['admin.unsavedHint'])}</span></span>${sectionReset}</div></form>`;
   }).join('');
 
   // Deploy-time values on their own tab: reference material, not daily controls.

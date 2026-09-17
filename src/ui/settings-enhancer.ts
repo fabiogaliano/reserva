@@ -1,15 +1,11 @@
-// Browser-side progressive enhancement for the admin settings page. Two jobs: tabs are plain
-// ?section= links that reload the page, so this intercepts them to toggle panels in place; and
-// each setting's control is collapsed behind its sentence, which only this script can do — the
-// server has to render both so the page still works as a form with scripting off.
-// IIFE so nothing leaks into the concatenated bundle.
+// Browser-side progressive enhancement for the admin settings page. Tabs are plain ?section=
+// links that reload the page, so this intercepts them to toggle panels in place; and since every
+// control is always editable, the only other job is to make an unsaved edit visible: on the field,
+// beside Save, and as a prompt before leaving. IIFE so nothing leaks into the concatenated bundle.
 
 export const settingsEnhancerJs = `(() => {
   const panels = document.querySelector('.bk-settings-sections');
   if (!panels) return;
-  // The stylesheet keys every collapse rule off this attribute, so the controls stay visible for
-  // anyone who never runs this script.
-  document.documentElement.setAttribute('data-bk-js', '');
 
   const tabs = document.querySelector('.bk-tabs');
   if (tabs) {
@@ -26,20 +22,26 @@ export const settingsEnhancerJs = `(() => {
     });
   }
 
-  // Opening a statement swaps the sentence for its controls and moves focus into the first one, so
-  // the click and the keyboard land in the same place. Only one statement is open at a time: the
-  // point of the sentence view is that the page is mostly prose.
-  panels.addEventListener('click', (event) => {
-    const button = event.target.closest('[data-reserva-stmt-edit]');
-    if (!button) return;
-    const statement = button.closest('.bk-stmt');
-    if (!statement) return;
-    for (const other of panels.querySelectorAll('.bk-stmt[data-bk-open]')) {
-      if (other !== statement) other.removeAttribute('data-bk-open');
-    }
-    statement.setAttribute('data-bk-open', '');
-    const field = statement.querySelector('input:not([type=hidden]), select, textarea');
-    if (field) field.focus();
+  // Save is the step operators miss: an edit flags its field and the section's save bar until the
+  // save lands, and leaving the page with edits pending asks first.
+  const dirtyForms = new Set();
+  panels.addEventListener('input', (event) => {
+    const control = event.target;
+    if (!control.name || control.type === 'hidden') return;
+    const field = control.closest('.bk-sfield');
+    const form = control.closest('form');
+    if (!field || !form) return;
+    field.setAttribute('data-bk-dirty', '');
+    field.querySelector('.bk-sfield-dirty')?.removeAttribute('hidden');
+    form.setAttribute('data-bk-dirty', '');
+    form.querySelector('.bk-unsaved')?.removeAttribute('hidden');
+    dirtyForms.add(form);
+  });
+  panels.addEventListener('submit', (event) => dirtyForms.delete(event.target));
+  window.addEventListener('beforeunload', (event) => {
+    if (dirtyForms.size === 0) return;
+    event.preventDefault();
+    event.returnValue = '';
   });
 })();
 `;

@@ -103,12 +103,16 @@ describe('admin dashboard enhancement', () => {
 });
 
 describe('admin settings enhancement', () => {
-  // The stylesheet keys every collapse rule off this attribute, so a browser that never runs the
-  // enhancer keeps the controls visible and the page stays a plain form.
-  it('marks the document as scripted before collapsing any setting behind its sentence', () => {
-    expect(settingsEnhancerJs).toContain("document.documentElement.setAttribute('data-bk-js', '')");
-    expect(themeCss).toContain(':root[data-bk-js] .bk-stmt-editor { display: none; }');
-    expect(themeCss).toContain(':root:not([data-bk-js]) .bk-stmt-edit { display: none; }');
+  // Save is the step operators miss: an edit flags its field and the section's save bar until it
+  // lands, and the bar stays in view while the section scrolls.
+  it('flags unsaved edits on the field and the sticky save bar, and guards navigation', () => {
+    expect(settingsEnhancerJs).toContain("panels.addEventListener('input'");
+    expect(settingsEnhancerJs).toContain("field.querySelector('.bk-sfield-dirty')?.removeAttribute('hidden')");
+    expect(settingsEnhancerJs).toContain("form.querySelector('.bk-unsaved')?.removeAttribute('hidden')");
+    expect(settingsEnhancerJs).toContain("window.addEventListener('beforeunload'");
+    expect(themeCss).toContain('.bk-savebar {\n  position: sticky;');
+    // The badge's own display would otherwise beat the hidden attribute.
+    expect(themeCss).toContain('.bk-sfield-dirty[hidden], .bk-unsaved[hidden] { display: none; }');
   });
 });
 
