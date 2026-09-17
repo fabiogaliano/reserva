@@ -234,6 +234,21 @@ describe('reserva-migrate CLI', () => {
     expect(equalsResult.capturedArgs()).toContainEqual('--env=production');
   });
 
+  it('omits --persist-to under --remote, which wrangler rejects without --local', () => {
+    const config = '{ "d1_databases": [{ "binding": "RESERVA_DB", "database_name": "bookings" }] }';
+    const remote = run(config, ['--remote']);
+    const local = run(config, ['--local']);
+
+    // The derived config lives in the tmpdir, so --cwd still has to pin the project root.
+    expect(remote.status).toBe(0);
+    expect(remote.capturedArgs()).toContainEqual('--remote');
+    expect(remote.capturedArgs()).toContainEqual('--cwd');
+    expect(remote.capturedArgs()).not.toContainEqual('--persist-to');
+    // A local run still gets its own persistence root, or projects would share one.
+    expect(local.status).toBe(0);
+    expect(local.capturedArgs()).toContainEqual('--persist-to');
+  });
+
   it('keeps value options and the database name separate in either order', () => {
     const config = '{ "env": { "production": { "d1_databases": [{ "binding": "RESERVA_DB", "database_name": "configured" }] } } }';
     const before = run(config, ['configured', '--env', 'production']);

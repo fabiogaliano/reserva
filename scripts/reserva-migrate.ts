@@ -153,12 +153,17 @@ function uniqueDerivedConfigPath(configPath: string): string {
 // `--cwd` alone does not move the persistence root: without `--persist-to`, every project on the
 // machine would share one `<tmpdir>/.wrangler/state`, so a fresh project would find its migrations
 // already applied by an unrelated one.
+//
+// `--persist-to` names a *local* persistence directory, and wrangler rejects it outright under
+// `--remote` ("Cannot use --persist-to without --local"). A remote run has no local state to pin,
+// so it must not be added there — injecting it unconditionally made `reserva-migrate --remote`,
+// the documented way to migrate a production database, fail every time.
 function derivedConfigCwdArgs(originalConfigPath: string, passthrough: readonly string[]): string[] {
   const has = (name: string) => passthrough.some((argument) => argument === name || argument.startsWith(`${name}=`));
   const projectRoot = dirname(originalConfigPath);
   return [
     ...(has('--cwd') ? [] : ['--cwd', projectRoot]),
-    ...(has('--persist-to') ? [] : ['--persist-to', resolve(projectRoot, '.wrangler/state')]),
+    ...(has('--persist-to') || has('--remote') ? [] : ['--persist-to', resolve(projectRoot, '.wrangler/state')]),
   ];
 }
 
