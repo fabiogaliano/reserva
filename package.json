@@ -95,10 +95,12 @@
     "audit": "bun audit",
     "docs:contract": "bun scripts/contract-docs.ts",
     "docs:contract:check": "bun scripts/contract-docs.ts --check",
+    "generate": "bun scripts/generate.ts",
+    "generate:check": "bun scripts/generate.ts --check",
     "changeset": "changeset",
     "release:version": "changeset version && bun install --lockfile-only",
     "release:publish": "changeset publish",
-    "verify": "bun run typecheck && bun run docs:contract:check && bun run test && bun run test:workers",
+    "verify": "bun run generate:check && bun run typecheck && bun run docs:contract:check && bun run test && bun run test:workers",
     "verify:packaged": "bun run test:preview && bun run test:scheduled && bun run test:pack && bun run test:quickstart",
     "check": "bun run audit && bun run verify && bun run verify:packaged"
   },

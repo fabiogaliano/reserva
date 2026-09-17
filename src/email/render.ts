@@ -283,7 +283,10 @@ function calendarAttachment(context: EmailTemplateContext): EmailAttachment | nu
   const { event, booking, config, locale, recipient } = context;
   if (recipient !== 'customer' || !CALENDAR_ATTACHMENT_EVENTS.has(event)) return null;
   const service = config.services[booking.serviceSlug];
-  const point = service
+  // Same gate as the email body: checkout snapshots a default meeting point even for an
+  // address-only option, so the option, not the snapshot, decides what the calendar event points at.
+  const presentation = service ? pickupPresentationFor(service, booking) : null;
+  const point = service && presentation?.usesMeetingPoint
     ? meetingPointForBooking(service, booking.meetingPointId ?? null, booking.meetingPointLabel ?? null, locale, config.locales.default)
     : null;
   const ics = icsText({

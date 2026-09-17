@@ -172,7 +172,10 @@ Two endpoints let a deployment describe itself without source access:
 - `GET /api/booking/ops/health` — admin-authenticated. `schema` (migrations applied +
   fingerprint match), `outbox` (pending/abandoned counts by family, oldest pending age),
   `incidents` (open count), `security` (`csrfTokenLayer`/`tokenEncryption` on or off from the
-  secrets that are set, and the resolved `adminAuth` path). Takes no parameters, mutates nothing.
+  secrets that are set, and the resolved `adminAuth` path), `reconciliation` (`lastRunAt`,
+  `lastSummary`). Takes no parameters. Its one write is the `reconciliation_stale` incident: the
+  read opens it when the sweep has not run for three cadences and resolves it once it has, an
+  idempotent upsert keyed on the sweep, so polling never re-alerts.
 
 ## Error codes
 

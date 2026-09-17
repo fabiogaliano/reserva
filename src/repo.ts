@@ -476,7 +476,9 @@ export interface BookingRepository {
   hydrateBookingTokens(bookings: readonly Booking[]): Promise<Booking[]>;
   // Every booking regardless of status from a starts_at lower bound — the admin's search/status
   // filters need cancelled/expired/past rows that listUpcoming (live upcoming only) never returns.
-  listAllFrom(startsAtFrom: string, options?: { limit?: number }): Promise<Booking[]>;
+  // `offset` lets the admin search walk the whole window page by page instead of judging
+  // the earliest `limit` rows only.
+  listAllFrom(startsAtFrom: string, options?: { limit?: number; offset?: number }): Promise<Booking[]>;
   // Confirmed bookings whose start falls in (now, until] and that have no reminder row for that
   // exact start yet. `reminderHours` also excludes bookings made inside the window: they just
   // received a confirmation email, so a reminder minutes later is noise.
@@ -1860,8 +1862,8 @@ export function createBookingRepository(
     // Not hydrated, for the same reason as listUpcoming.
     async listAllFrom(startsAtFrom, options = {}) {
       const result = await db.prepare(
-        `SELECT ${bookingColumns} FROM bookings WHERE starts_at >= ? ORDER BY starts_at LIMIT ?`,
-      ).bind(startsAtFrom, options.limit ?? DEFAULT_BOOKING_LIST_LIMIT).all<BookingRow>();
+        `SELECT ${bookingColumns} FROM bookings WHERE starts_at >= ? ORDER BY starts_at, id LIMIT ? OFFSET ?`,
+      ).bind(startsAtFrom, options.limit ?? DEFAULT_BOOKING_LIST_LIMIT, options.offset ?? 0).all<BookingRow>();
       return result.results.map(mapBooking);
     },
     async hydrateBookingTokens(bookings) {

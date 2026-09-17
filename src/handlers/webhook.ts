@@ -4,6 +4,7 @@ import {
   confirmBookingFromPayment,
   dispatchDisputeEvent,
   dispatchMutation,
+  openPaymentVerificationIncident,
   runOwedMutationSideEffects,
 } from '../confirmation.js';
 import type { Booking } from '../core/booking.js';
@@ -18,6 +19,9 @@ import { run } from './shared.js';
 // days after the capacity hold dies. Releasing the hold and cancelling the payment is everything
 // this path can do synchronously; `async_payment_succeeded` below covers the money that still lands.
 async function refuseDelayedPayment(context: ReservaContext, booking: Booking, event: PaymentEventParsed): Promise<void> {
+  // The webhook is the authoritative path and the customer may never poll `status`, so the
+  // operator's incident is opened here, not left to the confirmation page.
+  await openPaymentVerificationIncident(context, booking, 'payment_not_paid');
   await context.repo.expireHold(booking.id, nowIso(context));
   await cancelPaymentBestEffort(context, event.paymentRef ?? booking.paymentRef ?? null, booking.id);
   context.logger.warn?.('delayed payment method refused', {
@@ -96,6 +100,7 @@ export function handlePaymentWebhook(request: Request, context: ReservaContext):
       // 'payment_not_paid' can no longer reach here: an unpaid completed session was refused above.
       if (!verification.allowed) {
         context.logger.warn?.('payment verification rejected', { eventId: event.id, bookingId: booking.id, reason: verification.reason });
+        await openPaymentVerificationIncident(context, booking, verification.reason);
         if (verification.reason === 'session_ref_missing' || verification.reason === 'session_mismatch') {
           throw new HttpError(409, 'payment_session_mismatch', 'Payment session does not match the booking');
         }

@@ -194,6 +194,11 @@ describe('Reserva handlers', () => {
     expect(repo.rows.get(seeded.id)?.status).toBe('expired');
     expect(cancelled).toEqual(['pi_unpaid']);
     expect(calendarCreates()).toBe(0);
+    // The customer may never poll `status`, so the operator's incident is opened here, and under
+    // the same key the status page would use, so the two paths collapse into one incident.
+    const incidents = (await repo.listOpenIncidents(10)).filter((incident) => incident.bookingId === seeded.id);
+    expect(incidents).toHaveLength(1);
+    expect(incidents[0]).toMatchObject({ action: 'payment_verification_rejected', sourceKey: `${seeded.id}:payment_not_paid`, status: 'open' });
   });
 
   it('still acknowledges a refused unpaid event when cancelling the payment throws', async () => {

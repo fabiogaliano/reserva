@@ -9,6 +9,7 @@ import {
   isActionableSideEffectStatus,
   isConfirmationSideEffectOperation,
   missingConfirmationEventOperations,
+  openPaymentVerificationIncident,
   runOwedMutationSideEffects,
 } from '../confirmation.js';
 import type { ReservaContext } from '../context.js';
@@ -93,25 +94,6 @@ function confirmationBookingPayload(context: ReservaContext, booking: Booking): 
 
 // Anchored on immutable createdAt so polling and fulfillment retries cannot renew access; four hours covers the normal hold TTL plus post-payment viewing.
 const STATUS_DETAIL_GRACE_MS = 4 * 60 * 60_000;
-
-// The rejection reason is the incident's identity, not a detail column: the same booking rejected
-// for the same reason is one incident however many times the customer reloads the page, while a
-// different reason is a genuinely different thing for the operator to look at.
-async function openPaymentVerificationIncident(context: ReservaContext, booking: Booking, reason: string): Promise<void> {
-  const now = nowIso(context);
-  await context.repo.upsertOpenIncident({
-    id: crypto.randomUUID(),
-    bookingId: booking.id,
-    sourceType: 'payment_verification',
-    sourceKey: `${booking.id}:${reason}`,
-    action: 'payment_verification_rejected',
-    severity: 'action_required',
-    attemptCount: 0,
-    now,
-    sourceUpdatedAt: now,
-    escalate: false,
-  });
-}
 
 // Mirrors the webhook's refusal path: best effort, and never allowed to fail the status response.
 async function cancelRejectedPayment(context: ReservaContext, paymentRef: string | null, bookingId: string): Promise<void> {

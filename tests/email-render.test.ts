@@ -97,6 +97,13 @@ describe('calendar attachment', () => {
     expect(file!.contentType).toMatch(/^text\/calendar/);
     expect(atob(file!.content)).toContain('BEGIN:VCALENDAR');
 
+    // Checkout snapshots a default meeting point even for an address-only option, so the option
+    // decides the calendar location, not the snapshot.
+    const addressOnly = renderDefaultEmail(context({ booking: booking({ pickupType: 'custom', pickupAddress: 'Hotel Avenida, room 12', meetingPointId: 'default' }) }));
+    const addressIcs = atob(addressOnly.attachments![0]!.content);
+    expect(addressIcs).toContain('Hotel Avenida');
+    expect(addressIcs).not.toContain('Comércio');
+
     expect(renderDefaultEmail(context({ recipient: 'owner' })).attachments).toBeUndefined();
     expect(renderDefaultEmail(context({ event: 'booking.cancelled_by_customer' })).attachments).toBeUndefined();
   });
