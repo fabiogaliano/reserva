@@ -22,9 +22,11 @@ table inside the published tarball.
   never varies by locale), so one payload builder can serve quote and checkout.
 - `GET /api/booking/catalog?locale=` — everything needed to build a booking flow before a date
   is chosen: per service `slug`, locale-resolved `title`, `durationMin`, `location` (or
-  `null`), `metadataFields` (`[]` for none), `pricing` (the configured rules, each
-  `{ maxQuantity, pickup, priceMinor }`, `pickup` null where the service has no pickup axis)
-  and `fromPriceMinor` (the lowest of them, for a "from" price); top-level
+  `null`), `metadataFields` (`[]` for none), `pricing` (as configured: rows, each
+  `{ maxQuantity, pickup, priceMinor }` with `pickup` null where the service has no pickup axis,
+  or a formula `{ baseMinor, surcharges, maxUnits, surchargeScope, seatsPerUnit }` with every
+  inherited field already filled in), `maxQuantity` (the largest party it prices) and
+  `fromPriceMinor` (the lowest amount any party and pickup pays, for a "from" price); top-level
   `locales`, `currency`, `maxHorizonDays` and `policy` (`cancelCutoffHours`,
   `reschedule.enabled`, `reschedule.cutoffHours`: the admin-editable policy a site prints next to
   a price). Every service and every meeting point also carries
@@ -80,22 +82,26 @@ it accepts.
 
 ### Building a price table
 
-Pricing rows are breakpoints (`{ maxQuantity, pickup?, priceMinor }`): the tightest row whose
-`maxQuantity` covers the request wins. `@reservajs/astro/core` exports the three helpers that
-apply that rule, so a funnel never re-derives it from the rows itself. All three are order-safe —
-they accept the catalog's rules or a raw config module, sorted or not.
+A service prices either by breakpoint rows (`{ maxQuantity, pickup?, priceMinor }`: the tightest
+row whose `maxQuantity` covers the request wins) or by formula (`baseMinor` per capacity unit,
+times the units the party needs, plus the pickup option's surcharge). `@reservajs/astro/core`
+exports the helpers that apply both rules, so a funnel never re-derives them; `Array.isArray(
+service.pricing)` (or `isPricingFormula`) tells the shapes apart when a UI wants to explain the
+price. All are order-safe — they accept the catalog's entry or a raw config module, sorted or not.
 
 ```ts
-import { priceFor, resolvedPriceTableFor, pricingCombinations } from '@reservajs/astro/core';
+import { priceFor, resolvedPriceTableFor, pricingCombinations, lowestPriceMinor, maxQuantityFor } from '@reservajs/astro/core';
 
 priceFor(service, 3, 'custom_pickup');    // one charged amount, in minor units
 resolvedPriceTableFor(service);           // { [pickup or '']: number[] } indexed by quantity
 pricingCombinations(service);             // [{ quantity, pickup, priceMinor }, …] — one row per cell
+maxQuantityFor(service);                  // the largest party the service prices
+lowestPriceMinor(service);                // the "from" price (also published as fromPriceMinor)
 ```
 
 `resolvedPriceTableFor` is what a build-time price grid reads (`table[pickup][quantity]`);
 `pricingCombinations` is the same data flattened, for rendering a list. `service` is anything with
-a `pricing` array, so `catalog.services[i]` works directly.
+a `pricing` key of either shape, so `catalog.services[i]` works directly.
 
 Locale-bearing endpoints negotiate the requested tag against `config.locales.supported` by
 longest prefix match; an unsupported tag falls back to `locales.default`. Every human-readable

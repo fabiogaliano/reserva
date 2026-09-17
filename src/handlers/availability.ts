@@ -1,7 +1,7 @@
 import type { AvailabilityDay, AvailabilityResponse } from '../core/api.js';
-import { resolveService } from '../core/config.js';
+import { maxQuantityFor, resolveService } from '../core/config.js';
 import { availabilityForDay, capacityForDate, defaultCapacityForDate, type CalEvent, type DayAvailability } from '../core/occupancy.js';
-import { priceFor } from '../core/pricing.js';
+import { priceFor, pricingPickupKeys } from '../core/pricing.js';
 import { generateSlots } from '../core/slots.js';
 import { addDaysToDateKey, enumerateDateKeys, localDateKey, localDateTimeToUtcIso, parseUtcInstant } from '../core/time.js';
 import type { ReservaContext } from '../context.js';
@@ -26,7 +26,7 @@ const CALENDAR_STORED_AT_HEADER = 'x-reserva-calendar-stored-at';
 const calendarReadFlights = new Map<string, Promise<CalEvent[]>>();
 
 function maxPartySize(service: ReturnType<typeof resolveService>): number {
-  return Math.max(...service.pricing.map((rule) => rule.maxQuantity));
+  return maxQuantityFor(service);
 }
 
 export function assertSupportedPartySize(service: ReturnType<typeof resolveService>, quantity: number): void {
@@ -169,11 +169,11 @@ function availabilityInput(request: Request, context: ReservaContext): Availabil
     // Party size must price under every pickup id the service actually declares (derived, not a
     // fixed default/custom pair) since a service need not use pickupOptions. A location-less rule's
     // `pickup` is undefined, normalized to null — the same key priceFor expects.
-    for (const pickup of new Set(service.pricing.map((row) => row.pickup ?? null))) {
+    for (const pickup of pricingPickupKeys(service)) {
       priceFor(service, quantity, pickup);
     }
   } catch {
-    const maxQuantity = Math.max(...service.pricing.map((row) => row.maxQuantity), 0);
+    const maxQuantity = maxQuantityFor(service);
     throw new HttpError(
       400,
       'validation_failed',

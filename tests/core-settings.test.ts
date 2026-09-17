@@ -11,7 +11,7 @@ import {
   settingDefinitionsFor,
   type SettingsLoadWarning,
 } from '../src/core/settings';
-import { config } from './fixtures';
+import { config, rowsOf } from './fixtures';
 
 function definition(key: string) {
   const found = settingDefinitionsFor(config).find((entry) => entry.key === key);
@@ -275,7 +275,7 @@ describe('service pricing (per tier amount)', () => {
     ]);
     expect(pricing.every((entry) => entry.groupKey === 'services.vintage.pricing')).toBe(true);
     // The resolved localized title names the group now; the slug fallback is gone.
-    expect(pricing[0]?.pricingTier).toMatchObject({ serviceSlug: 'vintage', serviceTitle: 'Vintage Tour', rule: config.services.vintage?.pricing[0] });
+    expect(pricing[0]?.pricingTier).toMatchObject({ serviceSlug: 'vintage', serviceTitle: 'Vintage Tour', rule: rowsOf(config.services.vintage!)[0] });
     expect(pricing[0]?.kind).toEqual({ type: 'money', currency: 'eur' });
     // maxQuantity and pickup stay deploy-time: only the amount is editable.
     expect(pricing.map((entry) => entry.key.endsWith('.priceMinor'))).toEqual([true, true, true, true]);
@@ -284,16 +284,16 @@ describe('service pricing (per tier amount)', () => {
 
   it('applies a stored amount without mutating the file config', () => {
     const merged = applySettingOverrides(config, { [TIER0]: '15000' });
-    expect(merged.services.vintage?.pricing[0]?.priceMinor).toBe(15000);
-    expect(config.services.vintage?.pricing[0]?.priceMinor).toBe(10000);
+    expect(rowsOf(merged.services.vintage!)[0]?.priceMinor).toBe(15000);
+    expect(rowsOf(config.services.vintage!)[0]?.priceMinor).toBe(10000);
     // Untouched tiers still come from the file config.
-    expect(merged.services.vintage?.pricing[3]?.priceMinor).toBe(20000);
+    expect(rowsOf(merged.services.vintage!)[3]?.priceMinor).toBe(20000);
   });
 
   it('ignores stored amounts that are negative, fractional, or not a number', () => {
     for (const bad of ['-1', '150.5', '"150"', 'null']) {
       const merged = applySettingOverrides(config, { [TIER0]: bad });
-      expect(merged.services.vintage?.pricing[0]?.priceMinor).toBe(10000);
+      expect(rowsOf(merged.services.vintage!)[0]?.priceMinor).toBe(10000);
     }
   });
 
@@ -319,10 +319,10 @@ describe('service pricing (per tier amount)', () => {
   });
 
   it('save path keeps a valid amount and the load path drops an invalid stored row', () => {
-    expect(mergeAndValidateSettings(config, { [TIER0]: '16000' }).services.vintage?.pricing[0]?.priceMinor).toBe(16000);
+    expect(rowsOf(mergeAndValidateSettings(config, { [TIER0]: '16000' }).services.vintage!)[0]?.priceMinor).toBe(16000);
     const warnings: SettingsLoadWarning[] = [];
     const merged = loadMergedConfig(config, { [TIER3]: '-5' }, (warning) => warnings.push(warning));
-    expect(merged.services.vintage?.pricing[3]?.priceMinor).toBe(20000);
+    expect(rowsOf(merged.services.vintage!)[3]?.priceMinor).toBe(20000);
     expect(warnings).toEqual([{ key: TIER3, reason: expect.any(String) }]);
   });
 });

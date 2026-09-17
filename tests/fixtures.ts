@@ -1,11 +1,18 @@
 import type { Booking } from '../src/core/booking';
-import type { ResolvedClientConfig, ResolvedServiceConfig } from '../src/core/config';
+import type { PricingRule, ResolvedClientConfig, ResolvedServiceConfig } from '../src/core/config';
+
+// The breakpoint rows of a service the test knows prices by rows; narrows the pricing union once.
+export function rowsOf(service: { pricing: ResolvedServiceConfig['pricing'] }): PricingRule[] {
+  if (!Array.isArray(service.pricing)) throw new Error('expected breakpoint pricing rows');
+  return service.pricing;
+}
 
 export const service: ResolvedServiceConfig = {
   title: 'Vintage Tour',
   durationMin: 60,
   turnaroundMin: 30,
   schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], firstStart: '09:00', lastStart: '12:00', intervalMin: 30 }],
+  scheduleSource: 'service',
   pricing: [
     { maxQuantity: 4, pickup: 'default', priceMinor: 10000 },
     { maxQuantity: 4, pickup: 'custom', priceMinor: 12000 },
@@ -36,6 +43,7 @@ export const config: ResolvedClientConfig = {
   },
   capacity: { default: 2 },
   admin: { access: { teamDomain: 'https://team.cloudflareaccess.com', aud: 'aud' } },
+  pricing: { surcharges: {}, maxUnits: 1, surchargeScope: 'unit' },
   services: { vintage: service },
   booking: {
     minNoticeHours: 24,

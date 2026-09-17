@@ -1,5 +1,15 @@
 import { ZodError } from 'astro/zod';
-import { adminLocaleFor, resolveServiceTitle, validateConfig, type PricingRule, type ResolvedClientConfig, type ResolvedScheduleRule, type ResolvedServiceConfig } from './config.js';
+import {
+  adminLocaleFor,
+  resolveServiceTitle,
+  validateConfig,
+  type PricingRule,
+  type ResolvedClientConfig,
+  type ResolvedFormulaPricing,
+  type ResolvedScheduleRule,
+  type ResolvedServiceConfig,
+  type ScheduleRule,
+} from './config.js';
 import { minorUnitDigits, minorUnitFactor } from './currency.js';
 
 // Operator-editable settings: the runtime-safe scalar dials of ClientConfig, stored as JSON and
@@ -31,15 +41,17 @@ export type SettingKind =
   // takes them.
   | { type: 'days' };
 
-// Which schedule rule a service-hours definition belongs to; the settings page turns it into a
-// human heading (service title, weekdays, season) instead of exposing the raw slug/index key.
+// Which schedule rule a hours definition belongs to; the settings page turns it into a human
+// heading (service title, weekdays, season) instead of exposing the raw slug/index key. The shared
+// `hours` block carries no service: it is the business's own opening hours.
 export interface ScheduleRuleGroup {
-  serviceSlug: string;
-  serviceTitle: string;
+  serviceSlug?: string;
+  serviceTitle?: string;
   ruleIndex: number;
   // The rule as the file config declares it; the page reads the effective rule for the heading so
-  // it agrees with the fields below it once days have been overridden.
-  rule: ResolvedScheduleRule;
+  // it agrees with the fields below it once days have been overridden. A shared rule has no
+  // `lastStart` of its own when it is declared with `lastEnd` (each service derives one).
+  rule: ScheduleRule;
 }
 
 // Which pricing rule a tier-amount definition belongs to. Carries the service so the page can
@@ -49,6 +61,17 @@ export interface PricingTierGroup {
   serviceTitle: string;
   rule: PricingRule;
   service: ResolvedServiceConfig;
+}
+
+// Which dial of formula pricing a definition edits. `serviceSlug` is absent for the shared block;
+// `pickupId` is set on a surcharge amount. Carries the services that declare the pickup id so the
+// page can name a shared surcharge by the option's own label.
+export interface PricingFormulaGroup {
+  serviceSlug?: string;
+  serviceTitle?: string;
+  field: 'baseMinor' | 'surcharge' | 'maxUnits' | 'surchargeScope';
+  pickupId?: string;
+  services: ResolvedServiceConfig[];
 }
 
 export interface SettingDefinition {
@@ -65,6 +88,11 @@ export interface SettingDefinition {
   // Set on definitions generated per pricing rule; the page builds the field label from it, since
   // no static message key can describe a per-deployment tier.
   pricingTier?: PricingTierGroup;
+  // Set on definitions generated for formula pricing, shared or per service.
+  pricingFormula?: PricingFormulaGroup;
+  // A service-specific value that overrides a shared block the deployment also declares. The page
+  // keeps these out of the way by default: the shared block is the daily dial.
+  override?: boolean;
   kind: SettingKind;
   get(config: ResolvedClientConfig): SettingValue;
   set(config: ResolvedClientConfig, value: SettingValue): void;
@@ -190,74 +218,193 @@ export const settingSections: readonly SettingSection[] = ['policy', 'hours', 'p
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-// First/last departure, departure interval and weekdays per service schedule rule. Services are
-// deploy-time (their set can't change from the admin) but their hours are a daily dial, so
-// definitions are generated from the file config rather than listed statically. Keys mirror the
-// config path so validateConfig's issue paths attribute a rejected merge to the row that caused it.
+// The editable fields of one schedule rule, whether it is the shared `hours` block or a service's
+// own. `lastEnd` is a closing time and edits like any other field; the last departure each service
+// derives from it follows on the next validation. Keys mirror the config path so validateConfig's
+// issue paths attribute a rejected merge to the row that caused it.
+function scheduleRuleFields(
+  prefix: string,
+  rule: ScheduleRule,
+  ruleOf: (target: ResolvedClientConfig) => ScheduleRule | undefined,
+  scheduleRule: ScheduleRuleGroup,
+  override: boolean,
+): SettingDefinition[] {
+  const common = { section: 'hours' as const, groupKey: prefix, scheduleRule, override };
+  const definitions: SettingDefinition[] = [
+    {
+      ...common, key: `${prefix}.firstStart`, labelKey: 'setting.firstStart',
+      kind: { type: 'time' },
+      get: (target) => ruleOf(target)?.firstStart ?? null,
+      set: (target, value) => { const found = ruleOf(target); if (found) found.firstStart = value as string; },
+    },
+  ];
+  if (rule.lastEnd === undefined) {
+    definitions.push({
+      ...common, key: `${prefix}.lastStart`, labelKey: 'setting.lastStart',
+      kind: { type: 'time' },
+      get: (target) => ruleOf(target)?.lastStart ?? null,
+      set: (target, value) => { const found = ruleOf(target); if (found) found.lastStart = value as string; },
+    });
+  } else {
+    definitions.push({
+      ...common, key: `${prefix}.lastEnd`, labelKey: 'setting.lastEnd',
+      kind: { type: 'time' },
+      get: (target) => ruleOf(target)?.lastEnd ?? null,
+      set: (target, value) => { const found = ruleOf(target); if (found) found.lastEnd = value as string; },
+    });
+  }
+  definitions.push(
+    {
+      ...common, key: `${prefix}.intervalMin`, labelKey: 'setting.intervalMin',
+      // Ceiling mirrors validateConfig: a gap longer than a day can never produce a slot.
+      kind: { type: 'int', min: 1, max: 1440 },
+      get: (target) => ruleOf(target)?.intervalMin ?? null,
+      set: (target, value) => { const found = ruleOf(target); if (found) found.intervalMin = value as number; },
+    },
+    {
+      ...common, key: `${prefix}.days`, labelKey: 'setting.days',
+      kind: { type: 'days' },
+      get: (target) => ruleOf(target)?.days ?? null,
+      set: (target, value) => { const found = ruleOf(target); if (found) found.days = value as number[]; },
+    },
+  );
+  return definitions;
+}
+
+// The shared `hours` block first, then the rules of every service that declares its own. Services
+// are deploy-time (their set can't change from the admin) but their hours are a daily dial, so
+// definitions are generated from the file config rather than listed statically.
 function scheduleRuleDefinitions(config: ResolvedClientConfig): SettingDefinition[] {
   const definitions: SettingDefinition[] = [];
+  const shared = config.hours !== undefined;
+  (config.hours ?? []).forEach((rule, index) => {
+    definitions.push(...scheduleRuleFields(`hours.${index}`, rule, (target) => target.hours?.[index], { ruleIndex: index, rule }, false));
+  });
   for (const [slug, service] of Object.entries(config.services)) {
+    if (service.scheduleSource === 'hours') continue;
+    const serviceTitle = resolveServiceTitle(config, slug, adminLocaleFor(config));
     service.schedule.forEach((rule, index) => {
       const prefix = `services.${slug}.schedule.${index}`;
-      const scheduleRule: ScheduleRuleGroup = { serviceSlug: slug, serviceTitle: resolveServiceTitle(config, slug, adminLocaleFor(config)), ruleIndex: index, rule };
       const ruleOf = (target: ResolvedClientConfig): ResolvedScheduleRule | undefined => target.services[slug]?.schedule[index];
-      definitions.push(
-        {
-          key: `${prefix}.firstStart`, section: 'hours', labelKey: 'setting.firstStart', groupKey: prefix, scheduleRule,
-          kind: { type: 'time' },
-          get: (target) => ruleOf(target)?.firstStart ?? null,
-          set: (target, value) => { const found = ruleOf(target); if (found) found.firstStart = value as string; },
-        },
-      );
-      // A rule declared with `lastEnd` has no editable last departure: its value is derived from
-      // the closing time in config, and an override row would be recomputed away on the next save.
-      if (rule.lastEnd === undefined) {
-        definitions.push({
-          key: `${prefix}.lastStart`, section: 'hours', labelKey: 'setting.lastStart', groupKey: prefix, scheduleRule,
-          kind: { type: 'time' },
-          get: (target) => ruleOf(target)?.lastStart ?? null,
-          set: (target, value) => { const found = ruleOf(target); if (found) found.lastStart = value as string; },
-        });
-      }
-      definitions.push(
-        {
-          key: `${prefix}.intervalMin`, section: 'hours', labelKey: 'setting.intervalMin', groupKey: prefix, scheduleRule,
-          // Ceiling mirrors validateConfig: a gap longer than a day can never produce a slot.
-          kind: { type: 'int', min: 1, max: 1440 },
-          get: (target) => ruleOf(target)?.intervalMin ?? null,
-          set: (target, value) => { const found = ruleOf(target); if (found) found.intervalMin = value as number; },
-        },
-        {
-          key: `${prefix}.days`, section: 'hours', labelKey: 'setting.days', groupKey: prefix, scheduleRule,
-          kind: { type: 'days' },
-          get: (target) => ruleOf(target)?.days ?? null,
-          set: (target, value) => { const found = ruleOf(target); if (found) found.days = value as number[]; },
-        },
-      );
+      definitions.push(...scheduleRuleFields(prefix, rule, ruleOf, { serviceSlug: slug, serviceTitle, ruleIndex: index, rule }, shared));
     });
   }
   return definitions;
 }
 
-// The amount of every pricing tier. Only the price moves: a tier's maxQuantity and pickup decide
-// which rule a quote picks, so changing them from the admin would silently re-shape the catalog.
-function pricingRuleDefinitions(config: ResolvedClientConfig): SettingDefinition[] {
+function formulaOf(target: ResolvedClientConfig, slug: string): ResolvedFormulaPricing | undefined {
+  const pricing = target.services[slug]?.pricing;
+  return pricing !== undefined && !Array.isArray(pricing) ? pricing : undefined;
+}
+
+// Every dial of pricing: the shared formula block (only the parts some service actually inherits,
+// so a deployment on breakpoint rows alone sees nothing here), then per service either its base
+// price and any field it declares itself, or the amount of each of its breakpoint rows. Only a
+// row's price moves: its maxQuantity and pickup decide which rule a quote picks, so changing them
+// from the admin would silently re-shape the catalog.
+function pricingDefinitions(config: ResolvedClientConfig): SettingDefinition[] {
   const definitions: SettingDefinition[] = [];
   const currency = config.business.currency;
-  for (const [slug, service] of Object.entries(config.services)) {
-    service.pricing.forEach((rule, index) => {
-      const ruleOf = (target: ResolvedClientConfig): PricingRule | undefined => target.services[slug]?.pricing[index];
+  const money: SettingKind = { type: 'money', currency };
+  const formulaServices = Object.entries(config.services)
+    .flatMap(([slug, service]) => Array.isArray(service.pricing) ? [] : [{ slug, service, formula: service.pricing }]);
+  const inheriting = (field: keyof ResolvedFormulaPricing['inherited']) =>
+    formulaServices.filter(({ formula }) => formula.inherited[field]).map(({ service }) => service);
+  const declaring = (pickupId: string) =>
+    inheriting('surcharges').filter((service) => service.location?.pickupOptions.some((option) => option.id === pickupId));
+
+  const sharedSurchargeServices = inheriting('surcharges');
+  if (sharedSurchargeServices.length > 0) {
+    for (const pickupId of Object.keys(config.pricing.surcharges)) {
       definitions.push({
-        key: `services.${slug}.pricing.${index}.priceMinor`,
-        section: 'pricing',
-        labelKey: 'setting.priceTier',
-        groupKey: `services.${slug}.pricing`,
-        pricingTier: { serviceSlug: slug, serviceTitle: resolveServiceTitle(config, slug, adminLocaleFor(config)), rule, service },
-        kind: { type: 'money', currency },
-        get: (target) => ruleOf(target)?.priceMinor ?? null,
-        set: (target, value) => { const found = ruleOf(target); if (found) found.priceMinor = value as number; },
+        key: `pricing.surcharges.${pickupId}`, section: 'pricing', labelKey: 'setting.surcharge',
+        groupKey: 'pricing.surcharges',
+        pricingFormula: { field: 'surcharge', pickupId, services: declaring(pickupId) },
+        kind: money,
+        get: (target) => target.pricing.surcharges[pickupId] ?? null,
+        set: (target, value) => { target.pricing.surcharges[pickupId] = value as number; },
       });
+    }
+  }
+  if (inheriting('maxUnits').length > 0) {
+    definitions.push({
+      key: 'pricing.maxUnits', section: 'pricing', labelKey: 'setting.maxUnits',
+      groupKey: 'pricing.units',
+      pricingFormula: { field: 'maxUnits', services: inheriting('maxUnits') },
+      kind: { type: 'int', min: 1 },
+      get: (target) => target.pricing.maxUnits,
+      set: (target, value) => { target.pricing.maxUnits = value as number; },
     });
+  }
+  if (inheriting('surchargeScope').length > 0) {
+    definitions.push({
+      key: 'pricing.surchargeScope', section: 'pricing', labelKey: 'setting.surchargePerUnit',
+      groupKey: 'pricing.units',
+      pricingFormula: { field: 'surchargeScope', services: inheriting('surchargeScope') },
+      kind: { type: 'boolean' },
+      get: (target) => target.pricing.surchargeScope === 'unit',
+      set: (target, value) => { target.pricing.surchargeScope = value ? 'unit' : 'booking'; },
+    });
+  }
+
+  for (const [slug, service] of Object.entries(config.services)) {
+    const serviceTitle = resolveServiceTitle(config, slug, adminLocaleFor(config));
+    const groupKey = `services.${slug}.pricing`;
+    if (Array.isArray(service.pricing)) {
+      service.pricing.forEach((rule, index) => {
+        const ruleOf = (target: ResolvedClientConfig): PricingRule | undefined => {
+          const pricing = target.services[slug]?.pricing;
+          return Array.isArray(pricing) ? pricing[index] : undefined;
+        };
+        definitions.push({
+          key: `${groupKey}.${index}.priceMinor`, section: 'pricing', labelKey: 'setting.priceTier', groupKey,
+          pricingTier: { serviceSlug: slug, serviceTitle, rule, service },
+          kind: money,
+          get: (target) => ruleOf(target)?.priceMinor ?? null,
+          set: (target, value) => { const found = ruleOf(target); if (found) found.priceMinor = value as number; },
+        });
+      });
+      continue;
+    }
+    const formula = service.pricing;
+    const group = (field: PricingFormulaGroup['field'], pickupId?: string): PricingFormulaGroup =>
+      ({ serviceSlug: slug, serviceTitle, field, services: [service], ...(pickupId === undefined ? {} : { pickupId }) });
+    definitions.push({
+      key: `${groupKey}.baseMinor`, section: 'pricing', labelKey: 'setting.basePrice', groupKey,
+      pricingFormula: group('baseMinor'),
+      kind: money,
+      get: (target) => formulaOf(target, slug)?.baseMinor ?? null,
+      set: (target, value) => { const found = formulaOf(target, slug); if (found) found.baseMinor = value as number; },
+    });
+    if (!formula.inherited.surcharges) {
+      for (const option of service.location?.pickupOptions ?? []) {
+        definitions.push({
+          key: `${groupKey}.surcharges.${option.id}`, section: 'pricing', labelKey: 'setting.surcharge', groupKey,
+          pricingFormula: group('surcharge', option.id), override: true,
+          kind: money,
+          get: (target) => formulaOf(target, slug)?.surcharges[option.id] ?? null,
+          set: (target, value) => { const found = formulaOf(target, slug); if (found) found.surcharges[option.id] = value as number; },
+        });
+      }
+    }
+    if (!formula.inherited.maxUnits) {
+      definitions.push({
+        key: `${groupKey}.maxUnits`, section: 'pricing', labelKey: 'setting.maxUnits', groupKey,
+        pricingFormula: group('maxUnits'), override: true,
+        kind: { type: 'int', min: 1 },
+        get: (target) => formulaOf(target, slug)?.maxUnits ?? null,
+        set: (target, value) => { const found = formulaOf(target, slug); if (found) found.maxUnits = value as number; },
+      });
+    }
+    if (!formula.inherited.surchargeScope) {
+      definitions.push({
+        key: `${groupKey}.surchargeScope`, section: 'pricing', labelKey: 'setting.surchargePerUnit', groupKey,
+        pricingFormula: group('surchargeScope'), override: true,
+        kind: { type: 'boolean' },
+        get: (target) => formulaOf(target, slug)?.surchargeScope === 'unit',
+        set: (target, value) => { const found = formulaOf(target, slug); if (found) found.surchargeScope = value ? 'unit' : 'booking'; },
+      });
+    }
   }
   return definitions;
 }
@@ -267,7 +414,7 @@ function pricingRuleDefinitions(config: ResolvedClientConfig): SettingDefinition
 // config so the set of services (and therefore of keys) is the same on the load path, the save
 // path, and the rendered page.
 export function settingDefinitionsFor(config: ResolvedClientConfig): SettingDefinition[] {
-  return [...settingDefinitions, ...scheduleRuleDefinitions(config), ...pricingRuleDefinitions(config)];
+  return [...settingDefinitions, ...scheduleRuleDefinitions(config), ...pricingDefinitions(config)];
 }
 
 function isValidHttpUrl(value: string): boolean {
@@ -332,9 +479,11 @@ export function applySettingOverrides(
     business: { ...config.business, contact: { ...config.business.contact } },
     booking: { ...config.booking, reschedule: { ...config.booking.reschedule } },
     legal: { ...config.legal },
+    pricing: { ...config.pricing, surcharges: { ...config.pricing.surcharges } },
+    ...(config.hours === undefined ? {} : { hours: config.hours.map((rule) => ({ ...rule })) }),
     services: Object.fromEntries(Object.entries(config.services).map(([slug, service]) => [
       slug,
-      { ...service, schedule: service.schedule.map(clonedScheduleRule), pricing: service.pricing.map((rule) => ({ ...rule })) },
+      { ...service, schedule: service.schedule.map(clonedScheduleRule), pricing: clonedPricing(service.pricing) },
     ])),
   };
   for (const definition of settingDefinitionsFor(config)) {
@@ -362,6 +511,11 @@ function clonedScheduleRule(rule: ResolvedScheduleRule): ResolvedScheduleRule {
   if (rule.lastEnd === undefined) return { ...rule };
   const { lastStart: _derived, ...rest } = rule;
   return rest as ResolvedScheduleRule;
+}
+
+function clonedPricing(pricing: ResolvedServiceConfig['pricing']): ResolvedServiceConfig['pricing'] {
+  if (Array.isArray(pricing)) return pricing.map((rule) => ({ ...rule }));
+  return { ...pricing, surcharges: { ...pricing.surcharges }, inherited: { ...pricing.inherited } };
 }
 
 function zodIssues(error: unknown): Array<{ path: (string | number)[]; message: string }> {
@@ -405,6 +559,12 @@ export function loadMergedConfig(
   onWarn?: (warning: SettingsLoadWarning) => void,
 ): ResolvedClientConfig {
   if (Object.keys(rows).length === 0) return config;
+  // A row nobody defines any more (a pricing shape that changed under it, a service that was
+  // removed) is dead weight: it is named once here rather than silently carried forever.
+  const known = new Set(settingDefinitionsFor(config).map((definition) => definition.key));
+  for (const key of Object.keys(rows)) {
+    if (!known.has(key)) onWarn?.({ key, reason: 'no setting with this key in the current config; the stored row is ignored' });
+  }
   let candidateRows = rows;
   for (let guard = 0; guard <= Object.keys(rows).length; guard += 1) {
     const merged = applySettingOverrides(config, candidateRows, (key, reason) => onWarn?.({ key, reason }));

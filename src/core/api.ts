@@ -297,6 +297,21 @@ export interface CatalogPricingRule {
   priceMinor: number;
 }
 
+// Formula pricing as the catalog publishes it: `baseMinor` per unit of `seatsPerUnit` seats, times
+// the units the party needs, plus the pickup option's surcharge (once per unit or once per
+// booking). Every inherited field is already materialized, so `priceFor` needs nothing else.
+export interface CatalogPricingFormula {
+  baseMinor: number;
+  surcharges: Record<string, number>;
+  maxUnits: number;
+  surchargeScope: 'unit' | 'booking';
+  seatsPerUnit: number;
+}
+
+// Breakpoint rows or a formula, whichever the service was configured with. `Array.isArray` tells
+// them apart; the `@reservajs/astro/core` helpers accept either.
+export type CatalogPricing = CatalogPricingRule[] | CatalogPricingFormula;
+
 // Everything a consumer needs before a date is chosen. Excludes schedule, turnaround, capacity,
 // and occupancy — those live in the quote and availability endpoints.
 export interface CatalogService {
@@ -305,9 +320,11 @@ export interface CatalogService {
   durationMin: number;
   location: CatalogLocation | null;
   metadataFields: CatalogMetadataField[];
-  // The rules as configured, so a consumer can render a price table without a second request.
-  pricing: CatalogPricingRule[];
-  // The "from €X" figure: the lowest price across every rule of the service.
+  // The pricing as configured, so a consumer can render a price table without a second request.
+  pricing: CatalogPricing;
+  // The largest party the service prices; what a party-size control counts up to.
+  maxQuantity: number;
+  // The "from €X" figure: the lowest amount any party size and pickup is charged.
   fromPriceMinor: number;
   // Whatever `ServiceConfig.meta` declared, echoed verbatim and never read by reserva, so a site
   // can serve its own content from the same call. `{}` when the config declares none.

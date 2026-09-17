@@ -34,6 +34,8 @@ export type {
   CatalogMetadataFieldOption,
   CatalogMetadataField,
   CatalogPricingRule,
+  CatalogPricing,
+  CatalogPricingFormula,
   CatalogService,
   CatalogResponse,
   OpsHealthSchema,
@@ -110,8 +112,9 @@ export type { Booking, WireBooking, BookingStatus, CancellationActor } from './b
 export { toMajorUnits } from './currency.js';
 // `priceFor` is what a payment adapter charges; the two table helpers are what a funnel renders a
 // price grid from, so it never re-derives breakpoint semantics itself. All three are order-safe.
-export { priceFor, resolvedPriceTableFor, pricingCombinations } from './pricing.js';
-export type { ResolvedPriceTable } from './pricing.js';
+export { priceFor, resolvedPriceTableFor, pricingCombinations, lowestPriceMinor, isPricingFormula, unitsFor } from './pricing.js';
+export type { ResolvedPriceTable, Priceable, PricingFormula, PricingRow } from './pricing.js';
+export { maxQuantityFor } from './config.js';
 
 // --- HTTP --------------------------------------------------------------------------------------
 // The bounded body reader a payment adapter needs to parse a webhook safely (@reservajs/stripe is

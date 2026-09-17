@@ -1,8 +1,9 @@
-import { adminLocaleFor, resolveLocalizedText } from '../../core/config.js';
+import { adminLocaleFor, resolveLocalizedText, type ResolvedServiceConfig } from '../../core/config.js';
 import { minorUnitDigits, toMajorUnits } from '../../core/currency.js';
 import {
   settingDefinitionsFor,
   settingSections,
+  type PricingFormulaGroup,
   type PricingTierGroup,
   type ScheduleRuleGroup,
   type SettingDefinition,
@@ -61,25 +62,37 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
     return new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(Date.UTC(2024, month - 1, day)));
   };
   const ruleFor = ({ serviceSlug, ruleIndex, rule }: ScheduleRuleGroup) =>
-    context.config.services[serviceSlug]?.schedule[ruleIndex] ?? rule;
-  // A schedule rule's heading names the service and, for a seasonal rule, the window it covers.
-  // The days it runs are a statement inside the group, not part of its title.
+    (serviceSlug === undefined ? context.config.hours?.[ruleIndex] : context.config.services[serviceSlug]?.schedule[ruleIndex]) ?? rule;
+  // A schedule rule's heading names the service (or every service, for the shared block) and, for
+  // a seasonal rule, the window it covers. The days it runs are a statement inside the group, not
+  // part of its title.
   const scheduleRuleHeading = (group: ScheduleRuleGroup): string => {
     const rule = ruleFor(group);
+    const owner = group.serviceTitle ?? messages['settingGroup.sharedHours'];
     return rule.from || rule.to
-      ? formatMessage(messages['settingGroup.scheduleRuleSeason'], { service: group.serviceTitle, from: monthDayName(rule.from ?? '01-01'), to: monthDayName(rule.to ?? '12-31') })
-      : group.serviceTitle;
+      ? formatMessage(messages['settingGroup.scheduleRuleSeason'], { service: owner, from: monthDayName(rule.from ?? '01-01'), to: monthDayName(rule.to ?? '12-31') })
+      : owner;
   };
+  // A pickup option's own declared label, from whichever service declares it; the id is the last
+  // resort for a shared surcharge no current service names.
+  const pickupLabel = (pickupId: string, services: readonly ResolvedServiceConfig[]): string => {
+    for (const service of services) {
+      const option = service.location?.pickupOptions.find((candidate) => candidate.id === pickupId);
+      if (!option) continue;
+      return option.label ? resolveLocalizedText(option.label, locale, context.config.locales.default) : messages['pickup.meetingPoint'];
+    }
+    return pickupId;
+  };
+  const pricingFormulaLabel = (group: PricingFormulaGroup, fallback: string): string =>
+    group.field === 'surcharge' && group.pickupId !== undefined
+      ? formatMessage(messages['setting.surcharge'], { pickup: pickupLabel(group.pickupId, group.services) })
+      : fallback;
   // A tier's own description, since its label can't be a static message key: the quantity band and,
   // where the service has a pickup axis, the pickup option's own declared label (same resolution
   // as the catalog). Only the implied meeting-point option falls back to the message catalog.
   const pricingTierLabel = ({ rule, service }: PricingTierGroup): string => {
-    const option = service.location?.pickupOptions.find((candidate) => candidate.id === rule.pickup);
-    if (!option) return formatMessage(messages['setting.priceTierNoPickup'], { n: rule.maxQuantity });
-    const pickup = option.label
-      ? resolveLocalizedText(option.label, locale, context.config.locales.default)
-      : messages['pickup.meetingPoint'];
-    return formatMessage(messages['setting.priceTier'], { n: rule.maxQuantity, pickup });
+    if (rule.pickup === undefined) return formatMessage(messages['setting.priceTierNoPickup'], { n: rule.maxQuantity });
+    return formatMessage(messages['setting.priceTier'], { n: rule.maxQuantity, pickup: pickupLabel(rule.pickup, [service]) });
   };
   // Money is stored in minor units but only ever shown to an operator in major ones.
   const majorUnits = (value: number, currency: string): string =>
@@ -91,8 +104,12 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
     if (definition.kind.type === 'money') return majorUnits(value as number, definition.kind.currency);
     return String(value);
   };
-  const labelFor = (definition: SettingDefinition): string =>
-    definition.pricingTier ? pricingTierLabel(definition.pricingTier) : catalog[definition.labelKey] ?? definition.key;
+  const labelFor = (definition: SettingDefinition): string => {
+    const fallback = catalog[definition.labelKey] ?? definition.key;
+    if (definition.pricingTier) return pricingTierLabel(definition.pricingTier);
+    if (definition.pricingFormula) return pricingFormulaLabel(definition.pricingFormula, fallback);
+    return fallback;
+  };
 
   // The bare control for one definition, without the statement chrome around it.
   const controlMarkup = (definition: SettingDefinition): string => {
@@ -165,31 +182,34 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
     const byKey = (suffix: string) => group.find((definition) => definition.key.endsWith(`.${suffix}`));
     const first = byKey('firstStart');
     const last = byKey('lastStart');
+    const closing = byKey('lastEnd');
     const interval = byKey('intervalMin');
     const days = byKey('days');
-    if (!first || !interval || !days) return group.map((definition) => statement(plainSentence(definition), [definition])).join('');
+    if (!first || !interval || !days || (!last && !closing)) return group.map((definition) => statement(plainSentence(definition), [definition])).join('');
     const bold = (definition: SettingDefinition) => `<b>${escapeHtml(displayValue(definition, definition.get(context.config)))}</b>`;
-    // A rule declared with `lastEnd` generates no `lastStart` definition: its last departure is
-    // derived from the closing time, so it reads in the sentence but carries no control.
-    const rule = first.scheduleRule?.rule;
-    const departs = formatMessage(escapeHtml(messages['settingStmt.schedule']), {
-      from: bold(first), to: last ? bold(last) : `<b>${escapeHtml(rule?.lastStart ?? '')}</b>`, n: bold(interval),
-    });
-    const editable = last ? [first, last, interval] : [first, interval];
-    const derivedHint = last ? ''
-      : `<p class="bk-hint">${escapeHtml(formatMessage(messages['setting.lastEnd.hint'], { time: rule?.lastEnd ?? '' }))}</p>`;
+    const departs = closing
+      ? formatMessage(escapeHtml(messages['settingStmt.scheduleClosing']), { from: bold(first), end: bold(closing), n: bold(interval) })
+      : formatMessage(escapeHtml(messages['settingStmt.schedule']), { from: bold(first), to: bold(last as SettingDefinition), n: bold(interval) });
+    // A service's own closing-time rule also shows the departure it derives; the shared block
+    // cannot, since every service derives its own from its duration.
+    const scheduleRule = first.scheduleRule;
+    const derived = closing && scheduleRule?.serviceSlug !== undefined
+      ? `<p class="bk-hint">${escapeHtml(formatMessage(messages['setting.lastDeparture'], { time: (ruleFor(scheduleRule) as { lastStart?: string }).lastStart ?? '' }))}</p>`
+      : '';
     const runs = formatMessage(escapeHtml(messages['settingStmt.days']), { days: bold(days) });
-    return statement(departs, editable) + derivedHint + statement(runs, [days]);
+    return statement(departs, [first, (closing ?? last) as SettingDefinition, interval]) + derived + statement(runs, [days]);
   };
 
-  const sections = settingSections.map((section) => {
-    const sectionDefinitions = definitions.filter((definition) => definition.section === section);
+  // One section body: grouped statements, with service-specific overrides of a shared block folded
+  // into a disclosure at the end so the shared dial is what the operator sees first.
+  const sectionBody = (sectionDefinitions: SettingDefinition[]): string => {
     let body = '';
     let lastGroup: string | undefined;
     for (let index = 0; index < sectionDefinitions.length;) {
       const definition = sectionDefinitions[index] as SettingDefinition;
       const groupTitle = definition.scheduleRule ? scheduleRuleHeading(definition.scheduleRule)
         : definition.pricingTier ? definition.pricingTier.serviceTitle
+        : definition.pricingFormula ? definition.pricingFormula.serviceTitle ?? catalog[`settingGroup.${definition.groupKey?.split('.')[1] ?? ''}`]
         : catalog[definition.groupKey ?? ''] ?? definition.groupKey;
       if (definition.groupKey && definition.groupKey !== lastGroup) {
         body += `<h3 class="bk-setting-group">${escapeHtml(groupTitle ?? '')}</h3>`;
@@ -203,6 +223,22 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
       }
       body += statement(plainSentence(definition), [definition]);
       index += 1;
+    }
+    return body;
+  };
+
+  const sections = settingSections.map((section) => {
+    const sectionDefinitions = definitions.filter((definition) => definition.section === section);
+    const overrides = sectionDefinitions.filter((definition) => definition.override);
+    let body = sectionBody(sectionDefinitions.filter((definition) => !definition.override));
+    if (overrides.length > 0) {
+      // Open when the operator has already touched one, so a Modified badge is never hidden.
+      const touched = overrides.some((definition) => storedRows[definition.key] !== undefined);
+      const groups = new Set(overrides.map((definition) => definition.groupKey)).size;
+      body += `<details class="bk-overrides"${touched ? ' open' : ''}><summary>${escapeHtml(formatMessage(messages['settingGroup.overrides'], { n: groups }))}</summary>`
+        + `<p class="bk-hint">${escapeHtml(messages['settingGroup.overridesHint'])}</p>`
+        + sectionBody(overrides)
+        + `</details>`;
     }
     const hasOverrides = sectionDefinitions.some((definition) => storedRows[definition.key] !== undefined);
     // formnovalidate on resets: emptied required fields must not block returning to config values.

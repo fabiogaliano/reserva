@@ -1,6 +1,8 @@
 // A tuk-tuk tour operator: small fleet, hourly departures, three seats per vehicle, paid up front.
-// The riverside route prices pickup options outright rather than as surcharges: +20 € for either
-// custom leg alone, but +30 € (not +40 €) for both -- a surcharge model can't express that.
+// The whole fleet keeps one set of opening hours, and alfama prices by formula (a base per vehicle
+// plus the fleet-wide pick-up surcharge), so a party of 4-6 pays for two vehicles. The riverside
+// route prices its pickup options outright instead, because +20 € for either custom leg but +30 €
+// (not +40 €) for both is a curve no surcharge table expresses.
 import type { ClientConfig } from '@reservajs/astro';
 
 export default {
@@ -14,27 +16,36 @@ export default {
   },
   capacity: { default: 3 },
   admin: { access: { teamDomain: 'https://lisbontuktours.cloudflareaccess.com', aud: '<AUD>' } },
+  // Every tour departs on this grid and must be back by 19:00; each service derives its own last
+  // departure from that closing time. A service that declares `schedule` keeps its own.
+  hours: [{ days: [1, 2, 3, 4, 5, 6], firstStart: '09:00', lastEnd: '19:00', intervalMin: 60 }],
+  // The fleet-wide half of formula pricing: a party may take two vehicles, and the surcharge for
+  // each pickup option is charged once per vehicle.
+  pricing: { surcharges: { meeting_point: 0, hotel_pickup: 1500 }, maxUnits: 2 },
   services: {
     alfama: {
       // A per-locale map wherever a customer reads it; a plain string is still accepted.
       title: { en: 'Alfama Discovery', 'pt-PT': 'Descoberta de Alfama' },
       durationMin: 60,
       turnaroundMin: 15,
-      schedule: [{ days: [1, 2, 3, 4, 5, 6], firstStart: '09:00', lastStart: '17:00', intervalMin: 60 }],
-      // Three seats per tuk-tuk, so a party of 4 takes two of the three vehicles in `capacity.default`.
+      // Three seats per tuk-tuk, so a party of 4 takes two of the three vehicles in `capacity.default`
+      // and, under the formula below, pays 2 × (45 € + the pickup surcharge).
       occupancy: { seatsPerUnit: 3 },
-      // A single meeting point implies one pickup option ('meeting_point'), so pricing needs no `pickup` column.
-      pricing: [{ maxQuantity: 3, priceMinor: 4500 }],
+      pricing: { baseMinor: 4500 },
       location: {
         meetingPoints: [{ id: 'se', label: 'Sé Cathedral', mapsUrl: 'https://maps.google.com/?q=Se+Lisboa' }],
+        pickupOptions: [
+          { id: 'meeting_point', label: { en: 'Meeting point', 'pt-PT': 'Ponto de encontro' }, requiresAddress: false, usesMeetingPoint: true },
+          { id: 'hotel_pickup', label: { en: 'Hotel pick-up', 'pt-PT': 'Recolha no hotel' }, requiresAddress: true, usesMeetingPoint: false },
+        ],
       },
     },
     riverside: {
       title: { en: 'Riverside Grand Tour', 'pt-PT': 'Grande Tour Ribeirinho' },
       durationMin: 120,
       turnaroundMin: 15,
-      // `lastEnd` is the closing time, not the last departure: the 17:00 last start is derived from
-      // it and follows `durationMin` automatically.
+      // Runs on Sundays too, so it declares its own rule instead of inheriting `hours`. `lastEnd`
+      // is the closing time, not the last departure: the 17:00 last start is derived from it.
       schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], firstStart: '09:00', lastEnd: '19:00', intervalMin: 60 }],
       location: {
         meetingPoints: [

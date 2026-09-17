@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { MetadataField, ResolvedServiceConfig } from '../src/core/config';
 import { meetingPointForBooking, metadataRowsForBooking, quantityValuesForService, pickupOptionFor, pickupPresentationFor, resolveMeetingPoint, resolveMetadataFieldLabel, validateConfig } from '../src/core/config';
 import { priceFor } from '../src/core/pricing';
-import { config, service } from './fixtures';
+import { config, rowsOf, service } from './fixtures';
 
 describe('core config and pricing validation', () => {
   it('accepts a valid config unchanged (location already canonical: pickupOptions + meetingPoints under `location`)', () => {
@@ -71,7 +71,7 @@ describe('core config and pricing validation', () => {
       ...config,
       services: {
         ...config.services,
-        vintage: { ...service, pricing: [...service.pricing, { maxQuantity: 8, priceMinor: 15000 }] },
+        vintage: { ...service, pricing: [...rowsOf(service), { maxQuantity: 8, priceMinor: 15000 }] },
       },
     };
     expect(() => validateConfig(invalid)).toThrow(/declares a location module.*pricing rule 4 must declare 'pickup'/);
@@ -189,7 +189,7 @@ describe('core config and pricing validation', () => {
         ...config.services,
         vintage: {
           ...service,
-          pricing: [...service.pricing, { maxQuantity: 4, pickup: 'default', priceMinor: 9000 }],
+          pricing: [...rowsOf(service), { maxQuantity: 4, pickup: 'default', priceMinor: 9000 }],
         },
       },
     };
@@ -204,7 +204,7 @@ describe('core config and pricing validation', () => {
         ...config.services,
         vintage: {
           ...config.services.vintage!,
-          pricing: config.services.vintage!.pricing.filter((row) => row.pickup !== 'custom' || row.maxQuantity !== 8),
+          pricing: rowsOf(config.services.vintage!).filter((row) => row.pickup !== 'custom' || row.maxQuantity !== 8),
         },
       },
     };
@@ -498,7 +498,7 @@ describe('meeting-point-only location shorthand', () => {
     const validated = validateConfig(meetingPointOnly);
     const vintage = validated.services.vintage!;
     expect(vintage.location!.pickupOptions).toEqual([{ id: 'meeting_point', requiresAddress: false, usesMeetingPoint: true }]);
-    expect(vintage.pricing.every((row) => row.pickup === 'meeting_point')).toBe(true);
+    expect(rowsOf(vintage).every((row) => row.pickup === 'meeting_point')).toBe(true);
   });
 
   it('fills an omitted pricing pickup with the single explicitly declared pickup option id', () => {

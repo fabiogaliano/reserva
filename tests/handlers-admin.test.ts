@@ -4,7 +4,7 @@ import { ADMIN_CSRF_TOKEN_TTL_MS, mintAdminCsrfToken } from '../src/admin-csrf';
 import { createReservaContext } from '../src/context';
 import type { ResolvedClientConfig, ResolvedServiceConfig } from '../src/core/config';
 import { handleAdminGet, handleAdminPost } from '../src/handlers';
-import { booking, config } from './fixtures';
+import { booking, config, rowsOf } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
 const clock = () => new Date('2026-06-14T08:00:00.000Z');
@@ -416,7 +416,7 @@ describe('pickup option label + sub-lines', () => {
         meetingPoints: points,
         pickupOptions: mazeTour.location!.pickupOptions.filter((option) => option.id !== 'meet_elsewhere'),
       },
-      pricing: mazeTour.pricing.filter((rule) => rule.pickup !== 'meet_elsewhere'),
+      pricing: rowsOf(mazeTour).filter((rule) => rule.pickup !== 'meet_elsewhere'),
     };
     const repo = fakeRepository([seeded]);
     const context = createReservaContext({ config: { ...config, services: { ...config.services, vintage: withoutMeetElsewhere } }, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });

@@ -682,6 +682,13 @@ export const themeCss = `
 }
 .bk-setting-group:first-of-type { margin-top: 1.25rem; }
 
+/* Service-specific values that override a shared block stay folded: the shared dial is the daily
+   control, and an override is worth a click only when the operator is looking for it. */
+.bk-overrides { margin-top: 2rem; }
+.bk-overrides > summary { cursor: pointer; font-size: 0.95rem; font-weight: 600; letter-spacing: -0.01em; color: var(--bk-text); }
+.bk-overrides > .bk-hint { margin-top: 0.35rem; }
+.bk-overrides .bk-setting-group { margin-top: 1.25rem; }
+
 /* A setting reads as a statement about the business, not as a form field: the value is the
    sentence, and the control only appears once the operator asks to change it. Without scripting
    the sentence and the control are both rendered, so the page still works as a plain form. */

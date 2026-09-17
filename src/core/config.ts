@@ -197,14 +197,47 @@ const pricingRuleSchema = z.object({
   priceMinor: z.number().int().nonnegative(),
 });
 
+// Whether a pickup surcharge is charged once per booking or once per capacity unit: a hotel
+// pick-up that needs a second vehicle costs the operator twice, a single-address meeting fee
+// does not.
+const surchargeScopeSchema = z.enum(['unit', 'booking']);
+const surchargesSchema = z.record(z.string().min(1), z.number().int().nonnegative());
+
+// The business-wide half of formula pricing. Every formula service inherits whichever of these it
+// does not declare itself, so a fleet-wide pick-up surcharge is one number, not one per service.
+const sharedPricingSchema = z.object({
+  surcharges: surchargesSchema.default({}),
+  maxUnits: z.number().int().positive().default(1),
+  surchargeScope: surchargeScopeSchema.default('unit'),
+}).prefault({});
+
+// Formula pricing: `baseMinor` per capacity unit, times the units the party needs
+// (`ceil(quantity / occupancy.seatsPerUnit)`), plus the pickup option's surcharge. Fields left
+// undeclared inherit the top-level `pricing` block. `seatsPerUnit` and `inherited` are resolved-only:
+// the first lets `priceFor` work on a service (or catalog entry) alone, the second records which
+// fields came from the shared block so a re-validation of a resolved config, or an admin edit of the
+// shared block, still flows through to every service that inherits.
+const formulaPricingSchema = z.object({
+  baseMinor: z.number().int().nonnegative(),
+  surcharges: surchargesSchema.optional(),
+  maxUnits: z.number().int().positive().optional(),
+  surchargeScope: surchargeScopeSchema.optional(),
+  seatsPerUnit: z.number().int().positive().optional(),
+  inherited: z.object({ surcharges: z.boolean(), maxUnits: z.boolean(), surchargeScope: z.boolean() }).optional(),
+});
+
 const serviceSchema = z.object({
   // Customer-facing display name wherever a human reads the service ("Your Alfama Discovery is
   // confirmed"). Required: a slug is an identifier, never a name to put in front of a customer.
   title: localizedTextSchema,
   durationMin: z.number().int().positive(),
   turnaroundMin: z.number().int().nonnegative(),
-  schedule: z.array(scheduleSchema).min(1),
-  pricing: z.array(pricingRuleSchema).min(1),
+  // Absent inherits the top-level `hours` block. `scheduleSource` is resolved-only: a materialized
+  // inherited schedule must re-derive from `hours` on re-validation instead of freezing.
+  schedule: z.array(scheduleSchema).min(1).optional(),
+  scheduleSource: z.enum(['service', 'hours']).optional(),
+  // Either breakpoint rows (any price curve, typed by hand) or a formula (base × units + surcharge).
+  pricing: z.union([z.array(pricingRuleSchema).min(1), formulaPricingSchema]),
   // How many seats one capacity unit holds (a 4-seat vehicle, a 6-person table). Absent means one
   // unit per booking regardless of party size.
   occupancy: z.object({ seatsPerUnit: z.number().int().positive() }).optional(),
@@ -222,17 +255,88 @@ const serviceSchema = z.object({
   meta: metaSchema,
 }).transform(({ occupancyFor: _rejected, ...service }) => {
   // Normalized in the schema rather than in `validateConfig` so `z.output` is the single source of
-  // truth for the resolved shape: every runtime reader sees `pickupOptions` present, a resolved
-  // schedule rule always carries `lastStart`, and a single-option service's pricing rows already
-  // carry `pickup`, with no extra narrowing.
-  const schedule = service.schedule.map((rule) => resolveScheduleRule(rule, service.durationMin));
+  // truth for the resolved shape: every runtime reader sees `pickupOptions` present and a
+  // single-option service's pricing rows already carry `pickup`, with no extra narrowing. The
+  // schedule and formula pricing are finished by the top-level transform, which is the first place
+  // that can see the shared `hours` and `pricing` blocks they may inherit from.
   const options = service.location?.pickupOptions ?? [];
   const only = options.length === 1 ? options[0]! : undefined;
-  const pricing: PricingRule[] = only
+  const pricing = Array.isArray(service.pricing) && only
     ? service.pricing.map((rule) => rule.pickup === undefined ? { ...rule, pickup: only.id } : rule)
     : service.pricing;
-  return { ...service, schedule, pricing };
+  return { ...service, pricing };
 });
+
+type ParsedServiceConfig = z.output<typeof serviceSchema>;
+
+export interface ResolvedFormulaPricing {
+  baseMinor: number;
+  // Only the service's own declared pickup option ids: the shared table may carry ids that belong
+  // to other services, and they must not become price-table columns here.
+  surcharges: Record<string, number>;
+  maxUnits: number;
+  surchargeScope: 'unit' | 'booking';
+  seatsPerUnit: number;
+  inherited: { surcharges: boolean; maxUnits: boolean; surchargeScope: boolean };
+}
+
+export type ResolvedServiceConfig = Omit<ParsedServiceConfig, 'schedule' | 'scheduleSource' | 'pricing'> & {
+  schedule: ResolvedScheduleRule[];
+  // Absent reads as 'service': a hand-built resolved service (tests, adapters) owns its schedule.
+  scheduleSource?: 'service' | 'hours';
+  pricing: PricingRule[] | ResolvedFormulaPricing;
+};
+
+function resolveServicePricing(
+  service: ParsedServiceConfig,
+  shared: z.output<typeof sharedPricingSchema>,
+): PricingRule[] | ResolvedFormulaPricing {
+  if (Array.isArray(service.pricing)) return service.pricing;
+  const formula = service.pricing;
+  // First parse: a field inherits iff it was left undeclared. Re-parse of a resolved config: the
+  // recorded flags win, so a materialized inherited value is refreshed from the shared block
+  // instead of being mistaken for a declaration.
+  const inherited = formula.inherited ?? {
+    surcharges: formula.surcharges === undefined,
+    maxUnits: formula.maxUnits === undefined,
+    surchargeScope: formula.surchargeScope === undefined,
+  };
+  const pickupIds = (service.location?.pickupOptions ?? []).map((option) => option.id);
+  const table = inherited.surcharges ? shared.surcharges : formula.surcharges ?? {};
+  const surcharges: Record<string, number> = {};
+  // A location-less service has no pickup axis, so it keeps no surcharge column even if the shared
+  // table is non-empty. `validateService` reports a declared option the table does not price.
+  for (const id of pickupIds) {
+    const amount = table[id];
+    if (amount !== undefined) surcharges[id] = amount;
+  }
+  return {
+    baseMinor: formula.baseMinor,
+    surcharges,
+    maxUnits: inherited.maxUnits ? shared.maxUnits : formula.maxUnits ?? shared.maxUnits,
+    surchargeScope: inherited.surchargeScope ? shared.surchargeScope : formula.surchargeScope ?? shared.surchargeScope,
+    seatsPerUnit: service.occupancy?.seatsPerUnit ?? 1,
+    inherited,
+  };
+}
+
+function resolveServiceConfig(
+  service: ParsedServiceConfig,
+  hours: ScheduleRule[] | undefined,
+  shared: z.output<typeof sharedPricingSchema>,
+): ResolvedServiceConfig {
+  const { schedule: declared, scheduleSource, ...rest } = service;
+  const own = scheduleSource !== 'hours' && declared !== undefined;
+  // A service with neither its own schedule nor a shared block to inherit resolves to no rules;
+  // `validateService` is what names that as an error.
+  const source = own ? declared : hours ?? [];
+  return {
+    ...rest,
+    schedule: source.map((rule) => resolveScheduleRule(rule, service.durationMin)),
+    scheduleSource: own ? 'service' : 'hours',
+    pricing: resolveServicePricing(service, shared),
+  };
+}
 
 const bookingSchema = z.object({
   minNoticeHours: z.number().nonnegative().default(0),
@@ -271,7 +375,7 @@ const webhookEndpointSchema = z.object({
   events: z.array(z.custom<WebhookEvent>((value) => typeof value === 'string')).min(1).optional(),
 });
 
-export const clientConfigSchema = z.object({
+const clientConfigShape = z.object({
   business: z.object({
     name: z.string().min(1),
     shortCode: z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,9}$/),
@@ -300,6 +404,11 @@ export const clientConfigSchema = z.object({
     // Operator copy can differ from the locale used for customer pages, emails, and checkout.
     locale: z.string().min(1).refine(isValidLocale, 'must be a valid BCP 47 locale').optional(),
   }).prefault({}),
+  // The business's opening hours, inherited by every service that declares no `schedule` of its
+  // own. Each service still derives its own last departure from a rule's `lastEnd`.
+  hours: z.array(scheduleSchema).min(1).optional(),
+  // The business-wide half of formula pricing; see `formulaPricingSchema`.
+  pricing: sharedPricingSchema,
   services: z.record(z.string(), serviceSchema).refine((value) => Object.keys(value).length > 0, 'at least one service is required'),
   booking: bookingSchema,
   locales: z.object({
@@ -355,12 +464,26 @@ export const clientConfigSchema = z.object({
   }).optional(),
 });
 
+type ParsedClientConfig = z.output<typeof clientConfigShape>;
+
+// Finishes what `serviceSchema` cannot: the shared `hours` and `pricing` blocks live one level up,
+// so inheritance is resolved here, once, and the resolved shape is again the schema's own output.
+export const clientConfigSchema = clientConfigShape.transform((config): ResolvedClientConfig => ({
+  ...config,
+  services: Object.fromEntries(Object.entries(config.services).map(([slug, service]) => [
+    slug,
+    resolveServiceConfig(service, config.hours, config.pricing),
+  ])),
+}));
+
 // `ClientConfig` is what a consumer writes (every defaulted field optional); `ResolvedClientConfig`
 // is what the runtime reads once defaults and normalization have been applied.
-export type ClientConfig = z.input<typeof clientConfigSchema>;
-export type ResolvedClientConfig = z.output<typeof clientConfigSchema>;
+export type ClientConfig = z.input<typeof clientConfigShape>;
+export type ResolvedClientConfig = Omit<ParsedClientConfig, 'services'> & { services: Record<string, ResolvedServiceConfig> };
 export type ServiceConfig = z.input<typeof serviceSchema>;
-export type ResolvedServiceConfig = z.output<typeof serviceSchema>;
+export type FormulaPricing = z.input<typeof formulaPricingSchema>;
+export type SharedPricing = z.output<typeof sharedPricingSchema>;
+export type SurchargeScope = z.output<typeof surchargeScopeSchema>;
 export type ScheduleRule = z.output<typeof scheduleSchema>;
 // What every runtime reader sees: `lastStart` is computed once (from `lastEnd` when that is the
 // spelling the config used) so nothing downstream has to know which of the two was declared.
@@ -454,7 +577,6 @@ function validateService(service: ResolvedServiceConfig, serviceSlug: string, ad
   const location = service.location;
   const pickupOptions = location?.pickupOptions ?? [];
   const pickupOptionIds = pickupOptions.map((option) => option.id);
-  const pickupOptionIdSet = new Set(pickupOptionIds);
   if (location) {
     const seenOptionIds = new Set<string>();
     for (const [index, option] of pickupOptions.entries()) {
@@ -476,10 +598,66 @@ function validateService(service: ResolvedServiceConfig, serviceSlug: string, ad
     }
   }
 
+  if (Array.isArray(service.pricing)) {
+    validatePricingRules(service.pricing, location !== undefined, pickupOptionIds, serviceSlug, add);
+  } else {
+    validateFormulaPricing(service.pricing, pickupOptionIds, serviceSlug, add);
+  }
+
+  validateSchedule(service, serviceSlug, add);
+  // Config validation only checks key uniqueness and select-needs-options; per-value
+  // type/required/maxLength enforcement happens at checkout, where the request body is available.
+  const seenMetadataKeys = new Set<string>();
+  for (const [index, field] of (service.metadataFields ?? []).entries()) {
+    if (seenMetadataKeys.has(field.key)) {
+      add(['services', serviceSlug, 'metadataFields', index, 'key'], `duplicate metadata field key (${field.key}); keys must be unique within a service`);
+    }
+    seenMetadataKeys.add(field.key);
+    if (field.type === 'select') {
+      if (!field.options || field.options.length === 0) {
+        add(['services', serviceSlug, 'metadataFields', index, 'options'], `metadata field ${field.key} declares type 'select' and must declare at least one option`);
+      } else {
+        const seenOptionValues = new Set<string>();
+        for (const [optionIndex, option] of field.options.entries()) {
+          if (seenOptionValues.has(option.value)) {
+            add(['services', serviceSlug, 'metadataFields', index, 'options', optionIndex, 'value'], `duplicate option value (${option.value}) for metadata field ${field.key}; option values must be unique`);
+          }
+          seenOptionValues.add(option.value);
+        }
+      }
+    }
+  }
+}
+
+// Every declared pickup option needs a surcharge, even a zero one: a silent default would price a
+// hotel pick-up as free. The issue lands on the shared block when that is where the table came
+// from, so an admin edit there is blamed on the right stored row.
+function validateFormulaPricing(
+  pricing: ResolvedFormulaPricing,
+  pickupOptionIds: string[],
+  serviceSlug: string,
+  add: (path: (string | number)[], message: string) => void,
+): void {
+  const tablePath = pricing.inherited.surcharges ? ['pricing', 'surcharges'] : ['services', serviceSlug, 'pricing', 'surcharges'];
+  for (const id of pickupOptionIds) {
+    if (pricing.surcharges[id] === undefined) {
+      add([...tablePath, id], `service ${serviceSlug} declares pickup option ${id}, so ${tablePath.join('.')} must price it (0 for no surcharge)`);
+    }
+  }
+}
+
+function validatePricingRules(
+  rules: PricingRule[],
+  hasLocation: boolean,
+  pickupOptionIds: string[],
+  serviceSlug: string,
+  add: (path: (string | number)[], message: string) => void,
+): void {
+  const pickupOptionIdSet = new Set(pickupOptionIds);
   // Keyed by declared pickup id when location-ful, or a single '' key (tiers only) otherwise.
   const pricingBreakpoints = new Map<string, Map<number, number>>();
-  for (const [index, rule] of service.pricing.entries()) {
-    if (location) {
+  for (const [index, rule] of rules.entries()) {
+    if (hasLocation) {
       if (rule.pickup === undefined) {
         add(['services', serviceSlug, 'pricing', index, 'pickup'], `service ${serviceSlug} declares a location module, so pricing rule ${index} must declare 'pickup'; valid pickup option ids: ${pickupOptionIds.join(', ')}`);
         continue;
@@ -515,30 +693,54 @@ function validateService(service: ResolvedServiceConfig, serviceSlug: string, ad
     }
   }
 
+  const highest = Math.max(...rules.map((row) => row.maxQuantity), 0);
+  // Coverage is checked per declared pickup id when location-ful, or once (the '' key) otherwise.
+  const coverageKeys = hasLocation ? pickupOptionIds : [''];
+  for (let quantity = 1; quantity <= highest; quantity += 1) {
+    for (const key of coverageKeys) {
+      if (!rules.some((row) => (row.pickup ?? '') === key && quantity <= row.maxQuantity)) {
+        add(
+          ['services', serviceSlug, 'pricing'],
+          hasLocation ? `missing ${key} pricing for quantity=${quantity}` : `missing pricing for quantity=${quantity}`,
+        );
+      }
+    }
+  }
+}
+
+// An inherited rule is reported under `hours.<i>` and a declared one under the service's own
+// `schedule.<i>`: the settings load path attributes a failing merge to stored rows by path prefix,
+// so the path has to name the block the operator actually edited.
+function validateSchedule(service: ResolvedServiceConfig, serviceSlug: string, add: (path: (string | number)[], message: string) => void): void {
+  if (service.schedule.length === 0) {
+    add(['services', serviceSlug, 'schedule'], `service ${serviceSlug} declares no schedule and there is no top-level hours block to inherit; declare one or the other`);
+    return;
+  }
+  const pathOf = (index: number): (string | number)[] =>
+    service.scheduleSource === 'hours' ? ['hours', index] : ['services', serviceSlug, 'schedule', index];
   for (const [index, rule] of service.schedule.entries()) {
+    const path = pathOf(index);
+    const name = path.join('.');
     if (rule.from && !isValidMonthDay(rule.from)) {
-      add(['services', serviceSlug, 'schedule', index, 'from'], 'must be a valid month-day');
+      add([...path, 'from'], 'must be a valid month-day');
     }
     if (rule.to && !isValidMonthDay(rule.to)) {
-      add(['services', serviceSlug, 'schedule', index, 'to'], 'must be a valid month-day');
+      add([...path, 'to'], 'must be a valid month-day');
     }
     if (rule.firstStart > rule.lastStart) {
-      add(['services', serviceSlug, 'schedule', index], 'firstStart must not be after lastStart');
+      add(path, 'firstStart must not be after lastStart');
     }
     if (rule.intervalMin > 24 * 60) {
-      add(['services', serviceSlug, 'schedule', index, 'intervalMin'], 'intervalMin must be at most one day');
+      add([...path, 'intervalMin'], 'intervalMin must be at most one day');
     }
     if (rule.lastEnd !== undefined) {
       if (minutesOfDay(rule.lastEnd) - service.durationMin < minutesOfDay(rule.firstStart)) {
-        add(
-          ['services', serviceSlug, 'schedule', index],
-          `services.${serviceSlug}.schedule.${index}: lastEnd ${rule.lastEnd} leaves no room for a ${service.durationMin}-minute booking starting at firstStart ${rule.firstStart}`,
-        );
+        add(path, `${name}: lastEnd ${rule.lastEnd} leaves no room for a ${service.durationMin}-minute booking of service ${serviceSlug} starting at firstStart ${rule.firstStart}`);
       } else if (rule.lastStart !== derivedLastStart(rule, service.durationMin)) {
         // Compared against the derived value rather than testing "both present": a resolved config
         // carries both, and it round-trips back through validateConfig (settings merges, the
         // virtual config module) where a bare presence check would reject its own output.
-        add(['services', serviceSlug, 'schedule', index], `services.${serviceSlug}.schedule.${index}: declare lastStart or lastEnd, not both`);
+        add(path, `${name}: declare lastStart or lastEnd, not both`);
       }
     }
   }
@@ -553,49 +755,11 @@ function validateService(service: ResolvedServiceConfig, serviceSlug: string, ad
       const shared = scheduleStartTimes(rule).filter((start) => scheduleStartTimes(other).includes(start));
       if (shared.length === 0) continue;
       add(
-        ['services', serviceSlug, 'schedule', index],
-        `services.${serviceSlug}.schedule.${index} and services.${serviceSlug}.schedule.${otherIndex} share a weekday and season and both start at ${shared.join(', ')}; schedule rules combine, so change one rule's firstStart or intervalMin`,
+        pathOf(index),
+        `${pathOf(index).join('.')} and ${pathOf(otherIndex).join('.')} share a weekday and season and both start at ${shared.join(', ')} for service ${serviceSlug}; schedule rules combine, so change one rule's firstStart or intervalMin`,
       );
     }
   }
-
-  const highest = Math.max(...service.pricing.map((row) => row.maxQuantity), 0);
-  const quantityValues = Array.from({ length: highest }, (_, index) => index + 1);
-  // Coverage is checked per declared pickup id when location-ful, or once (the '' key) otherwise.
-  const coverageKeys = location ? pickupOptionIds : [''];
-  for (const quantity of quantityValues) {
-    for (const key of coverageKeys) {
-      if (!service.pricing.some((row) => (row.pickup ?? '') === key && quantity <= row.maxQuantity)) {
-        add(
-          ['services', serviceSlug, 'pricing'],
-          location ? `missing ${key} pricing for quantity=${quantity}` : `missing pricing for quantity=${quantity}`,
-        );
-      }
-    }
-  }
-  // Config validation only checks key uniqueness and select-needs-options; per-value
-  // type/required/maxLength enforcement happens at checkout, where the request body is available.
-  const seenMetadataKeys = new Set<string>();
-  for (const [index, field] of (service.metadataFields ?? []).entries()) {
-    if (seenMetadataKeys.has(field.key)) {
-      add(['services', serviceSlug, 'metadataFields', index, 'key'], `duplicate metadata field key (${field.key}); keys must be unique within a service`);
-    }
-    seenMetadataKeys.add(field.key);
-    if (field.type === 'select') {
-      if (!field.options || field.options.length === 0) {
-        add(['services', serviceSlug, 'metadataFields', index, 'options'], `metadata field ${field.key} declares type 'select' and must declare at least one option`);
-      } else {
-        const seenOptionValues = new Set<string>();
-        for (const [optionIndex, option] of field.options.entries()) {
-          if (seenOptionValues.has(option.value)) {
-            add(['services', serviceSlug, 'metadataFields', index, 'options', optionIndex, 'value'], `duplicate option value (${option.value}) for metadata field ${field.key}; option values must be unique`);
-          }
-          seenOptionValues.add(option.value);
-        }
-      }
-    }
-  }
-
 }
 
 export function validateConfig(input: unknown): ResolvedClientConfig {
@@ -625,6 +789,16 @@ export function validateConfig(input: unknown): ResolvedClientConfig {
       add(['locales', 'supported', index], `locale ${locale} is not a valid BCP 47 locale tag`);
     }
   }
+  // Shared hours are validated through every service that inherits them (the duration-dependent
+  // checks differ per service), so each rule's issues repeat once per inheriting service and are
+  // deduplicated below. A block nobody inherits still gets its shape checked once.
+  const inheritsHours = Object.values(config.services).some((service) => service.scheduleSource === 'hours');
+  for (const [index, rule] of (config.hours ?? []).entries()) {
+    if (inheritsHours) break;
+    if (rule.from && !isValidMonthDay(rule.from)) add(['hours', index, 'from'], 'must be a valid month-day');
+    if (rule.to && !isValidMonthDay(rule.to)) add(['hours', index, 'to'], 'must be a valid month-day');
+    if (rule.lastStart !== undefined && rule.lastEnd !== undefined) add(['hours', index], `hours.${index}: declare lastStart or lastEnd, not both`);
+  }
   for (const [slug, service] of Object.entries(config.services)) {
     validateService(service, slug, add);
   }
@@ -644,20 +818,33 @@ export function validateConfig(input: unknown): ResolvedClientConfig {
   }
 
   if (issues.length > 0) {
-    const result = clientConfigSchema.superRefine((_, ctx) => {
-      for (const issue of issues) addIssue(ctx, issue.path, issue.message);
+    const seen = new Set<string>();
+    const result = clientConfigShape.superRefine((_, ctx) => {
+      for (const issue of issues) {
+        const key = `${issue.path.join('.')}\u0000${issue.message}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        addIssue(ctx, issue.path, issue.message);
+      }
     }).safeParse(input);
     if (!result.success) throw result.error;
   }
   for (const service of Object.values(config.services)) {
-    service.pricing.sort((a, b) => a.maxQuantity - b.maxQuantity);
+    if (Array.isArray(service.pricing)) service.pricing.sort((a, b) => a.maxQuantity - b.maxQuantity);
   }
   return config;
 }
 
+// The largest party a service prices: the widest breakpoint row, or every seat of every unit a
+// formula allows. Accepts a catalog entry as well as a resolved service.
+export function maxQuantityFor(service: { pricing: ReadonlyArray<{ maxQuantity: number }> | { maxUnits: number; seatsPerUnit: number } }): number {
+  if (Array.isArray(service.pricing)) return Math.max(...service.pricing.map((row) => row.maxQuantity), 0);
+  const formula = service.pricing as { maxUnits: number; seatsPerUnit: number };
+  return formula.maxUnits * formula.seatsPerUnit;
+}
+
 export function quantityValuesForService(service: ResolvedServiceConfig): number[] {
-  const highest = Math.max(...service.pricing.map((row) => row.maxQuantity), 0);
-  return Array.from({ length: highest }, (_, index) => index + 1);
+  return Array.from({ length: maxQuantityFor(service) }, (_, index) => index + 1);
 }
 
 export function resolveService(config: ResolvedClientConfig, serviceSlug: string): ResolvedServiceConfig {
