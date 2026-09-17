@@ -33,8 +33,11 @@ Run `wrangler types` to generate `worker-configuration.d.ts` from your `wrangler
 wired as a `pretypes`/`predev` script so it stays current:
 
 ```json
-{ "scripts": { "pretypes": "wrangler types", "predev": "wrangler types" } }
+{ "scripts": { "pretypes": "wrangler types --include-runtime=false", "predev": "wrangler types --include-runtime=false" } }
 ```
+
+`--include-runtime=false` matters for a site with client scripts: the default output also declares
+the whole workerd runtime as globals, which shadow the DOM lib.
 
 `wrangler types` emits a **global** `interface Env`, so pass it as the type argument with no
 import: `defineCloudflareReservaRuntime<Env>({ … })`. The `providers` and `logger` factories then
@@ -172,8 +175,11 @@ regenerable — a row written without it never has its plaintext at rest again.
    export default {
      fetch: handle,
      scheduled: scheduledHandler(runtime),
-   } satisfies ExportedHandler<Env>;
+   };
    ```
+
+   No `satisfies ExportedHandler<Env>`: that type comes from the workerd globals, whose `Request`
+   conflicts with the DOM `Request` an Astro project with client scripts compiles against.
 
    and point Wrangler at it:
 
@@ -187,8 +193,7 @@ regenerable — a row written without it never has its plaintext at rest again.
    Five minutes is the documented cadence (`RECONCILIATION_CADENCE_MINUTES`); ops health opens a
    `reconciliation_stale` incident once the last successful run is older than three ticks.
 
-   `scheduledHandler` requires an operational alert sink and rethrows on failure, so a bad run is
-   recorded as a failed cron invocation. An overlapping invocation takes no work: both it and
+   `scheduledHandler` rethrows on failure, so a bad run is recorded as a failed cron invocation. An overlapping invocation takes no work: both it and
    `POST /api/booking/ops/reconcile` compete for one D1 lease row, and the loser logs a warning and
    exits successfully. Pass `ReconciliationOptions` as the second argument to change the limits, or
    call `runReconciliationWithLease(context, options)` yourself if you need to do more in the same
@@ -197,7 +202,7 @@ regenerable — a row written without it never has its plaintext at rest again.
    `POST /api/booking/ops/reconcile` runs the same sweep on demand, authorized by the operator
    bearer secret or an admin identity. It takes an optional JSON body with `sourceLimit` and
    `alertLimit`, returns the `ReconciliationSummary`, answers `409 reconciliation_in_progress` when
-   the lease is held, and `503 internal_error` when no alert sink is configured.
+   the lease is held.
    `GET /api/booking/ops/health` reports `reconciliation.lastRunAt` and the last summary.
 
    **The operational alert sink.** Alerts are what tell you an incident opened without you watching
@@ -206,8 +211,9 @@ regenerable — a row written without it never has its plaintext at rest again.
    not normally construct it — when `providers.alerts` is absent and `providers.email` implements
    `sendMessage` (the shipped Brevo adapter does), the runtime wires it to
    `business.contact.email` and logs `reserva operational alerts wired to the email provider` once.
-   Pass `providers.alerts` explicitly to override the mailbox or the channel. If email is down the
-   incident still shows on `/booking/admin`; there is deliberately no second channel.
+   Without such a provider the runtime wires `loggerAlertSink` instead and warns once: alerts then
+   land in the Worker logs only. Pass `providers.alerts` explicitly to override the mailbox or the
+   channel. If email is down the incident still shows on `/booking/admin`.
 
    Enable Workers observability with full logs, and set up a Cloudflare-side alert on cron failures
    before go-live: the in-process alert sink only fires from inside an invocation, so the platform
@@ -230,20 +236,21 @@ webhook at your build system and have the build read `/api/booking/catalog` for 
 ```ts
 webhooks: [{
   name: 'rebuild',
-  url: 'https://api.cloudflare.com/client/v4/pages/webhooks/deploy_hooks/<id>',
+  url: '<your deploy hook URL>',
   secretBinding: 'REBUILD_WEBHOOK_SECRET',
   events: ['settings.changed'],
 }]
 ```
 
-Two receivers work:
+The webhook is a POST with the Standard Webhooks signature headers and nothing else: no
+`Authorization` header, no custom body. So it can call a receiver that needs no auth, and cannot
+call GitHub or a CI API directly. Two receivers work:
 
-- **A Cloudflare Workers Builds deploy hook.** A plain POST with no auth header; the body and the
-  signature headers are ignored, and the endpoint is rate-limited to 10 builds per minute per
-  Worker. Simplest option, but anyone who learns the URL can trigger a build.
-- **A verifying Worker.** Verify the `webhook-*` headers with any Standard Webhooks library, then
-  forward to GitHub `repository_dispatch` (or your CI's equivalent) with a token the public never
-  sees. Use this when an unauthenticated build trigger is not acceptable.
+- **A Cloudflare Workers Builds deploy hook.** Accepts the POST as-is, rate-limited to 10 builds
+  per minute per Worker. Anyone who learns the URL can trigger a build.
+- **A relay Worker.** Verify the `webhook-*` headers with any Standard Webhooks library, then call
+  GitHub `repository_dispatch` (or your CI's equivalent) with a token the public never sees. Needed
+  whenever the build runs from GitHub Actions.
 
 A hook that arrives while a build is still `queued`/`initializing` is deduplicated, not queued —
 which is safe, because that build has not fetched the catalog yet. A save during a *running* build

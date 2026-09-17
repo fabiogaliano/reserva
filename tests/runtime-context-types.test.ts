@@ -1,6 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expectTypeOf, it, vi } from 'vitest';
 import type { ReservaCache } from '../src/context';
+import type { ClientConfig } from '../src/core/config';
 import { defineCloudflareReservaRuntime, type CloudflareRuntimeBindings } from '../src/runtime-context';
 
 // The factory no longer takes a config argument (plan item 12): it reads the build-time config from
@@ -76,3 +77,11 @@ describe('defineCloudflareReservaRuntime Env typing (compile-time)', () => {
     });
   });
 });
+
+// A pickup option without a label is a compile error for the consumer, not only a runtime one.
+type _LabelRequired = ClientConfig['services'][string]['location'];
+const _missingLabel: NonNullable<_LabelRequired> = {
+  // @ts-expect-error label is required on a declared pickup option
+  pickupOptions: [{ id: 'hotel', requiresAddress: true, usesMeetingPoint: false }],
+};
+void _missingLabel;

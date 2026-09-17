@@ -242,8 +242,9 @@ argument and read it from `virtual:reserva/config`. `ReservaRuntimeFactoryOption
 `ReservaContextInput.config` is unchanged. `reserva.config.ts` is now imported only by
 `astro.config.ts`.
 
-`Env` comes from `wrangler types`, which emits a **global** `interface Env` — there is nothing to
-import from `worker-configuration`.
+`Env` comes from `wrangler types --include-runtime=false`, which emits a **global** `interface Env`
+— there is nothing to import from `worker-configuration`. Without the flag the output also declares
+the workerd runtime globally, which shadows the DOM lib an Astro site with client scripts needs.
 
 ## `virtual:reserva/config`
 

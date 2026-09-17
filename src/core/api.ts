@@ -319,6 +319,8 @@ export interface CatalogResponse {
   locales: { supported: string[]; default: string };
   currency: string;
   maxHorizonDays: number;
+  // The admin-editable policy a site prints next to a price, so a rebuild picks up an edit.
+  policy: { cancelCutoffHours: number; reschedule: { enabled: boolean; cutoffHours: number } };
 }
 
 // ---------------------------------------------------------------------------

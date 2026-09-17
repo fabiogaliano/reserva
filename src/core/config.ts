@@ -119,16 +119,19 @@ const pickupOptionIdPattern = /^[a-z0-9_-]+$/;
 // The unit the pricing axis's `pickup` column points at. `requiresAddress` gates address
 // collection at checkout; `usesMeetingPoint` decides the meeting-point requirement. Ids are opaque
 // to the library, so `label` is required: nothing else can name the option to a customer.
-const pickupOptionSchema = z.object({
+const pickupOptionShape = z.object({
   id: z.string().min(1).regex(pickupOptionIdPattern),
-  // Optional here, required by `locationSchema`'s refinement below for every option a consumer
-  // declares: the one implied `meeting_point` option carries no label, and validating an already
-  // resolved config (which `createReservaContext` does on every request) must stay a no-op.
+  // Optional at runtime, required by `locationSchema`'s refinement for every option a consumer
+  // declares: the implied `meeting_point` option carries no label, and a resolved config must
+  // re-validate unchanged. The input type below still requires it, so a missing label is a
+  // compile error for the consumer and a named validation error at runtime.
   label: localizedTextSchema.optional(),
   hint: localizedTextSchema.optional(),
   requiresAddress: z.boolean(),
   usesMeetingPoint: z.boolean(),
 });
+type PickupOptionInput = Omit<z.input<typeof pickupOptionShape>, 'label'> & { label: z.input<typeof localizedTextSchema> };
+const pickupOptionSchema = pickupOptionShape as unknown as z.ZodType<z.output<typeof pickupOptionShape>, PickupOptionInput>;
 
 const meetingPointSchema = z.object({
   id: z.string().min(1),

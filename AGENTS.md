@@ -166,8 +166,9 @@ Two endpoints let a deployment describe itself without source access:
 - `GET /api/booking/catalog?locale=` — public. Services with locale-resolved titles,
   duration, declared location options, declared metadata fields, the service's `pricing`
   rules (`{ maxQuantity, pickup, priceMinor }`, `pickup` null without a pickup axis) and its
-  `fromPriceMinor`, plus `locales`,
-  `currency`, `maxHorizonDays`. Never exposes schedules, turnaround, or capacity. Build a
+  `fromPriceMinor`, plus `locales`, `currency`, `maxHorizonDays` and `policy`
+  (`cancelCutoffHours`, `reschedule.{enabled,cutoffHours}`). Never exposes schedules, turnaround,
+  or capacity. Build a
   booking UI from this; do not hardcode config or prices in the consumer.
 - `GET /api/booking/ops/health` — admin-authenticated. `schema` (migrations applied +
   fingerprint match), `outbox` (pending/abandoned counts by family, oldest pending age),

@@ -25,7 +25,9 @@ table inside the published tarball.
   `null`), `metadataFields` (`[]` for none), `pricing` (the configured rules, each
   `{ maxQuantity, pickup, priceMinor }`, `pickup` null where the service has no pickup axis)
   and `fromPriceMinor` (the lowest of them, for a "from" price); top-level
-  `locales`, `currency`, `maxHorizonDays`. Every service and every meeting point also carries
+  `locales`, `currency`, `maxHorizonDays` and `policy` (`cancelCutoffHours`,
+  `reschedule.enabled`, `reschedule.cutoffHours`: the admin-editable policy a site prints next to
+  a price). Every service and every meeting point also carries
   `meta`: the opaque JSON object its config declared, echoed back verbatim (`{}` when none) so a
   site can fetch prices and its own content in one call. Never exposes schedules, turnaround,
   capacity, or occupancy — a charged price still comes from `/api/booking/quote`.
