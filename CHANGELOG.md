@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0
+
+### Minor Changes
+
+- 3afca1a: Admin settings: two-column form with every control always editable. Unsaved edits are flagged on the field and in a sticky Save bar. Message keys `settingStmt.*`, `admin.changeValue`, `admin.doneEditing` removed; `admin.unsaved`, `admin.unsavedHint` added.
+
 ## 0.6.0
 
 ### Minor Changes
