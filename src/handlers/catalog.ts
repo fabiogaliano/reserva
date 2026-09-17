@@ -98,6 +98,10 @@ export function catalogPayload(config: ResolvedClientConfig, locale: string, mes
     locales: { supported: config.locales.supported, default: config.locales.default },
     currency: config.business.currency,
     maxHorizonDays: config.booking.maxHorizonDays,
+    policy: {
+      cancelCutoffHours: config.booking.cancelCutoffHours,
+      reschedule: { enabled: config.booking.reschedule.enabled, cutoffHours: config.booking.reschedule.cutoffHours },
+    },
   };
 }
 

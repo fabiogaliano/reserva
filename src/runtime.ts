@@ -23,6 +23,7 @@ export { cloudflareAccessAdminAuth } from './access.js';
 // absent and the email provider implements `sendMessage`; export it so a consumer can point alerts
 // at a different mailbox explicitly.
 export { emailAlertSink, type EmailAlertSinkOptions } from './alerts/email-sink.js';
+export { loggerAlertSink } from './alerts/logger-sink.js';
 export type { AdminIdentity } from './access.js';
 // The typed reconciliation function a consumer's own custom Worker entrypoint's `scheduled()`
 // calls — build the ReservaContext with a synthetic same-origin Request, then this runs the bounded

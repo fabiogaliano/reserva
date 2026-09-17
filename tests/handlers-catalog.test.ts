@@ -153,6 +153,8 @@ describe('GET /api/booking/catalog', () => {
     expect(payload.locales).toEqual({ supported: ['en', 'pt-BR'], default: 'en' });
     expect(payload.currency).toBe('eur');
     expect(payload.maxHorizonDays).toBe(180);
+    // The policy a site prints next to a price, so an admin edit reaches a rebuilt static page.
+    expect(payload.policy).toEqual({ cancelCutoffHours: 24, reschedule: { enabled: true, cutoffHours: 24 } });
   });
 
   it('never exposes turnaround, schedule, capacity, or occupancy', async () => {

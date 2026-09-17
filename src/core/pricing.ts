@@ -1,4 +1,4 @@
-import type { PricingRule, ResolvedClientConfig, PickupType, ResolvedServiceConfig } from './config.js';
+import type { ResolvedClientConfig, PickupType, ResolvedServiceConfig } from './config.js';
 import { resolveService } from './config.js';
 
 export class PricingError extends Error {
@@ -18,13 +18,19 @@ export class PricingError extends Error {
 // for a location-less (tiers-only) service — not a hard-coded pair.
 export type ResolvedPriceTable = Record<string, number[]>;
 
-export function priceFor(service: Pick<ResolvedServiceConfig, 'pricing'>, quantity: number, pickup: PickupType | null): number {
+// Accepts both the resolved config's rows (`pickup?: string`) and the catalog's (`pickup: string | null`),
+// so a funnel can pass `catalog.services[i]` straight in.
+export interface PricingRows {
+  pricing: ReadonlyArray<{ maxQuantity: number; pickup?: string | null | undefined; priceMinor: number }>;
+}
+
+export function priceFor(service: PricingRows, quantity: number, pickup: PickupType | null): number {
   if (!Number.isInteger(quantity) || quantity < 1) throw new PricingError(quantity, pickup);
   // The tightest covering tier wins regardless of array order: validateConfig sorts its own output,
   // but this is exported and a raw config module (or a hand-built rule list) is a legitimate input,
   // where first-match would silently charge a wider tier. Normalizing an undefined `pickup` to null
   // lets a location-less lookup match it.
-  let tightest: PricingRule | undefined;
+  let tightest: PricingRows['pricing'][number] | undefined;
   for (const candidate of service.pricing) {
     if ((candidate.pickup ?? null) !== pickup || quantity > candidate.maxQuantity) continue;
     if (!tightest || candidate.maxQuantity < tightest.maxQuantity) tightest = candidate;
@@ -33,7 +39,7 @@ export function priceFor(service: Pick<ResolvedServiceConfig, 'pricing'>, quanti
   return tightest.priceMinor;
 }
 
-export function resolvedPriceTableFor(service: Pick<ResolvedServiceConfig, 'pricing'>): ResolvedPriceTable {
+export function resolvedPriceTableFor(service: PricingRows): ResolvedPriceTable {
   const highest = Math.max(...service.pricing.map((row) => row.maxQuantity), 0);
   // The key set is each row's own `pickup` (or '' for a location-less row), in first-occurrence
   // order — not a fixed 'default'/'custom' pinning.

@@ -3,6 +3,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 // runtime module never imports (or re-validates a second copy of) reserva.config.ts itself.
 import virtualConfig from 'virtual:reserva/config';
 import { emailAlertSink } from './alerts/email-sink.js';
+import { loggerAlertSink } from './alerts/logger-sink.js';
 import { cloudflareAccessAdminAuth } from './access.js';
 import { CSRF_SECRET_ENV_NAME } from './admin-csrf.js';
 import { TOKEN_ENC_SECRET_NAME } from './repo.js';
@@ -165,20 +166,22 @@ function resolveAdminAuth(config: ResolvedClientConfig, custom: AdminAuth | unde
   return resolved;
 }
 
-// Alerts are the backstop behind the admin dashboard's "Attention required" cards, so a deployment
-// with a capable email transport gets them without opting in. An explicit `alerts` always wins:
-// this only fills an absence.
+// Alerts are the backstop behind the admin dashboard's incident cards, so every deployment gets a
+// sink: email when the transport can send a standalone message, the logger otherwise. An explicit
+// `alerts` always wins.
 let autoAlertSinkLogged = false;
 function withDefaultAlertSink(
   providers: ReservaProviders,
   logger: ReservaLogger | undefined,
   to: string,
 ): ReservaProviders {
-  if (providers.alerts || !providers.email?.sendMessage) return providers;
-  const alerts = emailAlertSink(providers.email, { to });
+  if (providers.alerts) return providers;
+  const email = providers.email?.sendMessage ? providers.email : null;
+  const alerts = email ? emailAlertSink(email, { to }) : loggerAlertSink(logger);
   if (!autoAlertSinkLogged) {
     autoAlertSinkLogged = true;
-    logger?.info?.('reserva operational alerts wired to the email provider', { to });
+    if (email) logger?.info?.('reserva operational alerts wired to the email provider', { to });
+    else logger?.warn?.('reserva operational alerts go to the logger only: no email provider with sendMessage');
   }
   return { ...providers, alerts };
 }

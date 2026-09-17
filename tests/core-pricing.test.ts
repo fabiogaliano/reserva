@@ -78,6 +78,9 @@ describe('core pricing', () => {
 
       // Widget path: the raw array as authored, never passed through validateConfig.
       const widgetPrices = resolvedPriceTableFor({ pricing: rawPricing });
+      // Catalog path: the wire rows carry `pickup: null` for a location-less row, and must type-check as-is.
+      const catalogRows = rawPricing.map((row) => ({ ...row, pickup: row.pickup ?? null }));
+      expect(resolvedPriceTableFor({ pricing: catalogRows })).toEqual(widgetPrices);
 
       for (let quantity = 1; quantity <= 8; quantity += 1) {
         for (const pickup of ['default', 'custom'] as const) {

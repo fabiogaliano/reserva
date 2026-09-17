@@ -135,9 +135,11 @@ describe('defineReservaRuntime alert-sink wiring', () => {
     expect(email.messages).toEqual([]);
   });
 
-  it('wires nothing when the email transport cannot send a standalone message', async () => {
+  it('falls back to the logger when the email transport cannot send a standalone message', async () => {
     const context = await contextFor({ email: { send: async () => undefined } });
 
-    expect(context.providers.alerts).toBeUndefined();
+    // The cron must still run: a deployment without email gets its alerts in the Worker logs.
+    expect(context.providers.alerts).toBeDefined();
+    await expect(context.providers.alerts!.send(alert)).resolves.toBeUndefined();
   });
 });
