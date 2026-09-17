@@ -215,8 +215,8 @@ const sharedPricingSchema = z.object({
 // (`ceil(quantity / occupancy.seatsPerUnit)`), plus the pickup option's surcharge. Fields left
 // undeclared inherit the top-level `pricing` block. `seatsPerUnit` and `inherited` are resolved-only:
 // the first lets `priceFor` work on a service (or catalog entry) alone, the second records which
-// fields came from the shared block so a re-validation of a resolved config, or an admin edit of the
-// shared block, still flows through to every service that inherits.
+// fields came from the shared block so a re-validation of a resolved config keeps following it.
+// `resolveServicePricing` only honours the flag when the value still matches the shared block.
 const formulaPricingSchema = z.object({
   baseMinor: z.number().int().nonnegative(),
   surcharges: surchargesSchema.optional(),
@@ -287,34 +287,51 @@ export type ResolvedServiceConfig = Omit<ParsedServiceConfig, 'schedule' | 'sche
   pricing: PricingRule[] | ResolvedFormulaPricing;
 };
 
+// Only the ids a service declares: the shared table may carry ids that belong to other services.
+export function surchargesFor(table: Record<string, number>, pickupIds: string[]): Record<string, number> {
+  const surcharges: Record<string, number> = {};
+  for (const id of pickupIds) {
+    const amount = table[id];
+    if (amount !== undefined) surcharges[id] = amount;
+  }
+  return surcharges;
+}
+
+function sameSurcharges(a: Record<string, number>, b: Record<string, number>): boolean {
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key]);
+}
+
 function resolveServicePricing(
   service: ParsedServiceConfig,
   shared: z.output<typeof sharedPricingSchema>,
 ): PricingRule[] | ResolvedFormulaPricing {
   if (Array.isArray(service.pricing)) return service.pricing;
   const formula = service.pricing;
-  // First parse: a field inherits iff it was left undeclared. Re-parse of a resolved config: the
-  // recorded flags win, so a materialized inherited value is refreshed from the shared block
-  // instead of being mistaken for a declaration.
-  const inherited = formula.inherited ?? {
-    surcharges: formula.surcharges === undefined,
-    maxUnits: formula.maxUnits === undefined,
-    surchargeScope: formula.surchargeScope === undefined,
-  };
   const pickupIds = (service.location?.pickupOptions ?? []).map((option) => option.id);
-  const table = inherited.surcharges ? shared.surcharges : formula.surcharges ?? {};
-  const surcharges: Record<string, number> = {};
+  const sharedView = surchargesFor(shared.surcharges, pickupIds);
+  // A field inherits iff it was left undeclared, or a re-parse of a resolved config says it was
+  // inherited *and* the materialized value still matches the shared block. The second check is
+  // what keeps `inherited` from being a consumer-facing override switch: a config that declares
+  // amounts and also claims they were inherited gets the amounts it wrote, never the shared table.
+  const claims = formula.inherited;
+  const inherited = {
+    surcharges: formula.surcharges === undefined
+      || (claims?.surcharges === true && sameSurcharges(surchargesFor(formula.surcharges, pickupIds), sharedView)),
+    maxUnits: formula.maxUnits === undefined || (claims?.maxUnits === true && formula.maxUnits === shared.maxUnits),
+    surchargeScope: formula.surchargeScope === undefined
+      || (claims?.surchargeScope === true && formula.surchargeScope === shared.surchargeScope),
+  };
   // A location-less service has no pickup axis, so it keeps no surcharge column even if the shared
   // table is non-empty. `validateService` reports a declared option the table does not price.
-  for (const id of pickupIds) {
-    const amount = table[id];
-    if (amount !== undefined) surcharges[id] = amount;
-  }
+  const surcharges = inherited.surcharges ? sharedView : surchargesFor(formula.surcharges ?? {}, pickupIds);
   return {
     baseMinor: formula.baseMinor,
     surcharges,
-    maxUnits: inherited.maxUnits ? shared.maxUnits : formula.maxUnits ?? shared.maxUnits,
-    surchargeScope: inherited.surchargeScope ? shared.surchargeScope : formula.surchargeScope ?? shared.surchargeScope,
+    maxUnits: inherited.maxUnits ? shared.maxUnits : formula.maxUnits!,
+    surchargeScope: inherited.surchargeScope ? shared.surchargeScope : formula.surchargeScope!,
+    // `validateService` rejects a formula service with no `occupancy`; the fallback only keeps the
+    // resolved shape total so that error can be reported alongside the others.
     seatsPerUnit: service.occupancy?.seatsPerUnit ?? 1,
     inherited,
   };
@@ -481,7 +498,8 @@ export const clientConfigSchema = clientConfigShape.transform((config): Resolved
 export type ClientConfig = z.input<typeof clientConfigShape>;
 export type ResolvedClientConfig = Omit<ParsedClientConfig, 'services'> & { services: Record<string, ResolvedServiceConfig> };
 export type ServiceConfig = z.input<typeof serviceSchema>;
-export type FormulaPricing = z.input<typeof formulaPricingSchema>;
+// The writable half only: `seatsPerUnit` and `inherited` are resolved-only and not for a consumer to type.
+export type FormulaPricing = Pick<z.input<typeof formulaPricingSchema>, 'baseMinor' | 'surcharges' | 'maxUnits' | 'surchargeScope'>;
 export type SharedPricing = z.output<typeof sharedPricingSchema>;
 export type SurchargeScope = z.output<typeof surchargeScopeSchema>;
 export type ScheduleRule = z.output<typeof scheduleSchema>;
@@ -601,6 +619,12 @@ function validateService(service: ResolvedServiceConfig, serviceSlug: string, ad
   if (Array.isArray(service.pricing)) {
     validatePricingRules(service.pricing, location !== undefined, pickupOptionIds, serviceSlug, add);
   } else {
+    // Checkout and availability count units with `occupancyFor`, which is one unit per booking when
+    // `occupancy` is absent; a formula price that multiplied by headcount would then charge for
+    // vehicles the booking never reserves.
+    if (service.occupancy === undefined) {
+      add(['services', serviceSlug, 'occupancy'], `service ${serviceSlug} uses formula pricing, so services.${serviceSlug}.occupancy.seatsPerUnit must be declared (it is what turns a party size into priced units)`);
+    }
     validateFormulaPricing(service.pricing, pickupOptionIds, serviceSlug, add);
   }
 
