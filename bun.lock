@@ -29,12 +29,12 @@
     },
     "packages/stripe": {
       "name": "@reservajs/stripe",
-      "version": "0.4.2",
+      "version": "0.5.0",
       "dependencies": {
         "stripe": "^22.5.0",
       },
       "peerDependencies": {
-        "@reservajs/astro": "^0.7.0",
+        "@reservajs/astro": "^0.8.0",
       },
     },
   },
