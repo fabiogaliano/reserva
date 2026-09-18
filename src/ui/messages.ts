@@ -96,12 +96,16 @@ export const defaultMessages = {
   // A cancel whose refund failed: the slot IS freed, only the money is still on its way, so this
   // reads as an outcome rather than as "nothing happened".
   'manage.cancelledRefundPending': 'Booking cancelled. The refund could not be issued automatically and will be handled by us.',
+  'manage.errorInvalidInput': 'Check the values in the form and try again — nothing was changed.',
   'manage.errorConflict': 'Another change to this booking is still being processed. Wait a moment and reload this page.',
   'manage.errorInvalidLink': 'This link is no longer valid for that action. Use the link from your confirmation email, or contact us.',
   'manage.actionFailed': 'Something went wrong and nothing was changed. Please try again in a minute.',
   'manage.refund': 'Refund',
   'manage.refundNone': 'No refund',
   'manage.refundFull': 'Full refund',
+  'manage.refundPartial': 'Partial refund',
+  'manage.refundAmount': 'Partial refund amount',
+  'manage.refundAmountHint': 'Only used when "Partial refund" is selected. Up to {max}.',
   'manage.noShowSubmit': 'Mark as no-show',
   'manage.noShowWarning': 'This marks the booking as missed by the customer and cannot be undone.',
   'manage.operatorBadge': 'Operator view',

@@ -231,7 +231,12 @@ export function handleAdminPost(request: Request, context: ReservaContext): Prom
         if (refundOperation) {
           const attemptNumber = await context.repo.claimRefundExecutionForRetry(refundOperation.id, nowIso(context));
           if (attemptNumber !== null) {
-            await attemptRefund(context, booking, refundOperation.id, refundOperation.choice, refundOperation.paymentIntent, { attemptNumber });
+            await attemptRefund(context, booking, {
+              operationId: refundOperation.id,
+              choice: refundOperation.choice,
+              requestedAmountCents: refundOperation.requestedAmountCents,
+              paymentRef: refundOperation.paymentIntent,
+            }, { attemptNumber });
           }
         }
       }

@@ -236,7 +236,18 @@ describe('stripe() adapter', () => {
     });
     await expect(provider.refund('pi_1', 10000)).resolves.toEqual({ refundRef: 're_1', amountMinor: 10000 });
     expect(client.refunds.create).toHaveBeenCalledWith(
-      { payment_intent: 'pi_1', metadata: { reserva_refund_key: 'reserva-refund-pi_1' } },
+      { payment_intent: 'pi_1', amount: 10000, metadata: { reserva_refund_key: 'reserva-refund-pi_1' } },
+      { idempotencyKey: 'reserva-refund-pi_1' },
+    );
+  });
+
+  it('sends a partial amount through as-is, under the same per-payment idempotency key', async () => {
+    const { client } = makeClient();
+    client.refunds.create = vi.fn(async () => stripeRefund('re_partial', 4500));
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    await expect(provider.refund('pi_1', 4500)).resolves.toEqual({ refundRef: 're_partial', amountMinor: 4500 });
+    expect(client.refunds.create).toHaveBeenCalledWith(
+      { payment_intent: 'pi_1', amount: 4500, metadata: { reserva_refund_key: 'reserva-refund-pi_1' } },
       { idempotencyKey: 'reserva-refund-pi_1' },
     );
   });

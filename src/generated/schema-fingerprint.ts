@@ -4,7 +4,8 @@
 export const RESERVA_MIGRATIONS = [
   "0001_init.sql",
   "0002_payment_verification_incidents.sql",
-  "0003_reconciliation_lease.sql"
+  "0003_reconciliation_lease.sql",
+  "0004_partial_refunds.sql"
 ] as const;
 
 export interface ReservaSchemaTable {
@@ -146,6 +147,7 @@ export const RESERVA_SCHEMA_TABLES: Readonly<Record<string, ReservaSchemaTable>>
       "status",
       "stripe_refund_id",
       "amount_cents",
+      "requested_amount_cents",
       "requested_at",
       "resolved_at",
       "error",

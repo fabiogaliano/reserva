@@ -1,5 +1,6 @@
 import type { ManageBooking } from '../../core/api.js';
 import { escapeHtml } from '../../http.js';
+import { toMajorUnits } from '../../core/currency.js';
 import { formatDateTime, formatDateTimeRange, formatPrice, googleCalendarUrl, icsDataUrl } from '../format.js';
 import { contactBlock, factList, pageShell, statusBadge, themeToggle, type ContactConfig } from '../layout.js';
 import { defaultLocale, formatMessage, resolveMessages, type ReservaMessages } from '../messages.js';
@@ -135,6 +136,9 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
     // rather than as a failed action.
     refund_failed: 'manage.cancelledRefundPending',
     refund_conflict: 'manage.errorConflict',
+    // A rejected field value (a partial-refund amount, a malformed reschedule time): the fix is in
+    // the form, not in waiting, so it must not read as a transient failure.
+    validation_failed: 'manage.errorInvalidInput',
     forbidden: 'manage.errorInvalidLink',
     too_many_holds: 'manage.actionFailed',
     calendar_unavailable: 'manage.actionFailed',
@@ -179,8 +183,24 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
       + `<button type="submit" class="bk-btn">${escapeHtml(messages['manage.rescheduleSubmit'])}</button></form></section>`
     : '';
 
+  // Major units, not the minor ones the API takes: an operator types "15.00", and the manage route
+  // converts. The page carries no script, so the amount field cannot be revealed by the select —
+  // it is always visible and simply ignored unless "partial" is chosen, which the hint states.
+  const refundCurrency = options.currency;
+  const partialRefundControl = typeof booking.priceMinor === 'number' && refundCurrency && booking.priceMinor > 1
+    ? `<label class="bk-field"><span>${escapeHtml(messages['manage.refundAmount'])}</span>`
+      + `<input class="bk-input" name="refundAmount" type="number" inputmode="decimal"`
+      + ` min="${toMajorUnits(1, refundCurrency)}" max="${toMajorUnits(booking.priceMinor - 1, refundCurrency)}" step="${toMajorUnits(1, refundCurrency)}"></label>`
+      + `<p class="bk-hint">${escapeHtml(formatMessage(messages['manage.refundAmountHint'], {
+        max: formatPrice(booking.priceMinor - 1, locale, refundCurrency),
+      }))}</p>`
+    : '';
   const refundControl = role === 'operator'
-    ? `<label class="bk-field"><span>${escapeHtml(messages['manage.refund'])}</span><select class="bk-select" name="refund"><option value="none">${escapeHtml(messages['manage.refundNone'])}</option><option value="full">${escapeHtml(messages['manage.refundFull'])}</option></select></label>`
+    ? `<label class="bk-field"><span>${escapeHtml(messages['manage.refund'])}</span><select class="bk-select" name="refund">`
+      + `<option value="none">${escapeHtml(messages['manage.refundNone'])}</option>`
+      + `<option value="full">${escapeHtml(messages['manage.refundFull'])}</option>`
+      + (partialRefundControl ? `<option value="partial">${escapeHtml(messages['manage.refundPartial'])}</option>` : '')
+      + `</select></label>${partialRefundControl}`
     : '<input type="hidden" name="refund" value="none">';
   // A disclosure makes the destructive action two-step without any script.
   const cancelForm = canCancel

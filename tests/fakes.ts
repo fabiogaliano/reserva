@@ -768,9 +768,16 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     // row exists yet for this booking_id, so a racing loser can be told who won.
     claimRefundOperation: async (input) => {
       if (refundOperations.has(input.bookingId)) return false;
+      const requestedAmountCents = input.requestedAmountCents ?? null;
+      // Mirrors the table's CHECK pairing choice with its decided amount, so a caller that forgets
+      // one fails here the way D1 would rather than silently storing an unexecutable row.
+      if ((input.choice === 'partial') !== (requestedAmountCents !== null)) {
+        throw new Error(`CHECK constraint failed: choice ${input.choice} with requested_amount_cents ${requestedAmountCents}`);
+      }
       refundOperations.set(input.bookingId, {
         id: input.id, bookingId: input.bookingId, paymentIntent: input.paymentIntent,
         choice: input.choice, status: 'requested', stripeRefundId: null, amountCents: null,
+        requestedAmountCents,
         requestedAt: input.requestedAt, resolvedAt: null, error: null,
         executionClaimToken: null, executionClaimUntil: null, attemptCount: 0, attemptedAt: null,
         failureStartedAt: null, nextAttemptAt: null,
@@ -811,7 +818,8 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       refundOperations.set(input.bookingId, {
         id: current?.id ?? input.id, bookingId: input.bookingId, paymentIntent: input.paymentIntent,
         choice: input.choice, status: input.status, stripeRefundId: input.stripeRefundId,
-        amountCents: input.amountCents, requestedAt: current?.requestedAt ?? input.requestedAt,
+        amountCents: input.amountCents, requestedAmountCents: input.requestedAmountCents ?? null,
+        requestedAt: current?.requestedAt ?? input.requestedAt,
         resolvedAt: input.resolvedAt, error: input.error ?? null,
         executionClaimToken: current?.executionClaimToken ?? null, executionClaimUntil: current?.executionClaimUntil ?? null,
         attemptCount: current?.attemptCount ?? 0, attemptedAt: current?.attemptedAt ?? null,
@@ -827,7 +835,8 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       refundOperations.set(input.bookingId, {
         id: current?.id ?? input.id, bookingId: input.bookingId, paymentIntent: input.paymentIntent,
         choice: input.choice, status: input.status, stripeRefundId: input.stripeRefundId,
-        amountCents: input.amountCents, requestedAt: current?.requestedAt ?? input.requestedAt,
+        amountCents: input.amountCents, requestedAmountCents: input.requestedAmountCents ?? null,
+        requestedAt: current?.requestedAt ?? input.requestedAt,
         resolvedAt: input.resolvedAt, error: input.error ?? null,
         executionClaimToken: current?.executionClaimToken ?? null, executionClaimUntil: current?.executionClaimUntil ?? null,
         attemptCount: current?.attemptCount ?? 0, attemptedAt: current?.attemptedAt ?? null,

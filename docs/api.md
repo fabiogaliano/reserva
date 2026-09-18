@@ -264,9 +264,16 @@ Decisions that are easy to mistake for accidents:
   `refund` port every other refund uses.
 - **Refunds are durable, not in-memory.** A `refund_operations` table records every refund
   decision, with `UNIQUE(booking_id)` as a compare-and-set claim inserted before the payment
-  provider is ever called, so racing `refund=full` and `refund=none` requests can never both
-  refund; the loser gets `409 refund_conflict`. The provider's refund webhook upserts the same
-  table. Partial refunds are out of scope.
+  provider is ever called, so two requests deciding differently can never both refund; the loser
+  gets `409 refund_conflict`. The provider's refund webhook upserts the same table.
+- **A refund is one decision per booking, made at cancellation.** `refund` is `none`, `full`, or
+  `partial`; `partial` also takes `refundAmountMinor`, which must be at least 1 and below the
+  booking's price (0 is `none`, the whole price is `full`). The amount is stored on the row as
+  `requested_amount_cents`, separately from `amount_cents` — what the provider reported it moved —
+  because a reconciler retry has only the row to replay from. Two `partial` requests for different
+  amounts are different decisions, so the loser gets `409 refund_conflict` like any other mismatch.
+  A booking cannot be refunded twice, or topped up later; a second refund is a provider-dashboard
+  action, and Reserva's webhook records it without cancelling anything.
 - **Delivery state is not an entity flag.** There are no `*_synced` columns on a booking.
   Calendar, email, hook, and webhook delivery live only in `side_effect_operations` rows;
   anything that needs to know derives it from there.

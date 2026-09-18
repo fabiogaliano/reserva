@@ -461,11 +461,18 @@ export class StripeProvider implements PaymentProvider {
     // findExistingRefund can match after a crash mid-create — its shape is an external contract.
     // A refund under a changed marker shape surfaces as an operator incident, not a silent
     // double refund.
+    // Deliberately not amount-qualified, even though partial refunds exist: Reserva keeps exactly
+    // one refund operation per booking, so one payment reference has exactly one decided amount.
+    // Folding the amount in would let a retry carrying a different one mint a second real refund
+    // instead of replaying the first.
     const idempotencyKey = `reserva-refund-${paymentRef}`;
     let created: Stripe.Refund;
     try {
+      // `amount` is always explicit, never left to Stripe's refund-the-rest default: a partial
+      // refund needs it, and stating it for a full one makes the call say exactly what the
+      // operation decided instead of whatever happens to remain refundable on the charge.
       created = await this.stripe.refunds.create(
-        { payment_intent: paymentRef, metadata: { reserva_refund_key: idempotencyKey } },
+        { payment_intent: paymentRef, amount: expectedAmountMinor, metadata: { reserva_refund_key: idempotencyKey } },
         { idempotencyKey },
       );
     } catch (error) {

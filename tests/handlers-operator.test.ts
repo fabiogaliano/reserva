@@ -551,7 +551,8 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     const seeded = booking({ id: 'b-op-cancel-fresh-repo-pending', paymentRef: 'pi_fresh_repo_pending' }); // still confirmed
     const pendingOperation: RefundOperationRecord = {
       id: 'op-fresh-repo-pending', bookingId: seeded.id, paymentIntent: seeded.paymentRef, choice: 'full',
-      status: 'requested', stripeRefundId: null, amountCents: null, requestedAt: '2026-06-14T07:00:00.000Z', resolvedAt: null, error: null,
+      status: 'requested', stripeRefundId: null, amountCents: null, requestedAmountCents: null,
+      requestedAt: '2026-06-14T07:00:00.000Z', resolvedAt: null, error: null,
       executionClaimToken: null, executionClaimUntil: null, attemptCount: 0, attemptedAt: null,
       failureStartedAt: null, nextAttemptAt: null,
     };
@@ -764,7 +765,8 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     const repo = fakeRepository([seeded]);
     repo.refundOperations.set(seeded.id, {
       id: 'op-preexisting', bookingId: seeded.id, paymentIntent: paymentRef, choice: 'none', status: 'succeeded',
-      stripeRefundId: null, amountCents: null, requestedAt: '2026-06-13T00:00:00.000Z', resolvedAt: '2026-06-13T00:00:00.000Z', error: null,
+      stripeRefundId: null, amountCents: null, requestedAmountCents: null,
+      requestedAt: '2026-06-13T00:00:00.000Z', resolvedAt: '2026-06-13T00:00:00.000Z', error: null,
       executionClaimToken: null, executionClaimUntil: null, attemptCount: 0, attemptedAt: null,
       failureStartedAt: null, nextAttemptAt: null,
     });
@@ -955,5 +957,101 @@ describe('POST /operator/no-show (spec §11)', () => {
     expect(second.status).toBe(200);
     expect(repo.rows.get(seeded.id)?.status).toBe('no_show');
     expect(emails).toEqual(['booking.no_show']);
+  });
+});
+
+// A partial refund is one durable decision like any other — it just carries the amount the
+// operator chose, which is the only thing about it that cannot be re-derived from the booking.
+describe('operator cancel with a partial refund', () => {
+  function contextFor(seed: ReturnType<typeof booking>[], tracker: ReturnType<typeof fakeRefundTracker>) {
+    const repo = fakeRepository(seed);
+    const context = createReservaContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock,
+      providers: providers({ payments: {
+        createCheckout: async () => ({ url: '', sessionRef: '' }),
+        parseWebhook: async () => { throw new Error('unused'); },
+        getSession: async () => ({ status: 'open' }),
+        refund: tracker.refund,
+      } }),
+    });
+    return { repo, context };
+  }
+
+  it('cancels the booking and refunds only the decided amount', async () => {
+    const seeded = booking({ id: 'b-op-cancel-partial', paymentRef: 'pi_partial' });
+    const tracker = fakeRefundTracker((paymentRef) => ({ refundRef: `re_${paymentRef}`, amountMinor: 4500 }));
+    const { repo, context } = contextFor([seeded], tracker);
+
+    const response = await handleOperatorCancel(
+      operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'partial', refundAmountMinor: 4500 }),
+      context,
+    );
+    expect(response.status).toBe(200);
+    expect(repo.rows.get(seeded.id)?.status).toBe('cancelled');
+    // The booking's own price (10000) never reaches the provider — only the decision does.
+    expect(tracker.expectedAmounts).toEqual([4500]);
+    expect(repo.refundOperations.get(seeded.id)).toMatchObject({
+      choice: 'partial', status: 'succeeded', requestedAmountCents: 4500, amountCents: 4500,
+    });
+  });
+
+  it('treats a different amount as a different decision and refuses it as a conflict', async () => {
+    const seeded = booking({ id: 'b-op-cancel-partial-conflict', paymentRef: 'pi_partial_conflict' });
+    const tracker = fakeRefundTracker((paymentRef) => ({ refundRef: `re_${paymentRef}`, amountMinor: 2000 }));
+    const { repo, context } = contextFor([seeded], tracker);
+
+    const first = await handleOperatorCancel(
+      operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'partial', refundAmountMinor: 2000 }),
+      context,
+    );
+    expect(first.status).toBe(200);
+
+    const second = await handleOperatorCancel(
+      operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'partial', refundAmountMinor: 7000 }),
+      context,
+    );
+    expect(second.status).toBe(409);
+    await expect(second.json()).resolves.toMatchObject({ error: { code: 'refund_conflict' } });
+    // The losing amount must never reach the provider on top of the winner's.
+    expect(tracker.expectedAmounts).toEqual([2000]);
+    expect(repo.refundOperations.get(seeded.id)).toMatchObject({ requestedAmountCents: 2000 });
+  });
+
+  it('repeating the same partial decision is idempotent rather than a conflict', async () => {
+    const seeded = booking({ id: 'b-op-cancel-partial-repeat', paymentRef: 'pi_partial_repeat' });
+    const tracker = fakeRefundTracker((paymentRef) => ({ refundRef: `re_${paymentRef}`, amountMinor: 3300 }));
+    const { repo, context } = contextFor([seeded], tracker);
+
+    const body = { operatorToken: seeded.operatorToken, refund: 'partial', refundAmountMinor: 3300 };
+    expect((await handleOperatorCancel(operatorRequest('cancel', body), context)).status).toBe(200);
+    expect((await handleOperatorCancel(operatorRequest('cancel', body), context)).status).toBe(200);
+    expect(tracker.expectedAmounts).toEqual([3300]);
+    expect(repo.refundOperations.get(seeded.id)).toMatchObject({ status: 'succeeded', requestedAmountCents: 3300 });
+  });
+
+  it.each([
+    ['no amount at all', { refund: 'partial' }],
+    ['zero, which is refund=none', { refund: 'partial', refundAmountMinor: 0 }],
+    ['the whole price, which is refund=full', { refund: 'partial', refundAmountMinor: 10000 }],
+    ['more than the booking price', { refund: 'partial', refundAmountMinor: 10001 }],
+    ['a fraction of a minor unit', { refund: 'partial', refundAmountMinor: 12.5 }],
+    ['an amount alongside refund=full', { refund: 'full', refundAmountMinor: 4500 }],
+  ])('rejects %s without cancelling or claiming anything', async (label, overrides) => {
+    const seeded = booking({ id: `b-op-cancel-partial-invalid-${label.replace(/\W+/g, '-')}`, paymentRef: 'pi_partial_invalid' });
+    const tracker = fakeRefundTracker();
+    const { repo, context } = contextFor([seeded], tracker);
+
+    const response = await handleOperatorCancel(
+      operatorRequest('cancel', { operatorToken: seeded.operatorToken, ...overrides }),
+      context,
+    );
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed' } });
+    expect(repo.rows.get(seeded.id)?.status).toBe('confirmed');
+    expect(repo.refundOperations.has(seeded.id)).toBe(false);
+    expect(tracker.expectedAmounts).toEqual([]);
   });
 });

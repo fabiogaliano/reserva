@@ -29,7 +29,7 @@ describe('attemptRefund with an execution claim (the scheduled-reconciler branch
     });
     await repo.claimRefundOperation({ id: 'op-1', bookingId: seeded.id, paymentIntent: seeded.paymentRef, choice: 'full', requestedAt: '2026-08-14T09:00:00.000Z' });
 
-    const outcome = await attemptRefund(context, seeded, 'op-1', 'full', seeded.paymentRef, { attemptNumber: 1 });
+    const outcome = await attemptRefund(context, seeded, { operationId: 'op-1', choice: 'full', requestedAmountCents: null, paymentRef: seeded.paymentRef }, { attemptNumber: 1 });
     expect(outcome).toMatchObject({ kind: 'failed', retryable: true });
     const stored = repo.refundOperations.get(seeded.id);
     expect(stored?.status).toBe('failed');
@@ -48,7 +48,7 @@ describe('attemptRefund with an execution claim (the scheduled-reconciler branch
     });
     await repo.claimRefundOperation({ id: 'op-2', bookingId: seeded.id, paymentIntent: seeded.paymentRef, choice: 'full', requestedAt: '2026-08-14T09:00:00.000Z' });
 
-    const outcome = await attemptRefund(context, seeded, 'op-2', 'full', seeded.paymentRef, { attemptNumber: SIDE_EFFECT_MAX_ATTEMPTS });
+    const outcome = await attemptRefund(context, seeded, { operationId: 'op-2', choice: 'full', requestedAmountCents: null, paymentRef: seeded.paymentRef }, { attemptNumber: SIDE_EFFECT_MAX_ATTEMPTS });
     expect(outcome).toMatchObject({ kind: 'failed', retryable: false });
     const stored = repo.refundOperations.get(seeded.id);
     expect(stored?.status).toBe('abandoned');
@@ -68,7 +68,7 @@ describe('attemptRefund with an execution claim (the scheduled-reconciler branch
     });
     await repo.claimRefundOperation({ id: 'op-3', bookingId: seeded.id, paymentIntent: seeded.paymentRef, choice: 'full', requestedAt: '2026-08-14T09:00:00.000Z' });
 
-    const outcome = await attemptRefund(context, seeded, 'op-3', 'full', seeded.paymentRef, { attemptNumber: 1 });
+    const outcome = await attemptRefund(context, seeded, { operationId: 'op-3', choice: 'full', requestedAmountCents: null, paymentRef: seeded.paymentRef }, { attemptNumber: 1 });
     expect(outcome).toMatchObject({ kind: 'failed', retryable: false });
     expect(repo.refundOperations.get(seeded.id)?.status).toBe('abandoned');
   });
@@ -85,7 +85,7 @@ describe('attemptRefund with an execution claim (the scheduled-reconciler branch
     });
     await repo.claimRefundOperation({ id: 'op-4', bookingId: seeded.id, paymentIntent: seeded.paymentRef, choice: 'full', requestedAt: '2026-08-14T09:00:00.000Z' });
 
-    const outcome = await attemptRefund(context, seeded, 'op-4', 'full', seeded.paymentRef, { attemptNumber: 1 });
+    const outcome = await attemptRefund(context, seeded, { operationId: 'op-4', choice: 'full', requestedAmountCents: null, paymentRef: seeded.paymentRef }, { attemptNumber: 1 });
     expect(outcome).toEqual({ kind: 'succeeded' });
     expect(repo.refundOperations.get(seeded.id)).toMatchObject({ status: 'succeeded', stripeRefundId: 're_exec_success' });
   });
@@ -94,14 +94,72 @@ describe('attemptRefund with an execution claim (the scheduled-reconciler branch
     const noneBooking = booking({ id: 'refund-exec-none', status: 'cancelled', paymentRef: null });
     const { repo: noneRepo, context: noneContext } = contextFor([noneBooking]);
     await noneRepo.claimRefundOperation({ id: 'op-5', bookingId: noneBooking.id, paymentIntent: null, choice: 'none', requestedAt: '2026-08-14T09:00:00.000Z' });
-    const noneOutcome = await attemptRefund(noneContext, noneBooking, 'op-5', 'none', null, { attemptNumber: 1 });
+    const noneOutcome = await attemptRefund(noneContext, noneBooking, { operationId: 'op-5', choice: 'none', requestedAmountCents: null, paymentRef: null }, { attemptNumber: 1 });
     expect(noneOutcome).toEqual({ kind: 'succeeded' });
 
     const missingIntentBooking = booking({ id: 'refund-exec-missing-intent', status: 'cancelled', paymentRef: null });
     const { repo: missingRepo, context: missingContext } = contextFor([missingIntentBooking]);
     await missingRepo.claimRefundOperation({ id: 'op-6', bookingId: missingIntentBooking.id, paymentIntent: null, choice: 'full', requestedAt: '2026-08-14T09:00:00.000Z' });
-    const missingOutcome = await attemptRefund(missingContext, missingIntentBooking, 'op-6', 'full', null, { attemptNumber: 1 });
+    const missingOutcome = await attemptRefund(missingContext, missingIntentBooking, { operationId: 'op-6', choice: 'full', requestedAmountCents: null, paymentRef: null }, { attemptNumber: 1 });
     expect(missingOutcome).toEqual({ kind: 'payment_ref_missing' });
     expect(missingRepo.refundOperations.get(missingIntentBooking.id)?.status).toBe('failed');
+  });
+
+  // The reason requested_amount_cents exists at all: a retry hours later has only the row to go on,
+  // and resolving the amount from the booking would quietly upgrade a partial refund to a full one.
+  it('a claimed retry replays the decided partial amount, not the booking price', async () => {
+    const seeded = booking({ id: 'refund-exec-partial', status: 'cancelled', paymentRef: 'pi_exec_partial' });
+    const amounts: number[] = [];
+    const { repo, context } = contextFor([seeded], {
+      payments: {
+        createCheckout: async () => ({ url: '', sessionRef: '' }),
+        parseWebhook: async () => { throw new Error('unused'); },
+        getSession: async () => ({ status: 'open' }),
+        refund: async (_paymentRef, expectedAmountMinor) => {
+          amounts.push(expectedAmountMinor);
+          return { refundRef: 're_exec_partial', amountMinor: expectedAmountMinor };
+        },
+      },
+    });
+    await repo.claimRefundOperation({
+      id: 'op-7', bookingId: seeded.id, paymentIntent: seeded.paymentRef, choice: 'partial',
+      requestedAmountCents: 2500, requestedAt: '2026-08-14T09:00:00.000Z',
+    });
+    const stored = repo.refundOperations.get(seeded.id);
+    if (!stored) throw new Error('claim did not store a row');
+
+    const outcome = await attemptRefund(context, seeded, {
+      operationId: stored.id, choice: stored.choice, requestedAmountCents: stored.requestedAmountCents, paymentRef: stored.paymentIntent,
+    }, { attemptNumber: 2 });
+    expect(outcome).toEqual({ kind: 'succeeded' });
+    expect(amounts).toEqual([2500]);
+    expect(seeded.priceMinor).not.toBe(2500);
+    expect(repo.refundOperations.get(seeded.id)).toMatchObject({ status: 'succeeded', amountCents: 2500 });
+  });
+
+  // Only reachable from a hand-edited row — the table's CHECK pairs the two — but a guess at the
+  // amount here would be a guess at somebody's money.
+  it('refuses a partial row whose decided amount is missing instead of falling back to the price', async () => {
+    const seeded = booking({ id: 'refund-exec-partial-bare', status: 'cancelled', paymentRef: 'pi_exec_partial_bare' });
+    let calls = 0;
+    const { repo, context } = contextFor([seeded], {
+      payments: {
+        createCheckout: async () => ({ url: '', sessionRef: '' }),
+        parseWebhook: async () => { throw new Error('unused'); },
+        getSession: async () => ({ status: 'open' }),
+        refund: async () => {
+          calls += 1;
+          return { refundRef: 're_never', amountMinor: seeded.priceMinor };
+        },
+      },
+    });
+    await repo.claimRefundOperation({ id: 'op-8', bookingId: seeded.id, paymentIntent: seeded.paymentRef, choice: 'full', requestedAt: '2026-08-14T09:00:00.000Z' });
+
+    const outcome = await attemptRefund(context, seeded, {
+      operationId: 'op-8', choice: 'partial', requestedAmountCents: null, paymentRef: seeded.paymentRef,
+    }, { attemptNumber: 1 });
+    expect(outcome).toEqual({ kind: 'amount_missing' });
+    expect(calls).toBe(0);
+    expect(repo.refundOperations.get(seeded.id)).toMatchObject({ status: 'failed', error: 'partial refund amount is missing' });
   });
 });

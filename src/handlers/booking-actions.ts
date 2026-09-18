@@ -14,8 +14,8 @@ import { cancellationSideEffectSeeds, dispatchMutation, mutationSideEffectSeeds,
 import type { ReservaContext } from '../context.js';
 import { getSecret, nowIso, OPERATOR_SECRET_NAME } from '../context.js';
 import { resumeClaimedOperatorCancellation } from '../operator-cancellation.js';
-import type { RefundChoice } from '../repo.js';
-import { attemptRefund } from '../refund-executor.js';
+import type { RefundChoice, RefundOperationRecord } from '../repo.js';
+import { attemptRefund, type RefundAttemptTarget } from '../refund-executor.js';
 import { bearerToken, constantTimeEqual, HttpError, json, requestJson, requireString } from '../http.js';
 import { checkSlot } from './checkout.js';
 import { run, warnDeprecatedField, withSensitiveHeaders } from './shared.js';
@@ -151,6 +151,53 @@ async function operatorBooking(
   return booking;
 }
 
+// What one request asked for, before any durable row exists to compare it against. `amountMinor`
+// is null for every choice but 'partial', whose amount is not derivable from the booking.
+interface RefundDecision {
+  choice: RefundChoice;
+  amountMinor: number | null;
+}
+
+function readRefundDecision(body: Record<string, unknown>, booking: Booking): RefundDecision {
+  const choice = body.refund === 'full' || body.refund === 'none' || body.refund === 'partial' ? body.refund : null;
+  if (!choice) throw new HttpError(400, 'validation_failed', 'refund must be none, full or partial');
+  const amount = body.refundAmountMinor;
+  if (choice !== 'partial') {
+    // Rejected rather than ignored: an amount sent alongside 'full'/'none' means the caller thinks
+    // it is deciding something the durable record would not reflect.
+    if (amount !== undefined) {
+      throw new HttpError(400, 'validation_failed', 'refundAmountMinor is only valid with refund=partial');
+    }
+    return { choice, amountMinor: null };
+  }
+  if (typeof amount !== 'number' || !Number.isInteger(amount)) {
+    throw new HttpError(400, 'validation_failed', 'refundAmountMinor must be a whole number of minor units');
+  }
+  // Strictly between the two other choices: 0 is refund=none and the whole price is refund=full, so
+  // a 'partial' row can never describe a refund of a size its own choice contradicts.
+  if (amount < 1 || amount >= booking.priceMinor) {
+    throw new HttpError(400, 'validation_failed', `refundAmountMinor must be at least 1 and below the booking price (${booking.priceMinor})`);
+  }
+  return { choice, amountMinor: amount };
+}
+
+// Two requests are the same logical operation only when they decided the same thing — refunding
+// €20 and refunding €50 are different decisions even though both are 'partial'.
+function sameDecision(operation: RefundOperationRecord, decision: RefundDecision): boolean {
+  return operation.choice === decision.choice && operation.requestedAmountCents === decision.amountMinor;
+}
+
+// Always built from the winning ROW, never from the request: a resumed operation must move the
+// amount that was durably decided, not whatever this request happens to be carrying.
+function targetFor(operation: RefundOperationRecord, fallbackPaymentRef: string | null): RefundAttemptTarget {
+  return {
+    operationId: operation.id,
+    choice: operation.choice,
+    requestedAmountCents: operation.requestedAmountCents,
+    paymentRef: operation.paymentIntent ?? fallbackPaymentRef,
+  };
+}
+
 // Executes (or resumes) the Stripe side of a claimed refund operation and records the outcome.
 // Safe to call more than once for the same operation id: refund() carries Stripe's own idempotency
 // key, so a resumed/retried call cannot double-refund even when a previous attempt's D1 write never
@@ -158,13 +205,15 @@ async function operatorBooking(
 async function resolvePendingRefund(
   context: ReservaContext,
   booking: Booking,
-  operationId: string,
-  choice: RefundChoice,
-  paymentRef: string | null,
+  target: RefundAttemptTarget,
 ): Promise<void> {
-  const outcome = await attemptRefund(context, booking, operationId, choice, paymentRef);
+  const outcome = await attemptRefund(context, booking, target);
   if (outcome.kind === 'payment_ref_missing') {
     throw new HttpError(409, 'refund_payment_ref_missing', 'Cannot refund a booking without a payment reference');
+  }
+  if (outcome.kind === 'amount_missing') {
+    // Permanent, so never the 502 "will be retried" below: the row itself is unusable.
+    throw new HttpError(409, 'refund_failed', 'The recorded refund decision is missing its amount');
   }
   if (outcome.kind === 'failed') {
     throw new HttpError(502, 'refund_failed', 'The refund could not be completed; it will be retried');
@@ -173,16 +222,16 @@ async function resolvePendingRefund(
 
 // Reconciles a request against the refund-operation row for an already-cancelled booking. Used both
 // when the booking was already cancelled on entry and when this request's own CAS cancel attempt
-// lost to a concurrent same-choice winner. Stripe may only be touched for the operation that
-// actually won the claim, and only once its choice matches this request's own.
+// lost to a concurrent same-decision winner. Stripe may only be touched for the operation that
+// actually won the claim, and only once its decision matches this request's own.
 async function reconcileCancelledRefund(
   context: ReservaContext,
   booking: Booking,
-  refund: 'full' | 'none',
+  decision: RefundDecision,
 ): Promise<Response> {
   const existing = await context.repo.getRefundOperationByBookingId(booking.id);
   if (!existing) {
-    if (refund === 'none') return json<ManageActionResponse>({ ok: true });
+    if (decision.choice === 'none') return json<ManageActionResponse>({ ok: true });
     if (booking.paymentRef === null) {
       throw new HttpError(409, 'refund_payment_ref_missing', 'Cannot refund a booking without a payment reference');
     }
@@ -191,27 +240,30 @@ async function reconcileCancelledRefund(
       id: operationId,
       bookingId: booking.id,
       paymentIntent: booking.paymentRef,
-      choice: refund,
+      choice: decision.choice,
+      requestedAmountCents: decision.amountMinor,
       requestedAt: nowIso(context),
     });
     if (claimed) {
-      await resolvePendingRefund(context, booking, operationId, refund, booking.paymentRef);
+      await resolvePendingRefund(context, booking, {
+        operationId, choice: decision.choice, requestedAmountCents: decision.amountMinor, paymentRef: booking.paymentRef,
+      });
       return json<ManageActionResponse>({ ok: true });
     }
     const concurrent = await context.repo.getRefundOperationByBookingId(booking.id);
-    if (!concurrent || concurrent.choice !== refund) {
+    if (!concurrent || !sameDecision(concurrent, decision)) {
       throw new HttpError(409, 'refund_conflict', 'A different refund decision already won for this booking');
     }
     if (concurrent.status !== 'succeeded') {
-      await resolvePendingRefund(context, booking, concurrent.id, concurrent.choice, concurrent.paymentIntent ?? booking.paymentRef);
+      await resolvePendingRefund(context, booking, targetFor(concurrent, booking.paymentRef));
     }
     return json<ManageActionResponse>({ ok: true });
   }
-  if (existing.choice !== refund) {
+  if (!sameDecision(existing, decision)) {
     throw new HttpError(409, 'refund_conflict', 'A different refund decision already won for this booking');
   }
   if (existing.status !== 'succeeded') {
-    await resolvePendingRefund(context, booking, existing.id, existing.choice, existing.paymentIntent ?? booking.paymentRef ?? null);
+    await resolvePendingRefund(context, booking, targetFor(existing, booking.paymentRef ?? null));
   }
   return json<ManageActionResponse>({ ok: true });
 }
@@ -220,7 +272,7 @@ async function completeClaimedOperatorCancellation(
   context: ReservaContext,
   booking: Booking,
   operationId: string,
-  refund: 'full' | 'none',
+  decision: RefundDecision,
 ): Promise<Response> {
   const result = await resumeClaimedOperatorCancellation(context, booking, operationId);
   if (result.kind === 'slot_changed') {
@@ -229,13 +281,12 @@ async function completeClaimedOperatorCancellation(
   if (result.kind === 'invalid_transition') {
     throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
   }
-  await resolvePendingRefund(
-    context,
-    result.booking,
+  await resolvePendingRefund(context, result.booking, {
     operationId,
-    refund,
-    result.booking.paymentRef ?? booking.paymentRef ?? null,
-  );
+    choice: decision.choice,
+    requestedAmountCents: decision.amountMinor,
+    paymentRef: result.booking.paymentRef ?? booking.paymentRef ?? null,
+  });
   return json<ManageActionResponse>({ ok: true });
 }
 
@@ -244,35 +295,34 @@ export function handleOperatorCancel(request: Request, context: ReservaContext):
     if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const body = await requestJson(request);
     const booking = await operatorBooking(context, request, body, true);
-    const refund = body.refund === 'full' ? 'full' : body.refund === 'none' ? 'none' : null;
-    if (!refund) throw new HttpError(400, 'validation_failed', 'refund must be full or none');
+    const decision = readRefundDecision(body, booking);
 
     if (booking.status === 'cancelled') {
       // Already cancelled, but the refund claimed for it might not have finished. Resume it instead
       // of silently reporting ok while the money side is unresolved — only when this request's own
-      // choice is the one that actually won the claim.
-      return reconcileCancelledRefund(context, booking, refund);
+      // decision is the one that actually won the claim.
+      return reconcileCancelledRefund(context, booking, decision);
     }
     if (booking.status !== 'confirmed') throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
-    if (refund === 'full' && booking.paymentRef === null) {
-      // Free bookings also use refund='none': requiring an intent for every 'full' choice keeps
-      // the durable operation record an honest statement that Stripe money was refunded.
+    if (decision.choice !== 'none' && booking.paymentRef === null) {
+      // Free bookings also use refund='none': requiring an intent for every choice that moves money
+      // keeps the durable operation record an honest statement that Stripe money was refunded.
       throw new HttpError(409, 'refund_payment_ref_missing', 'Cannot refund a booking without a payment reference');
     }
 
-    // Claim-then-act: the refund decision is durably recorded before Stripe is ever touched, so a
-    // refund=full and refund=none request racing on this booking can never both call Stripe. The CAS
-    // cancel below, not the claim, is the authoritative gate on when Stripe is reached.
+    // Claim-then-act: the refund decision is durably recorded before Stripe is ever touched, so two
+    // requests deciding differently on this booking can never both call Stripe. The CAS cancel
+    // below, not the claim, is the authoritative gate on when Stripe is reached.
     const operationId = crypto.randomUUID();
     const claimed = await context.repo.claimRefundOperation({
       id: operationId, bookingId: booking.id, paymentIntent: booking.paymentRef ?? null,
-      choice: refund, requestedAt: nowIso(context),
+      choice: decision.choice, requestedAmountCents: decision.amountMinor, requestedAt: nowIso(context),
     });
     if (!claimed) {
-      // Lost the claim to a concurrent request for this booking. Same choice = treat as the same
-      // logical operation and resume it; a different choice already won = surface the conflict.
+      // Lost the claim to a concurrent request for this booking. Same decision = treat as the same
+      // logical operation and resume it; a different one already won = surface the conflict.
       const existing = await context.repo.getRefundOperationByBookingId(booking.id);
-      if (!existing || existing.choice !== refund) {
+      if (!existing || !sameDecision(existing, decision)) {
         throw new HttpError(409, 'refund_conflict', 'A different refund decision already won for this booking');
       }
       if (existing.status === 'succeeded') return json<ManageActionResponse>({ ok: true });
@@ -280,15 +330,15 @@ export function handleOperatorCancel(request: Request, context: ReservaContext):
       if (existing.status === 'requested' && fresh?.status === 'confirmed') {
         // A crash or calendar failure can leave a claimed decision before its CAS. Resume the
         // whole operation, not only Stripe: the CAS remains the gate that makes a refund safe.
-        return completeClaimedOperatorCancellation(context, booking, existing.id, refund);
+        return completeClaimedOperatorCancellation(context, booking, existing.id, decision);
       }
       // Never resume the claim-holder's refund until the booking is durably cancelled.
       if (fresh?.status !== 'cancelled') throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be cancelled');
-      await resolvePendingRefund(context, booking, existing.id, existing.choice, existing.paymentIntent ?? booking.paymentRef ?? null);
+      await resolvePendingRefund(context, booking, targetFor(existing, booking.paymentRef ?? null));
       return json<ManageActionResponse>({ ok: true });
     }
 
-    return completeClaimedOperatorCancellation(context, booking, operationId, refund);
+    return completeClaimedOperatorCancellation(context, booking, operationId, decision);
   }).then(withSensitiveHeaders);
 }
 

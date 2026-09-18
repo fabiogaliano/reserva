@@ -28,9 +28,13 @@ export type RefundAttemptOutcome =
   // never called the provider. HTTP-path-only; the scheduled path never sees this because its
   // claim already excludes a 'succeeded' row.
   | { kind: 'skipped' }
-  // 'full' was requested but the booking has no payment reference — recorded as a permanent
+  // Money was requested but the booking has no payment reference — recorded as a permanent
   // 'failed' row; retrying without one could never succeed.
   | { kind: 'payment_ref_missing' }
+  // A 'partial' row reached the executor without the amount it decided to move. The table's CHECK
+  // makes this unreachable for any row this code wrote, so it can only mean a hand-edited row —
+  // recorded as a permanent 'failed' rather than guessed at with the booking's full price.
+  | { kind: 'amount_missing' }
   // The provider's refund() call itself failed. `retryable`/`statusCode` are classifyProviderError's
   // verdict; the HTTP caller only needs to know to report a 502.
   | { kind: 'failed'; message: string; retryable: boolean; statusCode: number | undefined };
@@ -41,22 +45,38 @@ export interface RefundExecutionClaim {
   attemptNumber: number;
 }
 
+// The claimed operation's own decision, read from its row rather than recomputed: a reconciler
+// retry hours later must move the amount the operator chose, which for a 'partial' is not
+// derivable from the booking.
+export interface RefundAttemptTarget {
+  operationId: string;
+  choice: RefundChoice;
+  requestedAmountCents: number | null;
+  paymentRef: string | null;
+}
+
 export async function attemptRefund(
   context: ReservaContext,
   booking: Booking,
-  operationId: string,
-  choice: RefundChoice,
-  paymentRef: string | null,
+  target: RefundAttemptTarget,
   claim?: RefundExecutionClaim,
 ): Promise<RefundAttemptOutcome> {
+  const { operationId, choice, requestedAmountCents, paymentRef } = target;
   const { id: bookingId, priceMinor } = booking;
   if (choice === 'none') {
     await context.repo.resolveRefundOperation(operationId, { status: 'succeeded', resolvedAt: nowIso(context) });
     return { kind: 'succeeded' };
   }
+  const amountMinor = choice === 'partial' ? requestedAmountCents : priceMinor;
+  if (amountMinor === null) {
+    await context.repo.resolveRefundOperation(operationId, {
+      status: 'failed', error: 'partial refund amount is missing', resolvedAt: nowIso(context),
+    });
+    return { kind: 'amount_missing' };
+  }
   if (!paymentRef) {
     // Legacy requested rows can bypass the pre-claim guard below. They must remain visibly
-    // unresolved rather than claiming a full refund succeeded when the provider was never called.
+    // unresolved rather than claiming a refund succeeded when the provider was never called.
     await context.repo.resolveRefundOperation(operationId, {
       status: 'failed', error: 'payment reference is missing', resolvedAt: nowIso(context),
     });
@@ -71,7 +91,7 @@ export async function attemptRefund(
   }
   let result: { refundRef: string; amountMinor: number };
   try {
-    result = await context.providers.payments.refund(paymentRef, priceMinor);
+    result = await context.providers.payments.refund(paymentRef, amountMinor);
   } catch (error) {
     // Only a failure of the provider call itself is a genuine refund failure — record it so the
     // operation row remains for retry/reconciliation.

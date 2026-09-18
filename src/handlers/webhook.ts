@@ -70,7 +70,11 @@ async function refundRefusedDelayedPayment(context: ReservaContext, booking: Boo
   const operation = claimed ? null : await context.repo.getRefundOperationByBookingId(booking.id);
   if (operation?.status === 'succeeded') return;
   context.logger.warn?.('refunding a delayed payment for a refused booking', { eventId: event.id, bookingId: booking.id });
-  await attemptRefund(context, booking, operation?.id ?? operationId, 'full', paymentRef);
+  // Always 'full', never the loser's stored decision: money that arrived for a booking that does
+  // not exist is returned whole, whatever an operator may separately have decided.
+  await attemptRefund(context, booking, {
+    operationId: operation?.id ?? operationId, choice: 'full', requestedAmountCents: null, paymentRef,
+  });
 }
 
 export function handlePaymentWebhook(request: Request, context: ReservaContext): Promise<Response> {
@@ -120,13 +124,17 @@ export function handlePaymentWebhook(request: Request, context: ReservaContext):
       const booking = event.bookingId ? await context.repo.getBookingById(event.bookingId) : event.sessionRef ? await context.repo.getBookingBySessionRef(event.sessionRef) : null;
       if (booking) await refundRefusedDelayedPayment(context, booking, event);
     } else if (event.type === 'refunded') {
+      const byPayment = event.paymentRef && context.repo.getBookingByPaymentRef
+        ? await context.repo.getBookingByPaymentRef(event.paymentRef)
+        : null;
+      const booking = byPayment ?? (event.bookingId ? await context.repo.getBookingById(event.bookingId) : null);
       if (event.amountCaptured === undefined || event.amountRefunded === undefined || event.amountRefunded !== event.amountCaptured) {
-        context.logger.warn?.('non-full refund does not cancel booking', { eventId: event.id });
+        // A partial refund leaves the booking standing, so there is nothing to transition. Reserva
+        // issues partials itself now, and those already have a durable row — only a refund it has
+        // no record of is worth an operator's attention.
+        const recorded = booking ? await context.repo.getRefundOperationByBookingId(booking.id) : null;
+        if (!recorded) context.logger.warn?.('non-full refund does not cancel booking', { eventId: event.id, bookingId: booking?.id });
       } else {
-        const byPayment = event.paymentRef && context.repo.getBookingByPaymentRef
-          ? await context.repo.getBookingByPaymentRef(event.paymentRef)
-          : null;
-        const booking = byPayment ?? (event.bookingId ? await context.repo.getBookingById(event.bookingId) : null);
         if (booking) {
           const timestamp = nowIso(context);
           // Reconcile the durable operation record regardless of which side ends up owning
