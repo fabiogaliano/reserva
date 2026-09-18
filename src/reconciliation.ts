@@ -271,7 +271,12 @@ async function processRefundCandidate(context: ReservaContext, bookingId: string
   const attemptNumber = await context.repo.claimRefundExecution(operation.id, now);
   if (attemptNumber === null) return;
   try {
-    await attemptRefund(context, booking, operation.id, operation.choice, operation.paymentIntent, { attemptNumber });
+    await attemptRefund(context, booking, {
+      operationId: operation.id,
+      choice: operation.choice,
+      requestedAmountCents: operation.requestedAmountCents,
+      paymentRef: operation.paymentIntent,
+    }, { attemptNumber });
   } catch (error) {
     context.logger.warn?.('reserva reconciliation refund attempt failed', { bookingId, error: String(error) });
   }

@@ -324,4 +324,41 @@ describe('refund_operations concurrent claim uniqueness on real D1', () => {
     stored = await repo.getRefundOperationByBookingId(id);
     expect(stored).toMatchObject({ status: 'succeeded', stripeRefundId: 're_original', amountCents: 12000, error: null });
   });
+
+  it('a partial claim stores its decided amount, and the table refuses a choice/amount mismatch', async () => {
+    const id = 'refund-partial-amount';
+    await seedConfirmed(id);
+
+    const claimed = await repo.claimRefundOperation({
+      id: 'op-partial', bookingId: id, paymentIntent: `pi_${id}`, choice: 'partial',
+      requestedAmountCents: 4500, requestedAt: '2026-07-21T11:00:00.000Z',
+    });
+    expect(claimed).toBe(true);
+    expect(await repo.getRefundOperationByBookingId(id)).toMatchObject({
+      choice: 'partial', requestedAmountCents: 4500, amountCents: null,
+    });
+
+    // The decided amount survives resolution: amount_cents records what the provider moved, and the
+    // reconciler still has the decision to replay if this row ever needs another attempt.
+    await repo.resolveRefundOperation('op-partial', { status: 'succeeded', stripeRefundId: 're_partial', amountCents: 4500, resolvedAt: '2026-07-21T11:00:05.000Z' });
+    expect(await repo.getRefundOperationByBookingId(id)).toMatchObject({
+      choice: 'partial', requestedAmountCents: 4500, amountCents: 4500, stripeRefundId: 're_partial',
+    });
+  });
+
+  it('the schema rejects a partial row with no amount and a full row carrying one', async () => {
+    const noAmount = 'refund-partial-no-amount';
+    await seedConfirmed(noAmount);
+    await expect(repo.claimRefundOperation({
+      id: 'op-partial-bare', bookingId: noAmount, paymentIntent: `pi_${noAmount}`, choice: 'partial',
+      requestedAmountCents: null, requestedAt: '2026-07-21T11:00:00.000Z',
+    })).rejects.toThrow();
+
+    const fullWithAmount = 'refund-full-with-amount';
+    await seedConfirmed(fullWithAmount);
+    await expect(repo.claimRefundOperation({
+      id: 'op-full-amount', bookingId: fullWithAmount, paymentIntent: `pi_${fullWithAmount}`, choice: 'full',
+      requestedAmountCents: 4500, requestedAt: '2026-07-21T11:00:00.000Z',
+    })).rejects.toThrow();
+  });
 });

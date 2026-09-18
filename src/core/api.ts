@@ -223,7 +223,11 @@ export interface CancelRequest {
   token?: string;
   operatorToken?: string;
   bookingId?: string;
-  refund?: 'none' | 'full';
+  refund?: 'none' | 'full' | 'partial';
+  // Minor units of the booking's own currency, required for `refund: 'partial'` and rejected for
+  // every other choice. Must be at least 1 and below the booking's price — 0 is `'none'` and the
+  // whole price is `'full'`, so the recorded decision never overstates what moved.
+  refundAmountMinor?: number;
 }
 
 // `start` is an ISO 8601 instant with an explicit offset, matching a generated slot start — the

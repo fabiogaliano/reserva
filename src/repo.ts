@@ -126,7 +126,10 @@ export interface CapacityGuardInput {
 
 // A durable record of a refund decision + its Stripe outcome. One row per booking, so exactly
 // one request can claim a booking's refund decision.
-export type RefundChoice = 'full' | 'none';
+// 'partial' always carries its own decided amount in requestedAmountCents; 'full' and 'none' never
+// do, because the booking's own price is the only amount they can mean. The table enforces that
+// pairing, so the executor may rely on it.
+export type RefundChoice = 'full' | 'none' | 'partial';
 // 'in_flight': execution claim held, Stripe call may be in progress.
 // 'abandoned': terminal — a permanent failure or exhausted retries, like side_effect_operations.
 export type RefundOperationStatus = 'requested' | 'in_flight' | 'succeeded' | 'failed' | 'abandoned';
@@ -138,7 +141,10 @@ export interface RefundOperationRecord {
   choice: RefundChoice;
   status: RefundOperationStatus;
   stripeRefundId: string | null;
+  // What the provider reported it actually moved.
   amountCents: number | null;
+  // What the operator decided to move. Non-null exactly when choice is 'partial'.
+  requestedAmountCents: number | null;
   requestedAt: string;
   resolvedAt: string | null;
   error: string | null;
@@ -263,6 +269,8 @@ export interface RefundOperationUpsertInput {
   status: RefundOperationStatus;
   stripeRefundId: string | null;
   amountCents: number | null;
+  // Only a 'partial' upsert carries one; see RefundChoice.
+  requestedAmountCents?: number | null;
   requestedAt: string;
   resolvedAt: string | null;
   error?: string | null;
@@ -512,6 +520,8 @@ export interface BookingRepository {
     bookingId: string;
     paymentIntent: string | null;
     choice: RefundChoice;
+    // Required for 'partial', rejected by the table's CHECK for any other choice.
+    requestedAmountCents?: number | null;
     requestedAt: string;
   }): Promise<boolean>;
   getRefundOperationByBookingId(bookingId: string): Promise<RefundOperationRecord | null>;
@@ -770,6 +780,7 @@ interface RefundOperationRow {
   status: RefundOperationStatus;
   stripe_refund_id: string | null;
   amount_cents: number | null;
+  requested_amount_cents: number | null;
   requested_at: string;
   resolved_at: string | null;
   error: string | null;
@@ -790,6 +801,7 @@ function mapRefundOperation(row: RefundOperationRow): RefundOperationRecord {
     status: row.status,
     stripeRefundId: row.stripe_refund_id,
     amountCents: row.amount_cents === null ? null : Number(row.amount_cents),
+    requestedAmountCents: row.requested_amount_cents === null ? null : Number(row.requested_amount_cents),
     requestedAt: row.requested_at,
     resolvedAt: row.resolved_at,
     error: row.error,
@@ -803,8 +815,8 @@ function mapRefundOperation(row: RefundOperationRow): RefundOperationRecord {
 }
 
 const refundOperationColumns = `id, booking_id, payment_intent, choice, status, stripe_refund_id,
-  amount_cents, requested_at, resolved_at, error, execution_claim_token, execution_claim_until,
-  attempt_count, attempted_at, failure_started_at, next_attempt_at`;
+  amount_cents, requested_amount_cents, requested_at, resolved_at, error, execution_claim_token,
+  execution_claim_until, attempt_count, attempted_at, failure_started_at, next_attempt_at`;
 
 interface OperationalIncidentRow {
   id: string;
@@ -1102,35 +1114,39 @@ export function createBookingRepository(
   };
 
   const refundOperationUpsertStmt = (input: RefundOperationUpsertInput) => db.prepare(
-    `INSERT INTO refund_operations (id, booking_id, payment_intent, choice, status, stripe_refund_id, amount_cents, requested_at, resolved_at, error)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO refund_operations (id, booking_id, payment_intent, choice, status, stripe_refund_id, amount_cents, requested_amount_cents, requested_at, resolved_at, error)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(booking_id) DO UPDATE SET
        payment_intent = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.payment_intent ELSE excluded.payment_intent END,
        choice = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.choice ELSE excluded.choice END,
        status = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.status ELSE excluded.status END,
        stripe_refund_id = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.stripe_refund_id ELSE excluded.stripe_refund_id END,
        amount_cents = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.amount_cents ELSE excluded.amount_cents END,
+       -- Moves with choice on every branch, never independently: the table's CHECK rejects a
+       -- row whose decided amount and choice disagree.
+       requested_amount_cents = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.requested_amount_cents ELSE excluded.requested_amount_cents END,
        resolved_at = excluded.resolved_at,
        error = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.error ELSE excluded.error END`,
   ).bind(
     input.id, input.bookingId, input.paymentIntent, input.choice, input.status,
-    input.stripeRefundId, input.amountCents, input.requestedAt, input.resolvedAt, input.error ?? null,
+    input.stripeRefundId, input.amountCents, input.requestedAmountCents ?? null, input.requestedAt, input.resolvedAt, input.error ?? null,
   );
 
   const stripeRefundReconciliationStmt = (input: RefundOperationUpsertInput) => db.prepare(
-    `INSERT INTO refund_operations (id, booking_id, payment_intent, choice, status, stripe_refund_id, amount_cents, requested_at, resolved_at, error)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO refund_operations (id, booking_id, payment_intent, choice, status, stripe_refund_id, amount_cents, requested_amount_cents, requested_at, resolved_at, error)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(booking_id) DO UPDATE SET
        payment_intent = CASE WHEN refund_operations.status = 'succeeded' AND refund_operations.choice = 'full' THEN refund_operations.payment_intent ELSE excluded.payment_intent END,
        choice = CASE WHEN refund_operations.status = 'succeeded' AND refund_operations.choice = 'full' THEN refund_operations.choice ELSE excluded.choice END,
        status = CASE WHEN refund_operations.status = 'succeeded' AND refund_operations.choice = 'full' THEN refund_operations.status ELSE excluded.status END,
        stripe_refund_id = CASE WHEN refund_operations.status = 'succeeded' AND refund_operations.choice = 'full' THEN refund_operations.stripe_refund_id ELSE excluded.stripe_refund_id END,
        amount_cents = CASE WHEN refund_operations.status = 'succeeded' AND refund_operations.choice = 'full' THEN refund_operations.amount_cents ELSE excluded.amount_cents END,
+       requested_amount_cents = CASE WHEN refund_operations.status = 'succeeded' AND refund_operations.choice = 'full' THEN refund_operations.requested_amount_cents ELSE excluded.requested_amount_cents END,
        resolved_at = excluded.resolved_at,
        error = CASE WHEN refund_operations.status = 'succeeded' AND refund_operations.choice = 'full' THEN refund_operations.error ELSE excluded.error END`,
   ).bind(
     input.id, input.bookingId, input.paymentIntent, input.choice, input.status,
-    input.stripeRefundId, input.amountCents, input.requestedAt, input.resolvedAt, input.error ?? null,
+    input.stripeRefundId, input.amountCents, input.requestedAmountCents ?? null, input.requestedAt, input.resolvedAt, input.error ?? null,
   );
 
   // One bound statement per admin_change_history row, for the caller to fold into the same
@@ -2020,10 +2036,10 @@ export function createBookingRepository(
       // WHERE NOT EXISTS makes this a single-statement compare-and-set, backed by the
       // UNIQUE(booking_id) constraint as the real safety net under concurrent writers.
       const result = await db.prepare(
-        `INSERT INTO refund_operations (id, booking_id, payment_intent, choice, status, requested_at)
-         SELECT ?, ?, ?, ?, 'requested', ?
+        `INSERT INTO refund_operations (id, booking_id, payment_intent, choice, requested_amount_cents, status, requested_at)
+         SELECT ?, ?, ?, ?, ?, 'requested', ?
          WHERE NOT EXISTS (SELECT 1 FROM refund_operations WHERE booking_id = ?)`,
-      ).bind(input.id, input.bookingId, input.paymentIntent, input.choice, input.requestedAt, input.bookingId).run();
+      ).bind(input.id, input.bookingId, input.paymentIntent, input.choice, input.requestedAmountCents ?? null, input.requestedAt, input.bookingId).run();
       return result.meta.changes > 0;
     },
     async getRefundOperationByBookingId(bookingId) {

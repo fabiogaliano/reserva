@@ -37,7 +37,9 @@ export interface BookingEventPayload {
   occurredAt: string;
   previousStartsAt?: string;
   cancelledBy?: 'customer' | 'operator';
-  refund?: 'full' | 'none';
+  refund?: 'full' | 'none' | 'partial';
+  // Present only for `refund: 'partial'`: the minor-unit amount the operator decided to return.
+  refundAmountMinor?: number;
 }
 
 export interface DomainBookingEvent extends BookingEventPayload {
@@ -173,6 +175,10 @@ export interface PaymentProvider {
   // second call for the same payment has to report the original refund instead of moving money
   // twice. The expected total lets a retry distinguish an incomplete historical partial refund
   // from a completed full refund; amountMinor reports the cumulative total the operation satisfied.
+  // `expectedAmountMinor` is the amount to move, not necessarily the whole charge — an operator
+  // may refund part of a booking — so an implementation must send it to the provider explicitly
+  // rather than relying on a refund-everything default. Reserva makes at most one refund call per
+  // booking, so the amount for a given `paymentRef` never changes between retries.
   refund(paymentRef: string, expectedAmountMinor: number): Promise<{ refundRef: string; amountMinor: number }>;
   // Optional synchronous config check, invoked once at runtime-definition init — never per
   // request. This is where a provider's own limits live (currencies, locales, session lifetime),

@@ -40,7 +40,9 @@ export const englishEmailCopy: Record<string, string> = {
   'contact.lead.plain': 'Questions? Just reply to this email, or call us:',
   // Neutral default; a consumer can override with a concrete turnaround promise via
   // config.emails.messages — the library makes no timing guarantee on an operator's behalf.
-  'refund.timing': 'Refunds are returned to your original payment method.',
+  // Deliberately says nothing about HOW MUCH: an operator may cancel with no refund or a partial
+  // one, and this line is rendered before the money has actually moved.
+  'refund.timing': 'Any refund due is returned to your original payment method.',
   'confirmed.customer.subject': 'Booking confirmed: {serviceTitle} — {when}',
   'confirmed.customer.lead': 'Your <strong>{serviceTitle}</strong> is confirmed — we look forward to seeing you!',
   'confirmed.customer.button': 'Manage my booking',
@@ -101,7 +103,7 @@ export const portuguesePortugalEmailCopy: Record<string, string> = {
   'cancellation.free': 'Cancelamento gratuito até {cancelDeadline}',
   'contact.lead.whatsapp': 'Dúvidas? Responda a este email, ou contacte-nos por telefone / WhatsApp:',
   'contact.lead.plain': 'Dúvidas? Responda a este email, ou ligue-nos:',
-  'refund.timing': 'Os reembolsos são devolvidos ao seu método de pagamento original.',
+  'refund.timing': 'Qualquer reembolso devido é devolvido ao seu método de pagamento original.',
   'confirmed.customer.subject': 'Reserva confirmada: {serviceTitle} — {when}',
   'confirmed.customer.lead': 'A sua reserva de <strong>{serviceTitle}</strong> está confirmada — esperamos por si!',
   'confirmed.customer.button': 'Gerir a minha reserva',
