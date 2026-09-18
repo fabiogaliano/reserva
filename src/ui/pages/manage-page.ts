@@ -77,8 +77,12 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
     [messages['common.date'], escapeHtml(displayStart)],
     [messages['common.quantity'], escapeHtml(quantityLabel)],
   ];
-  if (typeof booking.priceMinor === 'number' && options.currency) {
-    facts.push([messages['common.price'], escapeHtml(formatPrice(booking.priceMinor, locale, options.currency))]);
+  // The booking's own currency, captured at checkout — never today's configured one, which a
+  // deployment may have changed since the money moved. `options.currency` remains the fallback for
+  // a hand-built payload that carries no currency at all.
+  const currency = booking.currency ?? options.currency;
+  if (typeof booking.priceMinor === 'number' && currency) {
+    facts.push([messages['common.price'], escapeHtml(formatPrice(booking.priceMinor, locale, currency))]);
   }
   // Both facts key off the chosen option's flags independently — a both-flags option shows its
   // address AND its meeting point. Pickup ids are opaque, so a payload carrying no flag shows no
@@ -186,7 +190,7 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
   // Major units, not the minor ones the API takes: an operator types "15.00", and the manage route
   // converts. The page carries no script, so the amount field cannot be revealed by the select —
   // it is always visible and simply ignored unless "partial" is chosen, which the hint states.
-  const refundCurrency = options.currency;
+  const refundCurrency = currency;
   const partialRefundControl = typeof booking.priceMinor === 'number' && refundCurrency && booking.priceMinor > 1
     ? `<label class="bk-field"><span>${escapeHtml(messages['manage.refundAmount'])}</span>`
       + `<input class="bk-input" name="refundAmount" type="number" inputmode="decimal"`

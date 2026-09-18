@@ -178,6 +178,28 @@ describe('GET /manage (spec §11)', () => {
       expect(payloadWithEvidence.booking).toMatchObject({ pickupRequiresAddress: true, pickupUsesMeetingPoint: true });
     });
 
+    it('renders price and refund bounds in the booking\'s own currency, not the configured one', () => {
+      // A deployment that moved from 3-decimal KWD to 2-decimal EUR still has cancellable KWD
+      // bookings. Scaling either the displayed price or the partial-refund field by today's
+      // currency would misstate the money by a factor of ten.
+      const html = renderManagePage({
+        booking: {
+          reference: 'LVT-2026-900', serviceSlug: 'vintage', serviceTitle: 'Vintage Tour',
+          start: '2026-06-20T10:00:00.000+01:00', end: '2026-06-20T11:00:00.000+01:00',
+          quantity: 2, status: 'confirmed', priceMinor: 30000, currency: 'kwd',
+        },
+        role: 'operator', canCancel: true, token: 'op-token',
+      }, '/manage', { currency: 'eur', locale: 'en' });
+
+      // 30000 minor KWD is 30.000, not the 300.00 today's EUR factor would print.
+      expect(html).toContain('KWD');
+      expect(html).not.toContain('€');
+      // One thousandth is the smallest KWD unit; the ceiling is the price less that unit.
+      expect(html).toContain('min="0.001"');
+      expect(html).toContain('max="29.999"');
+      expect(html).toContain('step="0.001"');
+    });
+
     it('renderManagePage gates the address and meeting-point facts on the flags, independently', () => {
       // Local-offset instants, the shape manageBookingPayload actually emits: the page now builds
       // Google/ICS calendar links from start/end, which parse them.

@@ -8,6 +8,7 @@ import {
   handleOperatorReschedule,
 } from '../../handlers/index.js';
 import { renderManageErrorPage, renderManagePage, type ManagePageOptions } from '../../ui/pages/manage-page.js';
+import type { ReservaContext } from '../../context.js';
 import { nowIso } from '../../context.js';
 import { resolveLocale } from '../../core/locale.js';
 import { minorUnitFactor } from '../../core/currency.js';
@@ -96,14 +97,27 @@ export async function GET({ request, locals }: APIContext): Promise<Response> {
 // receipt; the API takes minor ones. Rounding rather than truncating so a currency's own smallest
 // unit is reachable from a decimal input. Sent only for refund=partial — the handler rejects an
 // amount alongside any other choice, and the no-script form always submits this field.
-function refundAmountBody(form: FormData, refund: string, currency: string): { refundAmountMinor?: number } {
+//
+// The factor comes from the BOOKING's own stored currency, never today's configured one: a
+// deployment that changed business.currency between currencies with different decimal counts (a
+// 3-decimal KWD booking cancelled after a move to 2-decimal EUR) would otherwise scale what the
+// operator typed by the wrong factor and silently refund a tenth of the intended amount. The
+// lookup is read-only and advisory — an unresolvable token falls through to the handler, which
+// owns the canonical 403.
+async function refundAmountBody(
+  context: ReservaContext,
+  form: FormData,
+  refund: string,
+  operatorToken: string,
+): Promise<{ refundAmountMinor?: number }> {
   if (refund !== 'partial') return {};
   const raw = String(form.get('refundAmount') ?? '').trim();
   const major = Number(raw);
   if (raw === '' || !Number.isFinite(major)) {
     throw new HttpError(400, 'validation_failed', 'refundAmount is required for a partial refund');
   }
-  return { refundAmountMinor: Math.round(major * minorUnitFactor(currency)) };
+  const booking = await context.repo.getBookingByOperatorTokenForRefundRecovery(operatorToken, nowIso(context));
+  return { refundAmountMinor: Math.round(major * minorUnitFactor(booking?.currency ?? context.config.business.currency)) };
 }
 
 export async function POST({ request, locals }: APIContext): Promise<Response> {
@@ -117,7 +131,7 @@ export async function POST({ request, locals }: APIContext): Promise<Response> {
     if (action === 'cancel') {
       const refund = String(form.get('refund') ?? 'none');
       response = operatorToken
-        ? await handleOperatorCancel(new Request(request, { body: JSON.stringify({ operatorToken, refund, ...refundAmountBody(form, refund, context.config.business.currency) }), headers: { 'content-type': 'application/json' } }), context)
+        ? await handleOperatorCancel(new Request(request, { body: JSON.stringify({ operatorToken, refund, ...await refundAmountBody(context, form, refund, operatorToken) }), headers: { 'content-type': 'application/json' } }), context)
         : await handleCustomerCancel(new Request(request, { body: JSON.stringify({ token }), headers: { 'content-type': 'application/json' } }), context);
     } else if (action === 'reschedule') {
       const start = String(form.get('start') ?? '');
