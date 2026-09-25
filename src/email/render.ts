@@ -145,13 +145,17 @@ function buildModel(context: EmailTemplateContext): EmailModel {
     return { label: row.label, valueHtml: `<strong>${escapeHtml(displayValue)}</strong>`, valueText: displayValue };
   });
 
+  // Escaped whole, like the cancellation row: a card cell is plain text, never operator markup.
+  const guests = interpolate(copy('value.guests'), rawValues);
+  const guestsRow: EmailCardRow = { label: copy('label.guests'), valueHtml: `<strong>${escapeHtml(guests)}</strong>`, valueText: guests };
+
   const subject = interpolate(copy(`${eventKey}.${recipient}.subject`), rawValues);
   const leadHtml = `<p style="margin:0 0 26px;font-size:17px;line-height:1.5;">${interpolate(copy(`${eventKey}.${recipient}.lead`), htmlValues)}</p>`;
 
   if (recipient === 'owner') {
     const card: EmailCardRow[] = [
       { label: copy('label.date'), valueHtml: `<strong>${escapeHtml(`${dateLong}, ${time}`)}</strong>`, valueText: `${dateLong}, ${time}` },
-      { label: copy('label.guests'), valueHtml: `<strong>${booking.quantity}</strong>`, valueText: String(booking.quantity) },
+      guestsRow,
       { label: copy('label.paid'), valueHtml: `<strong>${escapeHtml(price)}</strong>`, valueText: price },
       ...pickupRows,
       ...metadataCardRows,
@@ -188,7 +192,7 @@ function buildModel(context: EmailTemplateContext): EmailModel {
         ...(withBookingTerms ? [row(copy('label.service'), serviceTitle)] : []),
         { label: copy('label.date'), valueHtml: `<strong>${escapeHtml(dateLong)}</strong>`, valueText: dateLong },
         { label: copy('label.time'), valueHtml: `<strong>${escapeHtml(time)}</strong>`, valueText: time },
-        { label: copy('label.guests'), valueHtml: `<strong>${booking.quantity}</strong>`, valueText: String(booking.quantity) },
+        guestsRow,
         ...pickupRows,
         ...metadataCardRows,
         ...(withBookingTerms

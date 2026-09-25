@@ -108,3 +108,41 @@ describe('calendar attachment', () => {
     expect(renderDefaultEmail(context({ event: 'booking.cancelled_by_customer' })).attachments).toBeUndefined();
   });
 });
+
+describe('value.guests', () => {
+  const guestsCell = (html: string) => html.slice(html.indexOf('>Guests</td>'), html.indexOf('</tr>', html.indexOf('>Guests</td>')));
+
+  it.each([
+    ['customer confirmed', { event: 'booking.confirmed', recipient: 'customer' }],
+    ['owner confirmed', { event: 'booking.confirmed', recipient: 'owner' }],
+    ['customer reminder', { event: 'booking.reminder', recipient: 'customer' }],
+  ] as const)('renders the bare quantity by default in the %s email', (_, overrides) => {
+    const rendered = renderDefaultEmail(context({ ...overrides, booking: booking({ quantity: 8 }) }));
+    expect(guestsCell(rendered.html)).toBe('>Guests</td><td style="font-weight:600;"><strong>8</strong></td>');
+    expect(rendered.text).toContain('Guests: 8\n');
+  });
+
+  it.each([
+    ['customer confirmed', { event: 'booking.confirmed', recipient: 'customer' }],
+    ['owner confirmed', { event: 'booking.confirmed', recipient: 'owner' }],
+    ['customer reminder', { event: 'booking.reminder', recipient: 'customer' }],
+  ] as const)('renders an override via config.emails.messages in the %s email', (_, overrides) => {
+    const overriddenConfig: ResolvedClientConfig = {
+      ...config,
+      emails: { messages: { en: { 'value.guests': 'Up to {quantity} guests' } } },
+    };
+    const rendered = renderDefaultEmail(context({ ...overrides, config: overriddenConfig, booking: booking({ quantity: 8 }) }));
+    expect(guestsCell(rendered.html)).toContain('<strong>Up to 8 guests</strong>');
+    expect(rendered.text).toContain('Guests: Up to 8 guests\n');
+  });
+
+  it('escapes the override in the HTML body like every other copy string', () => {
+    const overriddenConfig: ResolvedClientConfig = {
+      ...config,
+      emails: { messages: { en: { 'value.guests': '{quantity} <b>seats</b> & more' } } },
+    };
+    const rendered = renderDefaultEmail(context({ config: overriddenConfig, booking: booking({ quantity: 8 }) }));
+    expect(guestsCell(rendered.html)).toContain('<strong>8 &lt;b&gt;seats&lt;/b&gt; &amp; more</strong>');
+    expect(rendered.text).toContain('Guests: 8 <b>seats</b> & more\n');
+  });
+});
