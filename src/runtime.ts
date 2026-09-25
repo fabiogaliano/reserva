@@ -37,3 +37,6 @@ export {
   type ReconciliationOptions,
   type ReconciliationSummary,
 } from './reconciliation.js';
+// A hand-built scheduled() context comes straight from runtime.createContext, which knows only the
+// file config; this overlays the admin settings page's stored overrides, as scheduledHandler does.
+export { withStoredSettings } from './context.js';

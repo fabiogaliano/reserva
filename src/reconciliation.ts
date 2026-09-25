@@ -14,7 +14,7 @@ import type { Booking } from './core/booking.js';
 import type { ReconciliationSummary } from './core/api.js';
 import type { OperationalAlert } from './core/events.js';
 import type { ReservaContext } from './context.js';
-import { nowIso } from './context.js';
+import { nowIso, withStoredSettings } from './context.js';
 import { resumeClaimedOperatorCancellation } from './operator-cancellation.js';
 import { attemptRefund } from './refund-executor.js';
 import {
@@ -515,7 +515,7 @@ export function scheduledHandler(
 ): (controller: ScheduledController, env: unknown, ctx: ExecutionContext) => Promise<void> {
   return async () => {
     try {
-      const context = await runtime.createContext({ request: new Request('https://reserva-scheduled.invalid/') });
+      const context = await withStoredSettings(await runtime.createContext({ request: new Request('https://reserva-scheduled.invalid/') }));
       const result = await runReconciliationWithLease(context, options);
       if (result.kind === 'busy') {
         // Not a failure: a manual trigger or an overrunning previous tick is already sweeping, and

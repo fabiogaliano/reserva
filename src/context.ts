@@ -1,6 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import type { AdminIdentity } from './access.js';
 import { validateConfig, type ResolvedClientConfig } from './core/config.js';
+import { loadMergedConfig } from './core/settings.js';
 import type {
   BookingEventHook,
   CalendarProvider,
@@ -99,6 +100,22 @@ export function createReservaContext(input: ReservaContextInput): ReservaContext
     confirmationLocks: input.confirmationLocks ?? new Map(),
     routeConfig: input.routeConfig ?? defaultRouteConfig,
   };
+}
+
+// Operator-edited settings (the admin settings page) live in D1, not in the file config the runtime
+// module builds the context from, so every entry point that serves or sweeps bookings — each route
+// and the cron — overlays them here, and nothing downstream distinguishes file config from overrides.
+// `baseConfig` keeps the pristine file values for the settings page's "config default" hints.
+export async function withStoredSettings(context: ReservaContext): Promise<ReservaContext> {
+  const overrides = await context.repo.listSettings();
+  if (Object.keys(overrides).length === 0) return context;
+  // A row saved before a bound tightened must degrade to the file config, not serve an invalid
+  // config or take down the whole site — loadMergedConfig drops offending rows and reports them
+  // here so they show up in logs instead of silently persisting.
+  const merged = loadMergedConfig(context.config, overrides, (warning) => {
+    context.logger.warn?.('reserva.settings.invalid_override', { key: warning.key, reason: warning.reason });
+  });
+  return { ...context, baseConfig: context.config, config: merged };
 }
 
 // The shared-secret alternative to a per-booking operator token on the operator endpoints. Read

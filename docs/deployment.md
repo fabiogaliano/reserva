@@ -197,7 +197,12 @@ regenerable — a row written without it never has its plaintext at rest again.
    `POST /api/booking/ops/reconcile` compete for one D1 lease row, and the loser logs a warning and
    exits successfully. Pass `ReconciliationOptions` as the second argument to change the limits, or
    call `runReconciliationWithLease(context, options)` yourself if you need to do more in the same
-   invocation.
+   invocation. Build that context with
+   `withStoredSettings(await runtime.createContext({ request }))` (also from
+   `@reservajs/astro/runtime`): `createContext` sees only `reserva.config.ts`, and without the
+   overlay the sweep ignores values edited on the admin settings page, such as
+   `booking.reminderHoursBefore` and the cancellation cutoff its emails quote. `scheduledHandler`
+   applies it for you.
 
    `POST /api/booking/ops/reconcile` runs the same sweep on demand, authorized by the operator
    bearer secret or an admin identity. It takes an optional JSON body with `sourceLimit` and
