@@ -136,20 +136,20 @@ describe('themeToggle (server-rendered control)', () => {
 
 describe('pageShell (data-theme + toggle placement)', () => {
   it('leaves <html> untouched and still mounts the toggle when the viewer follows the OS', () => {
-    const html = pageShell({ lang: 'en', title: 'T', cssHref: '/c', header: '<h1>Hi</h1>', body: '<p>b</p>', themeToggle: themeToggle(messages, undefined) });
+    const html = pageShell({ lang: 'en', page: 'confirmation', title: 'T', cssHref: '/c', header: '<h1>Hi</h1>', body: '<p>b</p>', themeToggle: themeToggle(messages, undefined) });
     expect(html).not.toContain('data-theme=');
     expect(html).toContain('data-reserva-theme-toggle');
   });
 
   it('reflects a forced theme onto <html> for a masthead page (first paint, no flash)', () => {
-    const html = pageShell({ lang: 'en', title: 'T', cssHref: '/c', header: '<h1>Hi</h1>', body: '<p>b</p>', theme: 'dark', themeToggle: themeToggle(messages, 'dark') });
+    const html = pageShell({ lang: 'en', page: 'confirmation', title: 'T', cssHref: '/c', header: '<h1>Hi</h1>', body: '<p>b</p>', theme: 'dark', themeToggle: themeToggle(messages, 'dark') });
     expect(html).toContain('<html lang="en" data-theme="dark">');
     // The toggle sits inside the masthead band for customer-facing pages.
     expect(html).toMatch(/bk-masthead-inner[^>]*>.*data-reserva-theme-toggle/s);
   });
 
   it('reflects a forced theme and mounts the toggle in the sidebar for admin shells', () => {
-    const html = pageShell({ lang: 'en', title: 'T', cssHref: '/c', sidebar: '<a href="#">Nav</a>', body: '<p>b</p>', theme: 'light', themeToggle: themeToggle(messages, 'light') });
+    const html = pageShell({ lang: 'en', page: 'admin', title: 'T', cssHref: '/c', sidebar: '<a href="#">Nav</a>', body: '<p>b</p>', theme: 'light', themeToggle: themeToggle(messages, 'light') });
     expect(html).toContain('<html lang="en" data-theme="light">');
     expect(html).toMatch(/bk-sidebar[^>]*>.*data-reserva-theme-toggle/s);
   });

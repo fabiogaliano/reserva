@@ -248,8 +248,9 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
   const savedAlert = saved ? `<p class="bk-alert bk-alert--ok" role="status">${escapeHtml(messages['admin.saved'])}</p>` : '';
   return pageShell({
     lang: locale,
+    page: 'settings',
     title: `${messages['admin.settings']} — ${context.config.business.name}`,
-    cssHref: cssAssetHref(context.routeConfig.paths.assetsCss),
+    cssHref: cssAssetHref(context.routeConfig.paths.assetsCss, context.config.ui?.branding),
     favicon: context.config.ui?.faviconUrl,
     headHtml: context.config.ui?.headHtml,
     scriptHref: jsAssetHref(context.routeConfig.paths.assetsJs),

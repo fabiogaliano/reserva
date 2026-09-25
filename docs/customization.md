@@ -78,6 +78,97 @@ Reserva's own stylesheet link, so a `--bk-*` override in it wins over the defaul
 markup: Reserva never escapes or parses it, and keeping it within your Content-Security-Policy is
 your responsibility.
 
+### Branding the customer pages
+
+`config.ui.branding` does for the confirmation and `/booking/manage` pages what
+`emails.branding` does for mail. The operator pages (`/booking/admin`, settings) keep Reserva's
+own look and dark mode.
+
+```ts
+ui: {
+  branding: {
+    logoUrl: '/brand/logo.svg',   // an <img> in the masthead, alt = business.name
+    logoWidth: 160,
+    logoHeight: 40,
+    colorScheme: 'light',         // 'auto' (default) | 'light' | 'dark'
+    accentColor: '#0f6b3f',       // #rgb or #rrggbb
+    mastheadBackground: 'linear-gradient(180deg, #16301f, #0c1a11)',
+    fontFamily: '"Fraunces", Georgia, serif',
+  },
+}
+```
+
+- `colorScheme: 'light' | 'dark'` renders `<html data-theme="…">` on the customer pages
+  whatever the viewer's saved choice, and leaves out the theme toggle. `'auto'` keeps the
+  OS/toggle behavior.
+- `accentColor` sets `--bk-accent`, derives `--bk-accent-contrast` (white or near-black,
+  whichever contrasts more), `--bk-accent-soft` and `--bk-focus`. The same accent applies in
+  both schemes.
+- `mastheadBackground` is any CSS `background` value. The masthead text tokens
+  (`--bk-masthead-text`, `--bk-masthead-muted`) stay as they are, so override them yourself if
+  you pick a light masthead.
+- `fontFamily` sets `--bk-font`. Loading the font is up to you, through `headHtml`.
+
+The values are written into the served stylesheet (`/booking/assets/reserva.css`), scoped to
+`.bk-page--confirmation` and `.bk-page--manage`. No inline styles are added, so `style-src 'self'`
+is still enough. `mastheadBackground` and `fontFamily` must be one CSS value: `;`, `{`, `}`, `<`,
+`>`, `\` and comment markers fail the build.
+
+To override any other token for the customer pages only, scope it the same way in your
+`headHtml` stylesheet, for example
+`.bk-page--confirmation, .bk-page--manage { --bk-bg: #fbf7ef; }`. With `colorScheme` pinned,
+you don't have to win against the dark-scheme selectors.
+
+### Status badge placement
+
+```ts
+ui: { confirmation: { statusPlacement: 'ticket' } }   // default 'masthead'
+```
+
+With `'ticket'`, the "Confirmed" badge on a confirmed booking moves from above the title into
+the top-right of the booking ticket (`.bk-ticket-status`). Every other state has no ticket, so
+its badge stays in the masthead.
+
+### Page hooks
+
+These classes and attributes are public API. They stay stable across minor versions, so use
+them in your CSS instead of markup order or `:has()`.
+
+| Hook | Where | Values |
+|---|---|---|
+| `bk-page--confirmation`, `bk-page--manage`, `bk-page--admin`, `bk-page--settings` | `<body>` | one per page |
+| `data-bk-status` | `<body>`, confirmation page | `pending`, `confirmed`, `failed`, `expired`, `cancelled`, `not_found` |
+| `data-bk-status` | `<body>`, manage page (not on the invalid-link page) | the booking's status: `hold`, `confirmed`, `cancelled`, `expired`, `no_show` |
+| `bk-ticket` | confirmation, confirmed booking | the ticket (`bk-ticket-top`, `bk-ticket-date`, `bk-ticket-body`, `bk-ticket-status`, `bk-ticket-foot`) |
+| `bk-whatsnext` | confirmation, confirmed booking | the "What's next" card |
+| `bk-summary` | confirmation (after the detail window), manage | the booking-facts card |
+| `bk-message` | confirmation, manage invalid link | the card carrying the state's message |
+| `bk-contact` | confirmation, manage | the "Need help?" contact card |
+| `bk-reschedule`, `bk-cancel`, `bk-no-show` | manage | the reschedule form card and the cancel / no-show disclosures |
+| `bk-brand`, `bk-brand-logo` | masthead | the brand line and its logo `<img>` |
+| `bk-list` | any structured message | a bulleted list (see below) |
+
+Example: `[data-bk-status="confirmed"] .bk-masthead { … }`.
+
+### Structured messages
+
+The long-form customer messages accept a small amount of structure: the confirmation page's
+`*Body` keys, `confirmation.detailsEmailed`, `manage.invalidBody` and
+`manage.invalidUseEmailLink`. A blank line starts a new paragraph. Consecutive lines that start
+with `- ` become one `<ul class="bk-list">`, which is indented so wrapped lines line up under
+their text. The text is escaped before any markup is added, so a message can never inject HTML.
+A message with no `- ` lines and no blank lines renders exactly as before.
+
+```ts
+ui: {
+  messages: {
+    en: {
+      'confirmation.whatsNextBody': '- Keep your reference handy\n- Arrive 10 minutes early\n- Hotel pickup? We will confirm the address by email',
+    },
+  },
+}
+```
+
 **CSP.** Nothing Reserva renders is inline: external same-origin assets only
 (`style-src 'self'`/`script-src 'self'` suffice), plain POST forms, and meta-refresh polling
 on the pending-payment state. The manage page's reschedule keeps a native `datetime-local`

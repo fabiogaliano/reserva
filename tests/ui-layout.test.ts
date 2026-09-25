@@ -4,6 +4,7 @@ import { pageShell } from '../src/ui/layout';
 describe('pageShell head customization', () => {
   const html = pageShell({
     lang: 'en',
+    page: 'manage',
     title: 'Manage',
     cssHref: '/api/booking/assets.css',
     body: '<p>body</p>',
@@ -24,7 +25,7 @@ describe('pageShell head customization', () => {
   });
 
   it('emits neither when unset', () => {
-    const plain = pageShell({ lang: 'en', title: 'Manage', cssHref: '/a.css', body: '' });
+    const plain = pageShell({ lang: 'en', page: 'manage', title: 'Manage', cssHref: '/a.css', body: '' });
     expect(plain).not.toContain('rel="icon"');
   });
 });

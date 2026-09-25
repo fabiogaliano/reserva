@@ -56,12 +56,53 @@ export function contactBlock(config: ContactConfig, messages: ReservaMessages): 
     rows.push(`<a href="https://wa.me/${escapeHtml(digitsOf(contact.whatsapp))}" rel="noopener" target="_blank">${escapeHtml(messages['common.whatsapp'])}</a>`);
   }
   if (rows.length === 0) return '';
-  return `<section class="bk-card"><h2>${escapeHtml(messages['common.contactTitle'])}</h2>`
+  return `<section class="bk-card bk-contact"><h2>${escapeHtml(messages['common.contactTitle'])}</h2>`
     + `<p class="bk-sub">${rows.join(' · ')}</p></section>`;
 }
 
+// A long-form message with a little structure: a blank line starts a paragraph, and consecutive
+// "- " lines become one list. Escaped line by line before any markup is added, so copy from config
+// never becomes HTML. A message with neither renders exactly as the single paragraph it always was.
+export function messageHtml(message: string, paragraphClass?: string): string {
+  const open = paragraphClass ? `<p class="${paragraphClass}">` : '<p>';
+  const lines = message.split(/\r?\n/);
+  const isListItem = (line: string): boolean => line.startsWith('- ');
+  const isBlank = (line: string): boolean => line.trim() === '';
+  if (!lines.some((line) => isListItem(line) || isBlank(line))) return `${open}${escapeHtml(message)}</p>`;
+  const html: string[] = [];
+  let paragraph: string[] = [];
+  let items: string[] = [];
+  const flush = (): void => {
+    if (paragraph.length > 0) html.push(`${open}${escapeHtml(paragraph.join('\n'))}</p>`);
+    if (items.length > 0) html.push(`<ul class="bk-list">${items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`);
+    paragraph = [];
+    items = [];
+  };
+  for (const line of lines) {
+    if (isBlank(line)) {
+      flush();
+    } else if (isListItem(line)) {
+      if (paragraph.length > 0) flush();
+      items.push(line.slice(2).trim());
+    } else {
+      if (items.length > 0) flush();
+      paragraph.push(line);
+    }
+  }
+  flush();
+  return html.length > 0 ? html.join('') : `${open}</p>`;
+}
+
+// Public styling hooks: consumers scope rules per page and per status with these instead of
+// relying on markup order, so the names are kept stable across minor versions.
+export type PageKind = 'confirmation' | 'manage' | 'admin' | 'settings';
+
 export interface PageShellOptions {
   lang: string;
+  // Rendered as `bk-page--<page>` on <body>.
+  page: PageKind;
+  // Rendered as `data-bk-status` on <body>: the confirmation state or the booking's status.
+  status?: string | undefined;
   title: string;
   cssHref: string;
   body: string;
@@ -98,11 +139,12 @@ export function pageShell(options: PageShellOptions): string {
   const head = `<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">${options.headExtra ?? ''}<title>${escapeHtml(options.title)}</title>${favicon}${stylesheet}${options.headHtml ?? ''}${options.scriptHref ? `<script type="module" src="${escapeHtml(options.scriptHref)}"></script>` : ''}</head>`;
   const htmlTag = `<html lang="${escapeHtml(options.lang)}"${options.theme ? ` data-theme="${options.theme}"` : ''}>`;
   const toggle = options.themeToggle ?? '';
+  const bodyTag = `<body class="bk-page bk-page--${options.page}"${options.status ? ` data-bk-status="${escapeHtml(options.status)}"` : ''}>`;
   const skip = options.skipLabel ? `<a class="bk-skip" href="#bk-main">${escapeHtml(options.skipLabel)}</a>` : '';
   if (options.sidebar) {
     const navLabel = options.sidebarLabel ? ` aria-label="${escapeHtml(options.sidebarLabel)}"` : '';
     const content = `${skip}<div class="bk-shell"><nav class="bk-sidebar"${navLabel}>${options.sidebar}${toggle}</nav><div class="bk-shell-main"><main id="bk-main" class="bk-main bk-main--shell">${options.body}</main></div></div>`;
-    return `<!doctype html>${htmlTag}${head}<body class="bk-page">${content}</body></html>`;
+    return `<!doctype html>${htmlTag}${head}${bodyTag}${content}</body></html>`;
   }
   const widthClass = options.width === 'wide' ? ' bk-main--wide' : options.width === 'mid' ? ' bk-main--mid' : '';
   const innerWidthClass = options.width === 'wide' ? ' bk-masthead-inner--wide' : options.width === 'mid' ? ' bk-masthead-inner--mid' : '';
@@ -110,7 +152,7 @@ export function pageShell(options: PageShellOptions): string {
     ? `<header class="bk-masthead"><div class="bk-masthead-inner${innerWidthClass}">${toggle}${options.header}</div></header>`
     : '';
   const mainClass = `bk-main${widthClass}${options.header ? ' bk-main--raised' : ''}`;
-  return `<!doctype html>${htmlTag}${head}<body class="bk-page">${skip}${masthead}<main id="bk-main" class="${mainClass}">${options.body}</main></body></html>`;
+  return `<!doctype html>${htmlTag}${head}${bodyTag}${skip}${masthead}<main id="bk-main" class="${mainClass}">${options.body}</main></body></html>`;
 }
 
 // Builds the per-viewer theme toggle: rendered hidden with mode + labels as data-* so the

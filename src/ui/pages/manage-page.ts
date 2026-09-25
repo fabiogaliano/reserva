@@ -2,7 +2,8 @@ import type { ManageBooking } from '../../core/api.js';
 import { escapeHtml } from '../../http.js';
 import { toMajorUnits } from '../../core/currency.js';
 import { formatDateTime, formatDateTimeRange, formatPrice, googleCalendarUrl, icsDataUrl } from '../format.js';
-import { contactBlock, factList, pageShell, statusBadge, themeToggle, type ContactConfig } from '../layout.js';
+import { brandMark, customerPageTheme, type PageBranding } from '../branding.js';
+import { contactBlock, factList, messageHtml, pageShell, statusBadge, themeToggle, type ContactConfig } from '../layout.js';
 import { defaultLocale, formatMessage, resolveMessages, type ReservaMessages } from '../messages.js';
 import type { ThemePreference } from '../theme.js';
 
@@ -19,6 +20,9 @@ export interface ManagePageOptions {
   // The viewer's forced theme (from the request cookie), set by the manage route so the page can
   // render <html data-theme> up front. Absent/undefined = follow the OS.
   theme?: ThemePreference | undefined;
+  // `config.ui.branding`: the logo in the brand line and a pinned color scheme. Its CSS travels in
+  // the stylesheet `cssHref` points at, which the route versions by it.
+  branding?: PageBranding | undefined;
   businessName?: string;
   // Makes the brand line a link back to the consumer's site.
   businessUrl?: string;
@@ -117,10 +121,7 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
   }
 
   const operatorBadge = role === 'operator' ? ` <span class="bk-badge bk-badge--accent">${escapeHtml(messages['manage.operatorBadge'])}</span>` : '';
-  const brandName = options.businessName ? escapeHtml(options.businessName) : '';
-  const brand = brandName
-    ? `<p class="bk-brand">${options.businessUrl ? `<a href="${escapeHtml(options.businessUrl)}">${brandName}</a>` : brandName}</p>`
-    : '';
+  const brand = options.businessName ? brandMark(options.businessName, options.businessUrl, options.branding) : '';
   const header = brand
     + `<h1>${escapeHtml(messages['manage.title'])} <strong>${escapeHtml(booking.reference)}</strong></h1>`
     + `<p class="bk-lead">${status ? statusBadge(status, messages) : ''}${operatorBadge}</p>`;
@@ -180,7 +181,7 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
   // The native datetime-local stays as the no-JS fallback; the enhancer hides it and swaps in the
   // calendar + slot chips when availability loads.
   const rescheduleForm = canReschedule
-    ? `<section class="bk-card"><h2>${escapeHtml(messages['manage.rescheduleTitle'])}</h2>`
+    ? `<section class="bk-card bk-reschedule"><h2>${escapeHtml(messages['manage.rescheduleTitle'])}</h2>`
       + `<p class="bk-hint">${escapeHtml(messages['manage.rescheduleHint'])}</p>`
       + `<form method="post" action="${action}" data-reserva-reschedule${rescheduleData}>${rescheduleIsland}<input type="hidden" name="action" value="reschedule">${hiddenToken}`
       + `<label class="bk-field" data-reserva-native-start><span>${escapeHtml(messages['manage.newStart'])}</span><input class="bk-input" name="start" type="datetime-local" required></label>`
@@ -208,7 +209,7 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
     : '<input type="hidden" name="refund" value="none">';
   // A disclosure makes the destructive action two-step without any script.
   const cancelForm = canCancel
-    ? `<details class="bk-disclosure bk-card--danger"><summary>${escapeHtml(messages['manage.cancelTitle'])}</summary><div>`
+    ? `<details class="bk-disclosure bk-card--danger bk-cancel"><summary>${escapeHtml(messages['manage.cancelTitle'])}</summary><div>`
       + `<p>${escapeHtml(messages['manage.cancelWarning'])}</p>${policyNote}`
       + `<form method="post" action="${action}"><input type="hidden" name="action" value="cancel">${hiddenToken}${refundControl}`
       + `<button type="submit" class="bk-btn bk-btn--danger">${escapeHtml(messages['manage.cancelConfirm'])}</button></form></div></details>`
@@ -217,7 +218,7 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
   // No-show is as irreversible as cancel, so it gets the same two-step disclosure treatment
   // instead of a bare one-click button.
   const noShowForm = canNoShow
-    ? `<details class="bk-disclosure"><summary>${escapeHtml(messages['manage.noShowSubmit'])}</summary><div>`
+    ? `<details class="bk-disclosure bk-no-show"><summary>${escapeHtml(messages['manage.noShowSubmit'])}</summary><div>`
       + `<p>${escapeHtml(messages['manage.noShowWarning'])}</p>`
       + `<form method="post" action="${action}"><input type="hidden" name="action" value="no-show"><input type="hidden" name="operatorToken" value="${escapeHtml(token)}"><button type="submit" class="bk-btn bk-btn--secondary">${escapeHtml(messages['manage.noShowSubmit'])}</button></form></div></details>`
     : '';
@@ -243,7 +244,7 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
         + `<a class="bk-btn bk-btn--secondary bk-btn--sm" href="${escapeHtml(icsDataUrl(event))}" download="booking.ics">${escapeHtml(messages['confirmation.addIcs'])}</a></div>`;
     })()
     : '';
-  const summaryCard = `<section class="bk-card${hasActions ? ' bk-col-side' : ''}" aria-label="${escapeHtml(messages['manage.yourBooking'])}"><h2>${escapeHtml(messages['manage.yourBooking'])}</h2>${factList(facts)}${calendar}</section>`;
+  const summaryCard = `<section class="bk-card bk-summary${hasActions ? ' bk-col-side' : ''}" aria-label="${escapeHtml(messages['manage.yourBooking'])}"><h2>${escapeHtml(messages['manage.yourBooking'])}</h2>${factList(facts)}${calendar}</section>`;
   const actionsColumn = `<div class="bk-col-main">${rescheduleForm}<section aria-label="${escapeHtml(messages['manage.title'])}">${cancelForm}${noShowForm}</section></div>`;
   const body = successNotice
     + errorNotice
@@ -252,16 +253,19 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
     + (hasActions ? `<div class="bk-cols">${summaryCard}${actionsColumn}</div>` : summaryCard)
     + cutoffContact;
 
+  const { theme, pinned } = customerPageTheme(options.branding, options.theme);
   return pageShell({
     lang: locale,
+    page: 'manage',
+    status,
     title: `${messages['manage.title']} ${String(booking.reference ?? '')}${options.businessName ? ` — ${options.businessName}` : ''}`,
     cssHref: options.cssHref ?? '',
     favicon: options.favicon,
     headHtml: options.headHtml,
     ...(canReschedule && options.scriptHref ? { scriptHref: options.scriptHref } : {}),
     header,
-    theme: options.theme,
-    themeToggle: themeToggle(messages, options.theme),
+    theme,
+    ...(pinned ? {} : { themeToggle: themeToggle(messages, theme) }),
     width: 'mid',
     body,
   });
@@ -273,21 +277,23 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
 export function renderManageErrorPage(managePagePath: string, options: ManagePageOptions = {}): string {
   const locale = options.locale ?? defaultLocale;
   const messages = options.messages ?? resolveMessages(undefined, locale);
-  const brand = options.businessName ? `<p class="bk-brand">${escapeHtml(options.businessName)}</p>` : '';
+  const brand = options.businessName ? brandMark(options.businessName, undefined, options.branding) : '';
   const header = brand
     + `<h1>${escapeHtml(messages['manage.invalidTitle'])}</h1>`
-    + `<p class="bk-lead">${escapeHtml(messages['manage.invalidBody'])}</p>`;
-  const body = `<section class="bk-card"><p class="bk-lead">${escapeHtml(messages['manage.invalidUseEmailLink'])}</p></section>`
+    + messageHtml(messages['manage.invalidBody'], 'bk-lead');
+  const body = `<section class="bk-card bk-message">${messageHtml(messages['manage.invalidUseEmailLink'], 'bk-lead')}</section>`
     + (options.contactConfig ? contactBlock(options.contactConfig, messages) : '');
+  const { theme, pinned } = customerPageTheme(options.branding, options.theme);
   return pageShell({
     lang: locale,
+    page: 'manage',
     title: `${messages['manage.invalidTitle']}${options.businessName ? ` — ${options.businessName}` : ''}`,
     cssHref: options.cssHref ?? '',
     favicon: options.favicon,
     headHtml: options.headHtml,
     header,
-    theme: options.theme,
-    themeToggle: themeToggle(messages, options.theme),
+    theme,
+    ...(pinned ? {} : { themeToggle: themeToggle(messages, theme) }),
     body,
   });
 }

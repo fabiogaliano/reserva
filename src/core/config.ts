@@ -392,6 +392,12 @@ const webhookEndpointSchema = z.object({
   events: z.array(z.custom<WebhookEvent>((value) => typeof value === 'string')).min(1).optional(),
 });
 
+// A value spliced into one declaration of the served stylesheet. Commas and parentheses stay legal
+// (font lists, gradients); anything that could end the declaration or the rule, or open a comment
+// swallowing the rest of the sheet, is refused at build time instead of breaking the page's CSS.
+const cssDeclarationValueSchema = z.string().trim().min(1)
+  .refine((value) => !/[;{}<>\\]|\/\*|\*\//.test(value), 'must be a single CSS value without ; { } < > \\ or comment markers');
+
 const clientConfigShape = z.object({
   business: z.object({
     name: z.string().min(1),
@@ -450,7 +456,34 @@ const clientConfigShape = z.object({
   ui: z.object({
     // Per-locale overrides for Reserva's rendered copy, merged over its bundled catalog and
     // English fallback. Keys are locale tags ('pt-PT', 'fr', …); values are partial message maps.
+    // The long-form customer messages (the confirmation page's `*Body` keys and
+    // `confirmation.detailsEmailed`, `manage.invalidBody`, `manage.invalidUseEmailLink`) take a
+    // little structure: a blank line starts a new paragraph, and consecutive lines starting with
+    // "- " become one bulleted list. Everything is escaped first, so a message can never carry HTML.
     messages: z.record(z.string(), z.record(z.string(), z.string())).optional(),
+    // Visual identity for the customer pages (confirmation, manage); the operator pages keep
+    // Reserva's own look. The values reach the page through the served stylesheet, never an
+    // inline style, so the pages stay within style-src 'self'.
+    branding: z.object({
+      // Replaces the business name in the masthead with an <img> whose alt text is that name.
+      logoUrl: z.string().min(1).optional(),
+      logoWidth: z.number().int().positive().optional(),
+      logoHeight: z.number().int().positive().optional(),
+      // 'light' / 'dark' pin the customer pages to one palette and drop the viewer's theme toggle
+      // there; 'auto' (the default) follows the OS and the toggle as before.
+      colorScheme: z.enum(['auto', 'light', 'dark']).optional(),
+      // Hex only, because the text color on accent-filled buttons is computed from it.
+      accentColor: z.string().regex(/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i, 'must be a #rgb or #rrggbb hex color').optional(),
+      // Any CSS `background` value (a color, a gradient).
+      mastheadBackground: cssDeclarationValueSchema.optional(),
+      // A font-family list. Loading the font stays the consumer's job, through headHtml.
+      fontFamily: cssDeclarationValueSchema.optional(),
+    }).optional(),
+    confirmation: z.object({
+      // Where the confirmed-booking status badge sits: above the title in the masthead (the
+      // default), or in the top-right of the booking ticket.
+      statusPlacement: z.enum(['masthead', 'ticket']).optional(),
+    }).optional(),
     // A URL or site-absolute path rendered as <link rel="icon"> on every page Reserva renders, so
     // the confirmation and manage pages carry the site's identity instead of the browser default.
     faviconUrl: z.string().min(1).optional(),

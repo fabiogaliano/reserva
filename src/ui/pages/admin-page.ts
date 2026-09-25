@@ -611,8 +611,9 @@ export function adminPage(
 
   return pageShell({
     lang: locale,
+    page: 'admin',
     title: `${messages['admin.title']} — ${context.config.business.name}`,
-    cssHref: cssAssetHref(context.routeConfig.paths.assetsCss),
+    cssHref: cssAssetHref(context.routeConfig.paths.assetsCss, context.config.ui?.branding),
     favicon: context.config.ui?.faviconUrl,
     headHtml: context.config.ui?.headHtml,
     scriptHref: jsAssetHref(context.routeConfig.paths.assetsJs),

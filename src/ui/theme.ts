@@ -367,6 +367,9 @@ export const themeCss = `
 .bk-ticket-day { font-size: 2.3rem; font-weight: 700; line-height: 1.05; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .bk-ticket-time { font-size: 0.85rem; color: var(--bk-text-muted); font-variant-numeric: tabular-nums; }
 .bk-ticket-body { flex: 1; min-width: 0; padding: 1.25rem 1.5rem; }
+/* Its own row above the facts rather than absolutely positioned, so a long service title can never
+   run underneath the badge. */
+.bk-ticket-status { display: flex; justify-content: flex-end; margin: 0 0 0.75rem; }
 .bk-ticket-foot {
   display: flex;
   align-items: center;
@@ -412,6 +415,7 @@ export const themeCss = `
 .bk-brand a { color: inherit; text-decoration: none; }
 .bk-brand a:hover { text-decoration: underline; }
 .bk-brand a:focus-visible { outline: none; box-shadow: var(--bk-focus); border-radius: 2px; }
+.bk-brand-logo { display: inline-block; vertical-align: top; max-width: 100%; height: auto; }
 
 .bk-card {
   background: var(--bk-surface);
@@ -502,6 +506,15 @@ export const themeCss = `
 .bk-alert--danger { background: var(--bk-danger-soft); color: var(--bk-danger); border-color: color-mix(in srgb, var(--bk-danger) 25%, transparent); }
 .bk-alert--warn { background: var(--bk-warning-soft); color: var(--bk-warning); border-color: color-mix(in srgb, var(--bk-warning) 25%, transparent); }
 .bk-alert--ok { background: var(--bk-ok-soft); color: var(--bk-ok); border-color: color-mix(in srgb, var(--bk-ok) 25%, transparent); }
+
+/* Bulleted lines in a long-form message: markers hang outside the text column, so a wrapped line
+   lines up under its own text instead of under the bullet. */
+.bk-list { margin: 0 0 1rem; padding-left: 1.25rem; text-wrap: pretty; }
+.bk-list:last-child { margin-bottom: 0; }
+.bk-list li { padding-left: 0.2rem; }
+.bk-list li + li { margin-top: 0.4rem; }
+.bk-list li::marker { color: var(--bk-text-muted); }
+.bk-lead + .bk-list { margin-top: -0.75rem; margin-bottom: 1.5rem; color: var(--bk-text-muted); }
 
 .bk-sub { display: block; font-size: 0.78rem; font-weight: 400; color: var(--bk-text-muted); }
 .bk-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; }

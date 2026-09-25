@@ -2,8 +2,9 @@ import type { ConfirmationBooking, ConfirmationSummary, StatusResponse } from '.
 import type { ReservaContext } from '../../context.js';
 import { escapeHtml } from '../../http.js';
 import { cssAssetHref } from '../asset-hrefs.js';
+import { brandMark, customerPageTheme } from '../branding.js';
 import { formatDateParts, formatDateTime, formatDateTimeRange, formatPrice, googleCalendarUrl, icsDataUrl } from '../format.js';
-import { contactBlock, factList, pageShell, themeToggle } from '../layout.js';
+import { contactBlock, factList, messageHtml, pageShell, themeToggle } from '../layout.js';
 import { formatMessage, resolveMessages, type ReservaMessages } from '../messages.js';
 
 // This page renders whatever GET /api/booking/status answers, so it takes that exported response
@@ -16,11 +17,8 @@ function isFullBooking(booking: ConfirmationBooking | ConfirmationSummary): book
   return 'metadataRows' in booking;
 }
 
-function brandLine(context: Pick<ReservaContext, 'config'>): string {
-  return `<p class="bk-brand"><a href="${escapeHtml(context.config.business.url)}">${escapeHtml(context.config.business.name)}</a></p>`;
-}
-
-function confirmedBody(context: Pick<ReservaContext, 'config'>, messages: ReservaMessages, booking: ConfirmedBooking, locale: string): string {
+// `statusBadge` is set only when `ui.confirmation.statusPlacement` moves the badge into the ticket.
+function confirmedBody(context: Pick<ReservaContext, 'config'>, messages: ReservaMessages, booking: ConfirmedBooking, locale: string, statusBadge: string): string {
   const timezone = context.config.business.timezone;
   const start = typeof booking.start === 'string' ? booking.start : '';
   const end = typeof booking.end === 'string' ? booking.end : start;
@@ -72,11 +70,11 @@ function confirmedBody(context: Pick<ReservaContext, 'config'>, messages: Reserv
     + calendar
     + `</div>`;
   return `<section class="bk-ticket">`
-    + `<div class="bk-ticket-top">${dateBlock}<div class="bk-ticket-body">${factList(facts)}</div></div>`
+    + `<div class="bk-ticket-top">${dateBlock}<div class="bk-ticket-body">${statusBadge ? `<div class="bk-ticket-status">${statusBadge}</div>` : ''}${factList(facts)}</div></div>`
     + foot
     + `</section>`
-    + `<section class="bk-card"><h2>${escapeHtml(messages['confirmation.whatsNextTitle'])}</h2>`
-    + `<p>${escapeHtml(messages['confirmation.whatsNextBody'])}</p></section>`;
+    + `<section class="bk-card bk-whatsnext"><h2>${escapeHtml(messages['confirmation.whatsNextTitle'])}</h2>`
+    + `${messageHtml(messages['confirmation.whatsNextBody'])}</section>`;
 }
 
 // Past the detail grace window the endpoint answers with a summary, not the full booking: name the
@@ -88,13 +86,13 @@ function summaryBody(context: Pick<ReservaContext, 'config'>, messages: ReservaM
     [messages['common.date'], escapeHtml(start ? formatDateTime(start, locale, context.config.business.timezone) : '')],
     [messages['common.reference'], escapeHtml(summary.reference)],
   ];
-  return `<section class="bk-card">${factList(facts)}</section>`
-    + `<section class="bk-card"><p class="bk-lead">${escapeHtml(messages['confirmation.detailsEmailed'])}</p></section>`;
+  return `<section class="bk-card bk-summary">${factList(facts)}</section>`
+    + `<section class="bk-card bk-message">${messageHtml(messages['confirmation.detailsEmailed'], 'bk-lead')}</section>`;
 }
 
 function simpleBody(body: string, options: { pending?: boolean; actionHtml?: string; afterHtml?: string } = {}): string {
   const spinner = options.pending ? '<div class="bk-spinner" aria-hidden="true"></div>' : '';
-  return `<section class="bk-card">${spinner}<p class="bk-lead">${escapeHtml(body)}</p>${options.actionHtml ?? ''}</section>`
+  return `<section class="bk-card bk-message">${spinner}${messageHtml(body, 'bk-lead')}${options.actionHtml ?? ''}</section>`
     + (options.afterHtml ?? '');
 }
 
@@ -138,9 +136,14 @@ export function confirmationPage(
   // of rendering the timeout page again immediately.
   const checkAgain = `<div class="bk-actions"><a class="bk-btn bk-btn--secondary" href="${escapeHtml(urlWithAttempt(requestUrl, 0))}">${escapeHtml(messages['confirmation.checkAgain'])}</a></div>`;
   const contact = contactBlock(context.config, messages);
+  const branding = context.config.ui?.branding;
+  const confirmedBadge = `<span class="bk-badge bk-badge--ok">${escapeHtml(messages['status.confirmed'])}</span>`;
+  // The ticket only exists for a full booking, so every other state keeps the masthead badge.
+  const badgeInTicket = status === 'confirmed' && booking !== null && booking.reference.length > 0 && isFullBooking(booking)
+    && context.config.ui?.confirmation?.statusPlacement === 'ticket';
   const body = status === 'confirmed'
     ? booking !== null && booking.reference.length > 0
-      ? isFullBooking(booking) ? confirmedBody(context, messages, booking, locale) : summaryBody(context, messages, booking, locale)
+      ? isFullBooking(booking) ? confirmedBody(context, messages, booking, locale, badgeInTicket ? confirmedBadge : '') : summaryBody(context, messages, booking, locale)
       : simpleBody(messages['confirmation.detailsEmailed'])
     : status === 'pending'
       ? pendingTimedOut
@@ -165,24 +168,27 @@ export function confirmationPage(
             ? messages['confirmation.cancelledTitle']
             : messages['confirmation.notFoundTitle'];
   const badge = status === 'confirmed'
-    ? `<span class="bk-badge bk-badge--ok">${escapeHtml(messages['status.confirmed'])}</span>`
+    ? badgeInTicket ? '' : confirmedBadge
     : status === 'pending'
       ? `<span class="bk-badge bk-badge--warn">${escapeHtml(messages['status.hold'])}</span>`
       : '';
-  const header = brandLine(context)
+  const header = brandMark(context.config.business.name, context.config.business.url, branding)
     + badge
     + `<h1>${escapeHtml(title)}</h1>`
     + (status === 'confirmed' ? `<p class="bk-lead">${escapeHtml(messages['confirmation.lead'])}</p>` : '');
+  const { theme, pinned } = customerPageTheme(branding, context.viewerTheme);
   return pageShell({
     lang: locale,
+    page: 'confirmation',
+    status,
     title: `${title} — ${context.config.business.name}`,
-    cssHref: cssAssetHref(context.routeConfig.paths.assetsCss),
+    cssHref: cssAssetHref(context.routeConfig.paths.assetsCss, branding),
     favicon: context.config.ui?.faviconUrl,
     headHtml: context.config.ui?.headHtml,
     headExtra: refresh,
     header,
-    theme: context.viewerTheme,
-    themeToggle: themeToggle(messages, context.viewerTheme),
+    theme,
+    ...(pinned ? {} : { themeToggle: themeToggle(messages, theme) }),
     body,
   });
 }

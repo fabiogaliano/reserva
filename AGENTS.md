@@ -86,7 +86,7 @@ receive once the defaults below have been applied.
 | `legal` | no | `{ termsUrl? }` — defaults to `{}`; `termsUrl` itself is optional |
 | `webhooks` | no | `Array<{ name, url, secretBinding, events? }>` |
 | `routes` | no | `{ admin?, ops?, manage? }` — all default `true` |
-| `ui` | no | `{ messages?: Record<locale, Partial<messages>> }` |
+| `ui` | no | `{ messages?: Record<locale, Partial<messages>>, faviconUrl?, headHtml?, branding?: { logoUrl?, logoWidth?, logoHeight?, colorScheme?: 'auto' \| 'light' \| 'dark', accentColor? (hex), mastheadBackground?, fontFamily? }, confirmation?: { statusPlacement?: 'masthead' \| 'ticket' } }`. `branding` affects only the confirmation and manage pages. Page hook classes (`bk-page--*`, `data-bk-status`) and the `- ` list syntax in messages are listed in `docs/customization.md` |
 | `emails` | no | `{ locale?, branding?, messages? }` |
 
 `ServiceConfig`:
