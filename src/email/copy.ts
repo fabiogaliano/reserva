@@ -26,6 +26,9 @@ export const englishEmailCopy: Record<string, string> = {
   'label.time': 'Time',
   'label.cancellation': 'Cancellation',
   'label.guests': 'Guests',
+  // A copy string rather than the bare number so a per-vehicle site can say what the quantity buys
+  // ("Up to {quantity} guests"); the default keeps the plain headcount.
+  'value.guests': '{quantity}',
   'label.meetingPoint': 'Meeting point',
   'label.pickup': 'Pickup',
   'label.openMap': 'Open map',
@@ -91,6 +94,7 @@ export const portuguesePortugalEmailCopy: Record<string, string> = {
   'label.time': 'Hora',
   'label.cancellation': 'Cancelamento',
   'label.guests': 'Pessoas',
+  'value.guests': '{quantity}',
   'label.meetingPoint': 'Ponto de encontro',
   'label.pickup': 'Recolha',
   'label.openMap': 'Abrir mapa',

@@ -3,6 +3,7 @@
 // Row-level execution preserves sibling backoff and failure isolation. Side-effect backoff is
 // derived in the repository query because HTTP recovery remains immediate, while refund rows use
 // their persisted next_attempt_at.
+import virtualConfig from 'virtual:reserva/config';
 import {
   classifyAttemptOutcome,
   reminderSideEffectSeeds,
@@ -509,13 +510,16 @@ export async function runReconciliationWithLease(
 // The `scheduled()` body every cron Worker would otherwise hand-copy. The synthetic request exists
 // only because `createContext` is request-shaped; nothing reads its URL. Failures rethrow so the
 // platform records a failed cron invocation, which is the detection path independent of the alert sink.
+// The cron never passes through createRouteContext, so it applies the same two overlays itself:
+// stored admin settings, and the build's route paths so cron-sent links carry the routePrefix.
 export function scheduledHandler(
   runtime: { createContext(input: { request: Request }): ReservaContext | Promise<ReservaContext> },
   options: ReconciliationOptions = { requireAlertSink: true },
 ): (controller: ScheduledController, env: unknown, ctx: ExecutionContext) => Promise<void> {
   return async () => {
     try {
-      const context = await withStoredSettings(await runtime.createContext({ request: new Request('https://reserva-scheduled.invalid/') }));
+      const base = await runtime.createContext({ request: new Request('https://reserva-scheduled.invalid/') });
+      const context: ReservaContext = { ...(await withStoredSettings(base)), routeConfig: virtualConfig.routes };
       const result = await runReconciliationWithLease(context, options);
       if (result.kind === 'busy') {
         // Not a failure: a manual trigger or an overrunning previous tick is already sweeping, and
