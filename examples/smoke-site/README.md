@@ -14,7 +14,7 @@ to start empty.
 | Page | What it shows |
 |---|---|
 | `/` | booking widget and the embeddable fragments |
-| `/booking-confirmation?session_id=…` | payment recovery and confirmation |
+| `/booking-confirmation?sessionId=…` | payment recovery and confirmation |
 | `/booking/admin` | owner dashboard (auth bypassed by the demo runtime only) |
 | `/booking/manage?token=…` | customer or operator controls |
 | `/api/booking/availability` | availability JSON |

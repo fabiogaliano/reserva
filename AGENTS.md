@@ -152,6 +152,11 @@ method, or a mismatched amount/currency): no booking was made, it is terminal fo
 customer, and it opens an operational incident for the operator. The confirmation page polls
 at most 20 times (~60 s) before showing a "still waiting" page with contact details.
 
+For a reschedule picker, `availability` accepts the booking's manage token in the
+`x-reserva-manage-token` header (`MANAGE_TOKEN_HEADER`; `manageToken` on the client). That booking
+is then left out of the count, so its current slot doesn't block the move. The answer is never
+cached, and an unknown or revoked token gets the same answer as no token.
+
 Endpoint field names are `serviceSlug`, `pickup`, `start` and `sessionId` everywhere. The old
 spellings (`?service=`, `?session_id=`, `pickupType` in the checkout body, `newStart` in the
 reschedule body) still read for one minor and log `deprecated field` once per isolate; they are
@@ -300,7 +305,8 @@ SQL error.
 | Startup throw: ledger says applied but fingerprint mismatch | migration filename collision in a shared database | give Reserva a dedicated D1 database |
 | Startup throw about `adminAuth` | neither or both of `config.admin.access` and a custom `adminAuth` configured while `admin`/`ops` routes are on | configure exactly one |
 | `403` from `/booking/admin` or any operator route | `adminAuth` returned `null` or threw | fail-closed by design; check the Access application (or your callback) |
-| Admin POST rejected, GET fine | same-origin CSRF layer | send the form from the same origin; set `RESERVA_CSRF_SECRET` for the token layer |
+| Admin POST answers 403, GET fine | the Origin / Fetch-Metadata check refused a cross-origin form | send the form from the same origin |
+| Admin form comes back with "This page expired" | its CSRF token (on when `RESERVA_CSRF_SECRET` is set) expired or belongs to another user | reload the page and submit again; nothing was changed |
 | `400 invalid_payment_signature` on the payment webhook | signing secret does not match the endpoint sending events | a live endpoint's secret never verifies a test-mode event, and vice versa |
 | `409 payment_amount_mismatch` | captured amount ≠ the booking's stored price | never expected; alert on it, do not retry-loop it |
 | `503 confirmation_in_progress` | another caller holds the confirmation lease | retry; the payment webhook's retry is the intended path |

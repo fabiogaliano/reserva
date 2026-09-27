@@ -86,7 +86,9 @@ Reserva treats them as a first-class audience.
 - **Broad public provider-error contract**: only the narrow
   operational-alert/reconciliation contracts are exported; the full hierarchy
   stays internal until an external adapter needs it.
-- **`listUpcoming` scan + per-row decrypts, per-date occupancy recompute**:
+- **Admin search scan + per-row decrypts, calendar occupancy over the whole
+  horizon**: the list pages in SQL, but a free-text search scans up to a fixed
+  cap in memory and the calendar recomputes each day's peak on every load;
   acceptable at the documented deployment scale; revisit at an order of
   magnitude more bookings.
 - **Pre-0008 occupancy backfill**: pre-upgrade rows' occupancy columns are

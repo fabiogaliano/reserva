@@ -20,16 +20,34 @@ displayed can never disagree with the amount charged. Copy it and change it free
 placed on a static page. Pass an explicit `endpoint` when `routes.manage` is disabled.
 
 **Theming.** All styling flows through `--bk-*` custom properties (light defaults plus
-`prefers-color-scheme: dark`). Rebrand by overriding tokens in site CSS, for example
-`.bk-embed, :root { --bk-accent: #d9a406; }`. Component styles ship as
-`dist/ui/components.css`, bundled by the consumer's build; the server-rendered pages load
-their stylesheet from `/booking/assets/reserva.css` and their calendar/enhancer script from
-`/booking/assets/reserva.js`, both referenced through content-hashed URLs with year-long
-cache headers.
+`prefers-color-scheme: dark`). Override them in your own CSS: `:root { … }` for the pages,
+`.bk-embed { … }` for the component. The defaults have zero specificity, so your rule wins in
+both light and dark mode. When you change the accent, set all four accent tokens, because the
+other three don't follow `--bk-accent` on their own:
+
+```css
+.bk-embed, :root {
+  --bk-accent: #8a5a00;
+  --bk-accent-contrast: #ffffff;
+  --bk-accent-soft: #f6eedf;
+  --bk-accent-text: #7a5000;
+}
+```
+
+The component stylesheet (`dist/ui/components.css`, bundled by your build) sets its tokens on
+`.bk-embed` only, so `<ManageBooking />` never changes your page's own colors. It follows a
+`data-theme="light"` or `data-theme="dark"` attribute on any ancestor, otherwise the OS setting.
+The server-rendered pages load `/booking/assets/reserva.css` and `/booking/assets/reserva.js`
+through content-hashed URLs; only the current hash is cached. Printed pages always use the light
+palette.
+
+Focus is a 2px `--bk-accent` outline, which stays visible in Windows forced-colors mode. On the
+dark masthead and admin sidebar it uses `--bk-masthead-text`. `--bk-accent-text` is the accent
+shade used for text on `--bk-accent-soft` and on `--bk-surface-2`.
 
 Every token is declared once, in `src/ui/tokens.css`; the pages' stylesheet and the components'
-stylesheet both source their defaults from it, so overriding one token reaches both surfaces. The
-table below is generated from that file by `bun run docs:contract`.
+stylesheet both source their defaults from it. The table below is generated from that file by
+`bun run docs:contract`.
 
 <!-- generated:ui-tokens -->
 | Token | Light default | Dark default |
@@ -44,6 +62,7 @@ table below is generated from that file by `bun run docs:contract`.
 | `--bk-accent` | `#5e6ad2` | `#7c86e2` |
 | `--bk-accent-contrast` | `#ffffff` | `#14162b` |
 | `--bk-accent-soft` | `#eceefb` | `#232647` |
+| `--bk-accent-text` | `#5763c3` | `#7f88e3` |
 | `--bk-danger` | `#b3261e` | `#f2a099` |
 | `--bk-danger-contrast` | `#ffffff` | `#2a100e` |
 | `--bk-danger-soft` | `#fbeae9` | `#3a201e` |
@@ -57,7 +76,6 @@ table below is generated from that file by `bun run docs:contract`.
 | `--bk-radius` | `12px` | same as light |
 | `--bk-radius-sm` | `8px` | same as light |
 | `--bk-shadow` | `0 1px 2px rgb(20 21 26 / 0.05), 0 8px 28px rgb(20 21 26 / 0.05)` | `0 1px 2px rgb(0 0 0 / 0.5), 0 8px 28px rgb(0 0 0 / 0.4)` |
-| `--bk-focus` | `0 0 0 3px color-mix(in srgb, var(--bk-accent) 50%, transparent)` | same as light |
 | `--bk-ease` | `cubic-bezier(0.16, 1, 0.3, 1)` | same as light |
 <!-- /generated:ui-tokens -->
 
@@ -77,6 +95,13 @@ ui: {
 Reserva's own stylesheet link, so a `--bk-*` override in it wins over the defaults. It is trusted
 markup: Reserva never escapes or parses it, and keeping it within your Content-Security-Policy is
 your responsibility.
+
+> **Keep analytics out of `headHtml`, or strip the query string.** The manage page URL contains
+> the booking's manage token, and the confirmation URL the payment session id. Most analytics
+> tags (GA4, Plausible, Matomo) report the full URL by default, which hands the token to anyone
+> who can read the reports, and with it the power to cancel the booking. Leave these pages
+> untracked, or send the path only (for GA4, set `page_location` to
+> `location.origin + location.pathname`).
 
 ### Branding the customer pages
 
@@ -101,9 +126,11 @@ ui: {
 - `colorScheme: 'light' | 'dark'` renders `<html data-theme="…">` on the customer pages
   whatever the viewer's saved choice, and leaves out the theme toggle. `'auto'` keeps the
   OS/toggle behavior.
-- `accentColor` sets `--bk-accent`, derives `--bk-accent-contrast` (white or near-black,
-  whichever contrasts more), `--bk-accent-soft` and `--bk-focus`. The same accent applies in
-  both schemes.
+- `accentColor` sets `--bk-accent` and derives the other three accent tokens from it, each
+  readable at 4.5:1. In dark mode (`'auto'` or `'dark'`) the pages use a lighter version of the
+  accent, just light enough to read on the dark background: `#0f6b3f` becomes `#448c69`. The
+  focus ring is the accent itself, so choose one with at least 3:1 contrast on white (a bright
+  yellow like `#ffcc00` is only 1.5:1).
 - `mastheadBackground` is any CSS `background` value. The masthead text tokens
   (`--bk-masthead-text`, `--bk-masthead-muted`) stay as they are, so override them yourself if
   you pick a light masthead.
@@ -112,12 +139,12 @@ ui: {
 The values are written into the served stylesheet (`/booking/assets/reserva.css`), scoped to
 `.bk-page--confirmation` and `.bk-page--manage`. No inline styles are added, so `style-src 'self'`
 is still enough. `mastheadBackground` and `fontFamily` must be one CSS value: `;`, `{`, `}`, `<`,
-`>`, `\` and comment markers fail the build.
+`>`, `\` and comment markers fail the build, and so does an unclosed `(`, `[` or quote.
 
 To override any other token for the customer pages only, scope it the same way in your
 `headHtml` stylesheet, for example
-`.bk-page--confirmation, .bk-page--manage { --bk-bg: #fbf7ef; }`. With `colorScheme` pinned,
-you don't have to win against the dark-scheme selectors.
+`.bk-page--confirmation, .bk-page--manage { --bk-bg: #fbf7ef; }`. It wins over branding in
+both schemes because `headHtml` loads after Reserva's stylesheet.
 
 ### Status badge placement
 

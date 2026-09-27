@@ -15,7 +15,10 @@ table inside the published tarball.
   projected so a consumer never re-derives it. `remaining: number | null` is published only at or
   below `config.booking.limitedThreshold` and `null` above it (exact capacity is
   deployment-private). `quantity` is optional and defaults to 1. The range may span up to
-  `maxHorizonDays`; a consumer never chunks requests.
+  `maxHorizonDays`; a consumer never chunks requests. A reschedule picker sends the booking's
+  manage token in the `x-reserva-manage-token` header (`MANAGE_TOKEN_HEADER`, or `manageToken` on
+  the client) so the booking's own slot isn't counted against it. That answer is never cached; an
+  unknown or revoked token gets the normal answer.
 - `POST /api/booking/quote` — `{ serviceSlug, quantity, pickup? }` →
   `{ priceMinor, currency }`. The same validation and pricing path checkout charges on: a
   consumer that shows a price never computes one. A `locale` key is accepted and ignored (a price
@@ -157,7 +160,8 @@ the `Date.UTC` dates a `<calendar-date>` hands its callback), `dateKey(date)` an
 Presentation helpers live in `@reservajs/astro/ui`: the message catalog (`defaultMessages`,
 `resolveMessages`, `formatMessage`) plus the formatters Reserva's own pages render with —
 `formatDateTime`, `formatDayDate`, `formatDateParts`, `formatPrice`, `googleCalendarUrl`,
-`icsDataUrl`.
+`icsDataUrl(event, { uid, generatedAt })`. Build the `uid` with `calendarUid(reference, businessUrl)`
+to match the UID Reserva's own pages and emails use for that booking.
 
 Rate limiting for the public routes belongs at the Cloudflare edge (WAF or rate-limiting
 rules), not inside this library.
