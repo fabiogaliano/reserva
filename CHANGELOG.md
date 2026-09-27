@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.10.0
+
+### Minor Changes
+
+- 50b8530: Admin dashboard fixes.
+  
+  - **One bookings list.** Choose Upcoming or Past (`?when=`), then filter by status or search within that period. "All" now includes every status, so a status filter can never show more rows than "All". Upcoming starts at midnight in the business timezone, so bookings from earlier today stay visible.
+  - **Paging.** 50 rows per page with "Showing X–Y of Z". A search reads up to 20,000 bookings and says so if it stops there. The "Show later bookings" link and `?until=` are gone.
+  - Filters, tabs, day links and page links keep the current list state. Filter options have their own labels ("Awaiting payment", "No-show", …).
+  - **Calendar.** Each day shows the most units in use at the same time against capacity, plus the number of bookings (`2/2 peak · 3 bookings`), across the whole booking horizon. The calendar is one Tab stop with arrow-key navigation. With JavaScript, multi-day selection replaces the "To date" field.
+  - A blank capacity is rejected instead of closing the day. Settings resets are validated like saves, Enter in a settings field saves, and schedule `days` are sorted and de-duplicated.
+  - A failed admin action returns to the same page with a readable message instead of JSON. An expired form says "This page expired". Access and Origin failures still return 403.
+  - The Attention badge shows the real number of open incidents. Retry is hidden where it can't help (oversell, payment verification, reconciliation).
+  
+  Removed message keys: `admin.all`, `admin.showLaterBookings`, `admin.unitsLoad`. New: `admin.whenLabel`, `admin.whenUpcoming`, `admin.whenPast`, `admin.filterAll`, `admin.filterConfirmed`, `admin.filterHold`, `admin.filterExpired`, `admin.filterCancelled`, `admin.filterNoShow`, `admin.noPastBookings`, `admin.noMatchingBookings`, `admin.pageRange`, `admin.pagination`, `admin.pagePrev`, `admin.pageNext`, `admin.searchTruncated`, `admin.dayLoad`, `admin.bookingCountOne`, `admin.bookingCount`, `admin.dayOpen`, `admin.incidentsTruncated`, `admin.errorGeneric`, `admin.errorInvalid`, `admin.errorInvalidField`, `admin.errorExpired`, `admin.errorNotFound`.
+- 50b8530: Confirmation and manage page fixes.
+  
+  **Run `bunx reserva-migrate` after upgrading.** Migration `0005_calendar_patch_outbox.sql` adds a `calendar_patch` outbox family (ops health can now report it).
+  
+  **Breaking:** `icsText` and `icsDataUrl` from `@reservajs/astro/ui` now take a second argument, `{ uid, generatedAt }`. Use `calendarUid(reference, businessUrl)` for the `uid`.
+  
+  - A reschedule succeeds as soon as the booking moves. The calendar update now goes through the outbox (retried, then raised as an incident), so a calendar outage no longer turns a finished reschedule into a 500. The incident is titled "Calendar not updated".
+  - Rescheduling to the time the booking already has succeeds without doing anything, so a double-submitted form no longer errors.
+  - The reschedule calendar no longer counts the customer's own booking against capacity. Availability accepts the booking's manage token in the `x-reserva-manage-token` header (`MANAGE_TOKEN_HEADER`, or `manageToken` on the client). That answer is never cached.
+  - The reschedule picker no longer fails with a 400 when its range crosses a daylight-saving change.
+  - After cancelling, the customer sees a "Booking cancelled" page instead of "Link not valid".
+  - The manage page shows both the cancel and the reschedule deadline, and says when one has passed. Form errors come back as a readable message, and buttons are disabled while a form is sending.
+  - The confirmation page keeps waiting after a server error instead of saying the booking wasn't found. With JavaScript it checks the status in the background and announces progress to screen readers. `?locale=pt` now finds `pt-PT`.
+  - Calendar files use one UID per booking (`<reference>@<your host>`), so two bookings at the same time no longer clash. `DTSTAMP` is the time the file was made.
+  - Multi-day bookings show their end date. After the 4-hour detail window, the page no longer says a confirmation email is on its way.
+  - Customer pages get a "Skip to content" link, and the theme toggle works on every confirmation and manage page.
+  - Checkout's metadata errors include `details.field` (`metadata.<key>`) for every rule.
+  - The low-availability hint now reads "Room for {n} more bookings", with a new singular key `widget.limitedOne`. If you override `widget.limited`, override `widget.limitedOne` too.
+  - `createReservaClient({ base })` accepts a trailing slash.
+  - Stripe: the default success URL includes `&locale=`.
+  
+  New message keys: `widget.limitedOne`, `confirmation.pollChecking`, `confirmation.pollUpdated`, `confirmation.summaryLead`, `manage.reschedulePolicy`, `manage.cancelClosed`, `manage.rescheduleClosed`, `manage.cancelDoneTitle`, `manage.cancelDoneBody`, `manage.cancelDoneRefund`, `manage.bookAgain`.
+- 50b8530: Theme fixes: token overrides work as documented, focus is easier to see, and branded pages read well in dark mode.
+  
+  **Breaking:** the `--bk-focus` token is removed. Focus is now a solid 2px outline in `--bk-accent`, which also shows in Windows forced-colors mode. Styles that used `var(--bk-focus)` need their own ring.
+  
+  - A plain `:root { --bk-accent: … }` (or `.bk-embed { … }` for the component) now wins in dark mode too. Before, the dark defaults beat it.
+  - `<ManageBooking />` no longer changes the host page's colors. Its tokens live on `.bk-embed`, and it follows `data-theme` on any ancestor, otherwise the OS setting.
+  - New `--bk-accent-text` token for accent-colored text, used by the accent badge and the ticket month, now at 4.5:1 contrast. If you override `--bk-accent` alone, set `--bk-accent-text` too, or those stay indigo.
+  - `ui.branding.accentColor` gets a lighter version in dark mode, just light enough to read (`#0f6b3f` becomes `#448c69`).
+  - Printed pages always use the light palette.
+  - The page assets are cached for a year only under their current `?v=` hash, so a stale URL is never cached.
+  - A list in the masthead no longer overlaps the text above it.
+  - `ui.branding.fontFamily` and `mastheadBackground` reject an unclosed `(`, `[` or quote, which used to break the rest of the stylesheet.
+
 ## 0.9.0
 
 ### Minor Changes
