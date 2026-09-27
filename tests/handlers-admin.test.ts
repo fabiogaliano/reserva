@@ -435,6 +435,29 @@ describe('GET /admin listing (one window + status query)', () => {
 
   // The calendar has its own query over the whole horizon: neither the list's window, its status
   // filter nor its page size can change a day's load.
+  // A site selling "up to N" tiers typically rewords widget.quantityCount as "Up to {n} guests" for
+  // its customer pages; the payer's exact answer must not inherit that wording.
+  it('labels an exact guest count with its own admin copy, whatever widget.quantityCount says', async () => {
+    const tiered: ResolvedClientConfig = {
+      ...config,
+      services: { ...config.services, vintage: { ...config.services.vintage!, collectGuestCount: true } },
+      ui: { ...config.ui, messages: { en: { 'widget.quantityCount': 'Up to {n} guests' } } },
+    };
+    const at = (day: number) => ({ startsAt: `2026-06-${day}T09:00:00.000Z`, endsAt: `2026-06-${day}T10:00:00.000Z` });
+    const repo = fakeRepository([
+      booking({ id: 'b-guests-3', reference: 'LVT-2026-310', quantity: 4, guestCount: 3, ...at(20), operatorToken: 'op-g3', cancelToken: 'c-g3' }),
+      booking({ id: 'b-guests-1', reference: 'LVT-2026-311', quantity: 4, guestCount: 1, ...at(21), operatorToken: 'op-g1', cancelToken: 'c-g1' }),
+      booking({ id: 'b-guests-blank', reference: 'LVT-2026-312', quantity: 4, guestCount: null, ...at(22), operatorToken: 'op-gb', cancelToken: 'c-gb' }),
+    ]);
+    const context = createReservaContext({ config: tiered, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers() });
+    const body = await (await handleAdminGet(adminGetRequest(), context)).text();
+    expect(body).toContain('title="3 guests"');
+    expect(body).toContain('title="1 guest"');
+    expect(body).not.toContain('Up to 3 guests');
+    expect(body).toContain('title="Up to 4"');
+    expect(body).toContain('>≤4</span>');
+  });
+
   it('counts the calendar over the whole horizon, independent of the list filters', async () => {
     const farOut = booking({ id: 'b-admin-far', reference: 'LVT-2026-320', startsAt: '2026-12-01T10:00:00.000Z', endsAt: '2026-12-01T11:00:00.000Z', operatorToken: 'op-far', cancelToken: 'cancel-far' });
     const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository([farOut]), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });

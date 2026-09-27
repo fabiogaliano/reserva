@@ -304,6 +304,8 @@
   "admin.today": "Hoje",
   "admin.manageBooking": "Gerir reserva",
   "admin.guestsUpTo": "Até {n}",
+  "admin.guestCount": "{n} pessoas",
+  "admin.guestCountOne": "1 pessoa",
   "admin.holdUntil": "até às {time}",
   "admin.copyReference": "Copiar referência",
   "admin.copyEmail": "Copiar e-mail",

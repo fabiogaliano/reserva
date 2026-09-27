@@ -229,6 +229,10 @@ export const defaultMessages = {
   'admin.manageBooking': 'Manage booking',
   // `{n}` is the party size a pricing tier covers, for a service that sells places "up to" a size.
   'admin.guestsUpTo': 'Up to {n}',
+  // The headcount the payer typed at checkout. Admin-owned rather than reusing widget.quantityCount,
+  // which a site selling "up to N" tiers overrides to say "up to" — wrong for an exact number.
+  'admin.guestCount': '{n} guests',
+  'admin.guestCountOne': '1 guest',
   'admin.holdUntil': 'until {time}',
   'admin.copyReference': 'Copy reference',
   'admin.copyEmail': 'Copy email',

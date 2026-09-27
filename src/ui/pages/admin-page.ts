@@ -234,7 +234,10 @@ function timeFormatting(locale: string, timezone: string): { text: (iso: string)
 // says it is an upper bound rather than passing the tier off as a headcount.
 function guestFigure(config: ReservaContext['config'], booking: Booking, messages: Messages): { value: string; label: string } {
   const people = (n: number): string => formatMessage(n === 1 ? messages['widget.person'] : messages['widget.quantityCount'], { n });
-  if (booking.guestCount !== null) return { value: String(booking.guestCount), label: people(booking.guestCount) };
+  if (booking.guestCount !== null) {
+    const exact = booking.guestCount === 1 ? messages['admin.guestCountOne'] : formatMessage(messages['admin.guestCount'], { n: booking.guestCount });
+    return { value: String(booking.guestCount), label: exact };
+  }
   let collects = false;
   try {
     collects = resolveService(config, booking.serviceSlug).collectGuestCount === true;
