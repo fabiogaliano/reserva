@@ -272,6 +272,19 @@ describe('listAdminBookings/countAdminBookings against real D1', () => {
     await expect(repo.countAdminBookings({ from: now, statuses: [] })).resolves.toBe(0);
   });
 
+  it('reads the highest numeric reference under a prefix, past deleted rows and odd suffixes', async () => {
+    await expect(repo.maxReferenceSequence('BKT-2026-')).resolves.toBe(0);
+    const hold = (id: string, reference: string) =>
+      seedHold(repo, id, '2026-08-05T09:00:00.000Z', '2026-08-05T10:00:00.000Z', '2026-12-31T00:00:00.000Z', { reference });
+    await hold('ref-a', 'BKT-2026-003');
+    await hold('ref-b', 'BKT-2026-040');
+    await hold('ref-c', 'BKT-2026-X99');
+    await hold('ref-d', 'BKT-2025-900');
+    await hold('ref-e', 'bkt-2026-500');
+    await expect(repo.maxReferenceSequence('BKT-2026-')).resolves.toBe(40);
+    await expect(repo.maxReferenceSequence('BKT-2025-')).resolves.toBe(900);
+  });
+
   it('pages in the requested direction with an id tie-break, so no row repeats or goes missing across pages', async () => {
     await seedConfirmed('adm-b', '2026-08-05T09:00:00.000Z');
     await seedConfirmed('adm-a', '2026-08-05T09:00:00.000Z');

@@ -347,7 +347,9 @@ export interface BookingRepository {
   getBookingByCancelToken(token: string, now: string): Promise<Booking | null>;
   getBookingByOperatorToken(token: string, now: string): Promise<Booking | null>;
   getBookingByOperatorTokenForRefundRecovery(token: string, now: string): Promise<Booking | null>;
-  countReferencesForYear(prefix: string): Promise<number>;
+  // The highest numeric sequence already used under `prefix` (0 when none). Deleted rows leave gaps,
+  // so a row count would restart numbering inside the range already taken.
+  maxReferenceSequence(prefix: string): Promise<number>;
   insertHold(input: BookingInsert): Promise<Booking>;
   // Same per-IP hold-cap guard as insertHold, plus a single-statement capacity guard. Returns
   // null when the capacity guard loses the race, distinct from HoldLimitExceededError (still
@@ -1319,11 +1321,14 @@ export function createBookingRepository(
       ).bind(hash, enc, placeholderToken(), legacyRow.id).run();
       return hydrateBooking(legacyRow, key);
     },
-    async countReferencesForYear(prefix) {
+    async maxReferenceSequence(prefix) {
+      // GLOB is case-sensitive, so the UNIQUE index on reference can serve the prefix; a suffix that
+      // is not all digits (a hand-made reference) is not a sequence and is skipped.
       const row = await first(db.prepare(
-        'SELECT COUNT(*) AS count FROM bookings WHERE reference LIKE ?',
-      ).bind(`${prefix}%`).all<{ count: number }>());
-      return Number(row?.count ?? 0);
+        `SELECT MAX(CAST(substr(reference, ?) AS INTEGER)) AS max FROM bookings
+         WHERE reference GLOB ? AND substr(reference, ?) NOT GLOB '*[^0-9]*'`,
+      ).bind(prefix.length + 1, `${prefix}*`, prefix.length + 1).all<{ max: number | null }>());
+      return Number(row?.max ?? 0);
     },
     async insertHold(input) {
       const holdIp = input.holdIp ?? null;
