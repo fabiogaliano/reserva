@@ -258,6 +258,7 @@ async function confirmBookingFromPaymentUnlocked(
   if (details.customerEmail !== undefined) customerPatch.customerEmail = details.customerEmail;
   if (details.customerPhone !== undefined) customerPatch.customerPhone = details.customerPhone;
   if (details.pickupAddress !== undefined) customerPatch.pickupAddress = details.pickupAddress;
+  if (details.guestCount !== undefined) customerPatch.guestCount = details.guestCount;
   let current = booking;
   let shouldDispatchConfirmation = current.status !== 'confirmed';
   let transitionApplied = false;

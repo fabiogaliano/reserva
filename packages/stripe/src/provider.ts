@@ -55,6 +55,9 @@ export interface StripeOptions {
   // checkout stays name-only.
   productDescription?: string | BookingCallback<string>;
   pickupFieldLabel?: string | BookingCallback<string>;
+  // The optional headcount field a `collectGuestCount` service adds. Stripe caps a custom field
+  // label at 50 characters.
+  guestCountFieldLabel?: string | BookingCallback<string>;
   // Stripe rejects consent collection unless the account has a Terms of Service URL in its
   // public business details, which a not-yet-activated test account lacks. Defaults to
   // 'required' to keep the chargeback-defense consent record; set 'none' for such an account.
@@ -120,6 +123,10 @@ export class StripeWebhookVerificationError extends Error {
 }
 
 const defaultPickupFieldLabel = 'Pickup address';
+const defaultGuestCountFieldLabel = 'Exact number of guests';
+// Three digits is what the numeric field allows, so anything outside 1..999 is not a headcount the
+// payer could have typed; it is dropped rather than stored as a misleading number.
+const MAX_GUEST_COUNT = 999;
 const checkoutSessionPlaceholder = '{CHECKOUT_SESSION_ID}';
 
 function objectId(value: string | { id: string } | null | undefined): string | null {
@@ -160,17 +167,26 @@ function paymentIntentOf(value: unknown): string | undefined {
   return undefined;
 }
 
+function guestCountOf(value: string | null | undefined): number | null {
+  const trimmed = value?.trim() ?? '';
+  if (!/^\d+$/.test(trimmed)) return null;
+  const count = Number(trimmed);
+  return count >= 1 && count <= MAX_GUEST_COUNT ? count : null;
+}
+
 function customerDetailsOf(session: Stripe.Checkout.Session): {
   customerName?: string | null;
   customerEmail?: string | null;
   customerPhone?: string | null;
   pickupAddress?: string | null;
+  guestCount?: number | null;
 } {
   const details: {
     customerName?: string | null;
     customerEmail?: string | null;
     customerPhone?: string | null;
     pickupAddress?: string | null;
+    guestCount?: number | null;
   } = {};
   if (session.customer_details) {
     details.customerName = session.customer_details.name;
@@ -179,6 +195,8 @@ function customerDetailsOf(session: Stripe.Checkout.Session): {
   }
   const pickupField = session.custom_fields?.find((field) => field.key === 'pickup_address');
   if (pickupField) details.pickupAddress = pickupField.text?.value?.trim() || null;
+  const guestCountField = session.custom_fields?.find((field) => field.key === 'guest_count');
+  if (guestCountField) details.guestCount = guestCountOf(guestCountField.numeric?.value);
   return details;
 }
 
@@ -332,6 +350,7 @@ export class StripeProvider implements PaymentProvider {
     const successUrl = resolveOption(this.options.successUrl, booking, config, defaultSuccessUrl(booking, config, routePaths));
     const cancelUrl = resolveOption(this.options.cancelUrl, booking, config, defaultCancelUrl(config));
     const pickupLabel = resolveOption(this.options.pickupFieldLabel, booking, config, defaultPickupFieldLabel);
+    const guestCountLabel = resolveOption(this.options.guestCountFieldLabel, booking, config, defaultGuestCountFieldLabel);
     const expiresInMinutes = Math.max(30, config.booking.holdMinutes - 5);
     const params: Stripe.Checkout.SessionCreateParams = {
       mode: 'payment',
@@ -356,9 +375,16 @@ export class StripeProvider implements PaymentProvider {
     // Keyed off the service's declared option instead of a fixed 'custom' id, so any option
     // marked requiresAddress collects the field. A stored pickupType the service no longer
     // declares resolves to undefined, safely skipping the field rather than guessing.
-    if (pickupOptionFor(service, booking.pickupType)?.requiresAddress) params.custom_fields = [{
+    const customFields: Stripe.Checkout.SessionCreateParams.CustomField[] = [];
+    if (pickupOptionFor(service, booking.pickupType)?.requiresAddress) customFields.push({
       key: 'pickup_address', label: { type: 'custom', custom: pickupLabel }, type: 'text',
-    }];
+    });
+    // Optional so a payer who does not know yet is never blocked from paying for the slot.
+    if (service.collectGuestCount) customFields.push({
+      key: 'guest_count', label: { type: 'custom', custom: guestCountLabel }, type: 'numeric',
+      optional: true, numeric: { maximum_length: 3 },
+    });
+    if (customFields.length > 0) params.custom_fields = customFields;
     // With no `legal.termsUrl` there is nothing for the payer to consent to, so absence degrades
     // to the same 'none' an unactivated Stripe account needs rather than a consent step pointing nowhere.
     if ((this.options.termsOfService ?? 'required') === 'required' && config.legal.termsUrl) {

@@ -375,6 +375,7 @@ export interface BookingRepository {
     customerEmail?: string | null;
     customerPhone?: string | null;
     pickupAddress?: string | null;
+    guestCount?: number | null;
     updatedAt: string;
   }): Promise<Booking | null>;
   confirmWithSideEffectOperations(id: string, input: {
@@ -384,6 +385,7 @@ export interface BookingRepository {
     customerEmail?: string | null;
     customerPhone?: string | null;
     pickupAddress?: string | null;
+    guestCount?: number | null;
     leaseToken: string;
     oversold: boolean;
     updatedAt: string;
@@ -401,6 +403,7 @@ export interface BookingRepository {
     customerEmail?: string | null;
     customerPhone?: string | null;
     pickupAddress?: string | null;
+    guestCount?: number | null;
   }, leaseToken: string, updatedAt: string): Promise<boolean>;
   // Lazy repair for a confirmed booking whose confirmation rows are missing (a subscriber or a
   // split-capable email provider configured after confirmation). A split email row is only
@@ -641,6 +644,7 @@ interface BookingRow {
   reference: string;
   service_slug: string;
   quantity: number;
+  guest_count: number | null;
   // The DB can't see the pickup-option domain (that's app config), so assertValidBookingRow
   // below only enforces that a present id is a non-empty string. NULL means no location module.
   pickup_type: PickupType | null;
@@ -720,6 +724,7 @@ function mapBooking(row: BookingRow): Booking {
     reference: row.reference,
     serviceSlug: row.service_slug,
     quantity: Number(row.quantity),
+    guestCount: row.guest_count === null ? null : Number(row.guest_count),
     pickupType: row.pickup_type,
     pickupAddress: row.pickup_address,
     meetingPointId: row.meeting_point_id ?? null,
@@ -784,7 +789,7 @@ function adminWindowPredicate(window: AdminBookingWindow): { where: string; para
 // D1 caps bound parameters per statement well below a full admin page of rows.
 const TOKEN_HYDRATION_CHUNK = 50;
 
-const bookingColumns = `id, reference, service_slug, quantity, pickup_type, pickup_address, meeting_point_id,
+const bookingColumns = `id, reference, service_slug, quantity, guest_count, pickup_type, pickup_address, meeting_point_id,
   meeting_point_label, starts_at, ends_at,
   customer_name, customer_email, customer_phone, locale, price_minor, currency, status, hold_expires_at,
   payment_session_ref, payment_ref, calendar_event_id, metadata, cancel_token, operator_token,
@@ -1506,6 +1511,7 @@ export function createBookingRepository(
       const columnMap: Record<string, string> = {
         paymentRef: 'payment_ref', customerName: 'customer_name',
         customerEmail: 'customer_email', customerPhone: 'customer_phone', pickupAddress: 'pickup_address',
+        guestCount: 'guest_count',
       };
       const entries = Object.entries(patch).filter(([, value]) => value !== undefined);
       const columns = entries.map(([key]) => columnMap[key]);
@@ -1524,6 +1530,7 @@ export function createBookingRepository(
       const columnMap: Record<string, string> = {
         paymentRef: 'payment_ref', customerName: 'customer_name',
         customerEmail: 'customer_email', customerPhone: 'customer_phone', pickupAddress: 'pickup_address',
+        guestCount: 'guest_count',
       };
       const entries = Object.entries(patch).filter(([, value]) => value !== undefined);
       const columns = entries.map(([key]) => columnMap[key]);
@@ -1575,6 +1582,7 @@ export function createBookingRepository(
       const columnMap: Record<string, string> = {
         paymentRef: 'payment_ref', customerName: 'customer_name',
         customerEmail: 'customer_email', customerPhone: 'customer_phone', pickupAddress: 'pickup_address',
+        guestCount: 'guest_count',
       };
       const entries = Object.entries(patch).filter(([, value]) => value !== undefined);
       if (entries.length === 0) return false;

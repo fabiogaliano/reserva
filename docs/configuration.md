@@ -59,6 +59,12 @@ two of them. Omit the key and every booking takes exactly one unit, which is wha
 deployments want. A formula-priced service must declare it: the formula multiplies by the same
 units checkout reserves, and a headcount with no `seatsPerUnit` has no unit count to multiply by.
 
+`collectGuestCount: true` is for a service sold as "up to N", where `quantity` is the priced tier
+rather than the number of people coming. The payment page asks for the exact headcount as an
+optional field (on Stripe, a numeric custom field). The answer is stored as `booking.guestCount`
+and shown in the admin bookings list, or "≤N" when the payer left it blank. Price and capacity
+still follow `quantity`.
+
 ## Opening hours
 
 Declare the business's hours once, at the top level, and every service without a `schedule` of

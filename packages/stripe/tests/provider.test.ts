@@ -227,6 +227,38 @@ describe('stripe() adapter', () => {
     }), expect.anything());
   });
 
+  it('asks a collectGuestCount service for an optional exact headcount, after the pickup address', async () => {
+    const { client, sessions } = makeClient();
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    const guestConfig: ResolvedClientConfig = { ...mazeConfig, services: { vintage: { ...mazeTour, collectGuestCount: true } } };
+    await provider.createCheckout(booking({ pickupType: 'custom_pickup' }), guestConfig);
+    expect(sessions.create).toHaveBeenCalledWith(expect.objectContaining({
+      custom_fields: [
+        { key: 'pickup_address', label: { type: 'custom', custom: 'Pickup address' }, type: 'text' },
+        {
+          key: 'guest_count', label: { type: 'custom', custom: 'Exact number of guests' }, type: 'numeric',
+          optional: true, numeric: { maximum_length: 3 },
+        },
+      ],
+    }), expect.anything());
+  });
+
+  it('asks for the headcount alone when no address is needed, with a per-booking label', async () => {
+    const { client, sessions } = makeClient();
+    const provider = stripe({
+      secretKey: 'sk_test', webhookSecret: 'whsec_test', client,
+      guestCountFieldLabel: (b) => b.locale === 'pt-PT' ? 'Número exato de pessoas' : 'How many of you?',
+    });
+    const guestConfig: ResolvedClientConfig = { ...mazeConfig, services: { vintage: { ...mazeTour, collectGuestCount: true } } };
+    await provider.createCheckout(booking({ pickupType: 'default', locale: 'pt-PT' }), guestConfig);
+    expect(sessions.create).toHaveBeenCalledWith(expect.objectContaining({
+      custom_fields: [{
+        key: 'guest_count', label: { type: 'custom', custom: 'Número exato de pessoas' }, type: 'numeric',
+        optional: true, numeric: { maximum_length: 3 },
+      }],
+    }), expect.anything());
+  });
+
   it('omits terms-of-service consent when termsOfService is none', async () => {
     const { client, sessions } = makeClient();
     const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client, termsOfService: 'none' });
@@ -710,6 +742,21 @@ describe('Stripe mapping helpers', () => {
     expect(stripeEventToParsed({ id: 'evt_refund', type: 'charge.refunded', data: { object: {
       metadata: { bookingId: 'booking-1' }, payment_intent: { id: 'pi_1' }, amount_captured: 10000, amount_refunded: 10000,
     } } } as unknown as Stripe.Event).refundRef).toBeUndefined();
+  });
+
+  it('reads the optional headcount as a positive integer, and a blank or unusable one as null', () => {
+    const withGuestCount = (value: string | null) => ({
+      id: 'cs_1', status: 'complete', payment_status: 'paid', payment_intent: 'pi_1', metadata: null,
+      custom_fields: [{ key: 'guest_count', type: 'numeric', optional: true, numeric: { value } }],
+    }) as unknown as Stripe.Checkout.Session;
+    expect(sessionStatusFromStripe(withGuestCount('3')).guestCount).toBe(3);
+    expect(sessionStatusFromStripe(withGuestCount(' 12 ')).guestCount).toBe(12);
+    for (const unusable of [null, '', '0', '2.5', '-1', 'abc']) {
+      expect(sessionStatusFromStripe(withGuestCount(unusable)).guestCount).toBeNull();
+    }
+    expect(stripeEventToParsed({ id: 'evt_1', type: 'checkout.session.completed', data: { object: withGuestCount('4') } } as unknown as Stripe.Event).guestCount).toBe(4);
+    // A service that never asked has no field, so the key stays absent rather than null.
+    expect(sessionStatusFromStripe({ id: 'cs_1', status: 'complete', metadata: null } as Stripe.Checkout.Session)).not.toHaveProperty('guestCount');
   });
 
   it('maps a session to the public status shape', () => {

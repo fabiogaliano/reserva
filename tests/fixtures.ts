@@ -65,6 +65,7 @@ export function booking(overrides: Partial<Booking> = {}): Booking {
     reference: 'LVT-2026-001',
     serviceSlug: 'vintage',
     quantity: 2,
+    guestCount: null,
     pickupType: 'default',
     pickupAddress: null,
     meetingPointId: null,

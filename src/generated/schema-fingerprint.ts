@@ -6,7 +6,8 @@ export const RESERVA_MIGRATIONS = [
   "0002_payment_verification_incidents.sql",
   "0003_reconciliation_lease.sql",
   "0004_partial_refunds.sql",
-  "0005_calendar_patch_outbox.sql"
+  "0005_calendar_patch_outbox.sql",
+  "0006_guest_count.sql"
 ] as const;
 
 export interface ReservaSchemaTable {
@@ -71,7 +72,8 @@ export const RESERVA_SCHEMA_TABLES: Readonly<Record<string, ReservaSchemaTable>>
       "cancel_token_revoked_at",
       "reschedule_transition_version",
       "meeting_point_id",
-      "meeting_point_label"
+      "meeting_point_label",
+      "guest_count"
     ],
     "indexes": [
       "idx_bookings_cancel_token_hash",

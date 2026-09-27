@@ -54,6 +54,14 @@ Every amount is minor units of the booking's own currency (`config.business.curr
 `createCheckout`'s optional `expiresAt` is a UTC ISO instant — return the provider's own value, not
 the one you requested, so an idempotent replay reports the original session's expiry.
 
+### Collected customer details
+
+`parseWebhook` and `getSession` may return what the payment page collected: `customerName`,
+`customerEmail`, `customerPhone`, `pickupAddress` (for a pickup option with `requiresAddress`) and
+`guestCount` (a positive integer, for a service with `collectGuestCount`). Leave a key out when the
+page never asked, and return `null` when it asked and got no usable answer. Reserva writes these
+at confirmation and only fills blanks afterwards, so a replayed or late event cannot overwrite them.
+
 ### Optional members
 
 - `cancelPayment?(paymentRef)` — best effort by contract. Reserva calls it to stop money that

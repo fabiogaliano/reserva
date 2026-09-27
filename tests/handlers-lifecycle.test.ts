@@ -64,6 +64,25 @@ describe('Reserva handlers', () => {
     expect(emails).toBe(1);
   });
 
+  it('stores the exact headcount the payer gave alongside the priced quantity', async () => {
+    const seeded = booking({ id: 'b-guests', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', paymentSessionRef: 'cs_1', paymentRef: null, quantity: 4 });
+    const repo = fakeRepository([seeded]);
+    const base = providers();
+    const context = createReservaContext({
+      config,
+      db: {} as D1Database,
+      repo,
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      providers: providers({
+        payments: { ...base.payments, parseWebhook: async () => ({ ...await base.payments.parseWebhook(new Request('https://example.test')), guestCount: 3 }) },
+      }),
+    });
+
+    const response = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), context);
+    expect(response.status).toBe(200);
+    expect(repo.rows.get(seeded.id)).toMatchObject({ status: 'confirmed', quantity: 4, guestCount: 3 });
+  });
+
   it('returns a retryable webhook error while another confirmation lease is active', async () => {
     const seeded = booking({
       id: 'b-leased',

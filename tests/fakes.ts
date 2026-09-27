@@ -320,7 +320,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         );
         if (active.length >= input.maxActiveHoldsForIp) throw new HoldLimitExceededError();
       }
-      const created: Booking = { ...booking(), ...input, pickupAddress: null, customerName: null, customerEmail: null, customerPhone: null, status: 'hold', paymentSessionRef: null, paymentRef: null, calendarEventId: null, cancelledAt: null, cancelledBy: null, rescheduledFrom: null };
+      const created: Booking = { ...booking(), ...input, guestCount: null, pickupAddress: null, customerName: null, customerEmail: null, customerPhone: null, status: 'hold', paymentSessionRef: null, paymentRef: null, calendarEventId: null, cancelledAt: null, cancelledBy: null, rescheduledFrom: null };
       const stored = storeTokens(created);
       rows.set(stored.id, stored);
       // A newly created row is hash-backed from the start (never "legacy"), mirroring
@@ -359,7 +359,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       }
       const used = maxConcurrentInInterval(input.startsAt, input.occupancyEndsAt, input.createdAt);
       if (used + input.occupancyUnits > capacity) return null;
-      const created: Booking = { ...booking(), ...input, pickupAddress: null, customerName: null, customerEmail: null, customerPhone: null, status: 'hold', paymentSessionRef: null, paymentRef: null, calendarEventId: null, cancelledAt: null, cancelledBy: null, rescheduledFrom: null };
+      const created: Booking = { ...booking(), ...input, guestCount: null, pickupAddress: null, customerName: null, customerEmail: null, customerPhone: null, status: 'hold', paymentSessionRef: null, paymentRef: null, calendarEventId: null, cancelledAt: null, cancelledBy: null, rescheduledFrom: null };
       const stored = storeTokens(created);
       rows.set(stored.id, stored);
       occupancyMeta.set(stored.id, { units: input.occupancyUnits, endsAt: input.occupancyEndsAt });
@@ -464,6 +464,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         ...(current.customerEmail === null && patch.customerEmail !== undefined ? { customerEmail: patch.customerEmail } : {}),
         ...(current.customerPhone === null && patch.customerPhone !== undefined ? { customerPhone: patch.customerPhone } : {}),
         ...(current.pickupAddress === null && patch.pickupAddress !== undefined ? { pickupAddress: patch.pickupAddress } : {}),
+        ...(current.guestCount === null && patch.guestCount !== undefined ? { guestCount: patch.guestCount } : {}),
         updatedAt,
       };
       rows.set(id, updated);

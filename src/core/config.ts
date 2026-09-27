@@ -246,6 +246,10 @@ const serviceSchema = z.object({
   // Declared only to reject it by name: silently stripping an unknown key would leave a deployment
   // that still reads as a working config while quietly overselling.
   occupancyFor: z.unknown().optional().refine((value) => value === undefined, 'replaced by occupancy.seatsPerUnit'),
+  // For a service sold by the vehicle or group ("up to 4"), `quantity` is the tier, not the people
+  // in it. Opting in asks the payer for the exact headcount as an optional field on the payment
+  // page, so the operator is not planning around the tier's ceiling.
+  collectGuestCount: z.boolean().optional(),
   // Opt-in per service; absent means no pickup/meeting-point dimension anywhere (pricing, checkout,
   // emails, admin, calendar).
   location: locationSchema.optional(),

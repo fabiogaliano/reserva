@@ -51,6 +51,7 @@ export interface PaymentCustomerDetails {
   customerEmail?: string | null;
   customerPhone?: string | null;
   pickupAddress?: string | null;
+  guestCount?: number | null;
 }
 
 // The closed set of payment events Reserva reacts to, exported as a runtime value so a provider

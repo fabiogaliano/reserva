@@ -334,6 +334,25 @@ describe('D1 booking repository', () => {
     await expect(repo.getBookingById('booking-pickup-null')).resolves.toMatchObject({ pickupType: null });
   });
 
+  it('round-trips the payer-given headcount through confirmation without letting a late detail overwrite it', async () => {
+    const created = await repo.insertHold({
+      id: 'booking-guests', reference: 'BKT-2026-GUESTS', serviceSlug: 'vintage', quantity: 4, pickupType: 'default',
+      startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
+      holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'guests-cancel', operatorToken: 'guests-operator',
+      createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
+    });
+    expect(created.guestCount).toBeNull();
+
+    await repo.transitionToConfirmed(created.id, { expectedStatusIn: ['hold'], guestCount: 3, updatedAt: '2026-07-21T10:01:00.000Z' });
+    await expect(repo.getBookingById(created.id)).resolves.toMatchObject({ quantity: 4, guestCount: 3 });
+
+    await repo.acquireConfirmationLease(created.id, 'lease-guests', '2026-07-21T10:02:00.000Z', '2026-07-21T10:07:00.000Z');
+    await repo.applyConfirmedPaymentDetails(created.id, { guestCount: 2 }, 'lease-guests', '2026-07-21T10:02:00.000Z');
+    await expect(repo.getBookingById(created.id)).resolves.toMatchObject({ guestCount: 3 });
+
+    await expect(db.prepare('UPDATE bookings SET guest_count = 0 WHERE id = ?').bind(created.id).run()).rejects.toThrow(/CHECK/);
+  });
+
   describe('token hashing, expiry, and revocation', () => {
     // A second repository instance bound to the same D1 database but with RESERVA_TOKEN_ENC_KEY
     // configured, so these tests can exercise the full encrypt-at-insert/decrypt-at-read round trip

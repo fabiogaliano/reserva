@@ -27,7 +27,7 @@ export interface DevEmail {
 // arrays survive across requests within the dev server's isolate, exactly like the Maps below.
 export const devOutbox: { emails: DevEmail[]; alerts: OperationalAlert[] } = { emails: [], alerts: [] };
 
-const checkoutSessions = new Map<string, { amountTotal: number; currency: string; pickupAddress: string | null }>();
+const checkoutSessions = new Map<string, { amountTotal: number; currency: string; pickupAddress: string | null; guestCount: number | null }>();
 const calendarEvents = new Map<string, CalEvent>();
 
 let forceNextCalendarFailure = false;
@@ -44,6 +44,8 @@ export interface DevProvidersOptions {
   customer?: { name?: string; email?: string; phone?: string };
   // Returned as the collected address for any pickup option whose config requires one.
   pickupAddress?: string;
+  // Returned as the payer's exact headcount for a service that sets `collectGuestCount`.
+  guestCount?: number;
 }
 
 const DEFAULT_CUSTOMER = { name: 'Local Demo Customer', email: 'customer@example.test', phone: '+351 910 000 000' };
@@ -67,6 +69,7 @@ export function devProviders(options: DevProvidersOptions = {}): ReservaProvider
           amountTotal: booking.priceMinor,
           currency: config.business.currency,
           pickupAddress: requiresAddress ? options.pickupAddress ?? null : null,
+          guestCount: service.collectGuestCount ? options.guestCount ?? null : null,
         });
         const confirmation = routePaths?.confirmationPage ?? '/booking-confirmation';
         return {
@@ -96,6 +99,7 @@ export function devProviders(options: DevProvidersOptions = {}): ReservaProvider
           customerEmail: customer.email,
           customerPhone: customer.phone,
           pickupAddress: session.pickupAddress,
+          guestCount: session.guestCount,
         };
       },
       async refund(paymentRef: string, expectedAmountMinor: number) {

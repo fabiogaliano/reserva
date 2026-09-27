@@ -417,6 +417,12 @@ describe('core config and pricing validation', () => {
     expect(validateConfig(declarative).services.vintage?.occupancy).toEqual({ seatsPerUnit: 6 });
   });
 
+  it('carries the collectGuestCount opt-in through, absent by default, and rejects a non-boolean', () => {
+    expect(validateConfig({ ...config, services: { vintage: { ...service, collectGuestCount: true } } }).services.vintage?.collectGuestCount).toBe(true);
+    expect(validateConfig(config).services.vintage?.collectGuestCount).toBeUndefined();
+    expect(() => validateConfig({ ...config, services: { vintage: { ...service, collectGuestCount: 'yes' } } })).toThrow(/collectGuestCount/);
+  });
+
   it('allows a season range that wraps across year-end', () => {
     const wrapped = {
       ...config,

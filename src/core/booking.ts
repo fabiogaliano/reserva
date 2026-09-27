@@ -10,6 +10,9 @@ export interface Booking {
   reference: string;
   serviceSlug: string;
   quantity: number;
+  // The exact headcount the payer gave, when the service sets `collectGuestCount`; `quantity` is
+  // what was priced. NULL when the service does not ask or the payer skipped the optional field.
+  guestCount: number | null;
   // Valid ids live in `ServiceConfig.pickupOptions`, per service — neither the DB nor this type
   // enumerates them. NULL means the service declares no location options.
   pickupType: PickupType | null;

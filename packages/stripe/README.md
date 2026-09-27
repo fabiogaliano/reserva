@@ -38,7 +38,7 @@ There is no class to construct and no default export: the factory is the whole s
 | `secretKey` | Stripe secret key. Required. |
 | `webhookSecret` | Signing secret of the endpoint you point at `/api/booking/webhooks/payment`. Required. |
 | `termsOfService` | `'required'` (default) records consent at checkout; `'none'` for accounts without a public ToS URL. |
-| `lineItemName`, `productDescription`, `pickupFieldLabel` | Copy on the hosted checkout line item and pickup field. Each takes a value or a `(booking, config)` callback. `lineItemName` defaults to the service's localized `title`. |
+| `lineItemName`, `productDescription`, `pickupFieldLabel`, `guestCountFieldLabel` | Copy on the hosted checkout line item, pickup field and headcount field. Each takes a value or a `(booking, config)` callback. `lineItemName` defaults to the service's localized `title`; `guestCountFieldLabel` to "Exact number of guests" (Stripe allows 50 characters). |
 | `successUrl`, `cancelUrl` | Override the URLs Reserva derives from `business.url` and its confirmation route. Each takes a string or a `(booking, config)` callback; `cancelUrl` defaults to `business.url`. |
 | `now` | Inject a clock (tests). |
 | `client` | Inject a Stripe client (tests). |
@@ -72,6 +72,9 @@ customer sees a "we couldn't take this payment" page. Money that settles regardl
   the capacity it holds.
 - `pickup_address` is collected as a custom field only when the booked service's location option
   declares `requiresAddress`.
+- `guest_count` is an optional numeric custom field, added only when the booked service sets
+  `collectGuestCount`. A blank or unusable answer is stored as no headcount; the payer is never
+  blocked from paying.
 - Checkout creation is idempotent per booking, and a refund carries a marker that lets a retry
   recognize a refund it already issued instead of issuing a second one.
 
