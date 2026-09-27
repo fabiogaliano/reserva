@@ -266,7 +266,7 @@ export function handleCheckout(request: Request, context: ReservaContext): Promi
     const prefix = `${context.config.business.shortCode.toUpperCase()}-${year}-`;
     // No per-candidate pre-read: the insert's ON CONFLICT(reference) is the authority, and a
     // collision comes back as ReferenceConflictError for the retry below to regenerate against.
-    let sequence = await context.repo.countReferencesForYear(prefix) + 1;
+    let sequence = await context.repo.maxReferenceSequence(prefix) + 1;
     let referenceAttempts = 0;
     // checkSlot above is only a fast-path pre-check (TOCTOU — two concurrent checkouts can both pass
     // it for the last unit). insertHoldWithCapacity is the authority: it re-evaluates capacity inside

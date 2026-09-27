@@ -310,7 +310,10 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       }
       return null;
     },
-    countReferencesForYear: async (prefix) => [...rows.values()].filter((item) => item.reference.startsWith(prefix)).length,
+    maxReferenceSequence: async (prefix) => Math.max(0, ...[...rows.values()]
+      .map((item) => item.reference)
+      .filter((reference) => reference.startsWith(prefix) && /^\d+$/.test(reference.slice(prefix.length)))
+      .map((reference) => Number(reference.slice(prefix.length)))),
     insertHold: async (input) => {
       if (input.holdIp && input.maxActiveHoldsForIp) {
         const active = [...rows.values()].filter((item) =>
