@@ -202,12 +202,14 @@ describe('GET /admin listing (one window + status query)', () => {
     expect(body).toContain(`href="?${state}&amp;date=2026-06-20&amp;tab=availability" data-reserva-admin-tab="availability"`);
     expect(body).toContain(`href="?${state}&amp;tab=availability&amp;date=2026-06-21#bk-override"`);
     expect(body).not.toMatch(/href="[^"]*saved=/);
-    expect(body).toContain('<option value="past" selected>Past</option>');
-    expect(body).toContain('<option value="cancelled" selected>Cancelled</option>');
+    // The period switch and status chips are links that mark the active choice; a search hides the
+    // per-status counts, since they would describe the window rather than the matches.
+    expect(body).toContain('href="?when=past&amp;q=Ana&amp;status=cancelled&amp;date=2026-06-20&amp;tab=upcoming#bk-upcoming" aria-current="true">Past</a>');
+    expect(body).toContain('href="?when=past&amp;q=Ana&amp;status=cancelled&amp;date=2026-06-20&amp;tab=upcoming#bk-upcoming" aria-current="true">Cancelled</a>');
     expect(body).toContain('class="bk-filter-clear" href="?date=2026-06-20&amp;tab=upcoming#bk-upcoming"');
     // An unknown status is ignored rather than matching nothing.
     const bogus = await (await handleAdminGet(new Request(`${ADMIN_URL}?status=bogus`), context)).text();
-    expect(bogus).toContain('<option value="" selected>All</option>');
+    expect(bogus).toContain('<a class="bk-chip" href="?tab=upcoming#bk-upcoming" aria-current="true">All <b>');
     expect(bogus).not.toContain('bk-filter-clear');
   });
 
@@ -215,9 +217,10 @@ describe('GET /admin listing (one window + status query)', () => {
     const localizedConfig: ResolvedClientConfig = { ...config, admin: { ...config.admin, locale: 'pt-PT' } };
     const context = createReservaContext({ config: localizedConfig, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?status=no_show`), context)).text();
-    for (const label of ['Todas', 'Confirmadas', 'A aguardar pagamento', 'Expiradas', 'Canceladas', 'Não compareceram', 'Próximas', 'Passadas']) {
-      expect(body).toContain(`>${label}</option>`);
+    for (const label of ['Todas', 'Confirmadas', 'A aguardar pagamento', 'Expiradas', 'Canceladas', 'Não compareceram']) {
+      expect(body).toContain(`>${label} <b>`);
     }
+    for (const label of ['Próximas', 'Passadas']) expect(body).toContain(`>${label}</a>`);
     expect(body).toContain('Nenhuma reserva corresponde aos filtros.');
     expect(body).not.toContain('Mostrar reservas mais distantes');
     const unfiltered = await (await handleAdminGet(adminGetRequest(), context)).text();
@@ -296,8 +299,8 @@ describe('GET /admin listing (one window + status query)', () => {
     expect(body).toContain('href="?tab=availability" data-reserva-admin-tab="availability"');
     expect(body).toContain('<section class="bk-panel" id="bk-upcoming">');
     expect(body).toContain('<section class="bk-panel" id="bk-availability" hidden>');
-    // Sidebar entries replace the page; tab links never do.
-    expect(body).toContain('href="/booking/admin" class="bk-active" aria-current="page"');
+    // Top bar entries replace the page; tab links never do.
+    expect(body).toContain('<nav class="bk-topbar-nav" aria-label="Admin navigation"><a href="/booking/admin" aria-current="page">');
     expect(body).toContain('href="/booking/admin?view=settings"');
   });
 
@@ -328,7 +331,8 @@ describe('GET /admin listing (one window + status query)', () => {
     const dashboard = await handleAdminGet(adminGetRequest(), context);
     const dashboardBody = await dashboard.text();
     expect(dashboardBody).toContain('<html lang="pt-PT">');
-    expect(dashboardBody).toContain('<title>Administração de reservas — Example City Tours</title>');
+    expect(dashboardBody).toContain('<title>Painel — Example City Tours</title>');
+    expect(dashboardBody).toContain('>Reservas<');
     expect(dashboardBody).toContain('>Próximas<');
     expect(dashboardBody).toContain('>Disponibilidade<');
 
@@ -402,10 +406,11 @@ describe('GET /admin listing (one window + status query)', () => {
     // cell's accessible name and tooltip rather than as printed text under every number.
     expect(body).toContain('2/2 peak · 1 booking');
     expect(body).not.toContain('1/2 peak');
-    // The island carries the same preformatted line per day so a client-side selection can show
-    // it; the cell's aria-label alone would be lost the moment the enhancer rewrites the panel.
-    expect(body).toContain('"loads":{');
-    expect(body).toContain('"2026-06-20":"2/2 peak · 1 booking"');
+    // The island carries the same figures per day ([capacity, default, peak units, bookings,
+    // adjusted]) so a client-side selection can redraw the day card; the cell's aria-label alone
+    // would be lost the moment the enhancer rewrites it.
+    expect(body).toContain('"meta":{');
+    expect(body).toContain('"2026-06-20":[2,2,2,1,0]');
   });
 
   // Checkout compares capacity against the most units in use at one instant, so back-to-back trips
@@ -420,10 +425,11 @@ describe('GET /admin listing (one window + status query)', () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository([morning, noon, overlapping, cancelled]), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
     const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?date=2026-06-20`), context)).text();
-    expect(body).toContain('"2026-06-20":"2/2 peak · 3 bookings"');
-    // The selected day's panel spells out the same line and lists only the live bookings.
-    expect(body).toContain('<div class="bk-day-detail" data-reserva-day-detail><p class="bk-hint">2/2 peak · 3 bookings</p>');
-    const panel = /<div class="bk-day-detail"[^]*?<\/div>/.exec(body)?.[0] ?? '';
+    expect(body).toContain('2/2 peak · 3 bookings');
+    expect(body).toContain('"2026-06-20":[2,2,2,3,0]');
+    // The selected day's card spells out the same figures and lists only the live bookings.
+    expect(body).toContain('<div class="bk-day-detail" data-reserva-day-detail><div class="bk-loadline"><div class="bk-loadline-top"><span>Busiest moment: 2 of 2</span><span>3 bookings</span></div>');
+    const panel = /<div class="bk-day-detail"[^]*?<\/ul>/.exec(body)?.[0] ?? '';
     expect(panel).not.toContain('Cancelled');
   });
 
@@ -433,7 +439,7 @@ describe('GET /admin listing (one window + status query)', () => {
     const farOut = booking({ id: 'b-admin-far', reference: 'LVT-2026-320', startsAt: '2026-12-01T10:00:00.000Z', endsAt: '2026-12-01T11:00:00.000Z', operatorToken: 'op-far', cancelToken: 'cancel-far' });
     const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository([farOut]), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?when=past&status=cancelled`), context)).text();
-    expect(body).toContain('"2026-12-01":"1/2 peak · 1 booking"');
+    expect(body).toContain('"2026-12-01":[2,2,1,1,0]');
   });
 
   // With a date in the URL the handler infers the availability tab, so the list's own filter
@@ -442,7 +448,7 @@ describe('GET /admin listing (one window + status query)', () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?date=2026-06-20&q=LVT&tab=upcoming`), context)).text();
     expect(body).toContain('<section class="bk-panel" id="bk-upcoming">');
-    expect(body).toContain('<form method="get" class="bk-searchbar" role="search"><input type="hidden" name="tab" value="upcoming">');
+    expect(body).toContain('<form method="get" class="bk-filterbar" role="search"><input type="hidden" name="tab" value="upcoming">');
     expect(body).toContain('class="bk-filter-clear" href="?date=2026-06-20&amp;tab=upcoming#bk-upcoming"');
 
     const roundTrip = await (await handleAdminGet(new Request(`${ADMIN_URL}?tab=upcoming&date=2026-06-20&q=&status=`), context)).text();
@@ -472,7 +478,9 @@ describe('GET /admin listing (one window + status query)', () => {
       const multiBody = await multiResponse.text();
       // The row summary names one place: the resolved meeting point, since this service has more
       // than one to choose between.
-      expect(multiBody).toContain('bk-booking-sub">Vintage Tour · 2 people · The Station');
+      expect(multiBody).toContain('bk-booking-sub">Vintage Tour · The Station</span>');
+      // Party size has its own column beside the name rather than riding in the sub-line.
+      expect(multiBody).toContain('<span class="bk-booking-guests" title="2 people">');
 
       const singleRepo = fakeRepository([booking({
         id: 'b-admin-single-point', reference: 'LVT-2026-401', startsAt: '2026-06-21T09:00:00.000Z', endsAt: '2026-06-21T10:00:00.000Z',
@@ -483,7 +491,7 @@ describe('GET /admin listing (one window + status query)', () => {
       const singleBody = await singleResponse.text();
       expect(singleBody).not.toContain('The Station');
       // One declared point is not a choice, so the row names the pickup option instead.
-      expect(singleBody).toContain('bk-booking-sub">Vintage Tour · 2 people · Meeting point');
+      expect(singleBody).toContain('bk-booking-sub">Vintage Tour · Meeting point</span>');
     });
 
     it('finds a booking by its resolved meeting-point label via the search filter', async () => {
@@ -538,7 +546,7 @@ describe('pickup option label + sub-lines', () => {
     const body = await response.text();
     // The summary names the meeting point; the option's own label and the address are facts in
     // the row's disclosure, where the detail that only matters sometimes belongs.
-    expect(body).toContain('bk-booking-sub">Vintage Tour · 2 people · The Station');
+    expect(body).toContain('bk-booking-sub">Vintage Tour · The Station</span>');
     expect(body).toContain('<dd>Custom pickup &amp; drop-off</dd>');
     expect(body).toContain('<dd>Hotel Avenida</dd>');
   });
@@ -559,8 +567,8 @@ describe('pickup option label + sub-lines', () => {
     const response = await handleAdminGet(adminGetRequest(), context);
     const body = await response.text();
     // The fixture's own declared labels for the two ids.
-    expect(body).toContain('bk-booking-sub">Vintage Tour · 2 people · Meeting point');
-    expect(body).toContain('bk-booking-sub">Vintage Tour · 2 people · Hotel pickup');
+    expect(body).toContain('bk-booking-sub">Vintage Tour · Meeting point</span>');
+    expect(body).toContain('bk-booking-sub">Vintage Tour · Hotel pickup</span>');
     // requiresAddress drives the address fact now, and 'custom' declares it.
     expect(body).toContain('<dd>Hotel Avenida</dd>');
   });
@@ -588,7 +596,7 @@ describe('pickup option label + sub-lines', () => {
     expect(body).toContain('<dd>meet_elsewhere</dd>');
     // An unknown option has no requiresAddress flag to key off, so the stored address stays
     // withheld while the meeting point still names the row.
-    expect(body).toContain('bk-booking-sub">Vintage Tour · 2 people · The Square');
+    expect(body).toContain('bk-booking-sub">Vintage Tour · The Square</span>');
     expect(body).not.toContain('Hotel Avenida');
   });
 
@@ -705,7 +713,7 @@ describe('POST /admin day overrides (spec §11)', () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?date=2026-06-20`), context)).text();
     const dayForm = /<form method="post" id="bk-override"[^]*?<\/form>/.exec(body)?.[0] ?? '';
-    expect(dayForm).toMatch(/<input class="bk-input" name="capacity" type="number" min="0" step="1" required/);
+    expect(dayForm).toMatch(/<input class="bk-input" id="bk-capacity" name="capacity" type="number" min="0" step="1" required/);
     expect(dayForm).toContain('name="action" value="close" formnovalidate');
     expect(dayForm).toContain('name="action" value="clear" formnovalidate');
     expect(dayForm).not.toContain('name="action" value="set" formnovalidate');

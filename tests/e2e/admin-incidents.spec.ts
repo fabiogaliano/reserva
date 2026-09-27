@@ -71,7 +71,7 @@ test('a one-shot provider failure opens an incident, "Try again" resolves it, a 
   // Oversell: no Retry button, only the manual-handling note.
   await expect(oversellCard.getByRole('button', { name: 'Try again' })).toHaveCount(0);
   await expect(oversellCard).toContainText('no automatic retry is available');
-  await expect(oversellCard.getByRole('button', { name: 'I handled this manually' })).toBeVisible();
+  await expect(oversellCard.getByRole('button', { name: 'Mark as resolved' })).toBeVisible();
 
   // --- "Try again": the forced failure was one-shot, so the row recovers immediately and the
   // redirect reports the real outcome ('Marked as handled.') instead of a generic "retry attempted"
@@ -87,15 +87,15 @@ test('a one-shot provider failure opens an incident, "Try again" resolves it, a 
   // (no reconciliation pass needed), records who/when, and survives a reload in history.
   const manualForm = manualCard.locator('form', { hasText: 'What did you do' });
   // First press reveals the note instead of submitting; the fill below then has somewhere to go.
-  await manualForm.getByRole('button', { name: 'I handled this manually' }).click();
+  await manualForm.getByRole('button', { name: 'Mark as resolved' }).click();
   await manualForm.getByLabel('What did you do?').fill('Called the customer and confirmed the slot by phone.');
-  await manualForm.getByRole('button', { name: 'I handled this manually' }).click();
+  await manualForm.getByRole('button', { name: 'Mark as resolved' }).click();
   await expect(page.locator('#bk-incidents')).toContainText('Marked as handled');
   await expect(page.locator('.bk-incident-card', { hasText: manualTarget.reference })).toHaveCount(0);
 
   await page.reload();
   await expect(page.locator('.bk-incident-card', { hasText: manualTarget.reference })).toHaveCount(0);
-  await page.locator('#bk-incidents summary', { hasText: 'Recently resolved' }).click();
+  await page.locator('#bk-incidents summary', { hasText: 'Resolved in the last 30 days' }).click();
   const history = page.locator('.bk-incident-history');
   await expect(history).toContainText(manualTarget.reference);
   await expect(history).toContainText('Resolved manually by');

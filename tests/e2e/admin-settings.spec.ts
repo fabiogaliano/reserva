@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 // Every control is open, so an edit is visible in place; the field and the save bar say it is not
-// saved yet, and nothing persists until Save is clicked.
+// saved yet, Discard puts the loaded value back, and nothing persists until Save is clicked.
 test('editing a setting flags the field and the section as unsaved until Save', async ({ page }) => {
   await page.goto('/booking/admin?view=settings&section=policy');
   const form = page.locator('#bk-s-policy');
@@ -9,11 +9,25 @@ test('editing a setting flags the field and the section as unsaved until Save', 
   const field = form.locator(".bk-sfield", { has: page.locator("input[name=\"booking.minNoticeHours\"]") });
   const before = await input.inputValue();
 
-  await expect(form.locator('.bk-unsaved')).toBeHidden();
+  const bar = form.locator('.bk-savebar');
+  const save = bar.getByRole('button', { name: 'Save' });
+  const discard = bar.getByRole('button', { name: 'Discard' });
+  await expect(bar).not.toHaveAttribute('data-dirty');
+  await expect(save).toBeDisabled();
+  await expect(discard).toBeHidden();
   await expect(field.locator('.bk-sfield-dirty')).toBeHidden();
   await input.fill('24');
   await expect(field.locator('.bk-sfield-dirty')).toBeVisible();
-  await expect(form.locator('.bk-unsaved')).toBeVisible();
+  await expect(bar).toHaveAttribute('data-dirty', '');
+  await expect(bar.locator('[data-reserva-savebar-msg]')).toHaveText('1 unsaved change');
+  await expect(save).toBeEnabled();
+
+  await discard.click();
+  await expect(input).toHaveValue(before);
+  await expect(field.locator('.bk-sfield-dirty')).toBeHidden();
+  await expect(bar).not.toHaveAttribute('data-dirty');
+  await expect(save).toBeDisabled();
+  await input.fill('24');
 
   // Reloading without saving shows the server's value again: nothing was persisted.
   page.on('dialog', (dialog) => dialog.accept());
@@ -22,7 +36,8 @@ test('editing a setting flags the field and the section as unsaved until Save', 
 
   await page.locator('input[name="booking.minNoticeHours"]').fill('24');
   await page.locator('#bk-s-policy').getByRole('button', { name: 'Save' }).click();
-  await expect(page.getByRole('status')).toContainText('Saved');
+  // The save bar's own message is a status region too, so name the confirmation by its alert.
+  await expect(page.locator('.bk-alert--ok[role="status"]')).toContainText('Saved');
   await expect(page.locator('input[name="booking.minNoticeHours"]')).toHaveValue('24');
   await expect(page.locator('#bk-s-policy').getByText('Modified').first()).toBeVisible();
 

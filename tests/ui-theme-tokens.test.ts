@@ -84,7 +84,7 @@ describe('focus ring', () => {
     expect(componentsCss).not.toContain('--bk-focus');
     expect(themeCss.match(/:focus-visible[^{]*\{[^}]*outline: 2px solid var\(--bk-accent\)/g)?.length).toBeGreaterThanOrEqual(15);
     expect(componentsCss.match(/outline: 2px solid var\(--bk-accent\)/g)).toHaveLength(2);
-    expect(themeCss).toContain(':is(.bk-masthead, .bk-sidebar) :is(a, button):focus-visible { outline-color: var(--bk-masthead-text); }');
+    expect(themeCss).toContain(':is(.bk-masthead, .bk-topbar) :is(a, button):focus-visible { outline-color: var(--bk-masthead-text); }');
   });
 
   it('clears 3:1 against every surface it is drawn on', () => {

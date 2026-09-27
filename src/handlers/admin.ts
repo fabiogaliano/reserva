@@ -41,6 +41,7 @@ import { attemptRefund } from '../refund-executor.js';
 import { resolveMessages } from '../ui/messages.js';
 import {
   adminPage,
+  adminStatusFilters,
   adminTabs,
   incidentRetryAvailable,
   incidentsSection,
@@ -50,8 +51,10 @@ import {
   type AdminDayLoad,
   type AdminErrorNotice,
   type AdminFilters,
+  type AdminGlance,
   type AdminTab,
 } from '../ui/pages/admin-page.js';
+import { ownerFacingIncidentTitle } from '../reconciliation-helpers.js';
 import { securityPosture } from './ops-health.js';
 import { settingsPage } from '../ui/pages/settings-page.js';
 import {
@@ -76,6 +79,8 @@ const ADMIN_SEARCH_SCAN_LIMIT = 20_000;
 const ADMIN_DAY_DETAIL_LIMIT = 500;
 const ADMIN_SELECTED_DAY_LIMIT = 200;
 const ADMIN_OPEN_INCIDENT_LIMIT = 100;
+// Unpaid checkouts are short-lived and few, so the "awaiting payment" figure reads them directly.
+const ADMIN_HOLD_SCAN_LIMIT = 200;
 
 function adminFiltersFrom(url: URL): AdminFilters {
   const statusParam = url.searchParams.get('status')?.trim() ?? '';
@@ -94,19 +99,23 @@ function adminErrorFrom(url: URL): AdminErrorNotice | null {
 }
 
 async function loadBookingList(context: ReservaContext, filters: AdminFilters, todayStart: string): Promise<AdminBookingList> {
-  const window: AdminBookingWindow = {
-    ...(filters.when === 'upcoming' ? { from: todayStart } : { before: todayStart }),
-    ...(filters.status ? { status: filters.status } : {}),
-  };
+  const period: AdminBookingWindow = filters.when === 'upcoming' ? { from: todayStart } : { before: todayStart };
+  const window: AdminBookingWindow = { ...period, ...(filters.status ? { status: filters.status } : {}) };
   const order = filters.when === 'upcoming' ? 'asc' : 'desc';
   const lastPageOf = (total: number): number => Math.max(1, Math.ceil(total / ADMIN_PAGE_SIZE));
   if (!filters.q) {
-    const total = await context.repo.countAdminBookings(window);
+    // The chips count the whole period, whichever status is selected, so switching to a status
+    // never hides how many rows the others hold.
+    const [total, perStatus] = await Promise.all([
+      context.repo.countAdminBookings(window),
+      Promise.all(adminStatusFilters.map((status) => context.repo.countAdminBookings({ ...period, status }))),
+    ]);
+    const statusCounts = Object.fromEntries(adminStatusFilters.map((status, index) => [status, perStatus[index] ?? 0])) as Record<BookingStatus, number>;
     const page = Math.min(filters.page, lastPageOf(total));
     const rows = total === 0
       ? []
       : await context.repo.listAdminBookings(window, { order, limit: ADMIN_PAGE_SIZE, offset: (page - 1) * ADMIN_PAGE_SIZE });
-    return { rows, total, page, pageSize: ADMIN_PAGE_SIZE, searchScanLimit: null };
+    return { rows, total, page, pageSize: ADMIN_PAGE_SIZE, searchScanLimit: null, statusCounts };
   }
   const scan = async (page: number): Promise<AdminBookingList> => {
     const offset = (page - 1) * ADMIN_PAGE_SIZE;
@@ -128,7 +137,7 @@ async function loadBookingList(context: ReservaContext, filters: AdminFilters, t
         break;
       }
     }
-    return { rows, total, page, pageSize: ADMIN_PAGE_SIZE, searchScanLimit: capped ? ADMIN_SEARCH_SCAN_LIMIT : null };
+    return { rows, total, page, pageSize: ADMIN_PAGE_SIZE, searchScanLimit: capped ? ADMIN_SEARCH_SCAN_LIMIT : null, statusCounts: null };
   };
   const result = await scan(filters.page);
   // A page past the end (fewer matches than a stale link assumed) lands on the last real page.
@@ -199,7 +208,8 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
     const url = new URL(request.url);
     const error = adminErrorFrom(url);
     if (url.searchParams.get('view') === 'settings') {
-      return html(settingsPage(context, await context.repo.listSettings(), url.searchParams.get('saved') === '1', url.searchParams.get('section') ?? '', csrfToken, error), 200, {
+      const [storedRows, openIncidentCount] = await Promise.all([context.repo.listSettings(), context.repo.countOpenIncidents()]);
+      return html(settingsPage(context, storedRows, url.searchParams.get('saved') === '1', url.searchParams.get('section') ?? '', csrfToken, error, openIncidentCount), 200, {
         'cache-control': 'no-store',
         // Same referrer-policy reasoning as the dashboard response below.
         'referrer-policy': 'same-origin',
@@ -219,17 +229,18 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
     const lookbackMinutes = Math.max(0, ...Object.values(context.config.services).map((service) => service.durationMin + service.turnaroundMin));
     const occupancyFrom = new Date(parseUtcInstant(todayStart).getTime() - lookbackMinutes * 60_000).toISOString();
     const editDate = validDateOrEmpty(url.searchParams.get('date')?.trim() ?? '');
-    const [list, occupancyBookings, detailRows, editDayBookings, overrides, capacityDefaults] = await Promise.all([
+    // The day card always shows a day: the one asked for, or today.
+    const dayDate = editDate || fromDate;
+    const [list, occupancyBookings, detailRows, editDayBookings, overrides, capacityDefaults, holdRows] = await Promise.all([
       loadBookingList(context, filters, todayStart),
       // The calendar's own query: the whole horizon, independent of the list's window, filters and
       // page, so a day's load never depends on what the list happens to show.
       context.repo.listOccupancyBookings(occupancyFrom, horizonEnd),
       context.repo.listLiveBookings(todayStart, horizonEnd, now, ADMIN_DAY_DETAIL_LIMIT + 1),
-      editDate
-        ? context.repo.listLiveBookings(localDayStartUtcIso(editDate, timezone), localDayStartUtcIso(addDaysToDateKey(editDate, 1), timezone), now, ADMIN_SELECTED_DAY_LIMIT)
-        : Promise.resolve([]),
+      context.repo.listLiveBookings(localDayStartUtcIso(dayDate, timezone), localDayStartUtcIso(addDaysToDateKey(dayDate, 1), timezone), now, ADMIN_SELECTED_DAY_LIMIT),
       context.repo.listDayOverrides(fromDate, toDate),
       context.repo.listCapacityDefaults(),
+      context.repo.listAdminBookings({ from: todayStart, status: 'hold' }, { order: 'asc', limit: ADMIN_HOLD_SCAN_LIMIT, offset: 0 }),
     ]);
     // Past the cap, the first date whose rows were cut off and every later one get no client-side
     // detail; days before it are complete, because rows arrive in start order.
@@ -238,6 +249,16 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
     const dayBookings = detailBefore === null
       ? detailRows
       : detailRows.slice(0, ADMIN_DAY_DETAIL_LIMIT).filter((booking) => localDateKey(booking.startsAt, timezone) < detailBefore);
+    // Rows arrive in start order, so the first match is the earliest. A sweep that has not run yet
+    // can leave a lapsed hold in 'hold', so the strip counts only holds still holding a place.
+    const tomorrow = addDaysToDateKey(fromDate, 1);
+    const liveHolds = holdRows.filter((booking) => booking.holdExpiresAt !== null && booking.holdExpiresAt > now);
+    const glance: AdminGlance = {
+      nextToday: dayBookings.find((booking) => localDateKey(booking.startsAt, timezone) === fromDate && booking.startsAt > now)?.startsAt ?? null,
+      firstTomorrow: dayBookings.find((booking) => localDateKey(booking.startsAt, timezone) === tomorrow)?.startsAt ?? null,
+      holds: liveHolds.length,
+      holdsExpireFirst: liveHolds.map((booking) => booking.holdExpiresAt as string).sort()[0] ?? null,
+    };
     // Token decryption is per-row AES-GCM, so it happens once, here, for exactly the rows the page
     // can emit a manage link for.
     const emitted = [...new Map(
@@ -263,17 +284,18 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
       context.repo.listRecentResolvedIncidents(incidentsSince, 20),
       context.repo.countIncidentsSince(incidentsSince),
     ]);
-    // A deployment-wide incident (reconciliation) has no booking, so it contributes no lookup.
+    // A deployment-wide incident (reconciliation) has no booking, so it contributes no lookup. Only
+    // an open incident's card links to its booking, so only those rows pay for token decryption.
     const incidentBookingIds = [...new Set([...openIncidents, ...resolvedIncidents]
       .flatMap((incident) => (incident.bookingId === null ? [] : [incident.bookingId])))];
-    const incidentBookings = await Promise.all(incidentBookingIds.map((id) => context.repo.getBookingById(id)));
-    const referenceByBookingId = new Map<string, string>();
-    incidentBookingIds.forEach((id, index) => {
-      const found = incidentBookings[index];
-      referenceByBookingId.set(id, found?.reference ?? id);
-    });
+    const found = (await Promise.all(incidentBookingIds.map((id) => context.repo.getBookingById(id))))
+      .filter((booking): booking is Booking => booking !== null);
+    const openBookingIds = new Set(openIncidents.map((incident) => incident.bookingId));
+    const hydratedIncidentBookings = await context.repo.hydrateBookingTokens(found.filter((booking) => openBookingIds.has(booking.id)));
+    const bookingById = new Map<string, Booking>([...found, ...hydratedIncidentBookings].map((booking) => [booking.id, booking] as const));
     const incidentsHtml = securityWarningsSection(messages, await securityPosture(context))
-      + incidentsSection(context, messages, openIncidents, openIncidentCount, resolvedIncidents, incidentCounts, referenceByBookingId, csrfToken, saved);
+      + incidentsSection(context, messages, openIncidents, openIncidentCount, resolvedIncidents, incidentCounts, bookingById, csrfToken, saved);
+    const firstOpen = openIncidentCount === 1 ? openIncidents[0] : undefined;
     return html(adminPage(context, {
       list: { ...list, rows: withTokens(list.rows) },
       filters,
@@ -292,7 +314,14 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
       error,
       csrfToken,
       incidentsHtml,
-      openIncidentCount,
+      attention: {
+        count: openIncidentCount,
+        actionRequired: openIncidents.some((incident) => incident.severity === 'action_required'),
+        first: firstOpen
+          ? { title: ownerFacingIncidentTitle(firstOpen.action), booking: firstOpen.bookingId === null ? null : bookingById.get(firstOpen.bookingId) ?? null }
+          : null,
+      },
+      glance,
       activeTab,
     }), 200, {
       'cache-control': 'no-store',

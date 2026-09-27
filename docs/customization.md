@@ -42,7 +42,7 @@ through content-hashed URLs; only the current hash is cached. Printed pages alwa
 palette.
 
 Focus is a 2px `--bk-accent` outline, which stays visible in Windows forced-colors mode. On the
-dark masthead and admin sidebar it uses `--bk-masthead-text`. `--bk-accent-text` is the accent
+dark masthead and admin top bar it uses `--bk-masthead-text`. `--bk-accent-text` is the accent
 shade used for text on `--bk-accent-soft` and on `--bk-surface-2`.
 
 Every token is declared once, in `src/ui/tokens.css`; the pages' stylesheet and the components'

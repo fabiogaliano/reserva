@@ -105,41 +105,44 @@ export const themeCss = `
 .bk-masthead .bk-lead + .bk-list { margin: 0.5rem 0 0; color: var(--bk-masthead-muted); }
 .bk-masthead .bk-list, .bk-masthead .bk-list li::marker { color: var(--bk-masthead-muted); }
 
-/* Per-viewer toggle (System → Light → Dark), server-rendered hidden; the enhancer reveals it so
-   no-JS viewers get the OS default instead of a dead control. Uses the masthead's glass button
-   treatment on both the dark masthead and dark sidebar. */
+/* Per-viewer theme switch (System / Light / Dark), all three visible so a choice is one click.
+   Server-rendered hidden; the enhancer reveals it so no-JS viewers get the OS default instead of a
+   dead control. Glass on the dark masthead and the dark top bar alike. */
 .bk-theme-toggle {
   display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.35rem 0.65rem;
-  border-radius: var(--bk-radius-sm);
-  border: 1px solid rgb(255 255 255 / 0.16);
-  background: rgb(255 255 255 / 0.07);
-  color: var(--bk-masthead-text);
-  font: inherit;
-  font-size: 0.8rem;
-  font-weight: 500;
-  line-height: 1;
+  gap: 0.15rem;
+  padding: 0.2rem;
+  border-radius: 10px;
+  border: 1px solid rgb(255 255 255 / 0.1);
+  background: rgb(255 255 255 / 0.06);
+}
+.bk-theme-toggle button {
+  display: inline-grid;
+  place-items: center;
+  width: 2.1rem;
+  height: 2rem;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--bk-masthead-muted);
   cursor: pointer;
-  transition: background-color 100ms ease;
+  transition: background-color 100ms ease, color 100ms ease;
 }
 @media (hover: hover) and (pointer: fine) {
-  .bk-theme-toggle:hover { background: rgb(255 255 255 / 0.13); }
+  .bk-theme-toggle button:hover { color: var(--bk-masthead-text); }
 }
-.bk-theme-toggle:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; }
-.bk-theme-toggle svg { flex: none; opacity: 0.85; }
+.bk-theme-toggle button[aria-pressed="true"] { background: rgb(255 255 255 / 0.12); color: var(--bk-masthead-text); }
+.bk-theme-toggle button:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) { .bk-theme-toggle button { transition: none; } }
 /* In-flow as the masthead's first row, right-aligned, so title text below can't underlap the
    control on a narrow screen. */
 .bk-masthead .bk-theme-toggle { display: flex; width: fit-content; margin: 0 0 0.9rem auto; }
-.bk-sidebar .bk-theme-toggle { grid-column: 2; grid-row: 1; min-height: 2.75rem; margin-left: auto; }
-@media (min-width: 880px) {
-  .bk-sidebar .bk-theme-toggle { grid-column: auto; grid-row: auto; width: 100%; margin: auto 0 0; justify-content: center; }
-}
-/* Scoped higher than the display rules above so the server-rendered button stays hidden until the
-   enhancer reveals it, no matter the source order of the context rules. */
+.bk-topbar .bk-theme-toggle { flex: none; margin-left: auto; }
+/* Scoped higher than the display rules above so the server-rendered control stays hidden until
+   the enhancer reveals it, no matter the source order of the context rules. */
+.bk-theme-toggle[hidden],
 .bk-masthead .bk-theme-toggle[hidden],
-.bk-sidebar .bk-theme-toggle[hidden] { display: none; }
+.bk-topbar .bk-theme-toggle[hidden] { display: none; }
 
 .bk-main { max-width: 44rem; margin: 0 auto; padding: 1.75rem 1rem 4rem; }
 .bk-main--mid { max-width: 56rem; }
@@ -148,38 +151,38 @@ export const themeCss = `
 .bk-main--shell { max-width: none; margin: 0; padding: 0; }
 
 /* Operators revisit this surface throughout the day, so navigation stays stable while the work
-   area favors scan speed over decorative chrome. */
-.bk-shell { display: grid; min-height: 100vh; grid-template-rows: auto 1fr; }
-.bk-sidebar {
+   area favors scan speed over decorative chrome. Two destinations fit in one bar across the top,
+   which leaves the full width to the work. */
+.bk-shell { min-height: 100vh; }
+.bk-topbar {
   position: sticky;
   top: 0;
   z-index: 20;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.65rem 0.75rem 0.55rem;
+  gap: 1.25rem;
+  min-height: 3.5rem;
+  padding: 0.35rem clamp(1rem, 3vw, 2rem);
   background: #101114;
   border-bottom: 1px solid rgb(255 255 255 / 0.08);
   box-sizing: border-box;
-  min-width: 0;
 }
-.bk-sidebar-brand {
+.bk-topbar-brand {
   display: flex;
   align-items: center;
   gap: 0.55rem;
+  flex: none;
   min-width: 0;
+  max-width: 16rem;
   margin: 0;
-  padding: 0 0.35rem;
   font-size: 0.9rem;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: #ededef;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
-.bk-sidebar-brand::before {
+.bk-topbar-brand span { overflow: hidden; text-overflow: ellipsis; }
+.bk-topbar-brand::before {
   content: '';
   flex: none;
   width: 0.62rem;
@@ -188,90 +191,133 @@ export const themeCss = `
   background: #6975df;
   box-shadow: 0 0 14px color-mix(in srgb, #6975df 70%, transparent);
 }
-.bk-sidebar-links {
-  grid-column: 1 / -1;
-  display: flex;
-  gap: 0.25rem;
-  min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.bk-sidebar-links::-webkit-scrollbar { display: none; }
-.bk-sidebar a {
-  display: flex;
+.bk-topbar-nav { display: flex; gap: 0.25rem; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.bk-topbar-nav::-webkit-scrollbar { display: none; }
+.bk-topbar-nav a {
+  display: inline-flex;
   align-items: center;
-  gap: 0.55rem;
-  min-height: 2.75rem;
+  gap: 0.45rem;
+  min-height: 2.5rem;
   box-sizing: border-box;
-  padding: 0.55rem 0.7rem;
+  padding: 0 0.7rem;
   border-radius: 8px;
   color: #aeb1b8;
   text-decoration: none;
-  font-size: 0.88rem;
+  font-size: 0.875rem;
   font-weight: 500;
   white-space: nowrap;
   transition: background-color 120ms ease, color 120ms ease;
 }
 @media (hover: hover) and (pointer: fine) {
-  .bk-sidebar a:hover { background: rgb(255 255 255 / 0.06); color: #ededef; }
+  .bk-topbar-nav a:hover { background: rgb(255 255 255 / 0.06); color: #ededef; }
 }
-.bk-sidebar a.bk-active { background: rgb(255 255 255 / 0.1); color: #ffffff; }
-/* Inset: on narrow screens the links scroll inside an overflow box that would clip an outer ring. */
-.bk-sidebar a:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: -2px; }
-.bk-sidebar svg { flex: none; opacity: 0.82; }
-.bk-sidebar-label { display: none; }
-@media (max-width: 879px) {
-  .bk-sidebar-links svg { display: none; }
-  .bk-sidebar-links a { padding-inline: 0.6rem; }
+.bk-topbar-nav a[aria-current="page"] { background: rgb(255 255 255 / 0.1); color: #ffffff; }
+/* Inset: the links scroll inside an overflow box that would clip an outer ring. */
+.bk-topbar-nav a:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: -2px; }
+.bk-topbar-nav svg { flex: none; opacity: 0.82; }
+.bk-topbar-count {
+  min-width: 1.2rem;
+  padding: 0 0.4rem;
+  box-sizing: border-box;
+  border-radius: 999px;
+  background: #e5484d;
+  color: #ffffff;
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.2rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+@media (prefers-reduced-motion: reduce) { .bk-topbar-nav a { transition: none; } }
+@media (max-width: 560px) {
+  .bk-topbar { gap: 0.75rem; }
+  .bk-topbar-brand span { display: none; }
+  .bk-topbar-nav svg { display: none; }
 }
 .bk-shell-main {
   width: 100%;
-  max-width: 76rem;
+  max-width: 72rem;
   min-width: 0;
   margin: 0 auto;
   padding: 1.5rem 1rem 4rem;
   box-sizing: border-box;
 }
 @media (min-width: 880px) {
-  .bk-shell { grid-template-columns: 15.5rem minmax(0, 1fr); grid-template-rows: none; }
-  .bk-sidebar {
-    height: 100vh;
-    align-self: start;
-    grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr auto;
-    align-items: stretch;
-    gap: 0;
-    padding: 1.25rem 0.9rem;
-    border-right: 1px solid rgb(255 255 255 / 0.08);
-    border-bottom: 0;
-  }
-  .bk-sidebar-brand { margin: 0 0.35rem 1.25rem; padding: 0; }
-  .bk-sidebar-links { grid-column: auto; flex-direction: column; overflow: visible; }
-  .bk-shell-main { padding: 2rem clamp(1.5rem, 3vw, 3rem) 5rem; }
-  .bk-sidebar-label { display: block; margin: 1.1rem 0.6rem 0.35rem; font-size: 0.68rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.09em; color: #6e7076; }
+  .bk-shell-main { padding: 2rem clamp(1.5rem, 3vw, 2rem) 5rem; }
 }
 .bk-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin: 0 0 1.25rem; }
 .bk-toolbar h1 { margin: 0; font-size: 1.25rem; font-weight: 600; letter-spacing: -0.01em; }
 .bk-toolbar .bk-lead { margin: 0.15rem 0 0; font-size: 0.9rem; }
 /* Bookings dashboard. The operator opens this many times a day, so the page states what it is and
    then gets out of the way: a title row, a tab strip, and one panel on screen at a time. */
-.bk-admin-header { display: flex; align-items: center; gap: 0.75rem 1rem; flex-wrap: wrap; margin: 0 0 1.25rem; }
+.bk-admin-header { display: flex; align-items: flex-end; gap: 0.75rem 1rem; flex-wrap: wrap; margin: 0 0 1.25rem; }
 .bk-admin-header h1 { margin: 0; font-size: 1.5rem; font-weight: 600; line-height: 1.2; letter-spacing: -0.025em; }
-.bk-admin-attention {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  min-height: 2.75rem;
-  color: var(--bk-danger);
-  font-size: 0.9rem;
-  font-weight: 500;
-  text-decoration: none;
-}
-.bk-admin-attention:hover { text-decoration: underline; }
-.bk-admin-attention:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; border-radius: 4px; }
+.bk-admin-date { margin: 0.2rem 0 0; color: var(--bk-text-muted); font-size: 0.9rem; }
 /* Panels are all server-rendered and all but one carry [hidden], so the tab strip works as plain
    links before the enhancer upgrades it to an in-page toggle. */
 .bk-panels > [hidden] { display: none; }
+
+/* The totals strip: four figures an operator would otherwise count rows for. Each is a link to
+   the view that explains it. */
+.bk-glance {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.75rem;
+  max-width: 62rem;
+  margin: 0 0 1.5rem;
+}
+.bk-glance[hidden] { display: none; }
+.bk-glance a {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--bk-border);
+  border-radius: var(--bk-radius-sm);
+  background: var(--bk-surface);
+  color: var(--bk-text);
+  text-decoration: none;
+  transition: border-color 120ms ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  .bk-glance a:hover { border-color: color-mix(in srgb, var(--bk-accent) 45%, var(--bk-border)); }
+}
+.bk-glance a:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .bk-glance a { transition: none; } }
+.bk-glance-label { font-size: 0.78rem; font-weight: 500; color: var(--bk-text-muted); }
+.bk-glance-value { font-size: 1.35rem; font-weight: 600; line-height: 1.2; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.bk-glance-sub { min-height: 1.2em; font-size: 0.8rem; color: var(--bk-text-muted); font-variant-numeric: tabular-nums; }
+.bk-glance a[data-tone="warn"] .bk-glance-value { color: var(--bk-warning); }
+@media (max-width: 560px) {
+  .bk-glance { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; }
+  .bk-glance a { padding: 0.7rem 0.8rem; }
+  .bk-glance-value { font-size: 1.15rem; }
+}
+
+/* The attention banner names the problem where the operator already is, instead of a count they
+   have to click through to understand. */
+.bk-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  max-width: 62rem;
+  box-sizing: border-box;
+  margin: 0 0 1.25rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid color-mix(in srgb, var(--bk-danger) 28%, transparent);
+  border-radius: var(--bk-radius-sm);
+  background: var(--bk-danger-soft);
+  color: var(--bk-danger);
+  font-size: 0.9rem;
+}
+.bk-banner[hidden] { display: none; }
+.bk-banner svg { flex: none; }
+.bk-banner p { flex: 1 1 16rem; margin: 0; color: var(--bk-text); }
+.bk-banner strong { color: var(--bk-danger); font-weight: 600; }
+.bk-banner a { color: var(--bk-danger); font-weight: 600; text-underline-offset: 0.2em; white-space: nowrap; }
+.bk-banner a:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; border-radius: 3px; }
+.bk-banner--warn { border-color: color-mix(in srgb, var(--bk-warning) 28%, transparent); background: var(--bk-warning-soft); color: var(--bk-warning); }
+.bk-banner--warn strong, .bk-banner--warn a { color: var(--bk-warning); }
 /* The list is a reading measure, not a spreadsheet: past roughly 60rem the chevron drifts so far
    from the name that a row stops reading as one thing. The calendar earns the extra width. */
 .bk-panel { min-width: 0; max-width: 62rem; }
@@ -287,31 +333,108 @@ export const themeCss = `
   font-variant-numeric: tabular-nums;
 }
 
-/* One search control, no field label: the placeholder already says what it searches. */
-.bk-searchbar { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; margin: 0 0 1.5rem; }
-.bk-searchbar .bk-input, .bk-searchbar .bk-select { width: auto; min-height: 2.6rem; }
-.bk-searchbar .bk-input[type=search] { flex: 1 1 16rem; max-width: 24rem; }
-.bk-searchbar .bk-select { flex: 0 0 auto; }
-.bk-searchbar .bk-btn { min-height: 2.6rem; }
-.bk-searchbar .bk-filter-clear { min-height: 2.6rem; }
+/* The list's toolbar: a period switch, one search box (its placeholder says what it searches),
+   and a status chip per state with its count, so filtering is one click and never a form. */
+.bk-filterbar { display: grid; gap: 0.75rem; max-width: 62rem; margin: 0 0 1.5rem; }
+.bk-filterbar-row { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.bk-segmented {
+  display: inline-flex;
+  gap: 0.15rem;
+  padding: 0.2rem;
+  border-radius: calc(var(--bk-radius-sm) + 0.2rem);
+  background: var(--bk-surface-2);
+}
+.bk-segmented a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.2rem;
+  padding: 0 0.8rem;
+  border-radius: var(--bk-radius-sm);
+  color: var(--bk-text-muted);
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.bk-segmented a[aria-current="true"] { background: var(--bk-surface); color: var(--bk-text); box-shadow: 0 1px 2px rgb(20 21 26 / 0.1); }
+.bk-segmented a:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 1px; }
+.bk-search { position: relative; flex: 1 1 16rem; max-width: 26rem; }
+.bk-search svg { position: absolute; left: 0.75rem; top: 50%; translate: 0 -50%; color: var(--bk-text-muted); pointer-events: none; }
+.bk-search .bk-input { min-height: 2.6rem; padding-left: 2.25rem; padding-right: 2rem; }
+.bk-kbd {
+  position: absolute;
+  right: 0.6rem;
+  top: 50%;
+  translate: 0 -50%;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--bk-border);
+  border-radius: 5px;
+  color: var(--bk-text-muted);
+  font: 500 0.72rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  pointer-events: none;
+}
+.bk-kbd[hidden], .bk-search .bk-input:focus ~ .bk-kbd { display: none; }
+.bk-chips { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.bk-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2rem;
+  padding: 0 0.7rem;
+  border: 1px solid var(--bk-border);
+  border-radius: 999px;
+  background: var(--bk-surface);
+  color: var(--bk-text-muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.bk-chip b { font-weight: 600; color: var(--bk-text); font-variant-numeric: tabular-nums; }
+.bk-chip[aria-current="true"] { background: var(--bk-text); border-color: var(--bk-text); color: var(--bk-bg); }
+.bk-chip[aria-current="true"] b { color: inherit; }
+.bk-chip--empty { opacity: 0.55; }
+.bk-chip:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; }
+.bk-chips .bk-filter-clear { margin-left: 0.35rem; min-height: 2rem; }
+@media (max-width: 560px) {
+  .bk-search { max-width: none; flex-basis: 100%; }
+  .bk-kbd { display: none; }
+  /* One swipeable line instead of three stacked rows of chips. */
+  .bk-chips { flex-wrap: nowrap; overflow-x: auto; margin: 0 -1rem; padding: 0 1rem; scrollbar-width: none; }
+}
 
 /* Day-grouped booking list. Every row is a native <details>: the summary holds what an operator
    scans by and the panel holds the rest, so the list never grows a column for a detail that only
    matters on one booking in twenty. Works with scripting off; the enhancer only adds
    one-open-at-a-time. */
 .bk-daygroup { margin: 0 0 1.75rem; }
+/* The day stays pinned under the top bar while its rows scroll past, so a long day never leaves
+   the operator guessing which date they are reading. */
 .bk-daygroup > h3 {
-  margin: 0 0 0.35rem;
-  font-size: 0.75rem;
+  position: sticky;
+  top: 3.5rem;
+  z-index: 5;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0 0 0.25rem;
+  padding: 0.55rem 0.6rem 0.45rem;
+  background: var(--bk-bg);
+  border-bottom: 1px solid var(--bk-border);
+  font-size: 0.85rem;
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--bk-text-muted);
+  letter-spacing: -0.005em;
+  text-transform: none;
+  color: var(--bk-text);
 }
+.bk-day-abs { font-weight: 500; color: var(--bk-text-muted); }
+.bk-day-totals { margin-left: auto; font-size: 0.8rem; font-weight: 500; color: var(--bk-text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Fixed tracks rather than auto: each summary is its own grid, and only fixed widths line the
+   columns up from one row to the next. */
 .bk-booking { border-bottom: 1px solid color-mix(in srgb, var(--bk-border) 55%, transparent); }
 .bk-booking > summary {
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr) auto 1rem;
+  grid-template-columns: 4.6rem minmax(0, 1fr) 4rem minmax(0, 14rem) 1rem;
   align-items: center;
   gap: 0.2rem 1rem;
   min-height: 3.25rem;
@@ -328,34 +451,73 @@ export const themeCss = `
 .bk-booking > summary:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; }
 .bk-booking[open] > summary { background: color-mix(in srgb, var(--bk-surface-2) 45%, transparent); }
 @media (prefers-reduced-motion: reduce) { .bk-booking > summary { transition: none; } }
-.bk-booking-time { min-width: 3.25rem; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bk-booking-time { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
+.bk-booking-time small, .bk-daylist time small { margin-left: 0.2rem; font-size: 0.72rem; font-weight: 500; color: var(--bk-text-muted); }
 .bk-booking-who { font-weight: 500; }
 .bk-booking-sub { display: block; margin-top: 0.15rem; font-size: 0.85rem; color: var(--bk-text-muted); }
-/* Only a status that is not the happy path earns text; a list of confirmed bookings stays quiet. */
-.bk-booking-status { font-size: 0.85rem; white-space: nowrap; color: var(--bk-text-muted); }
-.bk-booking-status--warn { color: var(--bk-warning); }
-.bk-booking-status--danger { color: var(--bk-danger); }
+.bk-booking-guests { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.875rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bk-booking-guests svg { flex: none; color: var(--bk-text-muted); }
+/* Only a status that is not the happy path earns a badge; a list of confirmed bookings stays quiet. */
+.bk-booking-status { justify-self: end; font-size: 0.85rem; white-space: nowrap; color: var(--bk-text-muted); }
 .bk-booking-chevron { justify-self: end; color: var(--bk-text-muted); transition: rotate 160ms var(--bk-ease); }
 .bk-booking[open] > summary .bk-booking-chevron { rotate: 90deg; }
 @media (prefers-reduced-motion: reduce) { .bk-booking-chevron { transition: none; } }
+/* A cancelled or expired row still answers "did they book?", but must not read as someone who
+   is coming. */
+.bk-booking--void :is(.bk-booking-time, .bk-booking-who, .bk-booking-sub, .bk-booking-guests) { opacity: 0.55; }
+.bk-booking--void .bk-booking-time { text-decoration: line-through; text-decoration-thickness: 1px; }
 .bk-booking-detail {
-  display: flex;
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 1rem 2rem;
-  flex-wrap: wrap;
-  padding: 0.25rem 0.6rem 1.15rem 4.5rem;
+  padding: 0.5rem 0.6rem 1.25rem 6.2rem;
 }
-.bk-booking-detail .bk-facts { gap: 0.35rem 1.25rem; font-size: 0.875rem; }
-.bk-booking-detail .bk-facts dd { font-weight: 400; }
-.bk-booking-detail .bk-booking-open { align-self: flex-start; }
+.bk-booking-detail .bk-facts { grid-template-columns: max-content minmax(0, 1fr); gap: 0.45rem 1.5rem; font-size: 0.875rem; }
+.bk-booking-detail .bk-facts dd { font-size: 0.875rem; font-weight: 400; }
 .bk-booking-detail .bk-sub { display: inline; font-size: inherit; }
+.bk-row-actions { display: flex; flex-direction: column; align-items: stretch; gap: 0.5rem; min-width: 10rem; }
+.bk-row-actions .bk-btn { justify-content: space-between; }
+/* Contact details are the reason a row gets opened, so they read as links at a glance. */
+.bk-facts a, .bk-daylist a, .bk-link { color: var(--bk-accent-text); text-decoration: none; }
+.bk-link { display: inline-flex; align-items: center; gap: 0.3rem; font-weight: 500; }
+@media (hover: hover) and (pointer: fine) {
+  :is(.bk-facts, .bk-daylist) a:hover, .bk-link:hover { text-decoration: underline; text-underline-offset: 0.18em; }
+}
+:is(.bk-facts, .bk-daylist) a:focus-visible, .bk-link:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; border-radius: 2px; }
+.bk-copy {
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  margin: -0.4rem 0 -0.4rem 0.25rem;
+  padding: 0;
+  vertical-align: middle;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--bk-text-muted);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.bk-copy[hidden] { display: none; }
+@media (hover: hover) and (pointer: fine) {
+  .bk-copy:hover { background: var(--bk-surface-2); color: var(--bk-text); }
+}
+.bk-copy:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 1px; }
+.bk-copy--done { color: var(--bk-ok); }
+@media (prefers-reduced-motion: reduce) { .bk-copy { transition: none; } }
 @media (max-width: 560px) {
-  .bk-booking > summary { grid-template-columns: max-content minmax(0, 1fr) 1rem; }
-  /* Both pinned: with the status wrapped under the name, auto-placement would otherwise carry
-     the chevron down to the second row beside it instead of keeping it on the name's line. */
-  .bk-booking-status { grid-row: 2; grid-column: 2; }
+  .bk-booking > summary { grid-template-columns: 3.9rem minmax(0, 1fr) 1rem; }
+  /* All pinned: auto-placement would otherwise carry the chevron down to a later row instead of
+     keeping it on the name's line. */
+  .bk-booking-guests { grid-row: 2; grid-column: 2; }
+  .bk-booking-status { grid-row: 3; grid-column: 2; justify-self: start; }
+  .bk-booking-status:empty { display: none; }
   .bk-booking-chevron { grid-row: 1; grid-column: 3; }
-  .bk-booking-detail { padding-left: 0.6rem; }
+  .bk-booking-time small { display: block; margin: 0; }
+  .bk-booking-detail { grid-template-columns: 1fr; padding-left: 0.6rem; }
+  .bk-row-actions { flex-direction: row; flex-wrap: wrap; }
 }
 
 /* Confirmation ticket: date block | facts, with a tear-off footer row for reference + calendar */
@@ -435,8 +597,8 @@ export const themeCss = `
 .bk-brand-logo { display: inline-block; vertical-align: top; max-width: 100%; height: auto; }
 /* The dark bands stay dark in both schemes, where a brand accent picked for light surfaces can
    fall under 3:1; their own text color is the ring that always reads there. After the rules
-   above on purpose: .bk-brand a and .bk-sidebar a tie with this on specificity. */
-:is(.bk-masthead, .bk-sidebar) :is(a, button):focus-visible { outline-color: var(--bk-masthead-text); }
+   above on purpose: .bk-brand a and .bk-topbar-nav a tie with this on specificity. */
+:is(.bk-masthead, .bk-topbar) :is(a, button):focus-visible { outline-color: var(--bk-masthead-text); }
 
 .bk-card {
   background: var(--bk-surface);
@@ -544,9 +706,19 @@ export const themeCss = `
 .bk-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
 .bk-actions--split { justify-content: space-between; margin-top: 1.5rem; }
 .bk-incident-list, .bk-incident-history { list-style: none; margin: 1rem 0; padding: 0; display: grid; gap: 0.75rem; }
-.bk-incident-card { margin: 0; padding: 1.1rem; border-color: color-mix(in srgb, var(--bk-danger) 30%, var(--bk-border)); box-shadow: none; }
-.bk-incident-card h3 { display: flex; align-items: center; gap: 0.6rem; margin: 0 0 0.4rem; font-size: 0.98rem; font-weight: 600; text-wrap: balance; }
-.bk-incident-card .bk-actions { align-items: center; }
+/* An incident card answers three things in reading order: what broke and when, which booking it
+   touched, and what the operator should do about it. Diagnostics stay folded at the foot. */
+.bk-incident-card { display: grid; gap: 0.75rem; margin: 0; padding: 1.1rem 1.25rem; border-color: color-mix(in srgb, var(--bk-danger) 30%, var(--bk-border)); box-shadow: none; }
+.bk-incident-card h3 { display: flex; align-items: center; gap: 0.4rem 0.6rem; flex-wrap: wrap; margin: 0; font-size: 1rem; font-weight: 600; text-wrap: balance; }
+.bk-incident-when { margin-left: auto; font-size: 0.8rem; font-weight: 400; color: var(--bk-text-muted); font-variant-numeric: tabular-nums; }
+.bk-incident-about { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.75rem; margin: 0; padding: 0.6rem 0.75rem; border-radius: var(--bk-radius-sm); background: var(--bk-surface-2); font-size: 0.875rem; }
+.bk-incident-about .bk-mono { font-weight: 600; }
+.bk-incident-about .bk-sub { display: inline; font-size: inherit; }
+.bk-incident-about .bk-link { margin-left: auto; }
+.bk-incident-todo { margin: 0; font-size: 0.9rem; text-wrap: pretty; }
+.bk-incident-foot { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem 1rem; flex-wrap: wrap; }
+.bk-incident-foot > .bk-disclosure { margin: 0; }
+.bk-incident-card .bk-actions { align-items: flex-end; gap: 0.5rem; }
 .bk-incident-action { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap-reverse; }
 .bk-incident-action > .bk-hint { flex-basis: 100%; margin: 0; }
 /* The note only has to be filled in when the operator has actually decided to resolve, so the
@@ -564,102 +736,170 @@ export const themeCss = `
 @media (prefers-reduced-motion: reduce) { .bk-spinner { animation-duration: 2.5s; } }
 
 .bk-disclosure { border: 1px solid var(--bk-border); border-radius: var(--bk-radius-sm); margin: 0 0 0.75rem; background: var(--bk-surface); }
-.bk-disclosure > summary { cursor: pointer; padding: 0.7rem 1rem; font-weight: 500; font-size: 0.95rem; list-style-position: inside; }
+.bk-disclosure > summary { display: flex; align-items: center; gap: 0.6rem; min-height: 2.75rem; box-sizing: border-box; padding: 0.35rem 1rem; font-weight: 500; font-size: 0.95rem; list-style: none; cursor: pointer; }
+.bk-disclosure > summary::-webkit-details-marker { display: none; }
+.bk-disclosure > summary::before { content: '\\203a'; display: inline-block; width: 0.6rem; flex: none; color: var(--bk-text-muted); transition: rotate 140ms var(--bk-ease); }
+.bk-disclosure[open] > summary::before { rotate: 90deg; }
+@media (prefers-reduced-motion: reduce) { .bk-disclosure > summary::before { transition: none; } }
 .bk-disclosure > summary:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; border-radius: var(--bk-radius-sm); }
+/* What is inside, said on the closed summary, so it only gets opened when that is worth it. */
+.bk-disclosure-meta { margin-left: auto; font-size: 0.82rem; font-weight: 400; color: var(--bk-text-muted); text-align: right; font-variant-numeric: tabular-nums; }
 .bk-disclosure > div { padding: 0 1rem 1rem; }
+.bk-disclosure--bare { border: none; background: none; }
+.bk-disclosure--bare > summary { gap: 0.35rem; min-height: 2.5rem; padding: 0; color: var(--bk-text-muted); font-size: 0.85rem; }
+.bk-disclosure--bare > div { padding: 0; }
 
 .bk-filter-clear { display: inline-flex; align-items: center; color: var(--bk-text-muted); font-size: 0.85rem; font-weight: 500; text-underline-offset: 0.18em; }
 .bk-filter-clear:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; border-radius: 3px; }
 
-/* Availability calendar. A tinted tile per day plus a used/capacity label under every number read
-   as a heat map the operator had to decode; the number carries the day and a single dot carries
-   its state, so a normal month is almost entirely plain text. */
+/* Availability calendar. Each day shows its number and one load bar: how full its busiest moment
+   is, readable across a month without decoding a figure per cell. A ring marks an adjusted day and
+   a struck-through number a closed one; the day card spells out the exact figures. */
 .bk-days-layout { display: grid; gap: 2rem; align-items: start; }
-.bk-months { display: grid; gap: 1rem; min-width: 0; }
-.bk-month h3 { margin: 0 0 0.75rem; font-size: 0.95rem; font-weight: 600; letter-spacing: -0.01em; }
-.bk-monthgrid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.2rem; }
-.bk-dow { text-align: center; font-size: 0.68rem; font-weight: 500; color: var(--bk-text-muted); padding: 0.1rem 0 0.4rem; }
+.bk-calendar { min-width: 0; }
+.bk-months { display: grid; gap: 1.25rem; min-width: 0; }
+.bk-month h3 { margin: 0 0 0.5rem; font-size: 0.8rem; font-weight: 600; letter-spacing: 0.02em; color: var(--bk-text-muted); }
+.bk-month[hidden] { display: none; }
+.bk-months .bk-disclosure { margin: 0; }
+/* touch-action leaves vertical swipes to the page and hands sideways drags to the range
+   selection; user-select keeps a mouse drag from painting a text selection across the grid. */
+.bk-monthgrid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.25rem; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.bk-dow { text-align: center; font-size: 0.68rem; font-weight: 500; color: var(--bk-text-muted); padding: 0.1rem 0 0.35rem; }
 .bk-day {
   position: relative;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 2.6rem;
+  gap: 0.3rem;
+  min-height: 3rem;
   border-radius: 8px;
-  color: var(--bk-text-muted);
+  color: var(--bk-text);
   text-decoration: none;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
+  -webkit-touch-callout: none;
   transition: background-color 120ms ease;
 }
+/* Not on the selected day: its inverted fill is the one state a hover must never hide. */
 @media (hover: hover) and (pointer: fine) {
-  .bk-day:hover { background: var(--bk-surface-2); }
+  a.bk-day:not(.bk-day--selected):hover { background: var(--bk-surface-2); }
 }
 .bk-day:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { .bk-day { transition: none; } }
 .bk-day--empty { visibility: hidden; }
-/* The dot is the whole state vocabulary: present means something is true of this day, and its
-   color says which. A quiet day has no dot at all. */
-.bk-day::after {
-  content: '';
-  position: absolute;
-  bottom: 0.3rem;
-  width: 0.28rem;
-  height: 0.28rem;
-  border-radius: 50%;
+.bk-day--past { color: color-mix(in srgb, var(--bk-text-muted) 55%, transparent); cursor: default; }
+.bk-day-num { font-size: 0.875rem; line-height: 1; }
+/* Pinned to the foot of the cell so every bar in a week sits on one line, whatever the number
+   above it is wearing (today's disc is taller than a plain digit). */
+.bk-day > .bk-meter { position: absolute; left: 19%; bottom: 0.4rem; }
+a.bk-day { padding-bottom: 0.35rem; box-sizing: border-box; }
+.bk-day--today .bk-day-num { display: inline-grid; place-items: center; width: 1.7rem; height: 1.7rem; border-radius: 50%; background: var(--bk-accent-soft); color: var(--bk-accent-text); font-weight: 700; }
+.bk-day--adjusted { box-shadow: inset 0 0 0 1px var(--bk-warning); }
+.bk-day--closed { color: var(--bk-danger); }
+.bk-day--closed .bk-day-num { text-decoration: line-through; text-decoration-thickness: 1.5px; }
+.bk-day--selected { background: var(--bk-text); color: var(--bk-bg); box-shadow: none; }
+.bk-day--selected.bk-day--today .bk-day-num { background: transparent; color: inherit; }
+/* The fill width is a class hook on data-fill (tenths) rather than a style attribute, which the
+   strict style-src CSP blocks. */
+.bk-meter { display: block; width: 62%; height: 3px; border-radius: 2px; background: color-mix(in srgb, var(--bk-border) 80%, transparent); overflow: hidden; }
+.bk-meter i { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--bk-accent); }
+.bk-meter[data-fill="10"] i { width: 10%; }
+.bk-meter[data-fill="20"] i { width: 20%; }
+.bk-meter[data-fill="30"] i { width: 30%; }
+.bk-meter[data-fill="40"] i { width: 40%; }
+.bk-meter[data-fill="50"] i { width: 50%; }
+.bk-meter[data-fill="60"] i { width: 60%; }
+.bk-meter[data-fill="70"] i { width: 70%; }
+.bk-meter[data-fill="80"] i { width: 80%; }
+.bk-meter[data-fill="90"] i { width: 90%; }
+.bk-meter[data-fill="100"] i { width: 100%; }
+.bk-meter--full i { background: var(--bk-warning); }
+.bk-day--selected .bk-meter { background: color-mix(in srgb, var(--bk-bg) 30%, transparent); }
+.bk-day--selected .bk-meter i { background: var(--bk-bg); }
+.bk-meter--bar { width: 100%; height: 6px; border-radius: 3px; background: var(--bk-surface-2); }
+.bk-legend { display: flex; flex-wrap: wrap; gap: 0.35rem 1rem; margin: 0.9rem 0 0; font-size: 0.78rem; color: var(--bk-text-muted); }
+.bk-legend span { display: inline-flex; align-items: center; gap: 0.4rem; }
+.bk-legend i { font-style: normal; }
+.bk-legend-swatch { display: inline-block; width: 1.1rem; height: 3px; border-radius: 2px; background: var(--bk-accent); }
+.bk-legend-swatch--full { background: var(--bk-warning); }
+.bk-legend-ring { display: inline-block; width: 0.8rem; height: 0.8rem; border-radius: 3px; box-shadow: inset 0 0 0 1px var(--bk-warning); }
+.bk-legend-strike { color: var(--bk-danger); text-decoration: line-through; font-variant-numeric: tabular-nums; }
+.bk-selection-hint { margin: 0.5rem 0 0; line-height: 1.5; }
+/* Two months at a time with a way back to today; adjacent controls keep pointer travel short
+   while comparing months. */
+.bk-pager { display: flex; align-items: center; gap: 0.25rem; }
+.bk-pager h3 { margin: 0 auto 0 0; font-size: 0.95rem; font-weight: 600; letter-spacing: -0.01em; }
+.bk-pager .bk-btn { width: 2.5rem; min-height: 2.5rem; padding: 0; font-size: 1.05rem; }
+.bk-pager .bk-pager-today { width: auto; padding: 0 0.75rem; font-size: 0.82rem; }
+@media (min-width: 1024px) {
+  .bk-days-layout { grid-template-columns: minmax(18rem, 24rem) minmax(0, 1fr); gap: 2.5rem; }
 }
-.bk-day--booked { color: var(--bk-text); font-weight: 600; }
-.bk-day--booked::after { background: var(--bk-accent); }
-.bk-day--adjusted { color: var(--bk-text); font-weight: 600; box-shadow: inset 0 0 0 1px var(--bk-warning); }
-.bk-day--adjusted::after { background: var(--bk-warning); }
-.bk-day--closed { color: var(--bk-danger); font-weight: 600; }
-.bk-day--closed::after { background: var(--bk-danger); }
-.bk-day--selected { background: var(--bk-text); color: var(--bk-bg); font-weight: 600; box-shadow: none; }
-.bk-day--selected::after { background: var(--bk-bg); }
-.bk-day-num { font-size: 0.875rem; }
-.bk-legend { display: grid; gap: 0.15rem; margin: 1rem 0 0; font-size: 0.8rem; color: var(--bk-text-muted); }
-.bk-legend span { display: flex; align-items: center; gap: 0.5rem; }
-.bk-legend i { width: 0.4rem; height: 0.4rem; border-radius: 50%; }
-.bk-legend-dot--booked { background: var(--bk-accent); }
-/* Hollow so the ring reads as the adjusted mark, matching the ring on the day cell itself. */
-.bk-legend-dot--adjusted { background: transparent; box-shadow: inset 0 0 0 1px var(--bk-warning); }
-.bk-legend-dot--closed { background: var(--bk-danger); }
-.bk-months .bk-disclosure { margin: 0; }
-.bk-selection-hint { margin: -0.25rem 0 0; padding-bottom: 0.25rem; line-height: 1.5; }
-.bk-day-editor { min-width: 0; }
+
+/* The selected day as one card: what is booked, then how to change it. */
+.bk-day-editor { display: grid; gap: 1rem; min-width: 0; }
+.bk-daycard { border: 1px solid var(--bk-border); border-radius: var(--bk-radius); background: var(--bk-surface); box-shadow: var(--bk-shadow); }
+.bk-daycard [hidden] { display: none; }
+.bk-daycard-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem 1rem; flex-wrap: wrap; padding: 1.1rem 1.25rem 0.9rem; border-bottom: 1px solid var(--bk-border); }
+.bk-main .bk-daycard-head h2 { margin: 0; color: var(--bk-text); font-size: 1.1rem; font-weight: 600; letter-spacing: -0.02em; text-transform: none; }
+.bk-daycard-head .bk-sub { margin-top: 0.2rem; font-size: 0.82rem; }
+.bk-daycard-body { display: grid; gap: 1.25rem; padding: 1rem 1.25rem 1.25rem; }
+.bk-daycard-body > .bk-alert { margin: 0; }
+.bk-day-detail { display: grid; gap: 0.75rem; min-width: 0; }
+.bk-day-detail .bk-hint { margin: 0; }
+.bk-loadline { display: grid; gap: 0.4rem; }
+.bk-loadline-top { display: flex; justify-content: space-between; gap: 1rem; font-size: 0.85rem; }
+.bk-loadline-top span:last-child { color: var(--bk-text-muted); font-variant-numeric: tabular-nums; }
+.bk-daylist { list-style: none; margin: 0; padding: 0; }
+.bk-daylist li {
+  display: grid;
+  grid-template-columns: 4.2rem minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--bk-border) 55%, transparent);
+  font-size: 0.875rem;
+}
+.bk-daylist li:last-child { border-bottom: 0; }
+.bk-daylist time { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bk-daylist strong { font-weight: 500; }
+.bk-daylist .bk-sub { display: inline; margin-left: 0.35rem; font-size: 0.82rem; }
+.bk-daylist-end { display: inline-flex; align-items: center; justify-content: flex-end; gap: 0.6rem; white-space: nowrap; }
+.bk-editrow { display: flex; align-items: flex-end; gap: 0.75rem 1rem; flex-wrap: wrap; }
+.bk-editrow .bk-field { margin: 0; }
+.bk-field > label { display: block; font-size: 0.85rem; font-weight: 500; margin-bottom: 0.3rem; }
+.bk-field--grow { flex: 1 1 14rem; }
+.bk-stepper { display: inline-flex; align-items: stretch; border: 1px solid var(--bk-border); border-radius: var(--bk-radius-sm); background: var(--bk-surface); overflow: hidden; }
+.bk-stepper:has(.bk-input:focus-visible) { outline: 2px solid var(--bk-accent); outline-offset: 2px; border-color: var(--bk-accent); }
+.bk-stepper button { width: 2.75rem; min-height: 2.75rem; padding: 0; border: 0; background: transparent; color: var(--bk-text); font: inherit; font-size: 1.1rem; cursor: pointer; }
+.bk-stepper button:first-child { border-right: 1px solid var(--bk-border); }
+.bk-stepper button:last-child { border-left: 1px solid var(--bk-border); }
+.bk-stepper button[hidden] { display: none; }
+@media (hover: hover) and (pointer: fine) {
+  .bk-stepper button:hover { background: var(--bk-surface-2); }
+}
+.bk-stepper button:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: -2px; }
+.bk-stepper .bk-input { width: 4rem; min-height: 2.75rem; border: 0; border-radius: 0; font-weight: 600; text-align: center; font-variant-numeric: tabular-nums; -moz-appearance: textfield; }
+/* The box around the number draws the ring; transparent rather than removed so forced-colors
+   mode, which repaints it, still shows focus. */
+.bk-stepper .bk-input:focus-visible, .bk-affix .bk-input:focus-visible { outline-color: transparent; }
+.bk-stepper .bk-input::-webkit-inner-spin-button, .bk-stepper .bk-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.bk-editfoot { display: flex; align-items: center; gap: 0.6rem 0.75rem; flex-wrap: wrap; padding-top: 1rem; border-top: 1px solid var(--bk-border); }
+.bk-editfoot .bk-hint { margin: 0; }
+.bk-editfoot .bk-linkbtn { margin-left: auto; min-height: 2.75rem; color: var(--bk-text-muted); }
 .bk-day-form h2 { margin: 0 0 1rem; color: var(--bk-text); font-size: 1.1rem; font-weight: 600; letter-spacing: -0.02em; text-transform: none; }
 .bk-day-form .bk-field { display: inline-block; margin: 0 0.75rem 1rem 0; }
 .bk-day-form .bk-field .bk-input { width: auto; min-width: 8rem; }
 .bk-day-form .bk-field .bk-input[type=number] { min-width: 5.5rem; width: 5.5rem; }
 .bk-day-form .bk-actions { gap: 0.6rem; }
-@media (min-width: 1024px) {
-  .bk-days-layout { grid-template-columns: minmax(16rem, 20rem) minmax(0, 1fr); gap: 3rem; }
-}
 @media (max-width: 520px) {
   .bk-monthgrid { gap: 0.15rem; }
-  .bk-day { min-height: 2.75rem; }
+  .bk-daycard-head, .bk-daycard-body { padding-inline: 1rem; }
+  .bk-daylist li { grid-template-columns: 3.6rem minmax(0, 1fr) auto; }
+  .bk-daylist-end { grid-column: 2 / -1; justify-content: flex-start; }
+  .bk-editfoot .bk-linkbtn { margin-left: 0; }
 }
-.bk-disclosure--bare { border: none; background: none; margin: 0 0 0.75rem; }
-.bk-disclosure--bare > summary { display: flex; align-items: center; gap: 0.35rem; min-height: 2.5rem; box-sizing: border-box; padding: 0 0 0.4rem; color: var(--bk-text-muted); font-size: 0.85rem; list-style: none; }
-.bk-disclosure--bare > summary::-webkit-details-marker { display: none; }
-.bk-disclosure--bare > summary::before { content: '\\203a'; display: inline-block; transition: rotate 140ms var(--bk-ease); }
-.bk-disclosure--bare[open] > summary::before { rotate: 90deg; }
-@media (prefers-reduced-motion: reduce) { .bk-disclosure--bare > summary::before { transition: none; } }
-.bk-disclosure--bare > div { padding: 0; }
-.bk-day-detail { margin: 0 0 1.5rem; }
-.bk-day-bookings { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
-.bk-day-bookings li {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;
-  padding: 0.6rem 0; font-size: 0.9rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--bk-border) 55%, transparent);
-}
-.bk-day-bookings li a { margin-left: auto; }
-/* Adjacent pager controls reduce pointer travel during repeated month comparison. */
-.bk-pager { display: flex; align-items: center; gap: 0.25rem; margin-bottom: 0.9rem; }
-.bk-pager h3 { order: -1; margin: 0 auto 0 0; font-size: 0.95rem; font-weight: 600; letter-spacing: -0.01em; }
-.bk-pager .bk-btn { width: 1.9rem; min-height: 1.9rem; padding: 0; font-size: 1rem; }
-.bk-month[hidden] { display: none; }
-#bk-default { margin-top: 1.25rem; }
+#bk-default { margin: 0; }
 .bk-btn--sm { min-height: 2.75rem; padding: 0.4rem 0.75rem; font-size: 0.85rem; }
 .bk-defaults { list-style: none; margin: 0.75rem 0 0; padding: 0; display: grid; gap: 0.5rem; }
 .bk-defaults li {
@@ -701,12 +941,41 @@ export const themeCss = `
   transition: color 100ms ease;
 }
 .bk-tabs a:hover { color: var(--bk-text); }
-/* Inset for the same reason as the sidebar links: the strip scrolls, and its overflow box clips.
+/* Inset for the same reason as the top bar links: the strip scrolls, and its overflow box clips.
    The tabs' inline padding (offset by the strip's negative margin) keeps the ring off the label. */
 .bk-tabs a:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: -2px; }
 .bk-tabs a[aria-current="page"] { color: var(--bk-text); border-bottom-color: var(--bk-text); }
 .bk-settings-sections { min-width: 0; }
 .bk-settings-sections > [hidden] { display: none; }
+/* Wide screens list every section down the side, with how many values each one overrides, so
+   the page doubles as a map of what has been changed. Narrow screens keep the tab strip. */
+.bk-snav { display: none; }
+.bk-snav a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 2.5rem;
+  padding: 0 0.7rem;
+  border-radius: var(--bk-radius-sm);
+  color: var(--bk-text-muted);
+  text-decoration: none;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+@media (hover: hover) and (pointer: fine) {
+  .bk-snav a:hover { background: var(--bk-surface-2); color: var(--bk-text); }
+}
+.bk-snav a:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; }
+.bk-snav a[aria-current="page"] { background: var(--bk-surface); color: var(--bk-text); box-shadow: inset 0 0 0 1px var(--bk-border); }
+.bk-snav-sep { height: 1px; margin: 0.5rem 0.7rem; background: var(--bk-border); }
+.bk-snav-count { min-width: 1.25rem; padding: 0 0.35rem; box-sizing: border-box; border-radius: 999px; background: var(--bk-accent-soft); color: var(--bk-accent-text); font-size: 0.72rem; font-weight: 600; line-height: 1.25rem; text-align: center; font-variant-numeric: tabular-nums; }
+.bk-settings-main { min-width: 0; }
+@media (min-width: 1100px) {
+  .bk-settings-layout { display: grid; grid-template-columns: 13rem minmax(0, 1fr); gap: 2.5rem; align-items: start; }
+  .bk-snav { display: grid; gap: 0.1rem; position: sticky; top: 5rem; }
+  .bk-settings-main > .bk-tabs { display: none; }
+}
 /* A settings section is a two-column form: the group's title on the left, its fields on the right,
    every control open. The gap between groups is the only separator; alignment does the rest. */
 .bk-settings-form { max-width: 52rem; }
@@ -728,7 +997,24 @@ export const themeCss = `
 .bk-sfield-label { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .bk-sfield .bk-fieldset legend { margin-bottom: 0.4rem; }
 /* The badge's own display would otherwise beat the hidden attribute the enhancer toggles. */
-.bk-sfield-dirty[hidden], .bk-unsaved[hidden] { display: none; }
+.bk-sfield-dirty[hidden] { display: none; }
+/* The unit sits in the field rather than in the label, so the label names the setting and the
+   field reads as the value it holds: "24 | hours". */
+.bk-affix, .bk-field > .bk-affix { display: inline-flex; align-items: stretch; margin: 0; border: 1px solid var(--bk-border); border-radius: var(--bk-radius-sm); background: var(--bk-surface); font-size: inherit; font-weight: 400; overflow: hidden; }
+.bk-affix:focus-within { outline: 2px solid var(--bk-accent); outline-offset: 2px; border-color: var(--bk-accent); }
+.bk-affix .bk-input { border: 0; border-radius: 0; font-variant-numeric: tabular-nums; }
+.bk-affix-unit { display: inline-flex; align-items: center; padding: 0 0.7rem; background: var(--bk-surface-2); color: var(--bk-text-muted); font-size: 0.85rem; white-space: nowrap; }
+.bk-affix-unit:first-child { border-right: 1px solid var(--bk-border); }
+.bk-affix-unit:last-child { border-left: 1px solid var(--bk-border); }
+.bk-hint b { color: var(--bk-text); font-weight: 600; font-variant-numeric: tabular-nums; }
+/* Prices by party size read as a table: pickups down the side, sizes across the top. */
+.bk-sgroup-fields--wide { max-width: 36rem; overflow-x: auto; padding: 3px; margin: -3px; }
+.bk-pricegrid { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+.bk-pricegrid th { padding: 0 0.75rem 0.5rem 0; text-align: left; font-size: 0.78rem; font-weight: 500; color: var(--bk-text-muted); white-space: nowrap; }
+.bk-pricegrid td { padding: 0.4rem 0.75rem 0.4rem 0; border-top: 1px solid color-mix(in srgb, var(--bk-border) 60%, transparent); vertical-align: top; }
+.bk-pricegrid tbody th { padding-top: 0.95rem; color: var(--bk-text); font-size: 0.875rem; }
+.bk-sfield--cell .bk-input[type=number] { width: 6.5rem; }
+.bk-sfield--cell .bk-modified { display: flex; }
 .bk-modified { display: inline-flex; align-items: baseline; gap: 0.5rem; font-size: 0.8rem; color: var(--bk-text-muted); margin-top: 0.3rem; }
 @media (max-width: 40rem) {
   .bk-sgroup { grid-template-columns: 1fr; gap: 0.75rem; padding: 1.25rem 0; }
@@ -741,8 +1027,8 @@ export const themeCss = `
 .bk-overrides > .bk-hint { margin-top: 0.35rem; }
 .bk-overrides .bk-sgroup:first-of-type { border-top: 0; padding-top: 1rem; }
 
-/* Save is the step operators miss: once anything in the section changes, the bar pins to the
-   bottom of the viewport and says so, and the edited field is flagged until the save lands. */
+/* Save is the step operators miss: the bar is pinned to the bottom of the viewport, stays quiet
+   while nothing has changed, and lifts and counts the edits once something has. */
 .bk-savebar {
   position: sticky;
   bottom: 0;
@@ -750,9 +1036,15 @@ export const themeCss = `
   padding: 0.75rem 0.85rem;
   background: var(--bk-bg);
   border-top: 1px solid var(--bk-border);
+  transition: box-shadow 160ms ease, background-color 160ms ease, border-color 160ms ease;
 }
-.bk-savebar-status { display: inline-flex; align-items: center; gap: 0.75rem; }
-.bk-unsaved { font-size: 0.85rem; color: var(--bk-warning); }
+.bk-savebar[data-dirty] { background: var(--bk-surface); border-top-color: color-mix(in srgb, var(--bk-warning) 40%, var(--bk-border)); box-shadow: 0 -8px 24px rgb(20 21 26 / 0.08); }
+.bk-savebar [hidden] { display: none; }
+.bk-savebar .bk-btn[disabled] { opacity: 0.45; }
+.bk-savebar-status { display: inline-flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.bk-savebar-msg { font-size: 0.85rem; color: var(--bk-text-muted); }
+.bk-savebar[data-dirty] .bk-savebar-msg { color: var(--bk-warning); font-weight: 500; }
+@media (prefers-reduced-motion: reduce) { .bk-savebar { transition: none; } }
 
 /* Weekday pills: seven checkboxes read as a form, seven toggles read as a week. */
 .bk-days { display: flex; flex-wrap: wrap; gap: 0.35rem; }
@@ -911,12 +1203,14 @@ export const themeCss = `
   :root { color-scheme: light; }
   .bk-page { background: #ffffff; color: #000000; }
   .bk-skip,
-  .bk-sidebar,
+  .bk-topbar,
   .bk-masthead,
   .bk-tabs,
   .bk-theme-toggle,
-  .bk-searchbar,
-  .bk-admin-attention,
+  .bk-filterbar,
+  .bk-banner,
+  .bk-glance,
+  .bk-copy,
   .bk-filter-clear,
   .bk-booking-open,
   .bk-booking-chevron,
@@ -939,6 +1233,7 @@ export const themeCss = `
   /* The day the rows belong to is the one thing a loose printed page must never lose, so it reads
      as a heading and is never left stranded at the foot of a page. */
   .bk-daygroup > h3 {
+    position: static;
     break-after: avoid;
     font-size: 1.05rem;
     letter-spacing: 0;

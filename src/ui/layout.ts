@@ -108,8 +108,9 @@ export interface PageShellOptions {
   body: string;
   // Raw HTML rendered inside the dark masthead band; caller escapes. Customer-facing pages.
   header?: string;
-  // App-shell sidebar for operator surfaces; wins over `header` if both are set. Caller escapes.
-  sidebar?: string;
+  // Contents of the operator surfaces' dark top bar (brand + navigation); wins over `header` if
+  // both are set. Caller escapes.
+  topbar?: string;
   // Content column width for masthead pages: default 44rem, mid 56rem, wide 72rem.
   width?: 'mid' | 'wide';
   // Extra raw head markup (e.g. the confirmation page's meta refresh). Caller escapes.
@@ -124,9 +125,8 @@ export interface PageShellOptions {
   // The viewer's forced theme, reflected onto <html data-theme> so first paint matches their
   // choice without an inline script. Absent/undefined = follow the OS (prefers-color-scheme).
   theme?: ThemePreference | undefined;
-  // Pre-built theme-toggle control (see themeToggle below); placed in the masthead or sidebar.
+  // Pre-built theme-toggle control (see themeToggle below); placed in the masthead or top bar.
   themeToggle?: string;
-  sidebarLabel?: string;
   skipLabel?: string;
 }
 
@@ -141,9 +141,8 @@ export function pageShell(options: PageShellOptions): string {
   const toggle = options.themeToggle ?? '';
   const bodyTag = `<body class="bk-page bk-page--${options.page}"${options.status ? ` data-bk-status="${escapeHtml(options.status)}"` : ''}>`;
   const skip = options.skipLabel ? `<a class="bk-skip" href="#bk-main">${escapeHtml(options.skipLabel)}</a>` : '';
-  if (options.sidebar) {
-    const navLabel = options.sidebarLabel ? ` aria-label="${escapeHtml(options.sidebarLabel)}"` : '';
-    const content = `${skip}<div class="bk-shell"><nav class="bk-sidebar"${navLabel}>${options.sidebar}${toggle}</nav><div class="bk-shell-main"><main id="bk-main" class="bk-main bk-main--shell">${options.body}</main></div></div>`;
+  if (options.topbar) {
+    const content = `${skip}<div class="bk-shell"><header class="bk-topbar">${options.topbar}${toggle}</header><div class="bk-shell-main"><main id="bk-main" class="bk-main bk-main--shell">${options.body}</main></div></div>`;
     return `<!doctype html>${htmlTag}${head}${bodyTag}${content}</body></html>`;
   }
   const widthClass = options.width === 'wide' ? ' bk-main--wide' : options.width === 'mid' ? ' bk-main--mid' : '';
@@ -155,16 +154,24 @@ export function pageShell(options: PageShellOptions): string {
   return `<!doctype html>${htmlTag}${head}${bodyTag}${skip}${masthead}<main id="bk-main" class="${mainClass}">${options.body}</main></body></html>`;
 }
 
-// Builds the per-viewer theme toggle: rendered hidden with mode + labels as data-* so the
-// enhancer needs no separate i18n island. `theme` undefined renders as "System".
+const themeIcons = {
+  system: '<rect width="20" height="14" x="2" y="3" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/>',
+  light: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
+  dark: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+};
+
+// The per-viewer theme switch: all three choices visible at once, so picking one is one click
+// rather than cycling through the others. Rendered hidden because only the enhancer can store the
+// choice; without it the page follows the OS. `theme` undefined marks "System" as pressed.
 export function themeToggle(messages: ReservaMessages, theme: ThemePreference | undefined): string {
   const mode = theme ?? 'system';
-  return `<button type="button" class="bk-theme-toggle" data-reserva-theme-toggle hidden`
-    + ` data-mode="${mode}"`
-    + ` data-aria="${escapeHtml(messages['theme.toggle'])}"`
-    + ` data-l-system="${escapeHtml(messages['theme.system'])}"`
-    + ` data-l-light="${escapeHtml(messages['theme.light'])}"`
-    + ` data-l-dark="${escapeHtml(messages['theme.dark'])}"></button>`;
+  const button = (value: keyof typeof themeIcons): string => {
+    const label = escapeHtml(messages[`theme.${value}`]);
+    return `<button type="button" value="${value}" aria-pressed="${value === mode}" aria-label="${label}" title="${label}">`
+      + `<svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${themeIcons[value]}</svg></button>`;
+  };
+  return `<div class="bk-theme-toggle" role="group" aria-label="${escapeHtml(messages['theme.toggle'])}" data-reserva-theme-toggle hidden>`
+    + `${button('system')}${button('light')}${button('dark')}</div>`;
 }
 
 const statusTone: Record<string, string> = {

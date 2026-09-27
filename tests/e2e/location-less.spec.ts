@@ -40,10 +40,11 @@ test('booking a service with no location module carries no pickup/meeting-point 
   await page.goto('/booking/admin');
   const row = page.locator('.bk-booking', { hasText: reference });
   await expect(row).toBeVisible();
-  // A location-less booking has no place to name, so the row summary stops at the party size and
-  // the opened row carries no pickup facts at all. The service reads as its localized title now;
-  // the slug fallback is gone.
-  await expect(row.locator('.bk-booking-sub')).toHaveText('River Cruise · 2 people');
+  // A location-less booking has no place to name, so the row summary stops at the service and the
+  // opened row carries no pickup facts at all. The service reads as its localized title now; the
+  // slug fallback is gone. Party size has its own column.
+  await expect(row.locator('.bk-booking-sub')).toHaveText('River Cruise');
+  await expect(row.locator('.bk-booking-guests')).toHaveAttribute('title', '2 people');
   await row.locator('summary').click();
   await expect(row.locator('.bk-facts')).not.toContainText('Pickup');
   await expect(row.locator('.bk-facts')).not.toContainText('Meeting point');

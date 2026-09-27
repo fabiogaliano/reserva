@@ -251,7 +251,8 @@ describe('admin incidents', () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const html = await (await handleAdminGet(new Request(ADMIN_URL), context)).text();
     expect(html).toContain('<span class="bk-tab-count">105</span>');
-    expect(html).toContain('105 need attention');
+    expect(html).toContain('105 issues need attention');
+    expect(html).toContain('<span class="bk-topbar-count" aria-hidden="true">105</span>');
     expect(html).toContain('Showing the first 100 of 105 open incidents.');
   });
 

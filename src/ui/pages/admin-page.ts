@@ -1,17 +1,20 @@
 import type { OpsHealthSecurity } from '../../core/api.js';
 import type { Booking, BookingStatus } from '../../core/booking.js';
 import { adminLocaleFor, meetingPointForBooking, pickupOptionFor, pickupPresentationFor, resolveLocalizedText, resolveService, resolveServiceTitle, type ResolvedServiceConfig } from '../../core/config.js';
+import { formatLocaleFor } from '../../core/locale.js';
 import { defaultCapacityForDate, type CapacityDefault } from '../../core/occupancy.js';
-import { enumerateDateKeys, localDateKey, utcToLocalIso } from '../../core/time.js';
+import { addDaysToDateKey, enumerateDateKeys, localDateKey, parseUtcInstant } from '../../core/time.js';
 import type { ReservaContext } from '../../context.js';
 import { escapeHtml } from '../../http.js';
 import { ownerFacingIncidentTitle } from '../../reconciliation-helpers.js';
 import { isManageableToken, type OperationalIncidentRecord } from '../../repo.js';
 import type { ReservaResolvedRouteConfig } from '../../routes-manifest.js';
 import { cssAssetHref, jsAssetHref } from '../asset-hrefs.js';
-import { formatDateTime, formatDayDate, formatPrice } from '../format.js';
-import { digitsOf, emailLink, factList, pageShell, phoneLinks, statusBadge, statusToneOf, themeToggle } from '../layout.js';
+import { formatDayDate, formatPrice } from '../format.js';
+import { digitsOf, emailLink, factList, pageShell, phoneLinks, statusToneOf, themeToggle } from '../layout.js';
 import { formatMessage, resolveMessages } from '../messages.js';
+
+type Messages = ReturnType<typeof resolveMessages>;
 
 export type AdminWindow = 'upcoming' | 'past';
 
@@ -30,6 +33,9 @@ export interface AdminBookingList {
   pageSize: number;
   // Set when a search stopped at its scan cap, so `total` counts only the rows it looked at.
   searchScanLimit: number | null;
+  // Rows per status in the current window, for the status chips. Null while a search is active:
+  // the counts would then have to come from the same in-memory scan as the list itself.
+  statusCounts: Record<BookingStatus, number> | null;
 }
 
 export interface AdminDayLoad {
@@ -51,6 +57,23 @@ export interface AdminCalendar {
   detailBefore: string | null;
   // The selected day's own bookings, fetched separately so they never depend on the cap above.
   editDayBookings: Booking[];
+}
+
+// The totals strip above the tabs. Times are UTC instants; null means "none" (or, for the two
+// first-departure times, not known because the day fell past the day-detail cap).
+export interface AdminGlance {
+  nextToday: string | null;
+  firstTomorrow: string | null;
+  holds: number;
+  holdsExpireFirst: string | null;
+}
+
+// What the banner above the tabs says about open incidents. `first` is set only when exactly one
+// is open, so the banner can name it instead of counting.
+export interface AdminAttention {
+  count: number;
+  actionRequired: boolean;
+  first: { title: string; booking: Booking | null } | null;
 }
 
 export interface AdminErrorNotice {
@@ -78,7 +101,7 @@ export function incidentRetryAvailable(incident: Pick<OperationalIncidentRecord,
 const ERROR_FIELD_PATTERN = /^[\w.:-]{1,200}$/;
 
 export function adminErrorAlert(
-  messages: ReturnType<typeof resolveMessages>,
+  messages: Messages,
   error: AdminErrorNotice | null,
   fieldLabel: (field: string) => string | undefined,
 ): string {
@@ -93,22 +116,40 @@ export function adminErrorAlert(
   return `<p class="bk-alert bk-alert--danger" role="alert">${escapeHtml(text)}</p>`;
 }
 
-const navIcons = {
-  dashboard: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
-  settings: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+const icon = (body: string, size = 16, className = ''): string =>
+  `<svg${className ? ` class="${className}"` : ''} aria-hidden="true" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
+
+const icons = {
+  dashboard: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+  chevron: '<path d="m9 18 6-6-6-6"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+  copy: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  arrow: '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
 };
 
-const chevronIcon = '<svg class="bk-booking-chevron" aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>';
+const chevronIcon = `<svg class="bk-booking-chevron" aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${icons.chevron}</svg>`;
 
-// The dark shell contains only destinations that replace the page; the dashboard's own tab strip
-// lives beside its content so switching panels is never mistaken for leaving the page.
-export function adminSidebar(context: ReservaContext, messages: ReturnType<typeof resolveMessages>, active: 'admin' | 'settings'): string {
+// The operator surfaces have two destinations, so they sit in one dark bar across the top rather
+// than a column of chrome beside every page. The dashboard link carries the open-incident count,
+// so it stays visible from Settings too.
+export function adminTopbar(context: ReservaContext, messages: Messages, active: 'admin' | 'settings', openIncidentCount: number): string {
   const adminPath = escapeHtml(context.routeConfig.paths.adminPage);
-  const link = (href: string, icon: string, label: string, isActive: boolean): string =>
-    `<a href="${href}"${isActive ? ' class="bk-active" aria-current="page"' : ''}>${icon} ${escapeHtml(label)}</a>`;
-  const links = link(adminPath, navIcons.dashboard, messages['admin.navOverview'], active === 'admin')
-    + link(`${adminPath}?view=settings`, navIcons.settings, messages['admin.settings'], active === 'settings');
-  return `<p class="bk-sidebar-brand">${escapeHtml(context.config.business.name)}</p><div class="bk-sidebar-links">${links}</div>`;
+  const link = (href: string, iconBody: string, label: string, isActive: boolean, extra = ''): string =>
+    `<a href="${href}"${isActive ? ' aria-current="page"' : ''}>${icon(iconBody)} ${escapeHtml(label)}${extra}</a>`;
+  const count = openIncidentCount > 0
+    ? ` <span class="bk-topbar-count" aria-hidden="true">${openIncidentCount}</span><span class="bk-sr-only">(${escapeHtml(attentionCountText(messages, openIncidentCount))})</span>`
+    : '';
+  const links = link(adminPath, icons.dashboard, messages['admin.navOverview'], active === 'admin', count)
+    + link(`${adminPath}?view=settings`, icons.settings, messages['admin.settings'], active === 'settings');
+  return `<p class="bk-topbar-brand"><span>${escapeHtml(context.config.business.name)}</span></p>`
+    + `<nav class="bk-topbar-nav" aria-label="${escapeHtml(messages['admin.navigation'])}">${links}</nav>`;
+}
+
+function attentionCountText(messages: Messages, count: number): string {
+  return formatMessage(count === 1 ? messages['admin.attentionCountOne'] : messages['admin.attentionCount'], { n: count });
 }
 
 // The meeting-point label the bookings list displays — '' when none. Shared with the search
@@ -153,16 +194,72 @@ export function manageLinkHref(routeConfig: ReservaResolvedRouteConfig, token: s
   return isManageableToken(token) ? `${routeConfig.paths.managePage}?token=${encodeURIComponent(token)}` : null;
 }
 
-// Relative "how long ago" phrasing for a card's first-detected timestamp — reads as urgency where
-// a plain locale date/time wouldn't.
-function formatIncidentSince(iso: string, locale: string, timezone: string): string {
-  return formatDateTime(utcToLocalIso(iso, timezone), locale, timezone);
+// "12 minutes ago" rather than a timestamp: how long something has been broken is what makes it
+// urgent. The unit grows with the distance so a week-old incident doesn't read in minutes.
+function relativeTime(iso: string, now: Date, locale: string): string {
+  const seconds = (parseUtcInstant(iso).getTime() - now.getTime()) / 1000;
+  const format = new Intl.RelativeTimeFormat(formatLocaleFor(locale), { numeric: 'auto' });
+  const distance = Math.abs(seconds);
+  if (distance < 3600) return format.format(Math.round(seconds / 60), 'minute');
+  if (distance < 86_400) return format.format(Math.round(seconds / 3600), 'hour');
+  return format.format(Math.round(seconds / 86_400), 'day');
+}
+
+// "Today", "Tomorrow", "Yesterday" for the three days an operator thinks of by name; '' otherwise.
+function relativeDayLabel(date: string, today: string, locale: string): string {
+  const offset = Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000);
+  if (Math.abs(offset) > 1) return '';
+  const label = new Intl.RelativeTimeFormat(formatLocaleFor(locale), { numeric: 'auto' }).format(offset, 'day');
+  return label.charAt(0).toLocaleUpperCase(formatLocaleFor(locale)) + label.slice(1);
+}
+
+function formatLongDate(date: string, locale: string): string {
+  return new Intl.DateTimeFormat(formatLocaleFor(locale), { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' })
+    .format(new Date(`${date}T00:00:00Z`));
+}
+
+// Shared by the bookings list and the day card: the time as the operator reads a departure board,
+// with no leading zero and the day period set smaller so the digits line up down the column.
+function timeFormatting(locale: string, timezone: string): { text: (iso: string) => string; html: (iso: string) => string } {
+  const formatter = new Intl.DateTimeFormat(formatLocaleFor(locale), { hour: 'numeric', minute: '2-digit', timeZone: timezone });
+  return {
+    text: (iso) => formatter.format(parseUtcInstant(iso)),
+    html: (iso) => formatter.formatToParts(parseUtcInstant(iso))
+      .map((part) => part.type === 'dayPeriod' ? `<small>${escapeHtml(part.value)}</small>` : escapeHtml(part.value)).join(''),
+  };
+}
+
+// The guest figure a row shows. A service that collects the exact headcount sells places "up to" a
+// party size, so its `quantity` is a pricing tier; until the payer states the real number, the row
+// says it is an upper bound rather than passing the tier off as a headcount.
+function guestFigure(config: ReservaContext['config'], booking: Booking, messages: Messages): { value: string; label: string } {
+  const people = (n: number): string => formatMessage(n === 1 ? messages['widget.person'] : messages['widget.quantityCount'], { n });
+  if (booking.guestCount !== null) return { value: String(booking.guestCount), label: people(booking.guestCount) };
+  let collects = false;
+  try {
+    collects = resolveService(config, booking.serviceSlug).collectGuestCount === true;
+  } catch {
+    collects = false;
+  }
+  if (!collects) return { value: String(booking.quantity), label: people(booking.quantity) };
+  const upTo = formatMessage(messages['admin.guestsUpTo'], { n: booking.quantity });
+  return { value: `≤${booking.quantity}`, label: upTo };
+}
+
+function guestsMarkup(figure: { value: string; label: string }): string {
+  return `<span class="bk-booking-guests" title="${escapeHtml(figure.label)}">${icon(icons.users, 14)}<span aria-hidden="true">${escapeHtml(figure.value)}</span><span class="bk-sr-only">${escapeHtml(figure.label)}</span></span>`;
+}
+
+// Hidden until the enhancer confirms the clipboard is reachable; a copy button that cannot copy
+// would be the one dead control on the page.
+function copyButton(value: string, label: string, copiedLabel: string): string {
+  return `<button type="button" class="bk-copy" data-reserva-copy="${escapeHtml(value)}" data-copied="${escapeHtml(copiedLabel)}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}" hidden>${icon(icons.copy, 14)}</button>`;
 }
 
 // Sits above the incident cards in the "Attention" panel: an off security layer is silent by
 // design at runtime, so the dashboard is the only place an operator finds out.
 export function securityWarningsSection(
-  messages: ReturnType<typeof resolveMessages>,
+  messages: Messages,
   security: OpsHealthSecurity,
 ): string {
   const warnings: string[] = [];
@@ -174,25 +271,20 @@ export function securityWarningsSection(
     + `</section>`;
 }
 
-// A deployment-wide incident (reconciliation) carries no booking, so the reference column shows
-// what it is about instead of a booking id.
-function incidentReference(incident: OperationalIncidentRecord, referenceByBookingId: Map<string, string>): string {
-  if (incident.bookingId === null) return incident.sourceType;
-  return referenceByBookingId.get(incident.bookingId) ?? incident.bookingId;
-}
-
-// The "Attention" panel: open incident cards with a technical-details disclosure and
-// CSRF-protected retry/resolve actions, plus 30-day counts and a resolved history. Never renders
-// a Retry button the server would refuse (see incidentRetryAvailable).
+// The "Attention" panel: open incident cards, each saying what broke, which booking it touched and
+// what to do about it, with CSRF-protected retry/resolve actions and a technical-details
+// disclosure, then the 30-day history. Never renders a Retry button the server would refuse (see
+// incidentRetryAvailable).
 export function incidentsSection(
   context: ReservaContext,
-  messages: ReturnType<typeof resolveMessages>,
+  messages: Messages,
   openIncidents: OperationalIncidentRecord[],
   // The real open count; `openIncidents` is a bounded page of it.
   openIncidentTotal: number,
   resolvedIncidents: OperationalIncidentRecord[],
   counts: { opened: number; resolved: number },
-  referenceByBookingId: Map<string, string>,
+  // Token-hydrated, so a card can link straight to the booking's manage page.
+  bookingById: Map<string, Booking>,
   csrfToken: string | undefined,
   saved: string,
 ): string {
@@ -202,6 +294,9 @@ export function incidentsSection(
 
   const locale = adminLocaleFor(context.config);
   const timezone = context.config.business.timezone;
+  const now = context.clock();
+  const time = timeFormatting(locale, timezone);
+  const catalog = messages as Record<string, string>;
   const csrfField = `<input type="hidden" name="csrf_token" value="${escapeHtml(csrfToken)}">`;
   // The retry POST reports what actually happened, so a retry that changed nothing must not read
   // like a success: only an incident that closed gets the ok tone.
@@ -217,11 +312,31 @@ export function incidentsSection(
   const hiddenSource = (incident: OperationalIncidentRecord): string =>
     `<input type="hidden" name="source_type" value="${escapeHtml(incident.sourceType)}">`
     + `<input type="hidden" name="source_key" value="${escapeHtml(incident.sourceKey)}">`;
+  // A deployment-wide incident (reconciliation) carries no booking, and a booking deleted since has
+  // nothing left to show but its id.
+  const aboutLine = (incident: OperationalIncidentRecord): string => {
+    if (incident.bookingId === null) return '';
+    const booking = bookingById.get(incident.bookingId);
+    if (!booking) return `<p class="bk-incident-about"><span class="bk-mono">${escapeHtml(incident.bookingId)}</span></p>`;
+    const when = `${formatDayDate(localDateKey(booking.startsAt, timezone), locale, now)}, ${time.text(booking.startsAt)}`;
+    const detail = [resolveServiceTitle(context.config, booking.serviceSlug, locale), when, guestFigure(context.config, booking, messages).label].join(' · ');
+    const href = manageLinkHref(context.routeConfig, booking.operatorToken);
+    return `<p class="bk-incident-about"><span class="bk-mono">${escapeHtml(booking.reference)}</span>`
+      + (booking.customerName || booking.customerEmail ? `<span>${escapeHtml(booking.customerName ?? booking.customerEmail ?? '')}</span>` : '')
+      + `<span class="bk-sub">${escapeHtml(detail)}</span>`
+      + (href ? `<a class="bk-link" href="${escapeHtml(href)}">${escapeHtml(messages['admin.openBooking'])} ${icon(icons.arrow, 13)}</a>` : '')
+      + `</p>`;
+  };
   const cards = openIncidents.map((incident) => {
-    const reference = incidentReference(incident, referenceByBookingId);
     const title = ownerFacingIncidentTitle(incident.action);
     const severityLabel = incident.severity === 'action_required' ? messages['admin.incidentSeverityActionRequired'] : messages['admin.incidentSeverityDelayed'];
     const severityTone = incident.severity === 'action_required' ? ' bk-badge--danger' : ' bk-badge--warn';
+    const detected = formatMessage(messages['admin.incidentDetected'], { when: relativeTime(incident.firstDetectedAt, now, locale) });
+    const attempts = incident.attemptCount > 0
+      ? ` · ${formatMessage(incident.attemptCount === 1 ? messages['admin.incidentAttemptsOne'] : messages['admin.incidentAttempts'], { n: incident.attemptCount })}`
+      : '';
+    const exactly = new Intl.DateTimeFormat(formatLocaleFor(locale), { dateStyle: 'full', timeStyle: 'short', timeZone: timezone }).format(parseUtcInstant(incident.firstDetectedAt));
+    const todo = catalog[`admin.incidentTodo.${incident.action}`];
     const canRetry = incidentRetryAvailable(incident);
     const isMultiRecipientish = incident.action === 'confirmation_email' || incident.action === 'customer_notification' || incident.action === 'operations_sync';
     const retryForm = canRetry
@@ -235,39 +350,43 @@ export function incidentsSection(
       + `<label class="bk-field" data-reserva-resolve-note><span>${escapeHtml(messages['admin.incidentResolveNoteLabel'])}</span>`
       + `<textarea class="bk-input" name="note" required minlength="1" maxlength="500"></textarea>`
       + `<span class="bk-hint">${escapeHtml(messages['admin.incidentResolveNoteHint'])}</span></label>`
-      + `<button type="submit" class="bk-btn bk-btn--outline-danger bk-btn--sm" name="action" value="incident-resolve">${escapeHtml(messages['admin.incidentResolveSubmit'])}</button></form>`;
+      + `<button type="submit" class="bk-btn bk-btn--sm" name="action" value="incident-resolve">${escapeHtml(messages['admin.incidentResolveSubmit'])}</button></form>`;
     const details = `<details class="bk-disclosure bk-disclosure--bare"><summary>${escapeHtml(messages['admin.incidentDetails'])}</summary><div>`
       + `<p class="bk-mono bk-sub">${escapeHtml(incident.action)} · ${escapeHtml(incident.sourceType)} · attempt ${incident.attemptCount}</p>`
       + `</div></details>`;
     return `<li class="bk-card bk-incident-card">`
-      + `<h3>${escapeHtml(title)} <span class="bk-badge${severityTone}">${escapeHtml(severityLabel)}</span></h3>`
-      + `<p class="bk-sub"><span class="bk-mono">${escapeHtml(reference)}</span> · ${escapeHtml(formatMessage(messages['admin.incidentSince'], { date: formatIncidentSince(incident.firstDetectedAt, locale, timezone) }))} · ${escapeHtml(formatMessage(messages['admin.incidentAttempts'], { n: incident.attemptCount }))}</p>`
-      + details
-      + `<div class="bk-actions">${retryForm}${resolveForm}</div>`
+      + `<h3>${escapeHtml(title)} <span class="bk-badge${severityTone}">${escapeHtml(severityLabel)}</span>`
+      + `<span class="bk-incident-when" title="${escapeHtml(exactly)}">${escapeHtml(detected + attempts)}</span></h3>`
+      + aboutLine(incident)
+      + (todo ? `<p class="bk-incident-todo">${escapeHtml(todo)}</p>` : '')
+      + `<div class="bk-incident-foot">${details}<div class="bk-actions">${retryForm}${resolveForm}</div></div>`
       + `</li>`;
   }).join('');
 
   const historyItems = resolvedIncidents.map((incident) => {
-    const reference = incidentReference(incident, referenceByBookingId);
+    const reference = incident.bookingId === null
+      ? incident.sourceType
+      : bookingById.get(incident.bookingId)?.reference ?? incident.bookingId;
     const resolution = incident.resolutionKind === 'manual'
       ? formatMessage(messages['admin.incidentHistoryManual'], { who: incident.resolvedBy ?? '' })
       : messages['admin.incidentHistoryAutomatic'];
     return `<li><span class="bk-mono">${escapeHtml(reference)}</span> — ${escapeHtml(ownerFacingIncidentTitle(incident.action))}`
       + `<span class="bk-sub">${escapeHtml(resolution)}</span></li>`;
   }).join('');
+  // The 30-day counts are history, not news, so they ride on the history disclosure's summary
+  // rather than sitting above the cards that need action now.
+  const countsLine = formatMessage(messages['admin.incidentCounts30d'], { opened: counts.opened, resolved: counts.resolved });
   const history = `<details class="bk-disclosure" id="bk-incidents-history">`
-    + `<summary>${escapeHtml(messages['admin.incidentHistory'])}</summary><div>`
+    + `<summary>${escapeHtml(messages['admin.incidentHistory'])}<span class="bk-disclosure-meta">${escapeHtml(countsLine)}</span></summary><div>`
     + (historyItems ? `<ul class="bk-incident-history">${historyItems}</ul>` : `<p class="bk-hint">${escapeHtml(messages['admin.incidentHistoryNone'])}</p>`)
     + `</div></details>`;
 
-  const countsLine = `<p class="bk-hint">${escapeHtml(formatMessage(messages['admin.incidentCounts30d'], { opened: counts.opened, resolved: counts.resolved }))}</p>`;
   const truncatedLine = openIncidentTotal > openIncidents.length
     ? `<p class="bk-hint">${escapeHtml(formatMessage(messages['admin.incidentsTruncated'], { shown: openIncidents.length, total: openIncidentTotal }))}</p>`
     : '';
 
   return `<section id="bk-incidents">`
     + savedAlert
-    + countsLine
     + truncatedLine
     + (cards ? `<ul class="bk-incident-list">${cards}</ul>` : `<p class="bk-lead">${escapeHtml(messages['admin.incidentsNone'])}</p>`)
     + history
@@ -278,6 +397,8 @@ export interface AdminPageInput {
   list: AdminBookingList;
   filters: AdminFilters;
   calendar: AdminCalendar;
+  // The ?date the operator asked for ('' when none): it rides along in every link the page builds.
+  // The day card shows it, or today when it is empty.
   editDate: string;
   saved: string;
   error: AdminErrorNotice | null;
@@ -285,7 +406,8 @@ export interface AdminPageInput {
   // no-op on the POST side.
   csrfToken: string | undefined;
   incidentsHtml: string;
-  openIncidentCount: number;
+  attention: AdminAttention;
+  glance: AdminGlance;
   activeTab: AdminTab;
 }
 
@@ -311,8 +433,19 @@ const adminFieldMessageKeys: Record<string, 'admin.capacity' | 'common.date' | '
   note: 'admin.incidentResolveNoteLabel',
 };
 
+// The load bar's fill, in tenths: a class hook rather than a width, because a style attribute is
+// blocked under the strict style-src CSP. Any load at all shows at least one tenth.
+function meterFill(peak: number, capacity: number): number {
+  if (capacity <= 0 || peak <= 0) return 0;
+  return Math.min(10, Math.max(1, Math.round((peak / capacity) * 10))) * 10;
+}
+
+function meterMarkup(peak: number, capacity: number, className = 'bk-meter'): string {
+  return `<span class="${className}${peak >= capacity && capacity > 0 ? ' bk-meter--full' : ''}" data-fill="${meterFill(peak, capacity)}" aria-hidden="true"><i></i></span>`;
+}
+
 export function adminPage(context: ReservaContext, input: AdminPageInput): string {
-  const { list, filters, calendar, editDate, saved, csrfToken, incidentsHtml, openIncidentCount, activeTab } = input;
+  const { list, filters, calendar, editDate, saved, csrfToken, incidentsHtml, attention, glance, activeTab } = input;
   const { fromDate, toDate, overrides, capacityDefaults } = calendar;
   const locale = adminLocaleFor(context.config);
   const messages = resolveMessages(context.config, locale);
@@ -320,24 +453,38 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
   // The render clock, not the host's: formatDayDate names the year only when it differs from
   // "now", and a test or a replayed request must see the same dates the request's clock implies.
   const now = context.clock();
-  const formatTime = (startsAt: string): string =>
-    new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', timeZone: timezone }).format(new Date(startsAt));
-  const quantityText = (quantity: number): string =>
-    formatMessage(quantity === 1 ? messages['widget.person'] : messages['widget.quantityCount'], { n: quantity });
-
-  // A booking row states the five things an operator scans by — when, who, what, how many, where —
-  // and keeps reference, contact details and money inside the disclosure, where they are one click
-  // away on the one booking in twenty that needs them.
-  const bookingRow = (booking: Booking): string => {
-    const who = booking.customerName ?? booking.customerEmail ?? '—';
+  const time = timeFormatting(locale, timezone);
+  const bookingCountText = (n: number): string =>
+    formatMessage(n === 1 ? messages['admin.bookingCountOne'] : messages['admin.bookingCount'], { n });
+  const serviceOf = (booking: Booking): ResolvedServiceConfig | undefined => {
     // resolveService throws for a renamed/removed serviceSlug; degrade to undefined rather than
     // 500 the row — every gate below falls back to the pickupType-keyed check.
-    let rowService: ResolvedServiceConfig | undefined;
     try {
-      rowService = resolveService(context.config, booking.serviceSlug);
+      return resolveService(context.config, booking.serviceSlug);
     } catch {
-      rowService = undefined;
+      return undefined;
     }
+  };
+  const isVoid = (booking: Booking): boolean => booking.status === 'cancelled' || booking.status === 'expired';
+  // Confirmed is the expected state and reads as noise on every row, so only the states an
+  // operator might act on get a badge. A hold is the one with a deadline of its own: it releases
+  // the spot unattended, so its badge carries the expiry.
+  const statusMarkup = (booking: Booking): string => {
+    if (booking.status === 'confirmed') return '';
+    const label = messages[`status.${booking.status}` as keyof typeof messages] ?? booking.status;
+    const text = booking.status === 'hold' && booking.holdExpiresAt
+      ? `${label} · ${formatMessage(messages['admin.holdUntil'], { time: time.text(booking.holdExpiresAt) })}`
+      : label;
+    const tone = statusToneOf(booking.status);
+    return `<span class="bk-badge${tone ? ` bk-badge--${tone}` : ''}">${escapeHtml(text)}</span>`;
+  };
+
+  // A booking row states what an operator scans by — when, who, what, where, how many — and keeps
+  // reference, contact details and money inside the disclosure, where they are one click away on
+  // the one booking in twenty that needs them.
+  const bookingRow = (booking: Booking): string => {
+    const who = booking.customerName ?? booking.customerEmail ?? '—';
+    const rowService = serviceOf(booking);
     const serviceLabel = resolveServiceTitle(context.config, booking.serviceSlug, locale);
     const option = rowService ? pickupOptionFor(rowService, booking.pickupType) : undefined;
     // Gate on the row's own data, not config — a location-less booking (pickupType null) shows no
@@ -354,45 +501,31 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
     // The summary names one place: the meeting point when there is a choice of them, otherwise the
     // pickup option itself. The exact street address stays in the disclosure.
     const place = meetingPointLabel || pickupLabel;
-    const summaryParts = [serviceLabel, quantityText(booking.quantity), place].filter(Boolean);
-    // Confirmed is the expected state and reads as noise on every row, so only the states an
-    // operator might act on are spelled out.
-    const tone = statusToneOf(booking.status);
-    // The badge below brings its own tint, so the cell must not tint the text a second time.
-    const statusClass = booking.status === 'hold' ? '' : tone === 'danger' ? ' bk-booking-status--danger' : tone === 'warn' ? ' bk-booking-status--warn' : '';
-    // A hold is the one row with a deadline of its own: it releases the spot unattended, so the
-    // row carries the expiry an operator would otherwise have to open the booking to find, and
-    // takes a badge so it reads as a state rather than as part of the customer line.
-    const statusText = booking.status === 'hold'
-      ? `<span class="bk-badge bk-badge--warn">${escapeHtml(booking.holdExpiresAt
-          ? `${messages['status.hold']} · ${formatTime(booking.holdExpiresAt)}`
-          : messages['status.hold'])}</span>`
-      : booking.status === 'confirmed'
-        ? ''
-        : escapeHtml(messages[`status.${booking.status}` as keyof typeof messages] ?? booking.status);
-    // No row action on terminal rows (reachable since the filter widening): "Manage" would open a
-    // page with no actions left.
-    const isTerminal = booking.status === 'cancelled' || booking.status === 'expired' || booking.status === 'no_show';
+    const summaryParts = [serviceLabel, place].filter(Boolean);
+    // No row action on terminal rows: "Manage" would open a page with no actions left.
+    const isTerminal = isVoid(booking) || booking.status === 'no_show';
     const manageHref = isTerminal ? null : manageLinkHref(context.routeConfig, booking.operatorToken);
     const manageMarkup = isTerminal
       ? ''
       : manageHref
-        ? `<a class="bk-btn bk-btn--secondary bk-btn--sm bk-booking-open" href="${escapeHtml(manageHref)}">${escapeHtml(messages['admin.manage'])}</a>`
-        : `<span class="bk-sub bk-booking-open">${escapeHtml(messages['admin.manageUnavailable'])}</span>`;
-    const facts: Array<[string, string]> = [[messages['common.reference'], `<span class="bk-mono">${escapeHtml(booking.reference)}</span>`]];
+        ? `<div class="bk-row-actions"><a class="bk-btn bk-btn--secondary bk-btn--sm bk-booking-open" href="${escapeHtml(manageHref)}">${escapeHtml(messages['admin.manageBooking'])} ${icon(icons.arrow, 14)}</a></div>`
+        : `<div class="bk-row-actions"><span class="bk-sub bk-booking-open">${escapeHtml(messages['admin.manageUnavailable'])}</span></div>`;
+    const facts: Array<[string, string]> = [[messages['common.reference'], `<span class="bk-mono">${escapeHtml(booking.reference)}</span>${copyButton(booking.reference, messages['admin.copyReference'], messages['admin.copied'])}`]];
     // Reaching the customer is the reason this disclosure gets opened at all, so the details are
-    // one tap rather than a copy-paste into another app.
-    if (booking.customerEmail) facts.push([messages['common.email'], emailLink(booking.customerEmail)]);
+    // one tap rather than a copy-paste into another app — and one click into the clipboard for the
+    // mail client that isn't the default one.
+    if (booking.customerEmail) facts.push([messages['common.email'], `${emailLink(booking.customerEmail)}${copyButton(booking.customerEmail, messages['admin.copyEmail'], messages['admin.copied'])}`]);
     if (booking.customerPhone) facts.push([messages['common.phone'], phoneLinks(booking.customerPhone, messages)]);
     facts.push([messages['common.price'], escapeHtml(formatPrice(booking.priceMinor, locale, context.config.business.currency))]);
     if (requiresAddress && booking.pickupAddress) facts.push([messages['common.pickupAddress'], escapeHtml(booking.pickupAddress)]);
     if (meetingPointLabel && pickupLabel) facts.push([messages['common.pickup'], escapeHtml(pickupLabel)]);
     facts.push([messages['admin.bookedOn'], escapeHtml(formatDayDate(localDateKey(booking.createdAt, timezone), locale, now))]);
-    return `<details class="bk-booking">`
+    return `<details class="bk-booking${isVoid(booking) ? ' bk-booking--void' : ''}">`
       + `<summary>`
-      + `<span class="bk-booking-time">${escapeHtml(formatTime(booking.startsAt))}</span>`
+      + `<span class="bk-booking-time">${time.html(booking.startsAt)}</span>`
       + `<span><span class="bk-booking-who">${escapeHtml(who)}</span><span class="bk-booking-sub">${escapeHtml(summaryParts.join(' · '))}</span></span>`
-      + `<span class="bk-booking-status${statusClass}">${statusText}</span>`
+      + guestsMarkup(guestFigure(context.config, booking, messages))
+      + `<span class="bk-booking-status">${statusMarkup(booking)}</span>`
       + chevronIcon
       + `</summary>`
       + `<div class="bk-booking-detail">${factList(facts)}${manageMarkup}</div>`
@@ -413,8 +546,25 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
     }
     return [...groups];
   };
+  // A day heading names the day the way an operator says it ("Tomorrow") and counts what is going
+  // ahead, keeping cancelled and expired rows out of that figure. No guest total: a party size can
+  // be a pricing tier rather than a headcount, so a sum of them would overstate the day.
+  const dayHeading = (date: string, rows: Booking[]): string => {
+    const relative = relativeDayLabel(date, fromDate, locale);
+    const absolute = formatDayDate(date, locale, now);
+    const live = rows.filter((row) => !isVoid(row)).length;
+    const cancelled = rows.filter((row) => row.status === 'cancelled').length;
+    const expired = rows.filter((row) => row.status === 'expired').length;
+    const totals = [
+      live > 0 ? bookingCountText(live) : '',
+      cancelled > 0 ? formatMessage(messages['admin.dayCancelled'], { n: cancelled }) : '',
+      expired > 0 ? formatMessage(messages['admin.dayExpired'], { n: expired }) : '',
+    ].filter(Boolean).join(' · ');
+    return `<h3>${relative ? `<span class="bk-day-rel">${escapeHtml(relative)}</span><span class="bk-day-abs">${escapeHtml(absolute)}</span>` : `<span class="bk-day-rel">${escapeHtml(absolute)}</span>`}`
+      + `<span class="bk-day-totals">${escapeHtml(totals)}</span></h3>`;
+  };
   const bookingList = groupByDay(list.rows).map(([date, rows]) =>
-    `<div class="bk-daygroup"><h3>${escapeHtml(formatDayDate(date, locale, now))}</h3>${rows.map(bookingRow).join('')}</div>`).join('');
+    `<div class="bk-daygroup">${dayHeading(date, rows)}${rows.map(bookingRow).join('')}</div>`).join('');
 
   const overridesByDate = new Map(overrides.map((override) => [override.date, override]));
   const bookingsByDate = new Map<string, Booking[]>();
@@ -424,24 +574,58 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
     if (rows) rows.push(booking);
     else bookingsByDate.set(date, [booking]);
   }
-  const bookingsOn = (date: string): number => calendar.load.get(date)?.bookings ?? 0;
+  const loadOn = (date: string): AdminDayLoad => calendar.load.get(date) ?? { peak: 0, bookings: 0 };
+  const defaultOn = (date: string): number => defaultCapacityForDate(date, context.config.capacity.default, capacityDefaults);
+  const capacityOn = (date: string): number => overridesByDate.get(date)?.capacity ?? defaultOn(date);
   const dayLoad = (date: string, capacity: number): string => {
-    const load = calendar.load.get(date) ?? { peak: 0, bookings: 0 };
-    const count = formatMessage(load.bookings === 1 ? messages['admin.bookingCountOne'] : messages['admin.bookingCount'], { n: load.bookings });
-    return formatMessage(messages['admin.dayLoad'], { peak: load.peak, capacity, bookings: count });
+    const load = loadOn(date);
+    return formatMessage(messages['admin.dayLoad'], { peak: load.peak, capacity, bookings: bookingCountText(load.bookings) });
   };
-  // Rendered as month calendar grids instead of a day-per-row list: an operator's mental model of
-  // availability is a calendar. Each day links to the adjust form — still no JS.
+
+  // --- totals strip: how busy the next days are, without counting rows ---
+  const tomorrow = addDaysToDateKey(fromDate, 1);
+  const weekDates = enumerateDateKeys(fromDate, addDaysToDateKey(fromDate, 6)).filter((date) => date <= toDate);
+  const weekBookings = weekDates.reduce((sum, date) => sum + loadOn(date).bookings, 0);
+  const busiest = weekDates.reduce<string | null>((best, date) => (loadOn(date).bookings > (best ? loadOn(best).bookings : 0) ? date : best), null);
+  const dayHref = (date: string): string => `?${adminStateParams(filters, { date, tab: 'availability' })}#bk-override`;
+  const glanceCard = (href: string, label: string, value: string, sub: string, tone = ''): string =>
+    `<a href="${escapeHtml(href)}"${tone ? ` data-tone="${tone}"` : ''}><span class="bk-glance-label">${escapeHtml(label)}</span>`
+    + `<span class="bk-glance-value">${escapeHtml(value)}</span><span class="bk-glance-sub">${escapeHtml(sub)}</span></a>`;
+  const todayBookings = loadOn(fromDate).bookings;
+  const todaySub = todayBookings === 0
+    ? messages['admin.glanceNothing']
+    : glance.nextToday ? formatMessage(messages['admin.glanceNext'], { time: time.text(glance.nextToday) }) : messages['admin.glanceDone'];
+  const tomorrowBookings = loadOn(tomorrow).bookings;
+  const tomorrowSub = tomorrowBookings === 0
+    ? messages['admin.glanceNothing']
+    : glance.firstTomorrow ? formatMessage(messages['admin.glanceFirst'], { time: time.text(glance.firstTomorrow) }) : '';
+  const holdsHref = `?${new URLSearchParams({ status: 'hold', tab: 'upcoming' })}#bk-upcoming`;
+  const glanceStrip = `<div class="bk-glance" data-reserva-tab-only="upcoming"${currentTabFor(activeTab, incidentsHtml) === 'upcoming' ? '' : ' hidden'}>`
+    + glanceCard(dayHref(fromDate), messages['admin.glanceToday'], bookingCountText(todayBookings), todaySub)
+    + glanceCard(dayHref(tomorrow), messages['admin.glanceTomorrow'], bookingCountText(tomorrowBookings), tomorrowSub)
+    + glanceCard(`?${new URLSearchParams({ tab: 'upcoming' })}#bk-upcoming`, messages['admin.glanceWeek'], bookingCountText(weekBookings),
+      busiest ? formatMessage(messages['admin.glanceBusiest'], { day: formatDayDate(busiest, locale, now) }) : messages['admin.glanceNothing'])
+    + glanceCard(holdsHref, messages['admin.glanceHolds'], String(glance.holds),
+      glance.holdsExpireFirst ? formatMessage(messages['admin.glanceHoldsExpire'], { time: time.text(glance.holdsExpireFirst) }) : messages['admin.glanceHoldsNone'],
+      glance.holds > 0 ? 'warn' : '')
+    + `</div>`;
+
+  // --- availability calendar ---
+  // A month grid rather than a day-per-row list: an operator's mental model of availability is a
+  // calendar. The first grid starts on this week's Monday so it never opens as a lone row of
+  // today; the days already gone stay as plain numbers, since nothing about them can change.
   const dowLabels = Array.from({ length: 7 }, (_, index) =>
     // 2024-01-01 is a Monday; formatting it +index yields locale weekday names, Monday-first.
     new Intl.DateTimeFormat(locale, { weekday: 'narrow', timeZone: 'UTC' }).format(new Date(Date.UTC(2024, 0, 1 + index))));
+  const weekStart = addDaysToDateKey(fromDate, -((new Date(`${fromDate}T00:00:00Z`).getUTCDay() + 6) % 7));
   const byMonth = new Map<string, string[]>();
-  for (const date of enumerateDateKeys(fromDate, toDate)) {
+  for (const date of enumerateDateKeys(weekStart, toDate)) {
     const month = date.slice(0, 7);
     const dates = byMonth.get(month);
     if (dates) dates.push(date);
     else byMonth.set(month, [date]);
   }
+  const dayDate = editDate || fromDate;
   const monthGrids = [...byMonth.values()].map((dates, monthIndex) => {
     const first = new Date(`${dates[0]}T00:00:00Z`);
     const monthTitle = new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(first);
@@ -450,43 +634,44 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
     let flagged = 0;
     let containsSelected = false;
     const cells = dates.map((date) => {
+      const dayNumber = `<span class="bk-day-num">${Number(date.slice(8, 10))}</span>`;
+      if (date < fromDate) return `<span class="bk-day bk-day--past">${dayNumber}</span>`;
       // Day links keep the active booking filters so selecting a day never resets the search.
       const dayParams = new URLSearchParams(adminStateParams(filters, { tab: 'availability' }));
       dayParams.set('date', date);
       const override = overridesByDate.get(date);
-      const dayDefault = defaultCapacityForDate(date, context.config.capacity.default, capacityDefaults);
-      const capacity = override?.capacity ?? dayDefault;
-      const booked = bookingsOn(date);
-      const tone = capacity === 0 ? ' bk-day--closed' : override ? ' bk-day--adjusted' : booked > 0 ? ' bk-day--booked' : '';
+      const capacity = capacityOn(date);
+      const load = loadOn(date);
+      const tone = capacity === 0 ? ' bk-day--closed' : override ? ' bk-day--adjusted' : load.bookings > 0 ? ' bk-day--booked' : '';
       if (override || capacity === 0) flagged += 1;
-      const selected = date === editDate;
+      const selected = date === dayDate;
       if (selected) containsSelected = true;
-      // Printing "units 2/4" under all thirty numbers turned the month into a table to decode, so
-      // the grid shows a dot and the load travels in the cell's accessible name and tooltip —
-      // still one hover or one screen-reader stop away. The day panel spells it out on selection,
-      // server-side here and client-side from the island's per-day `load` strings.
-      const stateWord = capacity === 0 ? messages['widget.closed'] : override ? messages['admin.stateOverride'] : booked > 0 ? messages['admin.legendBooked'] : '';
-      const load = booked > 0 || capacity === 0 || override ? ` — ${dayLoad(date, capacity)}` : '';
-      const label = `${formatDayDate(date, locale, now)}${stateWord ? ` — ${stateWord}` : ''}${load}`;
-      const tooltip = [override?.reason, load ? dayLoad(date, capacity) : ''].filter(Boolean).join(' · ');
+      // The cell shows the day and a load bar; the exact figures travel in its accessible name and
+      // tooltip, and the day card spells them out once the day is selected.
+      const stateWord = capacity === 0 ? messages['widget.closed'] : override ? messages['admin.stateOverride'] : load.bookings > 0 ? messages['admin.legendBooked'] : '';
+      const loadText = load.bookings > 0 || capacity === 0 || override ? dayLoad(date, capacity) : '';
+      const label = [formatDayDate(date, locale, now), stateWord, loadText].filter(Boolean).join(' — ');
+      const tooltip = [override?.reason, loadText].filter(Boolean).join(' · ');
       const title = tooltip ? ` title="${escapeHtml(tooltip)}"` : '';
       // data-* carries each day's effective values so the enhancer can prefill the form without a
       // page load; the href stays as the no-JS path.
       const dayData = ` data-date="${date}" data-capacity="${capacity}"${override?.reason ? ` data-reason="${escapeHtml(override.reason)}"` : ''}`;
-      return `<a class="bk-day${tone}${selected ? ' bk-day--selected' : ''}"${selected ? ' aria-current="date"' : ''} href="?${escapeHtml(String(dayParams))}#bk-override" aria-label="${escapeHtml(label)}"${title}${dayData}>`
-        + `<span class="bk-day-num">${Number(date.slice(8, 10))}</span></a>`;
+      return `<a class="bk-day${tone}${date === fromDate ? ' bk-day--today' : ''}${selected ? ' bk-day--selected' : ''}"${selected ? ' aria-current="date"' : ''} href="?${escapeHtml(String(dayParams))}#bk-override" aria-label="${escapeHtml(label)}"${title}${dayData}>`
+        + dayNumber + (capacity > 0 ? meterMarkup(load.peak, capacity) : '') + `</a>`;
     }).join('');
     const grid = `<div class="bk-monthgrid">${header}${blanks}${cells}</div>`;
     // Near months stay expanded; later mostly-quiet months collapse. A collapsed month auto-opens
     // when it holds signal (adjusted/closed days, or the day being edited).
-    if (monthIndex < 2) return `<div class="bk-month" data-label="${escapeHtml(monthTitle)}"><h3>${escapeHtml(monthTitle)}</h3>${grid}</div>`;
+    const monthKey = ` data-month="${dates[0]?.slice(0, 7) ?? ''}"`;
+    if (monthIndex < 2) return `<div class="bk-month"${monthKey} data-label="${escapeHtml(monthTitle)}"><h3>${escapeHtml(monthTitle)}</h3>${grid}</div>`;
     const flaggedBadge = flagged > 0
       ? ` <span class="bk-badge bk-badge--warn">${escapeHtml(formatMessage(messages['admin.monthFlagged'], { n: flagged }))}</span>`
       : '';
-    return `<details class="bk-month bk-disclosure" data-label="${escapeHtml(monthTitle)}"${flagged > 0 || containsSelected ? ' open' : ''}>`
+    return `<details class="bk-month bk-disclosure"${monthKey} data-label="${escapeHtml(monthTitle)}"${flagged > 0 || containsSelected ? ' open' : ''}>`
       + `<summary>${escapeHtml(monthTitle)}${flaggedBadge}</summary><div>${grid}</div></details>`;
   }).join('');
 
+  // --- bookings toolbar: period switch, search, status chips ---
   // Every status a row can carry: 'expired' rows exist (a hold nobody paid) and were unreachable
   // from the filter, so the only way to see one was to know its reference.
   const statusFilterLabels: Record<BookingStatus | '', string> = {
@@ -497,14 +682,16 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
     cancelled: messages['admin.filterCancelled'],
     no_show: messages['admin.filterNoShow'],
   };
-  const statusOptions = (['', ...adminStatusFilters] as const).map((value) => {
-    const selected = filters.status === value ? ' selected' : '';
-    return `<option value="${escapeHtml(value)}"${selected}>${escapeHtml(statusFilterLabels[value])}</option>`;
+  const listHref = (next: AdminFilters): string => `?${adminStateParams(next, { page: 1, date: editDate, tab: 'upcoming' })}#bk-upcoming`;
+  const counts = list.statusCounts;
+  const chips = (['', ...adminStatusFilters] as const).map((value) => {
+    const count = counts ? (value === '' ? Object.values(counts).reduce((sum, n) => sum + n, 0) : counts[value]) : null;
+    const current = filters.status === value;
+    return `<a class="bk-chip${count === 0 && !current ? ' bk-chip--empty' : ''}" href="${escapeHtml(listHref({ ...filters, status: value }))}"${current ? ' aria-current="true"' : ''}>`
+      + `${escapeHtml(statusFilterLabels[value])}${count === null ? '' : ` <b>${count}</b>`}</a>`;
   }).join('');
-  const whenOptions = (['upcoming', 'past'] as const).map((value) =>
-    `<option value="${value}"${filters.when === value ? ' selected' : ''}>${escapeHtml(messages[value === 'upcoming' ? 'admin.whenUpcoming' : 'admin.whenPast'])}</option>`).join('');
-
-  // Keeps the selected day when filters are (re)applied — the two workflows share one URL.
+  const periods = (['upcoming', 'past'] as const).map((value) =>
+    `<a href="${escapeHtml(listHref({ ...filters, when: value }))}"${filters.when === value ? ' aria-current="true"' : ''}>${escapeHtml(messages[value === 'upcoming' ? 'admin.whenUpcoming' : 'admin.whenPast'])}</a>`).join('');
   // Both carry tab=upcoming explicitly: with a date in play the handler would otherwise infer the
   // availability tab and move the operator off the list they were filtering.
   const clearParams = new URLSearchParams();
@@ -512,20 +699,22 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
   clearParams.set('tab', 'upcoming');
   const clearHref = `?${clearParams}#bk-upcoming`;
   const filtersActive = Boolean(filters.q || filters.status || filters.when === 'past');
-  // Drops the "pickup" mention from the search hint when no service declares a location module.
-  const hasLocationService = Object.values(context.config.services).some((candidate) => candidate.location);
-  const searchPlaceholder = hasLocationService ? messages['admin.searchPlaceholder'] : messages['admin.searchPlaceholderNoPickup'];
-  // One row of controls with no field labels: the placeholder names what the box searches and the
-  // selects' own options name what they filter. No page field: a changed filter starts at page 1.
-  const filterForm = `<form method="get" class="bk-searchbar" role="search">`
+  // The period and status are links, so they apply on click; the search box submits on Enter,
+  // carrying the rest of the state as hidden fields. No page field: a changed filter starts at 1.
+  const filterForm = `<form method="get" class="bk-filterbar" role="search">`
     + `<input type="hidden" name="tab" value="upcoming">`
     + (editDate ? `<input type="hidden" name="date" value="${escapeHtml(editDate)}">` : '')
-    + `<select class="bk-select" name="when" aria-label="${escapeHtml(messages['admin.whenLabel'])}">${whenOptions}</select>`
-    + `<input class="bk-input" type="search" name="q" value="${escapeHtml(filters.q)}" placeholder="${escapeHtml(searchPlaceholder)}" aria-label="${escapeHtml(messages['admin.searchLabel'])}">`
-    + `<select class="bk-select" name="status" aria-label="${escapeHtml(messages['common.status'])}">${statusOptions}</select>`
-    + `<button type="submit" class="bk-btn bk-btn--secondary">${escapeHtml(messages['admin.apply'])}</button>`
+    + (filters.when === 'past' ? `<input type="hidden" name="when" value="past">` : '')
+    + (filters.status ? `<input type="hidden" name="status" value="${escapeHtml(filters.status)}">` : '')
+    + `<div class="bk-filterbar-row">`
+    + `<nav class="bk-segmented" aria-label="${escapeHtml(messages['admin.whenLabel'])}">${periods}</nav>`
+    + `<label class="bk-search">${icon(icons.search)}<span class="bk-sr-only">${escapeHtml(messages['admin.searchLabel'])}</span>`
+    + `<input class="bk-input" type="search" name="q" value="${escapeHtml(filters.q)}" placeholder="${escapeHtml(messages['admin.searchPlaceholder'])}" data-reserva-search>`
+    + `<kbd class="bk-kbd" aria-hidden="true" hidden>/</kbd></label>`
+    + `</div>`
+    + `<nav class="bk-chips" aria-label="${escapeHtml(messages['common.status'])}">${chips}`
     + (filtersActive ? `<a class="bk-filter-clear" href="${escapeHtml(clearHref)}">${escapeHtml(messages['admin.clearFilters'])}</a>` : '')
-    + `</form>`;
+    + `</nav></form>`;
 
   const pageHref = (page: number): string => `?${adminStateParams(filters, { page, date: editDate, tab: 'upcoming' })}#bk-upcoming`;
   const firstShown = (list.page - 1) * list.pageSize + 1;
@@ -550,124 +739,162 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
       ? `<div class="bk-empty-state"><p>${escapeHtml(emptyText)}</p></div>`
       : bookingList + pager);
 
-  // Row "Edit" links land here with ?date=…, prefilling the form — no script needed.
-  const editOverride = editDate ? overridesByDate.get(editDate) : undefined;
-  const editDefault = defaultCapacityForDate(editDate || fromDate, context.config.capacity.default, capacityDefaults);
+  // --- day card: the selected day's state, its bookings, and the controls that change it ---
   // Explicit post-save confirmation inside whichever form was just submitted — the POST redirects
   // back with saved=day|default plus a hash so the operator lands on the form and sees it.
   const savedAlert = (which: string): string => saved === which
     ? `<p class="bk-alert bk-alert--ok" role="status">${escapeHtml(messages['admin.saved'])}</p>`
     : '';
-  // Per-day booking summaries, display-ready (times/labels formatted server-side so the enhancer
-  // renders them without duplicating locale logic). Bounded by the handler's detail cap.
-  const daySummaries: Record<string, Array<Record<string, string>>> = {};
-  for (const [date, rows] of bookingsByDate) {
-    daySummaries[date] = [...rows].sort(byStart).map((entry) => {
-      const tone = statusToneOf(entry.status);
+  // Per-day booking rows, display-ready (times and labels formatted here so the enhancer renders
+  // them without duplicating locale logic). Bounded by the handler's detail cap.
+  const dayRow = (entry: Booking): { t: string; c: string; v: string; g: string; gl: string; s?: string; sc?: string; u?: string } => {
+    const figure = guestFigure(context.config, entry, messages);
+    const manageHref = manageLinkHref(context.routeConfig, entry.operatorToken);
+    const tone = statusToneOf(entry.status);
+    return {
+      t: time.text(entry.startsAt),
+      c: entry.customerName ?? entry.customerEmail ?? '—',
+      v: resolveServiceTitle(context.config, entry.serviceSlug, locale),
+      g: figure.value,
+      gl: figure.label,
+      // Confirmed needs no badge; omitted keys keep the island small.
+      ...(entry.status === 'confirmed' ? {} : { s: messages[`status.${entry.status}` as keyof typeof messages] ?? entry.status, ...(tone ? { sc: tone } : {}) }),
       // Omitted (not a dead-link href) when the token isn't presentable — the enhancer renders
       // the "unavailable" fallback when `u` is absent.
-      const manageHref = manageLinkHref(context.routeConfig, entry.operatorToken);
-      return {
-        t: formatTime(entry.startsAt),
-        c: entry.customerName ?? entry.customerEmail ?? '—',
-        p: quantityText(entry.quantity),
-        s: messages[`status.${entry.status}` as keyof typeof messages] ?? entry.status,
-        ...(tone ? { sc: tone } : {}),
-        ...(manageHref ? { u: manageHref } : {}),
-      };
-    });
-  }
-  // The load line per calendar day, preformatted so the enhancer never re-derives units or
-  // capacity: a client-side selection shows the same "peak/capacity" line the server render does.
-  const dayLoads: Record<string, string> = {};
+      ...(manageHref ? { u: manageHref } : {}),
+    };
+  };
+  const daySummaries: Record<string, Array<ReturnType<typeof dayRow>>> = {};
+  for (const [date, rows] of bookingsByDate) daySummaries[date] = [...rows].sort(byStart).map(dayRow);
+  // Every calendar day's figures as [capacity, default, peak, bookings, adjusted, reason?], so a
+  // client-side selection shows the same card the server would render for that day.
+  const dayMeta: Record<string, Array<number | string>> = {};
   for (const date of enumerateDateKeys(fromDate, toDate)) {
     const override = overridesByDate.get(date);
-    dayLoads[date] = dayLoad(date, override?.capacity ?? defaultCapacityForDate(date, context.config.capacity.default, capacityDefaults));
+    const load = loadOn(date);
+    dayMeta[date] = [capacityOn(date), defaultOn(date), load.peak, load.bookings, override ? 1 : 0, ...(override?.reason ? [override.reason] : [])];
   }
   // Strings + day data the admin enhancer needs at runtime, shipped as a non-executable JSON
   // island (same CSP-safe pattern as the manage page's reschedule island).
   const adminIsland = `<script type="application/json" data-reserva-i18n>${JSON.stringify({
+    locale: formatLocaleFor(locale),
+    today: fromDate,
     selectedDays: messages['admin.selectedDays'],
     close: messages['admin.close'],
     closeMany: messages['admin.closeMany'],
+    clearTo: messages['admin.clear'],
+    clearMany: messages['admin.clearMany'],
     title: messages['admin.overrideTitle'],
     noBookings: messages['admin.dayNoBookings'],
     manage: messages['admin.manage'],
     manageUnavailable: messages['admin.manageUnavailable'],
     prevMonth: messages['admin.prevMonth'],
     nextMonth: messages['admin.nextMonth'],
+    todayLabel: messages['admin.today'],
     selectHint: messages['admin.selectHint'],
+    selectHintTouch: messages['admin.selectHintTouch'],
     dayOpen: messages['admin.dayOpen'],
+    openBadge: messages['admin.dayOpenBadge'],
+    adjustedBadge: messages['admin.dayAdjustedBadge'],
+    closedBadge: messages['admin.dayClosedBadge'],
+    closedReason: messages['admin.dayClosedReason'],
+    peak: messages['admin.dayPeak'],
+    bookingOne: messages['admin.bookingCountOne'],
+    bookingMany: messages['admin.bookingCount'],
+    reopenHint: messages['admin.reopenHint'],
     days: daySummaries,
+    meta: dayMeta,
     detailBefore: calendar.detailBefore,
-    loads: dayLoads,
   }).replace(/</g, '\\u003c')}</script>`;
-  // The day panel answers "what does this day actually have" — the bookings on the selected day,
-  // rendered server-side for the no-JS path and rebuilt client-side from the island on selection.
+
+  const dayOverride = overridesByDate.get(dayDate);
+  const dayDefault = defaultOn(dayDate);
+  const dayCapacity = dayOverride?.capacity ?? dayDefault;
+  const dayState = dayCapacity === 0 ? 'closed' : dayOverride ? 'adjusted' : 'open';
+  const dayBadge = dayState === 'closed'
+    ? `<span class="bk-badge bk-badge--danger" data-reserva-day-badge>${escapeHtml(dayOverride?.reason ? formatMessage(messages['admin.dayClosedReason'], { reason: dayOverride.reason }) : messages['admin.dayClosedBadge'])}</span>`
+    : dayState === 'adjusted'
+      ? `<span class="bk-badge bk-badge--warn" data-reserva-day-badge>${escapeHtml(formatMessage(messages['admin.dayAdjustedBadge'], { n: dayCapacity, d: dayDefault }))}</span>`
+      : `<span class="bk-badge bk-badge--ok" data-reserva-day-badge>${escapeHtml(formatMessage(messages['admin.dayOpenBadge'], { n: dayCapacity }))}</span>`;
+  const dayLoadNow = loadOn(dayDate);
+  const loadLine = dayCapacity > 0
+    ? `<div class="bk-loadline"><div class="bk-loadline-top"><span>${escapeHtml(formatMessage(messages['admin.dayPeak'], { peak: dayLoadNow.peak, capacity: dayCapacity }))}</span>`
+      + `<span>${escapeHtml(bookingCountText(dayLoadNow.bookings))}</span></div>${meterMarkup(dayLoadNow.peak, dayCapacity, 'bk-meter bk-meter--bar')}</div>`
+    : '';
+  // The day panel answers "what does this day actually have" — rendered here for the no-JS path
+  // and rebuilt client-side from the island on selection.
   const dayBookingItem = (entry: Booking): string => {
-    const manageHref = manageLinkHref(context.routeConfig, entry.operatorToken);
-    const manageMarkup = manageHref
-      ? `<a href="${escapeHtml(manageHref)}">${escapeHtml(messages['admin.manage'])}</a>`
+    const row = dayRow(entry);
+    const manage = row.u
+      ? `<a class="bk-link" href="${escapeHtml(row.u)}">${escapeHtml(messages['admin.manage'])}</a>`
       : `<span class="bk-sub">${escapeHtml(messages['admin.manageUnavailable'])}</span>`;
-    return `<li><span class="bk-mono">${escapeHtml(formatTime(entry.startsAt))}</span> <strong>${escapeHtml(entry.customerName ?? entry.customerEmail ?? '—')}</strong>`
-      + `<span class="bk-sub">${escapeHtml(quantityText(entry.quantity))}</span>${statusBadge(entry.status, messages)}`
-      + `${manageMarkup}</li>`;
+    return `<li><time>${escapeHtml(row.t)}</time><span><strong>${escapeHtml(row.c)}</strong><span class="bk-sub">${escapeHtml(row.v)}</span></span>`
+      + guestsMarkup({ value: row.g, label: row.gl })
+      + `<span class="bk-daylist-end">${row.s ? `<span class="bk-badge${row.sc ? ` bk-badge--${row.sc}` : ''}">${escapeHtml(row.s)}</span>` : ''}${manage}</span></li>`;
   };
-  const editDayBookings = editDate ? [...calendar.editDayBookings].sort(byStart) : [];
-  const editCapacity = editOverride?.capacity ?? editDefault;
-  const dayDetail = `<div class="bk-day-detail" data-reserva-day-detail>`
-    + (editDate
-      ? `<p class="bk-hint">${escapeHtml(dayLoad(editDate, editCapacity))}</p>`
-      : '')
-    + (editDate
-      ? editDayBookings.length
-        ? `<ul class="bk-day-bookings">${editDayBookings.map(dayBookingItem).join('')}</ul>`
-        : `<p class="bk-hint">${escapeHtml(messages['admin.dayNoBookings'])}</p>`
-      : '')
+  const dayBookings = [...calendar.editDayBookings].sort(byStart);
+  const dayDetail = `<div class="bk-day-detail" data-reserva-day-detail>${loadLine}`
+    + (dayBookings.length
+      ? `<ul class="bk-daylist">${dayBookings.map(dayBookingItem).join('')}</ul>`
+      : `<p class="bk-hint">${escapeHtml(messages['admin.dayNoBookings'])}</p>`)
     + `</div>`;
-  // Capacity prefills with the day's effective value (override, else its default) so the operator
-  // sees what they're changing from. The optional To date is the no-JS bulk path — the POST expands
-  // the range server-side; the enhancer hides it and uses multi-select with repeated date inputs.
-  const editReason = editOverride?.reason ?? '';
+  const relative = relativeDayLabel(dayDate, fromDate, locale);
   const csrfField = `<input type="hidden" name="csrf_token" value="${escapeHtml(csrfToken)}">`;
-  const overrideForm = `<form method="post" id="bk-override" class="bk-day-form">${csrfField}${adminIsland}`
+  const hiddenUnless = (visible: boolean): string => (visible ? '' : ' hidden');
+  // The controls follow the day's state: a closed day offers Reopen and nothing to type; an
+  // adjusted day offers its way back to the default; a plain day offers neither. The date comes
+  // from the calendar selection, so it travels as a hidden field.
+  const overrideForm = `<form method="post" id="bk-override" class="bk-daycard">${csrfField}${adminIsland}`
+    + `<input type="hidden" name="date" value="${escapeHtml(dayDate)}">`
+    + `<div class="bk-daycard-head"><div>`
     // The heading stays a heading; the enhancer announces selection changes through the separate
     // live region beside it, since a live region role would strip the heading from the outline.
-    + `<h2 data-reserva-day-title>${escapeHtml(editDate ? formatDayDate(editDate, locale, now) : messages['admin.overrideTitle'])}</h2>`
+    + `<h2 data-reserva-day-title>${escapeHtml(formatLongDate(dayDate, locale))}</h2>`
+    + `<span class="bk-sub" data-reserva-day-rel${hiddenUnless(Boolean(relative))}>${escapeHtml(relative)}</span></div>${dayBadge}</div>`
     + `<p class="bk-sr-only" role="status" data-reserva-day-announce></p>`
+    + `<div class="bk-daycard-body">`
     + savedAlert('day')
     + dayDetail
-    + `<label class="bk-field"><span>${escapeHtml(messages['common.date'])}</span><input class="bk-input" name="date" type="date" required value="${escapeHtml(editDate)}"></label>`
-    + `<label class="bk-field" data-reserva-to-date><span>${escapeHtml(messages['admin.overrideTo'])}</span><input class="bk-input" name="toDate" type="date"></label>`
+    + `<div class="bk-editrow" data-reserva-day-edit${hiddenUnless(dayState !== 'closed' || !dayOverride)}>`
+    + `<div class="bk-field"><label for="bk-capacity">${escapeHtml(messages['admin.dayCapacity'])}</label>`
     // Required because a blank capacity is not "0": only Close closes a day, and it (like Reset)
     // skips validation so it never needs a capacity typed first.
-    + `<label class="bk-field"><span>${escapeHtml(messages['admin.capacity'])}</span><input class="bk-input" name="capacity" type="number" min="0" step="1" required value="${editOverride ? editOverride.capacity : editDate ? editDefault : ''}"></label>`
-    + `<details class="bk-disclosure bk-disclosure--bare"${editReason ? ' open' : ''}><summary>${escapeHtml(messages['admin.addReason'])}</summary><div>`
-    + `<label class="bk-field"><span>${escapeHtml(messages['admin.reason'])}</span><input class="bk-input" name="reason" value="${escapeHtml(editReason)}"></label>`
-    + `</div></details>`
-    + `<div class="bk-actions">`
+    + `<span class="bk-stepper"><button type="button" data-step="-1" aria-label="${escapeHtml(messages['admin.stepDown'])}" hidden>−</button>`
+    + `<input class="bk-input" id="bk-capacity" name="capacity" type="number" min="0" step="1" required value="${dayCapacity}">`
+    + `<button type="button" data-step="1" aria-label="${escapeHtml(messages['admin.stepUp'])}" hidden>+</button></span></div>`
+    + `<label class="bk-field bk-field--grow"><span>${escapeHtml(messages['admin.reasonOptional'])}</span><input class="bk-input" name="reason" value="${escapeHtml(dayOverride?.reason ?? '')}"></label>`
+    // The no-JS bulk path: the POST expands the range server-side. The enhancer swaps it for
+    // calendar multi-select.
+    + `<label class="bk-field" data-reserva-to-date><span>${escapeHtml(messages['admin.overrideTo'])}</span><input class="bk-input" name="toDate" type="date"></label>`
+    + `</div>`
+    + `<div class="bk-editfoot" data-reserva-day-actions${hiddenUnless(dayState !== 'closed' || !dayOverride)}>`
     + `<button type="submit" class="bk-btn" name="action" value="set">${escapeHtml(messages['admin.save'])}</button>`
     + `<button type="submit" class="bk-btn bk-btn--outline-danger" name="action" value="close" formnovalidate>${escapeHtml(messages['admin.close'])}</button>`
-    + `<button type="submit" class="bk-btn bk-btn--secondary" name="action" value="clear" formnovalidate>${escapeHtml(messages['admin.clear'])}</button>`
+    + `<button type="submit" class="bk-linkbtn" name="action" value="clear" formnovalidate data-reserva-day-reset${hiddenUnless(dayState === 'adjusted')}>${escapeHtml(formatMessage(messages['admin.clear'], { n: dayDefault }))}</button>`
     + `</div>`
-    + `<p class="bk-hint">${escapeHtml(formatMessage(messages['admin.overrideDefault'], { n: editDefault }))}</p>`
-    + `</form>`;
+    + `<div class="bk-editfoot" data-reserva-day-reopen${hiddenUnless(dayState === 'closed' && Boolean(dayOverride))}>`
+    + `<button type="submit" class="bk-btn" name="action" value="clear" formnovalidate>${escapeHtml(messages['admin.reopen'])}</button>`
+    + `<span class="bk-hint" data-reserva-day-reopen-hint>${escapeHtml(formatMessage(messages['admin.reopenHint'], { n: dayDefault }))}</span>`
+    + `</div>`
+    + `</div></form>`;
 
   // Capacity-level changes ("a van broke down") apply from a date onwards, so operators never
   // click 30 day cells one by one. Each scheduled change can be removed independently.
+  const defaultEntryText = (entry: CapacityDefault): string =>
+    formatMessage(messages['admin.defaultEntry'], { n: entry.capacity, date: formatDayDate(entry.fromDate, locale, now) });
   const defaultEntries = capacityDefaults.map((entry) =>
-    `<li><span>${escapeHtml(formatMessage(messages['admin.defaultEntry'], { n: entry.capacity, date: formatDayDate(entry.fromDate, locale, now) }))}`
+    `<li><span>${escapeHtml(defaultEntryText(entry))}`
     + (entry.reason ? `<span class="bk-sub">${escapeHtml(entry.reason)}</span>` : '')
     + `</span><form method="post">${csrfField}<input type="hidden" name="date" value="${escapeHtml(entry.fromDate)}">`
     + `<button type="submit" class="bk-btn bk-btn--secondary bk-btn--sm" name="action" value="default-clear">${escapeHtml(messages['admin.remove'])}</button></form></li>`).join('');
   // The capacity-default form is the rare, high-blast-radius task, so it sits behind a collapsed
-  // disclosure. Opens after its own POST so the saved confirmation is visible; the
-  // scheduled-change count keeps active rules discoverable while collapsed.
-  const scheduledBadge = capacityDefaults.length > 0
-    ? ` <span class="bk-badge">${escapeHtml(formatMessage(messages['admin.defaultScheduled'], { n: capacityDefaults.length }))}</span>`
+  // disclosure. Opens after its own POST so the saved confirmation is visible; the summary names
+  // what is already scheduled so active rules stay discoverable while collapsed.
+  const scheduledMeta = capacityDefaults.length > 0 && capacityDefaults[0]
+    ? `<span class="bk-disclosure-meta">${escapeHtml(`${formatMessage(messages['admin.defaultScheduled'], { n: capacityDefaults.length })} · ${defaultEntryText(capacityDefaults[0])}`)}</span>`
     : '';
   const defaultForm = `<details class="bk-disclosure" id="bk-default"${saved === 'default' ? ' open' : ''}>`
-    + `<summary>${escapeHtml(messages['admin.defaultTitle'])}${scheduledBadge}</summary><div>`
+    + `<summary>${escapeHtml(messages['admin.defaultTitle'])}${scheduledMeta}</summary><div>`
     + `<form method="post" class="bk-day-form">${csrfField}`
     + savedAlert('default')
     + `<p class="bk-hint">${escapeHtml(messages['admin.defaultHint'])}</p>`
@@ -678,15 +905,16 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
     + (defaultEntries ? `<ul class="bk-defaults">${defaultEntries}</ul>` : '')
     + `</div></details>`;
 
-  // Class-driven dots: a style attribute would be blocked under the strict style-src CSP.
-  const legendRow = (state: 'booked' | 'adjusted' | 'closed', label: string): string =>
-    `<span><i class="bk-legend-dot bk-legend-dot--${state}"></i>${escapeHtml(label)}</span>`;
-  const legend = `<p class="bk-legend">${legendRow('booked', messages['admin.legendBooked'])}`
-    + `${legendRow('adjusted', messages['admin.stateOverride'])}`
-    + `${legendRow('closed', messages['widget.closed'])}</p>`;
-  const availabilityPanel = `<div class="bk-days-layout"><div><div class="bk-months">${monthGrids}</div>${legend}</div>`
+  // One line under the grid, drawn with the same marks the cells use.
+  const legend = `<p class="bk-legend">`
+    + `<span><i class="bk-legend-swatch"></i>${escapeHtml(messages['admin.legendLoad'])}</span>`
+    + `<span><i class="bk-legend-swatch bk-legend-swatch--full"></i>${escapeHtml(messages['admin.legendFull'])}</span>`
+    + `<span><i class="bk-legend-ring"></i>${escapeHtml(messages['admin.stateOverride'])}</span>`
+    + `<span><i class="bk-legend-strike">12</i>${escapeHtml(messages['widget.closed'])}</span></p>`;
+  const availabilityPanel = `<div class="bk-days-layout"><div class="bk-calendar"><div class="bk-months">${monthGrids}</div>${legend}</div>`
     + `<div class="bk-day-editor">${overrideForm}${defaultForm}</div></div>`;
 
+  // --- page chrome: header, attention banner, tabs ---
   // The enhancer's in-place tab switch replaceState()s to these hrefs, so they must carry every
   // piece of list state or a switch would silently reset the list.
   const tabParams = (tab: AdminTab): string => `?${adminStateParams(filters, { date: editDate, tab })}`;
@@ -697,12 +925,10 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
   };
   const hasIncidents = Boolean(incidentsHtml);
   const visibleTabs: AdminTab[] = hasIncidents ? ['upcoming', 'availability', 'attention'] : ['upcoming', 'availability'];
-  // `activeTab` is already narrowed by the caller, but an attention tab that no longer exists
-  // (the last incident cleared between the click and the render) must not leave every panel hidden.
-  const currentTab: AdminTab = visibleTabs.includes(activeTab) ? activeTab : 'upcoming';
+  const currentTab = currentTabFor(activeTab, incidentsHtml);
   const tabLink = (tab: AdminTab): string => {
-    const count = tab === 'attention' && openIncidentCount > 0
-      ? ` <span class="bk-tab-count">${openIncidentCount}</span>`
+    const count = tab === 'attention' && attention.count > 0
+      ? ` <span class="bk-tab-count">${attention.count}</span>`
       : '';
     return `<a href="${escapeHtml(tabParams(tab))}" data-reserva-admin-tab="${tab}"${tab === currentTab ? ' aria-current="page"' : ''}>${escapeHtml(tabLabels[tab])}${count}</a>`;
   };
@@ -710,14 +936,28 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
   const panel = (tab: AdminTab, id: string, content: string): string =>
     `<section class="bk-panel" id="${id}"${tab === currentTab ? '' : ' hidden'}>${content}</section>`;
 
-  const attentionLink = openIncidentCount > 0
-    ? `<a class="bk-admin-attention" href="${escapeHtml(tabParams('attention'))}">${escapeHtml(formatMessage(messages['admin.attentionCount'], { n: openIncidentCount }))}</a>`
+  // Names the problem and, for a single incident, the booking it touched, so the operator knows
+  // whether to drop everything before opening the Attention tab. Hidden on that tab itself.
+  const bannerText = (): string => {
+    const first = attention.first;
+    if (attention.count !== 1 || !first) return `<strong>${escapeHtml(attentionCountText(messages, attention.count))}</strong>`;
+    const booking = first.booking;
+    const about = booking
+      ? ` · ${escapeHtml(formatMessage(messages['admin.bannerBooking'], { reference: booking.reference, when: `${formatDayDate(localDateKey(booking.startsAt, timezone), locale, now)}, ${time.text(booking.startsAt)}` }))}`
+      : '';
+    return `<strong>${escapeHtml(first.title)}</strong>${about}`;
+  };
+  const banner = attention.count > 0
+    ? `<div class="bk-banner${attention.actionRequired ? '' : ' bk-banner--warn'}" role="status" data-reserva-tab-except="attention"${currentTab === 'attention' ? ' hidden' : ''}>`
+      + `${icon(icons.alert, 18)}<p>${bannerText()}</p>`
+      + `<a href="${escapeHtml(tabParams('attention'))}" data-reserva-attention-link>${escapeHtml(messages['admin.bannerReview'])}</a></div>`
     : '';
   const errorFieldLabel = (field: string): string | undefined => {
     const key = adminFieldMessageKeys[field];
     return key ? messages[key] : undefined;
   };
-  const adminHeader = `<header class="bk-admin-header"><h1>${escapeHtml(messages['admin.title'])}</h1>${attentionLink}</header>`
+  const todayLong = new Intl.DateTimeFormat(formatLocaleFor(locale), { weekday: 'long', day: 'numeric', month: 'long', timeZone: timezone }).format(now);
+  const adminHeader = `<header class="bk-admin-header"><div><h1>${escapeHtml(messages['admin.title'])}</h1><p class="bk-admin-date">${escapeHtml(todayLong)}</p></div></header>`
     + adminErrorAlert(messages, input.error, errorFieldLabel);
 
   return pageShell({
@@ -728,15 +968,20 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
     favicon: context.config.ui?.faviconUrl,
     headHtml: context.config.ui?.headHtml,
     scriptHref: jsAssetHref(context.routeConfig.paths.assetsJs),
-    sidebar: adminSidebar(context, messages, 'admin'),
-    sidebarLabel: messages['admin.navigation'],
+    topbar: adminTopbar(context, messages, 'admin', attention.count),
     skipLabel: messages['common.skipContent'],
     theme: context.viewerTheme,
     themeToggle: themeToggle(messages, context.viewerTheme),
-    body: `${adminHeader}${tabs}<div class="bk-panels">`
+    body: `${adminHeader}${glanceStrip}${banner}${tabs}<div class="bk-panels">`
       + panel('upcoming', 'bk-upcoming', upcomingPanel)
       + panel('availability', 'bk-availability', availabilityPanel)
       + (hasIncidents ? panel('attention', 'bk-attention', incidentsHtml) : '')
       + `</div>`,
   });
+}
+
+// `activeTab` is already narrowed by the caller, but an attention tab that no longer exists (the
+// last incident cleared between the click and the render) must not leave every panel hidden.
+function currentTabFor(activeTab: AdminTab, incidentsHtml: string): AdminTab {
+  return activeTab === 'attention' && !incidentsHtml ? 'upcoming' : activeTab;
 }

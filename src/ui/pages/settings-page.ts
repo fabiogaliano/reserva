@@ -1,5 +1,6 @@
 import { adminLocaleFor, resolveLocalizedText, type ResolvedServiceConfig } from '../../core/config.js';
 import { minorUnitDigits, toMajorUnits } from '../../core/currency.js';
+import { formatLocaleFor } from '../../core/locale.js';
 import {
   settingDefinitionsFor,
   settingSections,
@@ -15,12 +16,12 @@ import { escapeHtml } from '../../http.js';
 import { cssAssetHref, jsAssetHref } from '../asset-hrefs.js';
 import { factList, pageShell, themeToggle } from '../layout.js';
 import { formatMessage, resolveMessages } from '../messages.js';
-import { adminErrorAlert, adminSidebar, type AdminErrorNotice } from './admin-page.js';
+import { adminErrorAlert, adminTopbar, type AdminErrorNotice } from './admin-page.js';
 
 // The admin settings page (?view=settings). A two-column form: each group's title on the left,
 // its always-editable fields on the right, so the control is the value and there is no reveal
-// step. Sections sit behind a tab bar that degrades to links. csrfToken is undefined when CSRF
-// isn't configured.
+// step. Sections sit behind a side list (a tab bar on narrow screens) that degrades to links.
+// csrfToken is undefined when CSRF isn't configured.
 export function settingsPage(
   context: ReservaContext,
   storedRows: Record<string, string>,
@@ -28,12 +29,13 @@ export function settingsPage(
   sectionParam: string,
   csrfToken: string | undefined,
   error: AdminErrorNotice | null = null,
+  openIncidentCount = 0,
 ): string {
   const locale = adminLocaleFor(context.config);
   const messages = resolveMessages(context.config, locale);
   const catalog = messages as Record<string, string>;
-  // Tabs are plain links (?section=) so switching works without JS; the enhancer upgrades them to
-  // instant in-page toggles. The section param survives save redirects.
+  // Section links are plain ?section= links so switching works without JS; the enhancer upgrades
+  // them to instant in-page toggles. The section param survives save redirects.
   const activeSection = ([...settingSections, 'config'] as string[]).includes(sectionParam)
     ? sectionParam
     : settingSections[0] ?? 'policy';
@@ -116,6 +118,18 @@ export function settingsPage(
     if (definition.pricingFormula) return pricingFormulaLabel(definition.pricingFormula, fallback);
     return fallback;
   };
+  // The currency sits on whichever side the locale writes it ("€ 25" vs "25 €"), so a price input
+  // reads the way the same price is printed everywhere else.
+  const currencyUnit = (currency: string): { text: string; before: boolean } => {
+    const parts = new Intl.NumberFormat(formatLocaleFor(locale), { style: 'currency', currency: currency.toUpperCase() }).formatToParts(1);
+    const symbolAt = parts.findIndex((part) => part.type === 'currency');
+    return { text: parts[symbolAt]?.value ?? currency.toUpperCase(), before: symbolAt < parts.findIndex((part) => part.type === 'integer') };
+  };
+  const valueOf = (definition: SettingDefinition): string => {
+    const effective = definition.get(context.config);
+    if (effective === null) return '';
+    return definition.kind.type === 'money' ? majorUnits(effective as number, definition.kind.currency) : String(effective);
+  };
 
   // Every control is rendered open: the input is the value. A field that deviates from the file
   // config carries a Modified badge, its fallback, and a Reset; the enhancer adds a "not saved"
@@ -123,11 +137,15 @@ export function settingsPage(
   const badgesFor = (definition: SettingDefinition): string =>
     (storedRows[definition.key] !== undefined ? `<span class="bk-badge bk-badge--accent">${escapeHtml(messages['admin.modified'])}</span>` : '')
     + `<span class="bk-badge bk-badge--warn bk-sfield-dirty" hidden>${escapeHtml(messages['admin.unsaved'])}</span>`;
-  const controlMarkup = (definition: SettingDefinition): string => {
+  // `cell` renders the bare control for a pricing-table cell, where the row and column headers
+  // already say what the value is; the label is kept for screen readers only.
+  const controlMarkup = (definition: SettingDefinition, cell = false): string => {
     const label = labelFor(definition);
     const effective = definition.get(context.config);
     const kind = definition.kind;
-    const heading = `<span class="bk-sfield-label">${escapeHtml(label)}${badgesFor(definition)}</span>`;
+    const heading = cell
+      ? `<span class="bk-sr-only">${escapeHtml(label)}</span>`
+      : `<span class="bk-sfield-label">${escapeHtml(label)}${badgesFor(definition)}</span>`;
     if (kind.type === 'boolean') {
       return `<label class="bk-switch"><input type="checkbox" name="${escapeHtml(definition.key)}"${effective ? ' checked' : ''}>${heading}</label>`;
     }
@@ -143,11 +161,17 @@ export function settingsPage(
       : kind.type === 'number' ? ` min="${kind.min}" step="any" required`
       : kind.type === 'money' ? ` min="0" step="${moneyStep}" required`
       : (kind.type === 'text' || kind.type === 'url') && kind.optional ? '' : ' required';
-    const value = effective === null ? ''
-      : kind.type === 'money' ? majorUnits(effective as number, kind.currency)
-      : String(effective);
     const wide = inputType === 'text' || inputType === 'email' || inputType === 'url';
-    return `<label class="bk-field">${heading}<input class="bk-input${wide ? ' bk-input--wide' : ''}" type="${inputType}" name="${escapeHtml(definition.key)}" value="${escapeHtml(value)}"${constraints}></label>`;
+    const input = `<input class="bk-input${wide ? ' bk-input--wide' : ''}" type="${inputType}" name="${escapeHtml(definition.key)}" value="${escapeHtml(valueOf(definition))}"${constraints}>`;
+    // The unit lives in the box beside the number, so the label no longer has to carry it.
+    const unit = kind.type === 'money'
+      ? currencyUnit(kind.currency)
+      : catalog[`${definition.labelKey}.unit`] ? { text: catalog[`${definition.labelKey}.unit`] as string, before: false } : null;
+    const unitMarkup = unit ? `<span class="bk-affix-unit">${escapeHtml(unit.text)}</span>` : '';
+    const control = unit ? `<span class="bk-affix">${unit.before ? unitMarkup : ''}${input}${unit.before ? '' : unitMarkup}</span>` : input;
+    return cell
+      ? `<label class="bk-field">${heading}${control}</label>${badgesFor(definition)}`
+      : `<label class="bk-field">${heading}${control}</label>`;
   };
 
   // The reset button sits outside any <label> so clicking it never toggles the control it belongs to.
@@ -159,19 +183,27 @@ export function settingsPage(
       + `</span>`;
   };
 
-  const fieldMarkup = (definition: SettingDefinition, extraHint = ''): string => {
+  // A hint with a {v} restates the setting as the sentence a customer would live by ("can cancel
+  // until 24 hours before"), with the number kept live by the enhancer while it is edited.
+  const hintMarkup = (definition: SettingDefinition): string => {
     const hint = catalog[`${definition.labelKey}.hint`];
-    return `<div class="bk-sfield">${controlMarkup(definition)}${resetMarkup(definition)}`
-      + (hint ? `<span class="bk-hint">${escapeHtml(hint)}</span>` : '')
-      + extraHint
-      + `</div>`;
+    if (!hint) return '';
+    const [before, ...rest] = hint.split('{v}');
+    if (rest.length === 0) return `<span class="bk-hint">${escapeHtml(hint)}</span>`;
+    const value = valueOf(definition) || '0';
+    return `<span class="bk-hint">${escapeHtml(before ?? '')}`
+      + rest.map((after) => `<b data-reserva-live>${escapeHtml(value)}</b>${escapeHtml(after)}`).join('')
+      + `</span>`;
   };
+
+  const fieldMarkup = (definition: SettingDefinition, extraHint = ''): string =>
+    `<div class="bk-sfield">${controlMarkup(definition)}${resetMarkup(definition)}${hintMarkup(definition)}${extraHint}</div>`;
 
   // One group: its title (and, for a service's own closing-time rule, the departure it derives) on
   // the left, the fields on the right. The title column is the only structure the page has; there
   // are no rules between fields.
-  const groupMarkup = (title: string, fields: string, aside = ''): string =>
-    `<div class="bk-sgroup"><div class="bk-sgroup-head"><h3>${escapeHtml(title)}</h3>${aside}</div><div class="bk-sgroup-fields">${fields}</div></div>`;
+  const groupMarkup = (title: string, fields: string, aside = '', wide = false): string =>
+    `<div class="bk-sgroup"><div class="bk-sgroup-head"><h3>${escapeHtml(title)}</h3>${aside}</div><div class="bk-sgroup-fields${wide ? ' bk-sgroup-fields--wide' : ''}">${fields}</div></div>`;
 
   // The four opening-hours fields of one rule form a single group. A service's own closing-time
   // rule also shows the departure it derives; the shared block cannot, since every service derives
@@ -183,6 +215,32 @@ export function settingsPage(
       ? `<p class="bk-hint">${escapeHtml(formatMessage(messages['setting.lastDeparture'], { time: (ruleFor(scheduleRule) as { lastStart?: string }).lastStart ?? '' }))}</p>`
       : '';
     return groupMarkup(title, group.map((definition) => fieldMarkup(definition)).join(''), derived);
+  };
+
+  // A service's price tiers as one table: a row per pickup option, a column per party size. Laid
+  // out as a list, every price repeated "Up to 4 · <pickup>" and the page grew a screen per service.
+  const pricingTable = (run: SettingDefinition[]): string => {
+    const tierOf = (definition: SettingDefinition): PricingTierGroup => definition.pricingTier as PricingTierGroup;
+    const cell = (definition: SettingDefinition): string =>
+      `<div class="bk-sfield bk-sfield--cell">${controlMarkup(definition, true)}${resetMarkup(definition)}</div>`;
+    const people = (n: number): string => escapeHtml(formatMessage(messages['admin.pricePeople'], { n }));
+    const first = run[0];
+    if (!first) return '';
+    if (tierOf(first).rule.pickup === undefined) {
+      const rows = run.map((definition) => `<tr><th scope="row">${people(tierOf(definition).rule.maxQuantity)}</th><td>${cell(definition)}</td></tr>`).join('');
+      return `<table class="bk-pricegrid"><thead><tr><th scope="col">${escapeHtml(messages['admin.pricePartySize'])}</th><th scope="col">${escapeHtml(messages['admin.price'])}</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+    const quantities = [...new Set(run.map((definition) => tierOf(definition).rule.maxQuantity))].sort((a, b) => a - b);
+    const pickups = [...new Set(run.map((definition) => tierOf(definition).rule.pickup ?? ''))];
+    const service = tierOf(first).service;
+    const head = `<tr><th scope="col">${escapeHtml(messages['common.pickup'])}</th>${quantities.map((n) => `<th scope="col">${people(n)}</th>`).join('')}</tr>`;
+    const rows = pickups.map((pickup) => `<tr><th scope="row">${escapeHtml(pickupLabel(pickup, [service]))}</th>`
+      + quantities.map((n) => {
+        const definition = run.find((candidate) => tierOf(candidate).rule.pickup === pickup && tierOf(candidate).rule.maxQuantity === n);
+        return `<td>${definition ? cell(definition) : '—'}</td>`;
+      }).join('')
+      + `</tr>`).join('');
+    return `<table class="bk-pricegrid"><thead>${head}</thead><tbody>${rows}</tbody></table>`;
   };
 
   // One section body: consecutive definitions with the same groupKey share a group.
@@ -199,7 +257,9 @@ export function settingsPage(
       const run = sectionDefinitions.slice(index, next);
       body += definition.scheduleRule
         ? scheduleGroup(groupTitle ?? '', run)
-        : groupMarkup(groupTitle ?? '', run.map((member) => fieldMarkup(member)).join(''));
+        : run.every((member) => member.pricingTier)
+          ? groupMarkup(groupTitle ?? '', pricingTable(run), '', true)
+          : groupMarkup(groupTitle ?? '', run.map((member) => fieldMarkup(member)).join(''));
       index += run.length;
     }
     return body;
@@ -227,13 +287,18 @@ export function settingsPage(
     // field's Reset. This invisible Save comes first in tree order so implicit submission always
     // saves; it is kept out of the tab order and the accessibility tree, where the visible Save is.
     const defaultSave = `<button type="submit" class="bk-sr-only" name="action" value="settings-save" tabindex="-1" aria-hidden="true">${escapeHtml(messages['admin.save'])}</button>`;
-    // Save is the step operators miss, so the bar pins to the bottom of the viewport and, once
-    // anything changes, says so beside the button.
+    // Save is the step operators miss, so the bar pins to the bottom of the viewport. The enhancer
+    // keeps it quiet until something changes, then counts the edits and offers Discard; the
+    // messages ride on data-* so it needs no i18n island.
+    const savebar = `<div class="bk-actions bk-actions--split bk-savebar"`
+      + ` data-l-clean="${escapeHtml(messages['admin.noUnsaved'])}" data-l-one="${escapeHtml(messages['admin.unsavedCountOne'])}" data-l-many="${escapeHtml(messages['admin.unsavedCount'])}">`
+      + `<span class="bk-savebar-status"><button type="submit" class="bk-btn" name="action" value="settings-save">${escapeHtml(messages['admin.save'])}</button>`
+      + `<button type="reset" class="bk-btn bk-btn--secondary" data-reserva-discard hidden>${escapeHtml(messages['admin.discard'])}</button>`
+      + `<span class="bk-savebar-msg" role="status" data-reserva-savebar-msg></span></span>${sectionReset}</div>`;
     return `<form method="post" class="bk-settings-form" id="bk-s-${section}"${section === activeSection ? '' : ' hidden'}>${defaultSave}<h2>${escapeHtml(sectionTitles[section])}</h2>`
       + `<p class="bk-hint">${escapeHtml(sectionHints[section])}</p>`
       + `<input type="hidden" name="csrf_token" value="${escapeHtml(csrfToken)}"><input type="hidden" name="section" value="${escapeHtml(section)}">${body}`
-      + `<div class="bk-actions bk-actions--split bk-savebar"><span class="bk-savebar-status"><button type="submit" class="bk-btn" name="action" value="settings-save">${escapeHtml(messages['admin.save'])}</button>`
-      + `<span class="bk-unsaved" role="status" hidden>${escapeHtml(messages['admin.unsavedHint'])}</span></span>${sectionReset}</div></form>`;
+      + `${savebar}</form>`;
   }).join('');
 
   // Deploy-time values on their own tab: reference material, not daily controls.
@@ -249,11 +314,20 @@ export function settingsPage(
     ])
     + `</section>`;
 
-  const tabLink = (id: string, label: string): string =>
-    `<a href="?view=settings&section=${id}" data-reserva-tab="${id}"${id === activeSection ? ' aria-current="page"' : ''}>${escapeHtml(label)}</a>`;
+  // The same section links twice: a side list on wide screens, where it can also count what each
+  // section has modified, and a scrolling tab bar on narrow ones. CSS shows exactly one.
+  const modifiedIn = (section: string): number =>
+    definitions.filter((definition) => definition.section === section && storedRows[definition.key] !== undefined).length;
+  const sectionLink = (id: string, label: string, count = 0): string =>
+    `<a href="?view=settings&section=${id}" data-reserva-tab="${id}"${id === activeSection ? ' aria-current="page"' : ''}>${escapeHtml(label)}`
+    + (count > 0 ? `<span class="bk-snav-count" title="${escapeHtml(formatMessage(messages['admin.modifiedCount'], { n: count }))}">${count}</span>` : '')
+    + `</a>`;
+  const sideNav = `<nav class="bk-snav" aria-label="${escapeHtml(messages['admin.settings'])}">`
+    + settingSections.map((section) => sectionLink(section, sectionTitles[section], modifiedIn(section))).join('')
+    + `<span class="bk-snav-sep" aria-hidden="true"></span>${sectionLink('config', messages['admin.sectionReadonly'])}</nav>`;
   const tabs = `<nav class="bk-tabs" aria-label="${escapeHtml(messages['admin.settings'])}">`
-    + settingSections.map((section) => tabLink(section, sectionTitles[section])).join('')
-    + tabLink('config', messages['admin.sectionReadonly'])
+    + settingSections.map((section) => sectionLink(section, sectionTitles[section])).join('')
+    + sectionLink('config', messages['admin.sectionReadonly'])
     + `</nav>`;
 
   const savedAlert = saved ? `<p class="bk-alert bk-alert--ok" role="status">${escapeHtml(messages['admin.saved'])}</p>` : '';
@@ -269,15 +343,14 @@ export function settingsPage(
     favicon: context.config.ui?.faviconUrl,
     headHtml: context.config.ui?.headHtml,
     scriptHref: jsAssetHref(context.routeConfig.paths.assetsJs),
-    sidebar: adminSidebar(context, messages, 'settings'),
-    sidebarLabel: messages['admin.navigation'],
+    topbar: adminTopbar(context, messages, 'settings', openIncidentCount),
     skipLabel: messages['common.skipContent'],
     theme: context.viewerTheme,
     themeToggle: themeToggle(messages, context.viewerTheme),
     body: `<header class="bk-admin-header"><h1>${escapeHtml(messages['admin.settings'])}</h1></header>`
       + savedAlert
       + errorAlert
-      + tabs
-      + `<div class="bk-settings-sections">${sections}${readonlySection}</div>`,
+      + `<div class="bk-settings-layout">${sideNav}<div class="bk-settings-main">${tabs}`
+      + `<div class="bk-settings-sections">${sections}${readonlySection}</div></div></div>`,
   });
 }
