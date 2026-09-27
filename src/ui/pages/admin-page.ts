@@ -18,10 +18,13 @@ type Messages = ReturnType<typeof resolveMessages>;
 
 export type AdminWindow = 'upcoming' | 'past';
 
+// 'active' is the default and never appears in a URL; 'all' is every status in the window.
+export type AdminStatusFilter = BookingStatus | 'active' | 'all';
+
 export interface AdminFilters {
   when: AdminWindow;
   q: string;
-  status: BookingStatus | '';
+  status: AdminStatusFilter;
   page: number;
 }
 
@@ -87,6 +90,10 @@ export const adminTabs: readonly AdminTab[] = ['upcoming', 'availability', 'atte
 
 // The statuses the list filter offers, in the order an operator reaches for them.
 export const adminStatusFilters: readonly BookingStatus[] = ['confirmed', 'hold', 'expired', 'cancelled', 'no_show'];
+// What the list opens on: bookings that are going ahead, may still be paid for, or already happened.
+// An expired hold is an abandoned checkout and a cancellation already reached the operator by
+// email, so both would bury the day's real bookings if shown by default; All still lists them.
+export const adminActiveStatuses: readonly BookingStatus[] = ['confirmed', 'hold', 'no_show'];
 
 // Mirrors the server's refusal in handleAdminPost: there is no operation to re-run for these, so a
 // Retry button would only ever come back "unavailable".
@@ -420,7 +427,7 @@ function adminStateParams(filters: AdminFilters, options: { page?: number; date?
   const params = new URLSearchParams();
   if (filters.when === 'past') params.set('when', 'past');
   if (filters.q) params.set('q', filters.q);
-  if (filters.status) params.set('status', filters.status);
+  if (filters.status !== 'active') params.set('status', filters.status);
   const page = options.page ?? filters.page;
   if (page > 1) params.set('page', String(page));
   if (options.date) params.set('date', options.date);
@@ -677,8 +684,9 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
   // --- bookings toolbar: period switch, search, status chips ---
   // Every status a row can carry: 'expired' rows exist (a hold nobody paid) and were unreachable
   // from the filter, so the only way to see one was to know its reference.
-  const statusFilterLabels: Record<BookingStatus | '', string> = {
-    '': messages['admin.filterAll'],
+  const statusFilterLabels: Record<AdminStatusFilter, string> = {
+    active: messages['admin.filterActive'],
+    all: messages['admin.filterAll'],
     confirmed: messages['admin.filterConfirmed'],
     hold: messages['admin.filterHold'],
     expired: messages['admin.filterExpired'],
@@ -687,8 +695,11 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
   };
   const listHref = (next: AdminFilters): string => `?${adminStateParams(next, { page: 1, date: editDate, tab: 'upcoming' })}#bk-upcoming`;
   const counts = list.statusCounts;
-  const chips = (['', ...adminStatusFilters] as const).map((value) => {
-    const count = counts ? (value === '' ? Object.values(counts).reduce((sum, n) => sum + n, 0) : counts[value]) : null;
+  const sumOf = (statuses: readonly BookingStatus[]): number => statuses.reduce((sum, status) => sum + (counts?.[status] ?? 0), 0);
+  const chips = (['active', 'all', ...adminStatusFilters] as const).map((value) => {
+    const count = counts
+      ? (value === 'active' ? sumOf(adminActiveStatuses) : value === 'all' ? sumOf(adminStatusFilters) : counts[value])
+      : null;
     const current = filters.status === value;
     return `<a class="bk-chip${count === 0 && !current ? ' bk-chip--empty' : ''}" href="${escapeHtml(listHref({ ...filters, status: value }))}"${current ? ' aria-current="true"' : ''}>`
       + `${escapeHtml(statusFilterLabels[value])}${count === null ? '' : ` <b>${count}</b>`}</a>`;
@@ -701,14 +712,14 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
   if (editDate) clearParams.set('date', editDate);
   clearParams.set('tab', 'upcoming');
   const clearHref = `?${clearParams}#bk-upcoming`;
-  const filtersActive = Boolean(filters.q || filters.status || filters.when === 'past');
+  const filtersActive = Boolean(filters.q || filters.status !== 'active' || filters.when === 'past');
   // The period and status are links, so they apply on click; the search box submits on Enter,
   // carrying the rest of the state as hidden fields. No page field: a changed filter starts at 1.
   const filterForm = `<form method="get" class="bk-filterbar" role="search">`
     + `<input type="hidden" name="tab" value="upcoming">`
     + (editDate ? `<input type="hidden" name="date" value="${escapeHtml(editDate)}">` : '')
     + (filters.when === 'past' ? `<input type="hidden" name="when" value="past">` : '')
-    + (filters.status ? `<input type="hidden" name="status" value="${escapeHtml(filters.status)}">` : '')
+    + (filters.status !== 'active' ? `<input type="hidden" name="status" value="${escapeHtml(filters.status)}">` : '')
     + `<div class="bk-filterbar-row">`
     + `<nav class="bk-segmented" aria-label="${escapeHtml(messages['admin.whenLabel'])}">${periods}</nav>`
     + `<label class="bk-search">${icon(icons.search)}<span class="bk-sr-only">${escapeHtml(messages['admin.searchLabel'])}</span>`
@@ -733,7 +744,7 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
   const truncatedNote = list.searchScanLimit !== null
     ? `<p class="bk-hint">${escapeHtml(formatMessage(messages['admin.searchTruncated'], { n: list.searchScanLimit }))}</p>`
     : '';
-  const emptyText = filters.q || filters.status
+  const emptyText = filters.q || (filters.status !== 'active' && filters.status !== 'all')
     ? messages['admin.noMatchingBookings']
     : filters.when === 'past' ? messages['admin.noPastBookings'] : messages['admin.noBookings'];
   const upcomingPanel = filterForm

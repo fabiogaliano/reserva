@@ -162,7 +162,8 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
   const adminWindowRows = (window: AdminBookingWindow): Booking[] => [...rows.values()]
     .filter((item) => (window.from === undefined || item.startsAt >= window.from)
       && (window.before === undefined || item.startsAt < window.before)
-      && (window.status === undefined || item.status === window.status));
+      && (window.status === undefined || item.status === window.status)
+      && (window.statuses === undefined || window.statuses.includes(item.status)));
   const hydrateBooking = (item: Booking): Booking => {
     const state = tokenState.get(item.id);
     if (!state || options.tokenEncryptionKey === undefined) return item;

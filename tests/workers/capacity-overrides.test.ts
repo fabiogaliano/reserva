@@ -264,6 +264,12 @@ describe('listAdminBookings/countAdminBookings against real D1', () => {
 
     const past = await repo.listAdminBookings({ before: now }, { order: 'desc', limit: 10, offset: 0 });
     expect(past.map((booking) => booking.id)).toEqual(['adm-past']);
+
+    // The default "Active" view: a set of statuses, bound as parameters in one IN clause.
+    const active = await repo.listAdminBookings({ from: now, statuses: ['confirmed', 'hold', 'no_show'] }, { order: 'asc', limit: 10, offset: 0 });
+    expect(active.map((booking) => booking.id)).toEqual(['adm-upcoming']);
+    await expect(repo.countAdminBookings({ from: now, statuses: ['confirmed', 'expired'] })).resolves.toBe(2);
+    await expect(repo.countAdminBookings({ from: now, statuses: [] })).resolves.toBe(0);
   });
 
   it('pages in the requested direction with an id tie-break, so no row repeats or goes missing across pages', async () => {

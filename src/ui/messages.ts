@@ -219,6 +219,8 @@ export const defaultMessages = {
   'admin.whenLabel': 'Period',
   'admin.whenUpcoming': 'Upcoming',
   'admin.whenPast': 'Past',
+  // The list's default: what is going ahead or may yet. Cancelled and expired rows sit under All.
+  'admin.filterActive': 'Active',
   'admin.filterAll': 'All',
   'admin.filterConfirmed': 'Confirmed',
   'admin.filterHold': 'Awaiting payment',

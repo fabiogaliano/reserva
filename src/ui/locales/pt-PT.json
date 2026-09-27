@@ -138,6 +138,7 @@
   "admin.whenLabel": "Período",
   "admin.whenUpcoming": "Próximas",
   "admin.whenPast": "Passadas",
+  "admin.filterActive": "Ativas",
   "admin.filterAll": "Todas",
   "admin.filterConfirmed": "Confirmadas",
   "admin.filterHold": "A aguardar pagamento",
