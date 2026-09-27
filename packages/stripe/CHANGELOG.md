@@ -1,5 +1,23 @@
 # @reservajs/stripe
 
+## 0.6.0
+
+### Minor Changes
+
+- fff54ea: Exact guest count for "up to N" services.
+  
+  **Run `bunx reserva-migrate` after upgrading.** Migration `0006_guest_count.sql` adds a `guest_count` column to bookings.
+  
+  - Set `collectGuestCount: true` on a service to ask the payer how many people are coming. The field is optional and never blocks payment.
+  - The answer is stored as `booking.guestCount`. Price and capacity still follow `quantity`.
+  - `@reservajs/stripe` adds it as an optional numeric field on Stripe Checkout. Change its label with `guestCountFieldLabel`.
+
+### Patch Changes
+
+- Updated dependencies [40390d7]
+- Updated dependencies [fff54ea]
+  - @reservajs/astro@0.11.0
+
 ## 0.5.2
 
 ### Patch Changes
