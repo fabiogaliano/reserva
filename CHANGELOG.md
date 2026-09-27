@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.11.2
+
+### Patch Changes
+
+- 45ba3fe: The admin bookings list opens on a new "Active" filter: confirmed, awaiting payment and no-show bookings. Expired holds (abandoned checkouts) and cancellations no longer crowd the default view; "All" (`?status=all`) still lists every status. Sites that translate the admin into a locale other than en or pt-PT should add `admin.filterActive`.
+- 99aa20f: The admin bookings list groups each day into its own card, with the date as a tinted header band, so a day and its bookings read as one unit instead of rows loose on the page background. Cancelled and expired rows get a faint tint on top of their dimmed text. Printing keeps the flat layout.
+- 5aa0acc: A new booking's reference now continues from the highest one used that year instead of counting rows. Deleting old bookings (test or abandoned ones) used to restart numbering inside the range already taken, so checkout collided with existing references and could fail after its retries.
+
 ## 0.11.1
 
 ### Patch Changes
