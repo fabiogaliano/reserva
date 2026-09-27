@@ -40,6 +40,7 @@ import { reprojectIncidentAfterAdminRetry, sideEffectIncidentSourceKey } from '.
 import { attemptRefund } from '../refund-executor.js';
 import { resolveMessages } from '../ui/messages.js';
 import {
+  adminActiveStatuses,
   adminPage,
   adminStatusFilters,
   adminTabs,
@@ -88,7 +89,9 @@ function adminFiltersFrom(url: URL): AdminFilters {
   return {
     when: url.searchParams.get('when') === 'past' ? 'past' : 'upcoming',
     q: url.searchParams.get('q')?.trim() ?? '',
-    status: (bookingStatuses as readonly string[]).includes(statusParam) ? statusParam as BookingStatus : '',
+    status: statusParam === 'all' || (bookingStatuses as readonly string[]).includes(statusParam)
+      ? statusParam as BookingStatus | 'all'
+      : 'active',
     page: Number.isInteger(pageParam) && pageParam > 0 ? pageParam : 1,
   };
 }
@@ -100,7 +103,10 @@ function adminErrorFrom(url: URL): AdminErrorNotice | null {
 
 async function loadBookingList(context: ReservaContext, filters: AdminFilters, todayStart: string): Promise<AdminBookingList> {
   const period: AdminBookingWindow = filters.when === 'upcoming' ? { from: todayStart } : { before: todayStart };
-  const window: AdminBookingWindow = { ...period, ...(filters.status ? { status: filters.status } : {}) };
+  const statusWindow: Pick<AdminBookingWindow, 'status' | 'statuses'> = filters.status === 'all'
+    ? {}
+    : filters.status === 'active' ? { statuses: adminActiveStatuses } : { status: filters.status };
+  const window: AdminBookingWindow = { ...period, ...statusWindow };
   const order = filters.when === 'upcoming' ? 'asc' : 'desc';
   const lastPageOf = (total: number): number => Math.max(1, Math.ceil(total / ADMIN_PAGE_SIZE));
   if (!filters.q) {

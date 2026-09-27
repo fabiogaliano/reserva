@@ -328,6 +328,8 @@ export interface AdminBookingWindow {
   from?: string;
   before?: string;
   status?: BookingStatus;
+  // Any of several statuses; the admin's default "active" view is one such set.
+  statuses?: readonly BookingStatus[];
 }
 
 export interface BookingRepository {
@@ -782,6 +784,10 @@ function adminWindowPredicate(window: AdminBookingWindow): { where: string; para
   if (window.status !== undefined) {
     clauses.push('status = ?');
     params.push(window.status);
+  }
+  if (window.statuses !== undefined) {
+    clauses.push(window.statuses.length > 0 ? `status IN (${window.statuses.map(() => '?').join(', ')})` : '0 = 1');
+    params.push(...window.statuses);
   }
   return { where: clauses.length > 0 ? clauses.join(' AND ') : '1 = 1', params };
 }

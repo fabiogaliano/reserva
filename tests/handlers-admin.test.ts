@@ -104,9 +104,9 @@ describe('access control (spec §11: admin requires Cloudflare Access)', () => {
 });
 
 describe('GET /admin listing (one window + status query)', () => {
-  // "All" is every status inside the window: cancelled and swept-expired rows included, so a status
-  // filter can only ever narrow it, never show more than "All" does.
-  it('lists every status in the Upcoming window by default and keeps past rows out of it', async () => {
+  // The list opens on "Active": what is going ahead or may still be paid for. "All" is every status
+  // inside the window, cancelled and swept-expired rows included, so no filter shows more than it.
+  it('opens on active bookings in the Upcoming window, lists every status under All, and keeps past rows out', async () => {
     const futureConfirmed = booking({ id: 'b-admin-future-confirmed', reference: 'LVT-2026-100', status: 'confirmed', startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z', operatorToken: 'op-future-confirmed', cancelToken: 'cancel-future-confirmed' });
     const futureUnexpiredHold = booking({ id: 'b-admin-future-hold', reference: 'LVT-2026-101', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', startsAt: '2026-06-21T09:00:00.000Z', endsAt: '2026-06-21T10:00:00.000Z', operatorToken: 'op-future-hold', cancelToken: 'cancel-future-hold' });
     const futureExpiredHold = booking({ id: 'b-admin-expired-hold', reference: 'LVT-2026-102', status: 'hold', holdExpiresAt: '2026-06-14T07:00:00.000Z', startsAt: '2026-06-22T09:00:00.000Z', endsAt: '2026-06-22T10:00:00.000Z', operatorToken: 'op-expired-hold', cancelToken: 'cancel-expired-hold' });
@@ -120,12 +120,21 @@ describe('GET /admin listing (one window + status query)', () => {
     const body = await response.text();
     expect(body).toContain(futureConfirmed.reference);
     expect(body).toContain(futureUnexpiredHold.reference);
-    expect(body).toContain(futureExpiredHold.reference);
-    expect(body).toContain(cancelledFuture.reference);
+    expect(body).not.toContain(futureExpiredHold.reference);
+    expect(body).not.toContain(cancelledFuture.reference);
     expect(body).not.toContain(pastConfirmed.reference);
-    expect(body).toContain('Showing 1–4 of 4');
+    expect(body).toContain('Showing 1–2 of 2');
+    expect(body).toContain('<a class="bk-chip" href="?tab=upcoming#bk-upcoming" aria-current="true">Active <b>2</b></a>');
+    expect(body).toContain('<a class="bk-chip" href="?status=all&amp;tab=upcoming#bk-upcoming">All <b>4</b></a>');
+    expect(body).not.toContain('bk-filter-clear');
     // The sweep (called inside handleAdminGet) must have flipped the time-expired hold.
     expect(repo.rows.get(futureExpiredHold.id)?.status).toBe('expired');
+
+    const all = await (await handleAdminGet(new Request(`${ADMIN_URL}?status=all`), context)).text();
+    for (const row of [futureConfirmed, futureUnexpiredHold, futureExpiredHold, cancelledFuture]) expect(all).toContain(row.reference);
+    expect(all).not.toContain(pastConfirmed.reference);
+    expect(all).toContain('Showing 1–4 of 4');
+    expect(all).toContain('class="bk-filter-clear" href="?tab=upcoming#bk-upcoming"');
 
     const confirmedOnly = await (await handleAdminGet(new Request(`${ADMIN_URL}?status=confirmed`), context)).text();
     expect(confirmedOnly).toContain(futureConfirmed.reference);
@@ -207,9 +216,9 @@ describe('GET /admin listing (one window + status query)', () => {
     expect(body).toContain('href="?when=past&amp;q=Ana&amp;status=cancelled&amp;date=2026-06-20&amp;tab=upcoming#bk-upcoming" aria-current="true">Past</a>');
     expect(body).toContain('href="?when=past&amp;q=Ana&amp;status=cancelled&amp;date=2026-06-20&amp;tab=upcoming#bk-upcoming" aria-current="true">Cancelled</a>');
     expect(body).toContain('class="bk-filter-clear" href="?date=2026-06-20&amp;tab=upcoming#bk-upcoming"');
-    // An unknown status is ignored rather than matching nothing.
+    // An unknown status falls back to the default view rather than matching nothing.
     const bogus = await (await handleAdminGet(new Request(`${ADMIN_URL}?status=bogus`), context)).text();
-    expect(bogus).toContain('<a class="bk-chip" href="?tab=upcoming#bk-upcoming" aria-current="true">All <b>');
+    expect(bogus).toContain('<a class="bk-chip" href="?tab=upcoming#bk-upcoming" aria-current="true">Active <b>');
     expect(bogus).not.toContain('bk-filter-clear');
   });
 
