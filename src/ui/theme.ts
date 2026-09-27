@@ -407,9 +407,19 @@ export const themeCss = `
    scans by and the panel holds the rest, so the list never grows a column for a detail that only
    matters on one booking in twenty. Works with scripting off; the enhancer only adds
    one-open-at-a-time. */
-.bk-daygroup { margin: 0 0 1.75rem; }
-/* The day stays pinned under the top bar while its rows scroll past, so a long day never leaves
-   the operator guessing which date they are reading. */
+.bk-daygroup {
+  margin: 0 0 1rem;
+  background: var(--bk-surface);
+  border: 1px solid var(--bk-border);
+  border-radius: var(--bk-radius);
+  box-shadow: var(--bk-shadow);
+  /* clip rather than hidden: it rounds the header band and rows into the card without becoming a
+     scroll container, which would stop the heading below from sticking. */
+  overflow: clip;
+}
+/* Each day is its own card, so a day and its bookings read as one unit instead of rows loose on
+   the page. The day stays pinned under the top bar while its rows scroll past, so a long day never
+   leaves the operator guessing which date they are reading. */
 .bk-daygroup > h3 {
   position: sticky;
   top: 3.5rem;
@@ -417,9 +427,9 @@ export const themeCss = `
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
-  margin: 0 0 0.25rem;
-  padding: 0.55rem 0.6rem 0.45rem;
-  background: var(--bk-bg);
+  margin: 0;
+  padding: 0.6rem 1rem;
+  background: var(--bk-surface-2);
   border-bottom: 1px solid var(--bk-border);
   font-size: 0.85rem;
   font-weight: 600;
@@ -431,15 +441,15 @@ export const themeCss = `
 .bk-day-totals { margin-left: auto; font-size: 0.8rem; font-weight: 500; color: var(--bk-text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 /* Fixed tracks rather than auto: each summary is its own grid, and only fixed widths line the
    columns up from one row to the next. */
-.bk-booking { border-bottom: 1px solid color-mix(in srgb, var(--bk-border) 55%, transparent); }
+.bk-booking { border-bottom: 1px solid color-mix(in srgb, var(--bk-border) 70%, transparent); }
+.bk-booking:last-child { border-bottom: 0; }
 .bk-booking > summary {
   display: grid;
   grid-template-columns: 4.6rem minmax(0, 1fr) 4rem minmax(0, 14rem) 1rem;
   align-items: center;
   gap: 0.2rem 1rem;
   min-height: 3.25rem;
-  padding: 0.5rem 0.6rem;
-  border-radius: var(--bk-radius-sm);
+  padding: 0.6rem 1rem;
   list-style: none;
   cursor: pointer;
   transition: background-color 120ms ease;
@@ -448,7 +458,8 @@ export const themeCss = `
 @media (hover: hover) and (pointer: fine) {
   .bk-booking > summary:hover { background: color-mix(in srgb, var(--bk-surface-2) 55%, transparent); }
 }
-.bk-booking > summary:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; }
+/* Inset: the day card clips anything drawn outside a row, which would cut an outer ring at its edges. */
+.bk-booking > summary:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: -2px; }
 .bk-booking[open] > summary { background: color-mix(in srgb, var(--bk-surface-2) 45%, transparent); }
 @media (prefers-reduced-motion: reduce) { .bk-booking > summary { transition: none; } }
 .bk-booking-time { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
@@ -466,12 +477,13 @@ export const themeCss = `
    is coming. */
 .bk-booking--void :is(.bk-booking-time, .bk-booking-who, .bk-booking-sub, .bk-booking-guests) { opacity: 0.55; }
 .bk-booking--void .bk-booking-time { text-decoration: line-through; text-decoration-thickness: 1px; }
+.bk-booking--void > summary { background: color-mix(in srgb, var(--bk-surface-2) 35%, transparent); }
 .bk-booking-detail {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
   gap: 1rem 2rem;
-  padding: 0.5rem 0.6rem 1.25rem 6.2rem;
+  padding: 0.5rem 1rem 1.25rem 6.6rem;
 }
 .bk-booking-detail .bk-facts { grid-template-columns: max-content minmax(0, 1fr); gap: 0.45rem 1.5rem; font-size: 0.875rem; }
 .bk-booking-detail .bk-facts dd { font-size: 0.875rem; font-weight: 400; }
@@ -516,7 +528,7 @@ export const themeCss = `
   .bk-booking-status:empty { display: none; }
   .bk-booking-chevron { grid-row: 1; grid-column: 3; }
   .bk-booking-time small { display: block; margin: 0; }
-  .bk-booking-detail { grid-template-columns: 1fr; padding-left: 0.6rem; }
+  .bk-booking-detail { grid-template-columns: 1fr; padding-left: 1rem; }
   .bk-row-actions { flex-direction: row; flex-wrap: wrap; }
 }
 
@@ -1228,12 +1240,14 @@ a.bk-day { padding-bottom: 0.35rem; box-sizing: border-box; }
   details > :not(summary) { display: block !important; }
   ::details-content { display: block !important; content-visibility: visible !important; }
   .bk-card, .bk-badge, .bk-booking { box-shadow: none; }
+  .bk-daygroup { background: none; border: 0; border-radius: 0; box-shadow: none; overflow: visible; }
   .bk-booking { break-inside: avoid; border-bottom: 1px solid #cccccc; }
-  .bk-booking > summary { min-height: 0; }
+  .bk-booking > summary, .bk-booking[open] > summary { min-height: 0; background: none; }
   /* The day the rows belong to is the one thing a loose printed page must never lose, so it reads
      as a heading and is never left stranded at the foot of a page. */
   .bk-daygroup > h3 {
     position: static;
+    background: none;
     break-after: avoid;
     font-size: 1.05rem;
     letter-spacing: 0;
