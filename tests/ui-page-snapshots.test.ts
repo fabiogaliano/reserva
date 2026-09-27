@@ -8,7 +8,9 @@ import { config } from './fixtures';
 
 // The whole rendered document, per state, for a deployment that sets no page customization: any
 // markup change to a customer page shows up here as a reviewable diff.
-const context = { config, routeConfig: resolveRouteConfig() };
+// A pinned clock: the calendar file stamps when it was generated.
+const generatedAt = new Date('2026-06-01T10:00:00.000Z');
+const context = { config, routeConfig: resolveRouteConfig(), clock: () => generatedAt };
 const baseUrl = 'https://example.test/booking-confirmation?sessionId=cs_1';
 
 const fullBooking = {
@@ -55,6 +57,7 @@ describe('manage page snapshots (no customization)', () => {
     businessName: config.business.name,
     businessUrl: config.business.url,
     contactConfig: config,
+    now: generatedAt,
   };
 
   it('confirmed booking with actions', () => {

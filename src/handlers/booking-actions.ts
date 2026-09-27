@@ -21,12 +21,6 @@ import { checkSlot } from './checkout.js';
 import { run, warnDeprecatedField, withSensitiveHeaders } from './shared.js';
 import { tokenBooking } from './status-manage.js';
 
-async function calendarPatch(context: ReservaContext, booking: Booking): Promise<void> {
-  if (booking.calendarEventId && context.providers.calendar) {
-    await context.providers.calendar.patchEvent(booking.calendarEventId, booking, context.config);
-  }
-}
-
 export function handleCustomerCancel(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
@@ -67,18 +61,27 @@ function readStart(context: ReservaContext, body: Record<string, unknown>): stri
   return requireString(body.start, 'start');
 }
 
+function sameInstant(a: string, b: string): boolean {
+  try {
+    return parseUtcInstant(a).getTime() === parseUtcInstant(b).getTime();
+  } catch {
+    return false;
+  }
+}
+
 async function rescheduleWithToken(context: ReservaContext, booking: Booking, newStart: string, operator: boolean): Promise<Booking> {
   const now = nowIso(context);
   if (booking.status !== 'confirmed') throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be rescheduled');
-  if (!operator && !canRescheduleBooking(booking, now, context.config.booking.reschedule.cutoffHours, context.config.booking.reschedule.enabled)) throw new HttpError(403, 'past_cutoff', 'The reschedule deadline has passed');
+  const { enabled, cutoffHours } = context.config.booking.reschedule;
+  if (!operator && !enabled) throw new HttpError(403, 'past_cutoff', 'The reschedule deadline has passed');
+  // Already there — a double-submitted form, or a retry after a response that never arrived. The
+  // outcome the caller asked for holds, so it succeeds without a second version or notice. Checked
+  // before the cutoff: once the first submit has moved the booking, the cutoff is measured from the
+  // start it moved to, which may already be inside it.
+  if (sameInstant(newStart, booking.startsAt)) return booking;
+  if (!operator && !canRescheduleBooking(booking, now, cutoffHours, enabled)) throw new HttpError(403, 'past_cutoff', 'The reschedule deadline has passed');
   const candidate = await checkSlot(context, booking.serviceSlug, booking.quantity, newStart, now, booking.id);
   const next = rescheduleBooking(booking, candidate.startsAt, candidate.service.durationMin, now);
-  if (next.startsAt === booking.startsAt && next.endsAt === booking.endsAt) {
-    // A prior calendar patch can fail after the transition and notification debt committed. Retrying
-    // the same target must repair that patch without minting a second reschedule version or notice.
-    await calendarPatch(context, booking);
-    return booking;
-  }
   // checkSlot above is only a fast-path pre-check (TOCTOU — two concurrent reschedules into the
   // same last unit can both pass it). rescheduleWithCapacity is the authority: it re-evaluates the
   // CAS and occupancy inside the same atomic UPDATE ... WHERE as the write itself.
@@ -100,17 +103,24 @@ async function rescheduleWithToken(context: ReservaContext, booking: Booking, ne
     now,
     tokensExpireAt,
     occupancyUnits, occupancyEndsAt, localDate, defaultCapacity: context.config.capacity.default,
-    mutationSideEffects: mutationSideEffectSeeds(context, 'booking.rescheduled', next, next.updatedAt),
+    mutationSideEffects: [
+      ...mutationSideEffectSeeds(context, 'booking.rescheduled', next, next.updatedAt),
+      // The calendar is synced through the outbox, not inline: the booking has moved the moment
+      // this write commits, so a calendar outage is retried debt, never a failed reschedule.
+      ...(booking.calendarEventId ? [{ family: 'calendar_patch' as const, eventPayloadJson: null, eventIdPrefix: null }] : []),
+    ],
   });
   if (!updated) {
     const fresh = await context.repo.getBookingById(next.id);
     if (!fresh || fresh.status !== 'confirmed') throw new HttpError(409, 'invalid_transition', 'Only confirmed bookings can be rescheduled');
+    // Lost to a concurrent request that moved it to this very slot (the same form submitted twice):
+    // the booking is where this caller wanted it, and the winner owns the notice.
+    if (fresh.startsAt === next.startsAt) return fresh;
     // Status is still confirmed but the write lost the atomic guard — either a concurrent reschedule
     // moved starts_at, or capacity shrank concurrently. Both surface identically: the slot this
     // request computed availability against is gone.
     throw new HttpError(409, 'slot_unavailable', 'The selected slot is no longer available');
   }
-  await calendarPatch(context, updated);
   await dispatchMutation(context, 'booking.rescheduled', updated);
   return updated;
 }

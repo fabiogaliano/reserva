@@ -1,8 +1,52 @@
-// Browser-side progressive enhancement for the manage page's reschedule form. The page stays
-// fully functional without it — the native datetime-local input is the no-JS fallback, hidden
-// only once the calendar renders. IIFE so names can't collide with cally's in the concatenated file.
+// Browser-side progressive enhancement for the manage page. The page stays fully functional
+// without it — the native datetime-local input is the no-JS fallback, hidden only once the
+// calendar renders, and the server validates every field the enhancer only pre-checks. IIFEs so
+// names can't collide with cally's in the concatenated file.
+
+import { MANAGE_TOKEN_HEADER } from '../core/api.js';
 
 export const manageEnhancerJs = `(() => {
+  if (!document.body || !document.body.classList.contains('bk-page--manage')) return;
+
+  // One action per click: a second submit while the first is in flight would re-run a cancel or
+  // reschedule the first already did. Disabled after the event, so the submission itself proceeds.
+  for (const form of document.querySelectorAll('form[method="post"]')) {
+    form.addEventListener('submit', () => {
+      for (const button of form.querySelectorAll('button[type="submit"]')) {
+        button.disabled = true;
+        button.setAttribute('data-reserva-busy', '');
+      }
+    });
+  }
+  // Back/forward restores the page from the bfcache with the buttons still disabled.
+  window.addEventListener('pageshow', (event) => {
+    if (!event.persisted) return;
+    for (const button of document.querySelectorAll('button[data-reserva-busy]')) {
+      button.disabled = false;
+      button.removeAttribute('data-reserva-busy');
+    }
+  });
+
+  // The amount only means something for a partial refund, so it is required exactly then.
+  const refund = document.querySelector('select[name="refund"]');
+  const amount = document.querySelector('input[name="refundAmount"]');
+  if (refund && amount) {
+    const sync = () => { amount.required = refund.value === 'partial'; };
+    refund.addEventListener('change', sync);
+    sync();
+  }
+
+  // The notice has been rendered; leaving done/error in the URL would show it again on a reload
+  // or in a bookmark, long after the action it describes.
+  const url = new URL(location.href);
+  if (url.searchParams.has('done') || url.searchParams.has('error')) {
+    url.searchParams.delete('done');
+    url.searchParams.delete('error');
+    history.replaceState(history.state, '', url.toString());
+  }
+})();
+
+(() => {
   const form = document.querySelector('[data-reserva-reschedule]');
   if (!form || !('customElements' in window)) return;
   const ds = form.dataset;
@@ -85,7 +129,8 @@ export const manageEnhancerJs = `(() => {
       if (slot.remaining !== null && i18n.limited) {
         const hint = document.createElement('span');
         hint.className = 'bk-slot-hint';
-        hint.textContent = i18n.limited.replace('{n}', String(slot.remaining));
+        const one = slot.remaining === 1 && i18n.limitedOne;
+        hint.textContent = one ? i18n.limitedOne : i18n.limited.replace('{n}', String(slot.remaining));
         button.append(hint);
       }
       button.addEventListener('click', () => {
@@ -102,7 +147,12 @@ export const manageEnhancerJs = `(() => {
   };
 
   const query = new URLSearchParams({ serviceSlug: ds.service || '', quantity: ds.quantity || '', from: ds.from || '', to: ds.to || '' });
-  fetch(ds.endpoint + '?' + query, { cache: 'no-store' })
+  // The form's own token lets availability leave this booking out of the count, so the customer
+  // can move within (or next to) the slot they already hold. A header, not a query param, so the
+  // token stays out of request logs.
+  const tokenInput = form.querySelector('input[name="token"], input[name="operatorToken"]');
+  const headers = tokenInput && tokenInput.value ? { '${MANAGE_TOKEN_HEADER}': tokenInput.value } : {};
+  fetch(ds.endpoint + '?' + query, { cache: 'no-store', headers })
     .then((response) => response.json().then((payload) => ({ ok: response.ok, payload })))
     .then(({ ok, payload }) => {
       if (!ok || !payload.days) throw new Error();

@@ -168,7 +168,8 @@ describe('ui.branding', () => {
     expect(css).toContain('.bk-page--confirmation, .bk-page--manage {');
     expect(css).toContain('--bk-accent: #0f6b3f;');
     expect(css).toContain('--bk-accent-contrast: #ffffff;');
-    expect(css).toContain('--bk-focus: 0 0 0 3px color-mix(in srgb, #0f6b3f 50%, transparent);');
+    // The focus ring reads var(--bk-accent) where it is drawn, so branding no longer restates it.
+    expect(css).not.toContain('--bk-focus');
     expect(css).toContain('--bk-font: "Fraunces", serif;');
     expect(css).toContain('.bk-page--confirmation .bk-masthead, .bk-page--manage .bk-masthead { background: linear-gradient(180deg, #fdf6e3, #f5ecd7); }');
     expect(css).not.toContain('bk-page--admin');
@@ -192,7 +193,7 @@ describe('ui.branding', () => {
 
   it('serves the branding rules from the stylesheet route, after the defaults', async () => {
     const { GET } = await import('../src/routes/booking/assets');
-    const css = await GET().text();
+    const css = await GET({ url: new URL(`https://example.test${cssAssetHref('/booking/assets/reserva.css', branded.ui.branding)}`) }).text();
     expect(css.startsWith(themeCss)).toBe(true);
     expect(css.slice(themeCss.length)).toBe(brandingCss(branded.ui.branding));
   });
@@ -202,6 +203,14 @@ describe('ui.branding', () => {
     expect(() => validateConfig(withBranding({ accentColor: 'green' }))).toThrow(/accentColor.*hex/s);
     expect(() => validateConfig(withBranding({ mastheadBackground: 'red; } body { display: none' }))).toThrow(/mastheadBackground/);
     expect(() => validateConfig(withBranding({ fontFamily: 'Inter /* x' }))).toThrow(/fontFamily/);
+    // An unclosed bracket or string makes the CSS parser swallow every rule after the declaration.
+    for (const fontFamily of ['"Fraunces, serif', "'Fraunces", 'var(--x', 'var(--x))', 'a[b', 'a]', '(a]', '"a\nb"']) {
+      expect(() => validateConfig(withBranding({ fontFamily }))).toThrow(/fontFamily.*balanced \( \) and \[ \] and closed quotes/s);
+    }
+    expect(() => validateConfig(withBranding({ mastheadBackground: 'linear-gradient(180deg, #fff, #eee' }))).toThrow(/mastheadBackground.*balanced/s);
+    // Brackets inside a quoted family name are text, not structure.
+    expect(() => validateConfig(withBranding({ fontFamily: '"Font (Display)", \'Odd [x\', serif' }))).not.toThrow();
+    expect(() => validateConfig(withBranding({ mastheadBackground: 'linear-gradient(180deg, rgb(1 2 3), color-mix(in srgb, red 20%, blue))' }))).not.toThrow();
     expect(() => validateConfig(withBranding({ colorScheme: 'sepia' }))).toThrow(/colorScheme/);
     expect(() => validateConfig(withBranding(branded.ui.branding))).not.toThrow();
   });

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { config } from './fixtures';
 import { resolveRouteConfig } from '../src/routes-manifest';
 import { confirmationPage } from '../src/ui/pages/confirmation-page';
+import { formatDateTime } from '../src/ui/format';
 
 describe('booking confirmation page', () => {
   it('renders a confirmed booking from the minimized status payload', () => {
@@ -135,5 +136,75 @@ describe('booking confirmation page', () => {
     expect(html).toContain('<dd>On</dd>');
     expect(html).not.toContain(xssPayload);
     expect(html).toContain('&lt;script&gt;');
+  });
+});
+
+describe('booking confirmation page — pending, locale and return visits', () => {
+  const context = { config, routeConfig: resolveRouteConfig() };
+
+  it('hands the pending state to the served poller: the status endpoint, the session and the attempt it is on, plus a polite live region', () => {
+    const html = confirmationPage(context, { status: 'pending', booking: null }, 'https://example.test/booking-confirmation?sessionId=cs_wait&attempt=4', null);
+    expect(html).toContain('data-reserva-status-poll');
+    expect(html).toContain('data-endpoint="/api/booking/status"');
+    expect(html).toContain('data-session-id="cs_wait"');
+    expect(html).toContain('data-attempt="4"');
+    expect(html).toContain('data-max="20"');
+    expect(html).toContain('aria-live="polite"');
+    expect(html).toMatch(/<script type="module" src="\/booking\/assets\/reserva\.js\?v=[^"]+"><\/script>/);
+    // The no-script fallback stays.
+    expect(html).toContain('http-equiv="refresh"');
+    expect(html).toContain('<a class="bk-skip" href="#bk-main">Skip to content</a>');
+  });
+
+  it('stops offering the poller once the attempt budget is spent', () => {
+    const html = confirmationPage(context, { status: 'pending', booking: null }, 'https://example.test/booking-confirmation?sessionId=cs_wait&attempt=20', null);
+    expect(html).not.toContain('data-reserva-status-poll');
+    expect(html).not.toContain('http-equiv="refresh"');
+  });
+
+  // The header's theme toggle is revealed by the same served script, so every state loads it.
+  it('loads the served script in every state, so the theme toggle works once polling is over', () => {
+    for (const payload of [{ status: 'failed', booking: null }, { status: 'expired', booking: null }, { status: 'not_found', booking: null }] as const) {
+      const html = confirmationPage(context, payload, 'https://example.test/booking-confirmation?sessionId=cs_done', null);
+      expect(html).toContain('data-reserva-theme-toggle');
+      expect(html).toMatch(/<script type="module" src="\/booking\/assets\/reserva\.js\?v=[^"]+"><\/script>/);
+    }
+  });
+
+  it('negotiates the ?locale hint for states that carry no booking, and never echoes an unsupported tag into lang', () => {
+    const pending = { status: 'pending', booking: null } as const;
+    expect(confirmationPage(context, pending, 'https://example.test/booking-confirmation?sessionId=cs_1', 'pt')).toContain('<html lang="pt-BR"');
+    expect(confirmationPage(context, pending, 'https://example.test/booking-confirmation?sessionId=cs_1', 'xx-"evil')).toContain('<html lang="en"');
+  });
+
+  it('greets a return visit past the detail window neutrally rather than promising an email that went out hours ago', () => {
+    const html = confirmationPage(context, {
+      status: 'confirmed',
+      booking: { reference: 'LVT-2026-009', serviceTitle: 'Vintage Tour', start: '2026-06-15T09:00:00.000+01:00', end: '2026-06-15T10:00:00.000+01:00', locale: 'en' },
+    }, 'https://example.test/booking-confirmation?sessionId=cs_old', null);
+    expect(html).toContain('This booking is confirmed.');
+    expect(html).not.toContain('A confirmation email is on its way');
+  });
+
+  it('names the end day on a return visit to a multi-day booking, as the full ticket does', () => {
+    const html = confirmationPage(context, {
+      status: 'confirmed',
+      booking: { reference: 'LVT-2026-011', serviceTitle: 'Vintage Tour', start: '2026-06-15T09:00:00.000Z', end: '2026-06-17T09:00:00.000Z', locale: 'en' },
+    }, 'https://example.test/booking-confirmation?sessionId=cs_multi', null);
+    expect(html).toContain(formatDateTime('2026-06-17T09:00:00.000Z', 'en', config.business.timezone));
+  });
+
+  it('files the calendar download under the booking reference and business host, stamped with the page clock', () => {
+    const html = confirmationPage({ ...context, clock: () => new Date('2026-06-01T10:00:00.000Z') }, {
+      status: 'confirmed',
+      booking: {
+        reference: 'LVT-2026-010', serviceSlug: 'vintage', serviceTitle: 'Vintage Tour',
+        start: '2026-06-15T09:00:00.000+01:00', end: '2026-06-15T10:00:00.000+01:00',
+        quantity: 2, priceMinor: 10000, currency: 'eur', meetingPoint: null, locale: 'en', metadataRows: [],
+      },
+    }, 'https://example.test/booking-confirmation?sessionId=cs_ics', null);
+    const ics = decodeURIComponent(/href="data:text\/calendar;charset=utf-8,([^"]+)"/.exec(html)![1]!.replace(/&amp;/g, '&'));
+    expect(ics).toContain('UID:LVT-2026-010@example.test');
+    expect(ics).toContain('DTSTAMP:20260601T100000Z');
   });
 });

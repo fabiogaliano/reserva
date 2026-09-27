@@ -17,9 +17,16 @@ test('customer can cancel a booking within the cutoff, a cancellation email land
 
   await page.getByRole('button', { name: 'Yes, cancel this booking' }).click();
 
-  // Redirect to the manage page, which rejects the revoked token — only works because manage.ts
-  // serves `strict-origin` (not `no-referrer`), so the real Origin on this same-origin POST
-  // satisfies Astro's checkOrigin. (See the Referer-trimming test below for the other half.)
+  // The POST answers with the cancelled page itself (the link it came from is revoked by now) —
+  // only reachable because manage.ts serves `strict-origin` (not `no-referrer`), so the real
+  // Origin on this same-origin POST satisfies Astro's checkOrigin. (See the Referer-trimming test
+  // below for the other half.)
+  await expect(page.locator('h1')).toContainText('Booking cancelled');
+  await expect(page.locator('.bk-masthead .bk-lead')).toContainText(reference);
+  await expect(page.getByRole('link', { name: 'Book again' })).toBeVisible();
+
+  // Revisiting the old link is where "Link not valid" still belongs.
+  await page.goto(manageUrl.pathname + manageUrl.search);
   await expect(page.locator('h1')).toContainText('Link not valid');
 
   const outbox = await (await page.request.get('/dev/outbox.json')).json();
@@ -81,6 +88,20 @@ test('customer can reschedule to another available slot, the manage page reflect
   const outbox = await (await page.request.get('/dev/outbox.json')).json();
   const rescheduleEmail = outbox.find((entry: any) => entry.reference === reference && entry.event === 'booking.rescheduled');
   expect(rescheduleEmail).toBeTruthy();
+});
+
+test('the reschedule calendar asks availability with the manage token in a header, so the booking does not count against itself', async ({ page }) => {
+  const { outboxEntry } = await createBooking(page, { service: TOUR, quantity: 2 });
+  const manageUrl = new URL(outboxEntry.customerManageUrl);
+  const token = manageUrl.searchParams.get('token');
+  if (!token) throw new Error('customerManageUrl did not carry a token');
+
+  const availabilityRequest = page.waitForRequest((req) => req.url().includes('/api/booking/availability'));
+  await page.goto(manageUrl.pathname + manageUrl.search);
+  const sent = await availabilityRequest;
+  expect(sent.headers()['x-reserva-manage-token']).toBe(token);
+  expect(sent.url()).not.toContain(token);
+  await page.locator('.bk-cal-wrap').waitFor();
 });
 
 // Regression: manage-enhancer's dateKey() must use UTC getters (same cally/Date.UTC mismatch as

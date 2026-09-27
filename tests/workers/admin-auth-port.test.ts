@@ -137,9 +137,8 @@ describe('admin auth port: custom adminAuth drives the whole admin surface (no a
     const seedContext = await buildContext(adminGetRequest());
     await seedConfirmedPastBooking(seedContext);
 
-    // A past confirmed booking is outside listUpcoming's default window — the search filter widens
-    // the table's source to every booking, same as handlers-admin.test.ts's own past-row coverage.
-    const searchUrl = `${ADMIN_URL}?q=${encodeURIComponent(PAST_REFERENCE)}`;
+    // Search is scoped to the chosen window, so a past booking is only found under when=past.
+    const searchUrl = `${ADMIN_URL}?when=past&q=${encodeURIComponent(PAST_REFERENCE)}`;
     const context = await buildContext(new Request(searchUrl, { headers: authorizedHeaders() }));
     const response = await handleAdminGet(new Request(searchUrl, { headers: authorizedHeaders() }), context);
     expect(response.status).toBe(200);

@@ -162,6 +162,22 @@ describe('stripe() adapter', () => {
     expect(unprefixed.sessions.create.mock.calls[0]?.[0].success_url).toContain('/booking-confirmation?sessionId=');
   });
 
+  it('carries the booking locale on the default success URL and leaves the session placeholder for Stripe', async () => {
+    const { client, sessions } = makeClient();
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+    await provider.createCheckout(booking({ locale: 'pt-PT' }), config);
+    expect(sessions.create.mock.calls[0]?.[0].success_url)
+      .toBe(`${config.business.url}/booking-confirmation?sessionId={CHECKOUT_SESSION_ID}&locale=pt-PT`);
+
+    const custom = makeClient();
+    const customProvider = stripe({
+      secretKey: 'sk_test', webhookSecret: 'whsec_test', client: custom.client,
+      successUrl: 'https://example.test/thanks?sessionId={CHECKOUT_SESSION_ID}',
+    });
+    await customProvider.createCheckout(booking({ locale: 'pt-PT' }), config);
+    expect(custom.sessions.create.mock.calls[0]?.[0].success_url).toBe('https://example.test/thanks?sessionId={CHECKOUT_SESSION_ID}');
+  });
+
   it('omits pickup custom fields for the default pickup', async () => {
     const { client, sessions } = makeClient();
     const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });

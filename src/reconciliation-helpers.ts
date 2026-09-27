@@ -45,7 +45,8 @@ export function actionForSideEffectOperation(operation: SideEffectOperationIdent
   switch (operation.family) {
     case 'oversell': return 'oversell';
     case 'calendar_create':
-    case 'calendar_delete': return 'calendar';
+    case 'calendar_delete':
+    case 'calendar_patch': return 'calendar';
     case 'email_confirmation': return 'confirmation_email';
     case 'hook':
     case 'webhook': return 'operations_sync';
@@ -53,12 +54,13 @@ export function actionForSideEffectOperation(operation: SideEffectOperationIdent
   }
 }
 
-// The owner-facing card title. Never the internal word "abandoned".
+// The owner-facing card title. Never the internal word "abandoned". 'calendar' covers the event's
+// creation, its deletion on a cancel and its move on a reschedule, so its title names none of them.
 export function ownerFacingIncidentTitle(action: OperationalIncidentAction): string {
   switch (action) {
     case 'confirmation_email': return 'Confirmation email not delivered';
     case 'customer_notification': return 'Customer notification not delivered';
-    case 'calendar': return 'Calendar booking not created';
+    case 'calendar': return 'Calendar not updated';
     case 'operations_sync': return 'Operations sync not delivered';
     case 'refund': return 'Refund needs attention';
     case 'oversell': return 'Booking may exceed capacity';

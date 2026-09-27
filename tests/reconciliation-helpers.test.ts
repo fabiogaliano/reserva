@@ -96,7 +96,7 @@ describe('ownerFacingIncidentTitle', () => {
   });
   it('uses plain language for each card', () => {
     expect(ownerFacingIncidentTitle('confirmation_email')).toBe('Confirmation email not delivered');
-    expect(ownerFacingIncidentTitle('calendar')).toBe('Calendar booking not created');
+    expect(ownerFacingIncidentTitle('calendar')).toBe('Calendar not updated');
     expect(ownerFacingIncidentTitle('refund')).toBe('Refund needs attention');
     expect(ownerFacingIncidentTitle('oversell')).toBe('Booking may exceed capacity');
   });

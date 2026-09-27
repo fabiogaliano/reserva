@@ -67,11 +67,12 @@ describe('checkout metadata validation', () => {
     const { context } = contextFor(metadataConfig);
     const response = await handleCheckout(checkoutRequest({ metadata: { seat_pref: 'window' } }), context);
     expect(response.status).toBe(400);
-    const body = await response.json() as { error: { code: string; message: string } };
+    const body = await response.json() as { error: { code: string; message: string; details?: { field?: string } } };
     expect(body.error.code).toBe('validation_failed');
     expect(body.error.message).toContain('dietary_notes');
     expect(body.error.message).toContain('required');
     expect(body.error.message).toContain('text');
+    expect(body.error.details?.field).toBe('metadata.dietary_notes');
   });
 
   it('rejects an unknown metadata key, naming it and the declared key set', async () => {
@@ -92,18 +93,21 @@ describe('checkout metadata validation', () => {
     const { context } = contextFor(metadataConfig);
     const response = await handleCheckout(checkoutRequest({ metadata }), context);
     expect(response.status).toBe(400);
-    const body = await response.json() as { error: { message: string } };
+    const body = await response.json() as { error: { message: string; details?: { field?: string } } };
     expect(body.error.message).toContain(expectedKey);
     expect(body.error.message).toContain(expectedType);
+    // A form can point at the rejected control from the envelope, whatever the rule was.
+    expect(body.error.details?.field).toBe(`metadata.${expectedKey}`);
   });
 
   it('rejects a text value over its declared per-field maxLength', async () => {
     const { context } = contextFor(metadataConfig);
     const response = await handleCheckout(checkoutRequest({ metadata: { dietary_notes: 'x'.repeat(21) } }), context);
     expect(response.status).toBe(400);
-    const body = await response.json() as { error: { message: string } };
+    const body = await response.json() as { error: { message: string; details?: { field?: string } } };
     expect(body.error.message).toContain('dietary_notes');
     expect(body.error.message).toContain('20 characters');
+    expect(body.error.details?.field).toBe('metadata.dietary_notes');
   });
 
   it('rejects a metadata object whose serialized size exceeds 8 KB even when every per-field maxLength is satisfied', async () => {

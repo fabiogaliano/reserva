@@ -25,4 +25,9 @@ test('editing a setting flags the field and the section as unsaved until Save', 
   await expect(page.getByRole('status')).toContainText('Saved');
   await expect(page.locator('input[name="booking.minNoticeHours"]')).toHaveValue('24');
   await expect(page.locator('#bk-s-policy').getByText('Modified').first()).toBeVisible();
+
+  // The specs share one database: a 24-hour notice left behind closes today (and, late in the UTC
+  // day, all of tomorrow) for every later spec, which then fight over the few days still open.
+  await page.locator('#bk-s-policy button[value="settings-reset:booking.minNoticeHours"]').click();
+  await expect(page.locator('input[name="booking.minNoticeHours"]')).toHaveValue(before);
 });

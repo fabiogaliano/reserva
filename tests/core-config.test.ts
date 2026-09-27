@@ -29,6 +29,18 @@ describe('core config and pricing validation', () => {
     expect(late.services.vintage?.schedule[0]).toMatchObject({ firstStart: '11:00', lastStart: '18:00' });
   });
 
+  // `days` is a set: the settings page compares it with its own sorted checkbox list, so an
+  // unsorted or repeated config value must not read as a change.
+  it('normalizes schedule days to a sorted, deduplicated set, in services and shared hours', () => {
+    const [rule] = service.schedule;
+    const resolved = validateConfig({ ...config, services: { vintage: { ...service, schedule: [{ ...rule!, days: [5, 1, 5, 3] }] } } } as never);
+    expect(resolved.services.vintage?.schedule[0]?.days).toEqual([1, 3, 5]);
+    const { schedule: _schedule, ...withoutSchedule } = service;
+    const shared = validateConfig({ ...config, hours: [{ ...rule!, days: [6, 0, 6] }], services: { vintage: withoutSchedule } } as never);
+    expect(shared.hours?.[0]?.days).toEqual([0, 6]);
+    expect(shared.services.vintage?.schedule[0]?.days).toEqual([0, 6]);
+  });
+
   it('accepts a service with no location module at all', () => {
     const noLocation = {
       ...config,

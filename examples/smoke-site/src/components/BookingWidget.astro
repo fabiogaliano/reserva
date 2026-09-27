@@ -4,6 +4,7 @@ import virtualConfig from 'virtual:reserva/config';
 // consumer imports the same names from '@reservajs/astro/ui' and '@reservajs/astro/core'. The
 // widget itself is example code — Reserva ships no customer booking funnel.
 import { defaultLocale, formatMessage, resolveMessages, type ReservaMessages } from '../../../../src/ui/messages';
+import { maxQuantityFor } from '../../../../src/core/index';
 import { resolveWidgetMessages, type WidgetMessages } from './widget-messages';
 import './booking-widget.css';
 
@@ -23,6 +24,8 @@ interface Props {
   availabilityFrom?: string;
   availabilityTo?: string;
   locale?: string;
+  // An explicit override: when passed, the widget offers exactly these party sizes. Omitted, it
+  // offers 1..maxQuantity of the service as the catalog publishes it.
   quantityOptions?: number[];
   startOptions?: StartOption[];
   // Shown in the <noscript> fallback as a way to book without JavaScript — pass
@@ -43,7 +46,7 @@ const {
   availabilityFrom,
   availabilityTo,
   locale = defaultLocale,
-  quantityOptions = [1, 2, 3, 4],
+  quantityOptions: quantityOverride,
   startOptions = [],
   contactEmail,
   contactPhone,
@@ -54,12 +57,18 @@ const {
 // Library keys (shared vocabulary like `common.price`) plus the widget's own catalog, which lives
 // in this example rather than in Reserva: the library ships no booking funnel.
 const t: ReservaMessages & WidgetMessages = {
-  ...resolveMessages(undefined, locale),
+  ...resolveMessages(virtualConfig.config, locale),
   ...resolveWidgetMessages(locale),
   ...messageOverrides,
 };
 const usesAvailability = availabilityFrom !== undefined && availabilityTo !== undefined;
 const quantityLabel = (n: number): string => formatMessage(n === 1 ? t['widget.person'] : t['widget.quantityCount'], { n });
+// The server render reads the same config the catalog is derived from, so the markup already
+// matches what the script rebuilds from the catalog; an unknown slug renders a party of one and
+// the catalog check in the script keeps the fallback up.
+const configuredService = virtualConfig.config.services[serviceSlug];
+const quantityOptions = quantityOverride
+  ?? Array.from({ length: configuredService ? maxQuantityFor(configuredService) : 1 }, (_, index) => index + 1);
 
 // Everything the client script needs that can vary per render (copy, locale) travels in a JSON
 // data island rather than an inline define:vars script, so no unhashed inline JS is ever emitted
@@ -73,13 +82,23 @@ const scriptData = {
     closed: t['widget.closed'],
     soldOut: t['widget.soldOut'],
     limited: t['widget.limited'],
-    spotsLeft: t['widget.spotsLeft'],
+    limitedOne: t['widget.limitedOne'],
+    person: t['widget.person'],
+    quantityCount: t['widget.quantityCount'],
     pickup: t['widget.pickup'],
     meetingPoint: t['widget.meetingPoint'],
     submit: t['widget.submit'],
     submitting: t['widget.submitting'],
     errorAvailability: t['widget.errorAvailability'],
     errorCheckout: t['widget.errorCheckout'],
+    errorSlotUnavailable: t['widget.errorSlotUnavailable'],
+    errorTooManyHolds: t['widget.errorTooManyHolds'],
+    errorValidation: t['widget.errorValidation'],
+    errorField: t['widget.errorField'],
+    errorCalendar: t['widget.errorCalendar'],
+    errorNetwork: t['widget.errorNetwork'],
+    details: t['widget.details'],
+    optional: t['widget.optional'],
   },
 };
 
@@ -113,7 +132,7 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
 
   <label class="bkw-field">
     <span class="bkw-label">{t['widget.quantity']}</span>
-    <select class="bkw-select" name="quantity" required>
+    <select class="bkw-select" name="quantity" required data-quantity-fixed={quantityOverride ? '' : undefined}>
       {quantityOptions.map((quantity) => <option value={quantity}>{quantityLabel(quantity)}</option>)}
     </select>
   </label>
@@ -162,6 +181,9 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
       service). */}
   <div data-reserva-pickup-slot></div>
   <div data-reserva-meeting-point-slot></div>
+  {/* Filled from the catalog's metadataFields the same way, so the inputs always match what
+      checkout validates. */}
+  <div data-reserva-metadata-slot></div>
 
   <p class="bkw-price" data-reserva-price aria-live="polite">
     <span class="bkw-price-label">{t['common.price']}</span>
@@ -224,9 +246,10 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     createReservaClient,
     firstOpenDay,
     isDayDisallowed,
+    isReservaApiError,
     type ReservaClient,
   } from '../../../../src/client/index';
-  import type { AvailabilityDay, CatalogService, CheckoutRequest } from '../../../../src/core/index';
+  import type { AvailabilityDay, CatalogMetadataField, CatalogService, CheckoutRequest } from '../../../../src/core/index';
 
   interface CalendarDateElement extends HTMLElement {
     value: string;
@@ -267,11 +290,44 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     return template.replace(/\{(\w+)\}/g, (match, name: string) => (name in vars ? String(vars[name]) : match));
   }
 
+  // Only the metadata controls carry a visitor-facing label the widget can name back; any other
+  // rejected field gets the generic copy.
+  function metadataControl(form: HTMLFormElement, field: string | undefined): HTMLInputElement | HTMLSelectElement | null {
+    if (!field) return null;
+    return form.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-metadata-key][name="${CSS.escape(field)}"]`);
+  }
+
+  // Copy is chosen by the error's code, never taken from its message: the message is the server's
+  // English diagnostic for developers, and a network failure's message is the browser's own text.
+  function errorCopy(form: HTMLFormElement, data: WidgetData, cause: unknown, fallbackKey: string): string {
+    const fallback = data.i18n[fallbackKey] ?? '';
+    if (!isReservaApiError(cause)) return fallback;
+    if (cause.status === 0) return data.i18n.errorNetwork ?? fallback;
+    if (cause.code === 'calendar_unavailable') return data.i18n.errorCalendar ?? fallback;
+    // The rest answer a submitted checkout; an availability read has nothing the visitor can fix.
+    if (fallbackKey !== 'errorCheckout') return fallback;
+    switch (cause.code) {
+      case 'slot_unavailable':
+        return data.i18n.errorSlotUnavailable ?? fallback;
+      case 'too_many_holds':
+        return data.i18n.errorTooManyHolds ?? fallback;
+      case 'validation_failed': {
+        const control = metadataControl(form, cause.details?.field);
+        if (!control) return data.i18n.errorValidation ?? fallback;
+        control.setAttribute('aria-invalid', 'true');
+        control.focus();
+        return fill(data.i18n.errorField ?? '', { field: control.dataset.fieldLabel ?? '' });
+      }
+      default:
+        return fallback;
+    }
+  }
+
   function showError(form: HTMLFormElement, data: WidgetData, cause: unknown, fallbackKey: string): void {
     const error = form.querySelector<HTMLElement>('[data-reserva-error]');
     if (!error) return;
     const text = error.querySelector<HTMLElement>('[data-reserva-error-text]') ?? error;
-    text.textContent = cause instanceof Error && cause.message ? cause.message : data.i18n[fallbackKey] ?? '';
+    text.textContent = errorCopy(form, data, cause, fallbackKey);
     error.hidden = false;
   }
 
@@ -285,6 +341,7 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     if (error) error.hidden = true;
     const retry = form.querySelector<HTMLElement>('[data-reserva-retry]');
     if (retry) retry.hidden = true;
+    for (const invalid of form.querySelectorAll('[aria-invalid]')) invalid.removeAttribute('aria-invalid');
   }
 
   // The price shown is always the server-quoted price -- the widget carries no price table of its
@@ -409,6 +466,94 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     }
   }
 
+  // The catalog's maxQuantity is the largest party the service prices, so offering more would only
+  // produce a rejected checkout. An explicit quantityOptions prop is left exactly as passed.
+  function renderQuantities(form: HTMLFormElement, service: CatalogService, data: WidgetData): void {
+    const select = form.querySelector<HTMLSelectElement>('select[name="quantity"]');
+    if (!select || select.dataset.quantityFixed !== undefined) return;
+    const current = Number(select.value);
+    const options = Array.from({ length: service.maxQuantity }, (_, index) => {
+      const n = index + 1;
+      return new Option(fill((n === 1 ? data.i18n.person : data.i18n.quantityCount) ?? '', { n }), String(n));
+    });
+    select.replaceChildren(...options);
+    select.value = String(current >= 1 && current <= service.maxQuantity ? current : 1);
+  }
+
+  function metadataInput(field: CatalogMetadataField): HTMLInputElement | HTMLSelectElement {
+    if (field.type === 'select') {
+      const select = document.createElement('select');
+      select.className = 'bkw-select';
+      // An empty first option: a required select is invalid until the visitor picks, and an
+      // optional one can be left unanswered (it is then omitted from the payload).
+      select.append(new Option('', ''), ...field.options.map((option) => new Option(option.label, option.value)));
+      return select;
+    }
+    const input = document.createElement('input');
+    if (field.type === 'boolean') {
+      input.type = 'checkbox';
+      return input;
+    }
+    input.className = 'bkw-input';
+    input.type = field.type === 'number' ? 'number' : 'text';
+    if (field.type === 'number') input.step = 'any';
+    if (field.maxLength !== null) input.maxLength = field.maxLength;
+    return input;
+  }
+
+  function renderMetadata(form: HTMLFormElement, service: CatalogService, data: WidgetData): void {
+    const slot = form.querySelector<HTMLElement>('[data-reserva-metadata-slot]');
+    if (!slot || service.metadataFields.length === 0) return;
+    const fieldset = document.createElement('fieldset');
+    fieldset.className = 'bkw-field';
+    const legend = document.createElement('legend');
+    legend.className = 'bkw-label';
+    legend.textContent = data.i18n.details ?? '';
+    fieldset.append(legend);
+    for (const field of service.metadataFields) {
+      const control = metadataInput(field);
+      control.name = `metadata.${field.key}`;
+      control.dataset.metadataKey = field.key;
+      control.dataset.metadataType = field.type;
+      control.dataset.fieldLabel = field.label;
+      control.addEventListener('input', () => control.removeAttribute('aria-invalid'));
+      const label = document.createElement('label');
+      const text = document.createElement('span');
+      text.className = 'bkw-meta-label';
+      if (field.type === 'boolean') {
+        // Always answered (unchecked is `false`), so never marked optional and never `required`:
+        // a required checkbox would force the answer to be yes.
+        text.textContent = field.label;
+        label.className = 'bkw-check';
+        label.append(control, text);
+      } else {
+        text.textContent = field.required ? field.label : `${field.label} ${data.i18n.optional ?? ''}`.trim();
+        control.required = field.required;
+        label.className = 'bkw-meta';
+        label.append(text, control);
+      }
+      fieldset.append(label);
+    }
+    slot.append(fieldset);
+  }
+
+  // Types each value the way checkout validates it (strictly: no "5" for a number, no "true" for a
+  // boolean). A blank optional field is left out rather than sent empty.
+  function collectMetadata(form: HTMLFormElement): Record<string, string | number | boolean> {
+    const metadata: Record<string, string | number | boolean> = {};
+    for (const control of form.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-metadata-key]')) {
+      const key = control.dataset.metadataKey!;
+      const type = control.dataset.metadataType;
+      if (type === 'boolean') {
+        metadata[key] = (control as HTMLInputElement).checked;
+        continue;
+      }
+      if (control.value === '') continue;
+      metadata[key] = type === 'number' ? Number(control.value) : control.value;
+    }
+    return metadata;
+  }
+
   async function loadCatalog(form: HTMLFormElement, data: WidgetData): Promise<void> {
     if (!form.dataset.catalogEndpoint) throw new Error('Booking form is missing its catalog endpoint');
     const result = await clientFor(form).catalog({ locale: data.locale });
@@ -418,13 +563,20 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     // the init so the fallback (with its contact details) stays up instead of showing a form whose
     // every submission would 404.
     if (!service) throw new Error(`Service "${slug}" is not in this deployment's catalog`);
+    renderQuantities(form, service, data);
     renderLocation(form, service, data);
+    renderMetadata(form, service, data);
   }
 
   function calStatus(form: HTMLFormElement, text: string): void {
     const status = form.querySelector<HTMLElement>('[data-reserva-cal-status]');
     if (status) status.textContent = text;
   }
+
+  // A checkout in flight owns the submit button and its label: an availability refresh underneath
+  // it (a date change) must not re-enable it, or a second click opens a second hold and a second
+  // payment session.
+  const checkoutInFlight = new WeakSet<HTMLFormElement>();
 
   function renderSlots(form: HTMLFormElement, day: AvailabilityDay | undefined, data: WidgetData): void {
     const wrap = form.querySelector<HTMLElement>('[data-reserva-slots-wrap]');
@@ -437,7 +589,7 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     // The button's initial label is a loading affordance (data-reserva-checkout only becomes
     // visible once this script runs); once availability actually resolves, restore its normal
     // label regardless of whether a slot ends up selectable.
-    if (submit) submit.textContent = data.i18n.submit ?? submit.textContent;
+    if (submit && !checkoutInFlight.has(form)) submit.textContent = data.i18n.submit ?? submit.textContent;
     if (slots.length === 0) {
       const empty = document.createElement('p');
       empty.className = 'bkw-empty';
@@ -464,12 +616,14 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
       if (slot.remaining !== null) {
         const hint = document.createElement('span');
         hint.className = 'bkw-slot-hint';
-        hint.textContent = fill(data.i18n.limited ?? '', { n: slot.remaining });
+        // `remaining` is never 0 (full slots are omitted), so exactly 1 is the only singular case.
+        const copy = slot.remaining === 1 ? data.i18n.limitedOne : data.i18n.limited;
+        hint.textContent = fill(copy ?? '', { n: slot.remaining });
         label.append(hint);
       }
       container.append(label);
     }
-    if (submit) submit.disabled = false;
+    if (submit) submit.disabled = checkoutInFlight.has(form);
   }
 
   // Per-form in-flight request state (keyed by the form element, since a page can host several
@@ -544,12 +698,23 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
       // idle label) never ran — do it here so the button doesn't read "loading" forever.
       if (submit) {
         submit.disabled = true;
-        submit.textContent = data.i18n.submit ?? submit.textContent;
+        if (!checkoutInFlight.has(form)) submit.textContent = data.i18n.submit ?? submit.textContent;
       }
     } finally {
       // A superseded request's finally must not clear aria-busy out from under the newer request
       // that's still in flight and already set it back to true for itself.
       if (isCurrent()) calendar.removeAttribute('aria-busy');
+    }
+  }
+
+  function endCheckout(form: HTMLFormElement, data: WidgetData): void {
+    checkoutInFlight.delete(form);
+    const quantity = form.querySelector<HTMLSelectElement>('select[name="quantity"]');
+    if (quantity) quantity.disabled = false;
+    const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+    if (submit) {
+      submit.disabled = false;
+      submit.textContent = data.i18n.submit ?? submit.textContent;
     }
   }
 
@@ -578,6 +743,8 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
     void loadAvailability(form, data);
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
+      // The disabled button stops clicks and Enter, not requestSubmit() or another submit path.
+      if (checkoutInFlight.has(form)) return;
       const formData = new FormData(form);
       const payload: CheckoutRequest = {
         serviceSlug: String(formData.get('serviceSlug') ?? ''),
@@ -595,31 +762,43 @@ const dateLabelId = `bkw-date-label-${crypto.randomUUID()}`;
       // sending an empty string the server would reject as an unknown id.
       const meetingPointId = formData.get('meetingPointId');
       if (meetingPointId !== null) payload.meetingPointId = String(meetingPointId);
+      const metadata = collectMetadata(form);
+      if (Object.keys(metadata).length > 0) payload.metadata = metadata;
       const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
-      const idleLabel = submit?.textContent ?? '';
       try {
         // data-endpoint is always rendered by the component; a missing value means hand-edited
         // markup, so surface an error instead of silently falling back to a URL that could 404.
         const endpoint = form.dataset.endpoint;
         if (!endpoint) throw new Error('Booking form is missing its endpoint');
         clearError(form);
+        checkoutInFlight.add(form);
+        // The party size is what this checkout charges for; letting it change underneath would
+        // show a price and slot list for a booking that isn't the one being paid.
+        const quantity = form.querySelector<HTMLSelectElement>('select[name="quantity"]');
+        if (quantity) quantity.disabled = true;
         if (submit) {
           submit.disabled = true;
-          submit.textContent = data.i18n.submitting ?? idleLabel;
+          submit.textContent = data.i18n.submitting ?? submit.textContent;
         }
         const result = await clientFor(form).checkout(payload);
         window.location.assign(result.checkoutUrl);
       } catch (cause) {
-        if (submit) {
-          submit.disabled = false;
-          submit.textContent = idleLabel;
-        }
+        endCheckout(form, data);
         showError(form, data, cause, 'errorCheckout');
         // A checkout rejection usually means the slot list went stale (e.g. it just filled), so
         // reload the options rather than leaving the dead slot selectable — keeping the error on
         // screen, since the reload's own clearError would otherwise wipe it instantly.
         void loadAvailability(form, data, true);
       }
+    });
+    // Back from the payment page, the back/forward cache restores this page exactly as it was
+    // left: mid-checkout, button disabled on the redirecting label, though nothing is in flight any
+    // more and the slot list is as old as the visit.
+    window.addEventListener('pageshow', (event) => {
+      if (!event.persisted) return;
+      endCheckout(form, data);
+      clearError(form);
+      void loadAvailability(form, data);
     });
     // Every step above succeeded: only now swap the always-visible fallback for the
     // now-functional form. Doing this earlier (e.g. before readData, as this used to) risks

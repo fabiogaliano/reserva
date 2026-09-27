@@ -69,6 +69,32 @@ describe('BookingWidget.astro is catalog- and quote-driven', () => {
     expect(portuguese.i18n.pickup).not.toBe(i18n.pickup);
   });
 
+  // The script rebuilds the options from the catalog's maxQuantity; the server render reads the
+  // same config, so the markup never offers a size the service does not price.
+  it('renders party sizes 1..maxQuantity of the configured service, not a fixed 1..4', async () => {
+    const html = await render({ ...baseProps, serviceSlug: 'vintage' });
+    const values = [...html.matchAll(/<option value="(\d+)">/g)].map((match) => Number(match[1]));
+    expect(values).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(html).not.toContain('data-quantity-fixed');
+  });
+
+  it('keeps an explicit quantityOptions prop exactly as passed, and tells the script not to rebuild it', async () => {
+    const html = await render({ ...baseProps, serviceSlug: 'vintage', quantityOptions: [2, 4] });
+    const values = [...html.matchAll(/<option value="(\d+)">/g)].map((match) => Number(match[1]));
+    expect(values).toEqual([2, 4]);
+    expect(html).toContain('data-quantity-fixed');
+  });
+
+  it('carries its error copy in the requested locale', async () => {
+    const { i18n } = island(await render());
+    expect(i18n.errorSlotUnavailable).toBe('That time is no longer available. Please pick another one.');
+    const portuguese = island(await render({ ...baseProps, locale: 'pt-PT' }));
+    for (const key of ['errorSlotUnavailable', 'errorTooManyHolds', 'errorValidation', 'errorField', 'errorCalendar', 'errorNetwork', 'limited', 'limitedOne', 'details', 'optional']) {
+      expect(portuguese.i18n[key], key).toBeTruthy();
+      expect(portuguese.i18n[key], key).not.toBe(i18n[key]);
+    }
+  });
+
   // defaultLocale flipped pt-PT -> en — a generic library must not default to Portuguese.
   it('renders English when no locale is supplied', async () => {
     const html = await render({ serviceSlug: 'oldTown', availabilityFrom: '2026-01-01', availabilityTo: '2026-01-02' });

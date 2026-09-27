@@ -62,3 +62,49 @@ test('a corrupted data island in one instance does not stop the sibling widget f
   await expect(instanceB.locator('form.bk-widget')).toBeVisible();
   await expect(instanceB.getByRole('radiogroup').getByRole('radio').first()).toBeVisible();
 });
+
+// `.bkw-retry { display: block }` beat the browser's `[hidden]` rule, so Retry sat under every
+// healthy widget before anything had failed.
+test('Retry stays hidden until availability actually fails, and hides again once it loads', async ({ page }) => {
+  let failAvailability = false;
+  await page.route('**/api/booking/availability*', async (route) => {
+    if (!failAvailability) return route.continue();
+    await route.fulfill({
+      status: 500,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: { code: 'internal_error', message: 'boom' } }),
+    });
+  });
+  await page.goto('/');
+  await expect(page.getByRole('radiogroup').getByRole('radio').first()).toBeVisible();
+
+  const retry = page.getByRole('button', { name: 'Retry' });
+  await expect(retry).toBeHidden();
+
+  failAvailability = true;
+  await page.getByLabel('How many people?').selectOption('2');
+  await expect(retry).toBeVisible();
+  await expect(page.locator('form.bk-widget [data-reserva-error]')).toHaveText('Could not load availability. Please try again.');
+
+  failAvailability = false;
+  await retry.click();
+  await expect(retry).toBeHidden();
+  await expect(page.getByRole('radiogroup').getByRole('radio').first()).toBeVisible();
+});
+
+// The --bk-* tokens were declared on the form, but the fallback is the form's sibling: on a page
+// that defined no tokens itself, its border and background resolved to nothing.
+test('the fallback message is styled on a page that defines no --bk-* tokens of its own', async ({ page }) => {
+  await page.route('**/BookingWidget.astro?astro&type=script*', (route) => route.abort());
+  await page.goto('/river-cruise');
+
+  const fallback = page.locator('[data-reserva-fallback]');
+  await expect(fallback).toBeVisible();
+  const style = await fallback.evaluate((element) => {
+    const computed = getComputedStyle(element);
+    return { borderWidth: computed.borderTopWidth, borderStyle: computed.borderTopStyle, background: computed.backgroundColor };
+  });
+  expect(style.borderStyle).toBe('solid');
+  expect(style.borderWidth).toBe('1px');
+  expect(style.background).not.toBe('rgba(0, 0, 0, 0)');
+});

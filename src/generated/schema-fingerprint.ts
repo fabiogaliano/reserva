@@ -5,7 +5,8 @@ export const RESERVA_MIGRATIONS = [
   "0001_init.sql",
   "0002_payment_verification_incidents.sql",
   "0003_reconciliation_lease.sql",
-  "0004_partial_refunds.sql"
+  "0004_partial_refunds.sql",
+  "0005_calendar_patch_outbox.sql"
 ] as const;
 
 export interface ReservaSchemaTable {

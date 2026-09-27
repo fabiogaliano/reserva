@@ -16,8 +16,8 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const RAW_ASSETS = [
   'components/ManageBooking.astro',
   'ui/components.css',
-  // components.css @imports it, so the consumer's bundler needs it next to that file in dist/.
-  'ui/tokens.css',
+  // components.css @imports it, so the consumer's bundler needs it at the same relative path in dist/.
+  'ui/generated/embed-tokens.css',
 ];
 
 function fail(message: string): never {
@@ -30,7 +30,8 @@ rmSync(resolve(repoRoot, 'dist'), { recursive: true, force: true });
 // Before tsc: the generated fingerprint is a source file in the module graph, gitignored, so a
 // clean checkout has nothing for tsc to resolve until it is written.
 console.log(`build: ${generateSchemaFingerprint(repoRoot)}`);
-// Same reason: theme.ts imports the token lists lifted out of src/ui/tokens.css.
+// Same reason: theme.ts imports the token lists lifted out of src/ui/tokens.css, and the embed
+// stylesheet copied below is generated alongside them.
 console.log(`build: ${generateUiTokens(repoRoot)}`);
 
 const tsc = spawnSync('bunx', ['tsc', '-p', 'tsconfig.build.json'], { cwd: repoRoot, stdio: 'inherit' });

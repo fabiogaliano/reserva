@@ -6,7 +6,7 @@ import { formatLocaleFor } from '../core/locale.js';
 // Boolean metadata reuses the app's one existing yes/no copy pair (admin.on/off) instead of a
 // second one here; the calendar file is the same builder the confirmation page hands the browser,
 // so the attached .ics and the page's download can never describe the booking differently.
-import { icsText } from '../ui/format.js';
+import { calendarUid, icsText } from '../ui/format.js';
 import { resolveMessages } from '../ui/messages.js';
 import { emailString, eventCopyKey } from './copy.js';
 
@@ -26,6 +26,8 @@ export interface EmailTemplateContext {
   // (a payment dispute). Empty when the admin routes are disabled.
   adminUrl?: string;
   startsAtLocal: string;
+  // When this message is being rendered — the calendar attachment's DTSTAMP. Absent means now.
+  generatedAt?: Date;
 }
 
 // Provider-neutral rendered result. A transport maps this to its own API vocabulary (Brevo's
@@ -299,6 +301,12 @@ function calendarAttachment(context: EmailTemplateContext): EmailAttachment | nu
     end: booking.endsAt,
     location: point?.label ?? booking.pickupAddress ?? '',
     description: `${emailString(config, locale, 'label.bookingId')}: ${booking.reference}`,
+  }, {
+    // The same UID the confirmation and manage pages put in their download, so every copy of the
+    // file (a later reschedule's attachment included) names the same event.
+    uid: calendarUid(booking.reference, config.business.url),
+    // Rendered in the send path, so this is the moment the file is generated.
+    generatedAt: context.generatedAt ?? new Date(),
   });
   return { filename: 'booking.ics', contentType: 'text/calendar; charset=utf-8', content: toBase64(ics) };
 }

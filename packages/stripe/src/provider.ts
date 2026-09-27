@@ -211,8 +211,10 @@ function isChargeAlreadyRefundedError(error: unknown): boolean {
   return error instanceof Stripe.errors.StripeInvalidRequestError && error.code === 'charge_already_refunded';
 }
 
-function defaultSuccessUrl(config: ResolvedClientConfig, routePaths?: ReservaResolvedRouteConfig['paths']): string {
-  return `${config.business.url.replace(/\/$/, '')}${routePaths?.confirmationPage ?? '/booking-confirmation'}?sessionId=${checkoutSessionPlaceholder}`;
+// Carries the booking's locale: the confirmation page's pending, failed and expired states have no
+// booking in the status payload to read it from, and would otherwise fall back to the default.
+function defaultSuccessUrl(booking: Booking, config: ResolvedClientConfig, routePaths?: ReservaResolvedRouteConfig['paths']): string {
+  return `${config.business.url.replace(/\/$/, '')}${routePaths?.confirmationPage ?? '/booking-confirmation'}?sessionId=${checkoutSessionPlaceholder}&locale=${encodeURIComponent(booking.locale)}`;
 }
 
 // The site root, not a per-service page: the library does not own the consumer's URL scheme, so
@@ -327,7 +329,7 @@ export class StripeProvider implements PaymentProvider {
     // service's own localized title — the slug is an identifier, never a name.
     const name = resolveOption(this.options.lineItemName, booking, config, resolveServiceTitle(config, booking.serviceSlug, booking.locale));
     const description = resolveOption(this.options.productDescription, booking, config, '').trim();
-    const successUrl = resolveOption(this.options.successUrl, booking, config, defaultSuccessUrl(config, routePaths));
+    const successUrl = resolveOption(this.options.successUrl, booking, config, defaultSuccessUrl(booking, config, routePaths));
     const cancelUrl = resolveOption(this.options.cancelUrl, booking, config, defaultCancelUrl(config));
     const pickupLabel = resolveOption(this.options.pickupFieldLabel, booking, config, defaultPickupFieldLabel);
     const expiresInMinutes = Math.max(30, config.booking.holdMinutes - 5);

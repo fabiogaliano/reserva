@@ -49,10 +49,14 @@ export const defaultMessages = {
   'widget.loadingSlots': 'Checking availability…',
   'widget.noSlots': 'No times available for this date',
   'widget.closed': 'Closed',
-  'widget.limited': 'Only {n} left',
+  // {n} counts further bookings of the chosen party size, not seats, so the copy says bookings.
+  'widget.limited': 'Room for {n} more bookings',
+  'widget.limitedOne': 'Room for 1 more booking',
   // Confirmation page
   'confirmation.title': 'Booking confirmed',
   'confirmation.lead': 'Thank you — your booking is confirmed. A confirmation email is on its way.',
+  // The lead once the 4-hour detail window has passed: a return visit, long after the email went out.
+  'confirmation.summaryLead': 'This booking is confirmed.',
   'confirmation.detailsEmailed': 'Your booking is confirmed. Full details and a link to manage your booking were emailed to you.',
   'confirmation.whatsNextTitle': "What's next",
   'confirmation.whatsNextBody': 'Save your reference and arrive a few minutes early. If you chose a custom pickup, we will contact you to confirm the address.',
@@ -61,6 +65,9 @@ export const defaultMessages = {
   'confirmation.addIcs': 'Apple / Outlook (.ics)',
   'confirmation.pendingTitle': 'Confirming your payment…',
   'confirmation.pendingBody': 'This page updates automatically. It usually takes a few seconds.',
+  // Announced in the pending page's live region by the served poller (not rendered without script).
+  'confirmation.pollChecking': 'Still checking with the payment provider…',
+  'confirmation.pollUpdated': 'Payment status updated — loading your booking…',
   'confirmation.pendingTimeoutTitle': 'Still waiting for the payment provider',
   'confirmation.pendingTimeoutBody': "We're still waiting for the payment provider. You'll get an email once it's confirmed.",
   'confirmation.checkAgain': 'Check again',
@@ -83,8 +90,17 @@ export const defaultMessages = {
   'manage.cancelTitle': 'Cancel booking',
   'manage.cancelWarning': 'Cancelling frees your slot and cannot be undone.',
   'manage.cancelPolicy': 'Free cancellation until {deadline}.',
+  'manage.reschedulePolicy': 'You can reschedule online until {deadline}.',
+  // Shown in place of the one action whose deadline has passed while the other is still open.
+  'manage.cancelClosed': 'Online cancellation closed on {deadline}. Contact us if you need to cancel.',
+  'manage.rescheduleClosed': 'Online rescheduling closed on {deadline}. Contact us if you need a different time.',
   'manage.cancelConfirm': 'Yes, cancel this booking',
   'manage.cancelled': 'This booking has been cancelled.',
+  // The page a customer lands on right after cancelling (their link stops working at that moment).
+  'manage.cancelDoneTitle': 'Booking cancelled',
+  'manage.cancelDoneBody': 'Your booking {reference} has been cancelled.',
+  'manage.cancelDoneRefund': 'Any refund due is returned to your original payment method.',
+  'manage.bookAgain': 'Book again',
   'manage.rescheduleTitle': 'Reschedule',
   'manage.rescheduleHint': 'Choose a new start time. Your price and party size stay the same.',
   'manage.newStart': 'New start',
@@ -119,13 +135,24 @@ export const defaultMessages = {
   'admin.tabAttention': 'Attention',
   'admin.attentionCount': '{n} need attention',
   'admin.legendBooked': 'Has bookings',
-  'admin.unitsLoad': '{booked}/{capacity} units booked',
+  // A day's load: the most capacity units in use at any one moment, then how many bookings start
+  // that day. `{bookings}` is one of the two count keys below.
+  'admin.dayLoad': '{peak}/{capacity} peak · {bookings}',
+  'admin.bookingCountOne': '{n} booking',
+  'admin.bookingCount': '{n} bookings',
+  'admin.dayOpen': 'Show this day’s bookings',
   'admin.bookedOn': 'Booked',
   'admin.searchLabel': 'Search bookings',
   'admin.navigation': 'Admin navigation',
   'admin.navOverview': 'Dashboard',
   'admin.noBookings': 'No upcoming bookings.',
-  'admin.showLaterBookings': 'Show later bookings',
+  'admin.noPastBookings': 'No past bookings.',
+  'admin.noMatchingBookings': 'No bookings match the filters.',
+  'admin.pageRange': 'Showing {from}–{to} of {total}',
+  'admin.pagination': 'Booking pages',
+  'admin.pagePrev': 'Previous',
+  'admin.pageNext': 'Next',
+  'admin.searchTruncated': 'The search only looked at the first {n} bookings in this period. Add a status filter to narrow it.',
   'admin.capacity': 'Capacity',
   'admin.stateOverride': 'Adjusted',
   'admin.reason': 'Reason',
@@ -152,13 +179,29 @@ export const defaultMessages = {
   'admin.searchPlaceholder': 'Reference, service, pickup…',
   // Shown instead of the key above when no configured service declares a location module.
   'admin.searchPlaceholderNoPickup': 'Reference, service…',
-  'admin.all': 'All',
+  // Filter options name a set of bookings, so they are worded apart from the per-row status badges
+  // (a plural in Portuguese, for one).
+  'admin.whenLabel': 'Period',
+  'admin.whenUpcoming': 'Upcoming',
+  'admin.whenPast': 'Past',
+  'admin.filterAll': 'All',
+  'admin.filterConfirmed': 'Confirmed',
+  'admin.filterHold': 'Awaiting payment',
+  'admin.filterExpired': 'Expired',
+  'admin.filterCancelled': 'Cancelled',
+  'admin.filterNoShow': 'No-show',
   'admin.apply': 'Apply filters',
   'admin.manage': 'Manage',
   // Shown instead of a manage-link href when the booking's operatorToken isn't presentable — a
   // not-yet-backfilled legacy row, or no encryption key configured at all.
   'admin.manageUnavailable': 'Manage link unavailable',
   'admin.clearFilters': 'Clear filters',
+  // A rejected admin form comes back to the page it was sent from with one of these.
+  'admin.errorGeneric': 'Something went wrong and nothing was changed. Please try again.',
+  'admin.errorInvalid': 'Nothing was saved: a value is missing or not valid.',
+  'admin.errorInvalidField': 'Nothing was saved: check “{field}”.',
+  'admin.errorExpired': 'This page expired. Please try again.',
+  'admin.errorNotFound': 'That item no longer exists, so nothing was changed.',
   // Admin settings page
   'admin.settings': 'Settings',
   'admin.saved': 'Saved. Changes reach the public site within a minute.',
@@ -227,7 +270,7 @@ export const defaultMessages = {
   'setting.rescheduleCutoffHours': 'Reschedule cutoff (hours)',
   'setting.rescheduleCutoffHours.hint': 'Customers can move a booking until this long before the start.',
   'setting.limitedThreshold': 'Low-availability warning',
-  'setting.limitedThreshold.hint': 'Show “only N left” once remaining spots drop to this number. 0 turns it off.',
+  'setting.limitedThreshold.hint': 'Show “room for N more bookings” once that many or fewer still fit. 0 turns it off.',
   'setting.maxHoldsPerIp': 'Max holds per visitor',
   'setting.maxHoldsPerIp.hint': 'Stops one visitor reserving many spots with unpaid checkouts. Leave empty for no limit.',
   'setting.reminderHoursBefore': 'Reminder email (hours before)',
@@ -268,6 +311,7 @@ export const defaultMessages = {
   'admin.incidentHistoryAutomatic': 'Resolved automatically',
   'admin.incidentHistoryManual': 'Resolved manually by {who}',
   'admin.incidentCounts30d': '{opened} opened, {resolved} resolved in the last 30 days',
+  'admin.incidentsTruncated': 'Showing the first {shown} of {total} open incidents.',
   'admin.securityCsrfOff': 'Admin form protection is off: set the RESERVA_CSRF_SECRET secret on this deployment.',
   'admin.securityTokenEncOff': 'Booking tokens are stored unencrypted: set the RESERVA_TOKEN_ENC_KEY secret on this deployment.',
 } as const;

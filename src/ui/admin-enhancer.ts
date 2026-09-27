@@ -66,15 +66,27 @@ export const adminEnhancerJs = `(() => {
   const monthsBox = document.querySelector('.bk-months');
   if (!form || !monthsBox) return;
   const dateInput = form.querySelector('input[name="date"]');
-  const toInput = form.querySelector('input[name="toDate"]');
+  let toInput = form.querySelector('input[name="toDate"]');
   const capacityInput = form.querySelector('input[name="capacity"]');
   const reasonDetails = form.querySelector('details');
   const reasonInput = form.querySelector('input[name="reason"]');
   const closeButton = form.querySelector('button[value="close"]');
   const title = form.querySelector('[data-reserva-day-title]');
+  const announce = form.querySelector('[data-reserva-day-announce]');
   const detail = form.querySelector('[data-reserva-day-detail]');
   const island = form.querySelector('[data-reserva-i18n]');
   if (!dateInput || !capacityInput) return;
+  // The visible To date is the no-JS range path, which multi-select replaces. A contiguous
+  // selection still submits through toDate, so the field is swapped for a hidden input rather than
+  // removed — and swapped rather than [hidden], which the day form's field layout rule outranks.
+  const toField = form.querySelector('[data-reserva-to-date]');
+  if (toField && toInput) {
+    const hiddenTo = document.createElement('input');
+    hiddenTo.type = 'hidden';
+    hiddenTo.name = 'toDate';
+    toField.replaceWith(hiddenTo);
+    toInput = hiddenTo;
+  }
   let i18n = {};
   try { i18n = JSON.parse(island ? island.textContent : '{}'); } catch {}
   const dayData = i18n.days || {};
@@ -83,6 +95,9 @@ export const adminEnhancerJs = `(() => {
 
   // --- month pager: one month visible at a time, prev/next buttons ---
   const monthEls = [...monthsBox.querySelectorAll('.bk-month')];
+  // Set when the pager exists, so arrow-key navigation can turn the page it walks off.
+  let showMonth = null;
+  let syncTabStop = () => {};
   if (monthEls.length > 1) {
     const pager = document.createElement('div');
     pager.className = 'bk-pager';
@@ -113,9 +128,10 @@ export const adminEnhancerJs = `(() => {
       prev.disabled = active === 0;
       next.disabled = active === monthEls.length - 1;
     };
-    prev.addEventListener('click', () => show(active - 1));
-    next.addEventListener('click', () => show(active + 1));
+    prev.addEventListener('click', () => { show(active - 1); syncTabStop(); });
+    next.addEventListener('click', () => { show(active + 1); syncTabStop(); });
     show(active);
+    showMonth = show;
   }
 
   // A visible hint before the calendar: Shift/Ctrl/Cmd-click and the Space toggle only exist once
@@ -131,19 +147,35 @@ export const adminEnhancerJs = `(() => {
 
   // --- day selection + form prefill + day panel ---
   const cells = new Map();
+  const dayHrefs = new Map();
   monthsBox.querySelectorAll('.bk-day[data-date]').forEach((cell) => {
     cells.set(cell.dataset.date, cell);
+    dayHrefs.set(cell.dataset.date, cell.getAttribute('href'));
     // Removing href (not just intercepting click) is required: a browser opens ctrl/cmd-click on
     // an <a href> as a new tab before any JS sees the click, so preventDefault() can't stop it.
-    // tabIndex and the keydown listener below restore the lost tab-stop and Enter-activation.
+    // The roving tabindex and the keydown listener below restore keyboard reach and activation.
     cell.removeAttribute('href');
-    cell.tabIndex = 0;
+    cell.tabIndex = -1;
     cell.setAttribute('role', 'button');
     // Starts from the server-rendered selected class, which already reflects initial selection.
     cell.setAttribute('aria-pressed', String(cell.classList.contains('bk-day--selected')));
   });
   let selected = dateInput.value && cells.has(dateInput.value) ? [dateInput.value] : [];
   let anchor = selected[0] || null;
+
+  // Roving tabindex: the calendar is one Tab stop, and the arrow keys move within it, instead of
+  // every day of every month sitting in the Tab order.
+  const setTabStop = (target) => {
+    cells.forEach((cell) => { cell.tabIndex = cell === target ? 0 : -1; });
+  };
+  syncTabStop = () => {
+    const current = [...cells.values()].find((cell) => cell.tabIndex === 0);
+    if (current && !current.closest('[hidden]')) return;
+    const visible = [...cells.values()].filter((cell) => !cell.closest('[hidden]'));
+    const target = visible.find((cell) => selected.includes(cell.dataset.date)) || visible[0];
+    if (target) setTabStop(target);
+  };
+  syncTabStop();
 
   const renderDetail = (date) => {
     if (!detail) return;
@@ -156,6 +188,18 @@ export const adminEnhancerJs = `(() => {
       load.className = 'bk-hint';
       load.textContent = dayLoads[date];
       detail.appendChild(load);
+    }
+    // The island stops at a row cap; a day past it links to its server-rendered panel rather
+    // than claiming it has no bookings.
+    if (i18n.detailBefore && date >= i18n.detailBefore) {
+      const more = document.createElement('p');
+      more.className = 'bk-hint';
+      const link = document.createElement('a');
+      link.href = dayHrefs.get(date) || '';
+      link.textContent = i18n.dayOpen || '';
+      more.appendChild(link);
+      detail.appendChild(more);
+      return;
     }
     const rows = dayData[date] || [];
     if (!rows.length) {
@@ -222,8 +266,6 @@ export const adminEnhancerJs = `(() => {
         if (reasonDetails) reasonDetails.open = !!cell.dataset.reason;
       }
     } else if (sorted.length > 1) {
-      // role="status" on the title (server markup) makes this an accessible live-region
-      // announcement of the selection count, without moving focus.
       if (title) title.textContent = (i18n.selectedDays || '{n} days selected').replace('{n}', sorted.length);
       if (closeButton && i18n.closeMany) closeButton.textContent = i18n.closeMany.replace('{n}', sorted.length);
       renderDetail(null);
@@ -232,6 +274,9 @@ export const adminEnhancerJs = `(() => {
       if (closeButton) closeButton.textContent = i18n.close || closeLabel;
       renderDetail(null);
     }
+    // The live region (server markup) repeats the new title, so a screen reader hears the
+    // selection change without focus leaving the calendar.
+    if (announce && title) announce.textContent = title.textContent;
     return sorted;
   };
 
@@ -292,34 +337,48 @@ export const adminEnhancerJs = `(() => {
   monthsBox.addEventListener('click', (event) => {
     const cell = event.target.closest('.bk-day[data-date]');
     if (!cell) return;
+    setTabStop(cell);
     selectDate(cell.dataset.date, modeFromEvent(event));
   });
 
+  const arrowSteps = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 };
+  const shiftDate = (date, days) => new Date(Date.parse(date + 'T00:00:00Z') + days * 86400000).toISOString().slice(0, 10);
+
   // href is gone (see above), so Enter/Space aren't wired by the browser anymore — both are
-  // handled here, sharing the same modifier-based mode as a click.
+  // handled here, sharing the same modifier-based mode as a click. The arrows move focus a day or
+  // a week, turning the month page when they walk off it.
   monthsBox.addEventListener('keydown', (event) => {
-    if (event.key !== ' ' && event.key !== 'Spacebar' && event.key !== 'Enter') return;
     const cell = event.target.closest('.bk-day[data-date]');
     if (!cell) return;
+    const step = arrowSteps[event.key];
+    if (step !== undefined) {
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      event.preventDefault();
+      const target = cells.get(shiftDate(cell.dataset.date, step));
+      if (!target) return;
+      const month = target.closest('.bk-month');
+      if (showMonth && month && month.hidden) showMonth(monthEls.indexOf(month));
+      setTabStop(target);
+      target.focus();
+      return;
+    }
+    if (event.key !== ' ' && event.key !== 'Spacebar' && event.key !== 'Enter') return;
     event.preventDefault();
     selectDate(cell.dataset.date, modeFromEvent(event));
   });
 
-  // Typing into either date field is a first-class selection path: it must update \`selected\` (so
-  // highlighting/aria-pressed/the title stay in sync) and must clear stale hidden extra-date
-  // fields left by an earlier scattered pointer selection.
-  const applyTypedRange = () => {
+  // Typing a date is a first-class selection path: it must update \`selected\` (so
+  // highlighting/aria-pressed/the title stay in sync) and must clear both range shapes an earlier
+  // selection left behind — the toDate is hidden now, so a stale one would silently widen (or
+  // invert) what gets submitted.
+  const applyTypedDate = () => {
     form.querySelectorAll('input[data-reserva-extra-date]').forEach((input) => input.remove());
+    if (toInput) toInput.value = '';
     const date = dateInput.value;
-    if (!date) { selected = []; anchor = null; renderCells(); return; }
-    const toValue = toInput ? toInput.value : '';
-    selected = toValue && toValue >= date
-      ? [...cells.keys()].filter((key) => key >= date && key <= toValue)
-      : [date];
-    anchor = date;
+    selected = date ? [date] : [];
+    anchor = date || null;
     renderCells();
   };
-  dateInput.addEventListener('change', applyTypedRange);
-  if (toInput) toInput.addEventListener('change', applyTypedRange);
+  dateInput.addEventListener('change', applyTypedDate);
 })();
 `;

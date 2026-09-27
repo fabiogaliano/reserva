@@ -38,13 +38,13 @@ describe('readThemePreference (bk_theme cookie → forced theme)', () => {
 
 describe('themeCss (OS default + forced overrides)', () => {
   it('keeps the OS media query but skips it once the viewer forces a theme', () => {
-    expect(themeCss).toContain('@media (prefers-color-scheme: dark)');
-    expect(themeCss).toContain(':root:not([data-theme])');
+    expect(themeCss).toContain('@media screen and (prefers-color-scheme: dark)');
+    expect(themeCss).toContain(':where(:root:not([data-theme]))');
   });
 
   it('forces the palette + color-scheme for an explicit choice', () => {
-    expect(themeCss).toContain(':root[data-theme="dark"]');
-    expect(themeCss).toContain(':root[data-theme="light"] { color-scheme: light; }');
+    expect(themeCss).toContain(':where(:root[data-theme="dark"])');
+    expect(themeCss).toContain(':where(:root[data-theme="light"]) { color-scheme: light; }');
     // The dark palette is single-sourced, so the forced-dark selector carries the same accent token.
     expect(themeCss).toContain('--bk-accent: #7c86e2;');
   });

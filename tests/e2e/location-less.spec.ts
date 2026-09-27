@@ -11,15 +11,13 @@ test('booking a service with no location module carries no pickup/meeting-point 
       checkoutBody = JSON.parse(request.postData() ?? '{}');
     }
   });
-  // riverCruise also declares a required text metadata field the widget renders no input for, so
-  // this injects a minimal valid value onto the request rather than growing the widget.
-  await page.route('**/api/booking/checkout', async (route) => {
-    const body = JSON.parse(route.request().postData() ?? '{}');
-    body.metadata = { dietary_notes: 'n/a' };
-    await route.continue({ postData: JSON.stringify(body) });
+  // riverCruise also declares a required text detail, which a visitor has to answer to book.
+  const { reference, outboxEntry } = await createBooking(page, {
+    service: 'riverCruise',
+    quantity: 2,
+    path: '/river-cruise',
+    fields: { 'Dietary notes': 'n/a' },
   });
-
-  const { reference, outboxEntry } = await createBooking(page, { service: 'riverCruise', quantity: 2, path: '/river-cruise' });
   expect(reference).toBeTruthy();
 
   // The widget renders no pickup radios at all for this service, so the submitted checkout body

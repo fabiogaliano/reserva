@@ -109,32 +109,32 @@ const DEFAULT_METADATA_TEXT_MAX_LENGTH = 500;
 
 // Strict coercion — no `"true"` -> boolean, no `"5"` -> number.
 // Every throw names the offending key, its declared type, and the violated constraint, so the
-// caller can correct the request from the envelope alone.
+// caller can correct the request from the envelope alone; `details.field` lets a form point at
+// the control without parsing the message.
+function metadataFieldError(field: MetadataField, message: string, allowed?: string[]): HttpError {
+  return new HttpError(400, 'validation_failed', message, { field: `metadata.${field.key}`, ...(allowed ? { allowed } : {}) });
+}
+
 function coerceMetadataValue(field: MetadataField, raw: unknown): string | number | boolean {
   if (field.type === 'text') {
-    if (typeof raw !== 'string') throw new HttpError(400, 'validation_failed', `metadata.${field.key} must be a string (declared type: text)`);
+    if (typeof raw !== 'string') throw metadataFieldError(field, `metadata.${field.key} must be a string (declared type: text)`);
     const maxLength = field.maxLength ?? DEFAULT_METADATA_TEXT_MAX_LENGTH;
-    if (raw.length > maxLength) throw new HttpError(400, 'validation_failed', `metadata.${field.key} must be at most ${maxLength} characters (declared type: text)`);
+    if (raw.length > maxLength) throw metadataFieldError(field, `metadata.${field.key} must be at most ${maxLength} characters (declared type: text)`);
     return raw;
   }
   if (field.type === 'number') {
-    if (typeof raw !== 'number' || !Number.isFinite(raw)) throw new HttpError(400, 'validation_failed', `metadata.${field.key} must be a number (declared type: number)`);
+    if (typeof raw !== 'number' || !Number.isFinite(raw)) throw metadataFieldError(field, `metadata.${field.key} must be a number (declared type: number)`);
     return raw;
   }
   if (field.type === 'boolean') {
-    if (typeof raw !== 'boolean') throw new HttpError(400, 'validation_failed', `metadata.${field.key} must be a boolean (declared type: boolean); it was not strictly coerced from another type`);
+    if (typeof raw !== 'boolean') throw metadataFieldError(field, `metadata.${field.key} must be a boolean (declared type: boolean); it was not strictly coerced from another type`);
     return raw;
   }
   // 'select'
-  if (typeof raw !== 'string') throw new HttpError(400, 'validation_failed', `metadata.${field.key} must be a string matching one of its declared options (declared type: select)`);
   const validValues = (field.options ?? []).map((option) => option.value);
+  if (typeof raw !== 'string') throw metadataFieldError(field, `metadata.${field.key} must be a string matching one of its declared options (declared type: select)`, validValues);
   if (!validValues.includes(raw)) {
-    throw new HttpError(
-      400,
-      'validation_failed',
-      `metadata.${field.key} must be one of: ${validValues.join(', ')} (declared type: select)`,
-      { field: `metadata.${field.key}`, allowed: validValues },
-    );
+    throw metadataFieldError(field, `metadata.${field.key} must be one of: ${validValues.join(', ')} (declared type: select)`, validValues);
   }
   return raw;
 }
@@ -163,7 +163,7 @@ function validateCheckoutMetadata(service: ResolvedServiceConfig, serviceSlug: s
   const result: Record<string, unknown> = {};
   for (const field of fields) {
     if (!Object.prototype.hasOwnProperty.call(input, field.key)) {
-      if (field.required) throw new HttpError(400, 'validation_failed', `metadata.${field.key} is required (declared type: ${field.type})`);
+      if (field.required) throw metadataFieldError(field, `metadata.${field.key} is required (declared type: ${field.type})`);
       continue;
     }
     result[field.key] = coerceMetadataValue(field, input[field.key]);

@@ -64,6 +64,12 @@ export interface ApiErrorEnvelope {
 // GET /api/booking/availability
 // ---------------------------------------------------------------------------
 
+// A booking's own manage token (customer or operator), sent on an availability request to leave
+// that booking out of the count — what a reschedule picker needs so the customer's current slot
+// doesn't block their move. A header so the token stays out of URLs and request logs; a missing or
+// unrecognized token gets exactly the answer no token would.
+export const MANAGE_TOKEN_HEADER = 'x-reserva-manage-token';
+
 // `remaining` counts further bookings of the requested quantity that fit; `null` above
 // `limitedThreshold` (exact capacity stays private). Full slots are omitted, so never 0.
 export interface AvailabilitySlot {

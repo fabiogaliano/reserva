@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createReservaClient, isReservaApiError, ReservaApiError } from '../src/client/index';
+import { createReservaClient, isReservaApiError, MANAGE_TOKEN_HEADER, ReservaApiError } from '../src/client/index';
 import type { CheckoutRequest } from '../src/core/api';
 
 interface FetchCall {
@@ -87,6 +87,17 @@ describe('createReservaClient request shapes', () => {
     expect(new URL(fake.last().url, 'https://example.test').searchParams.get('quantity')).toBe('4');
   });
 
+  it('sends a manage token as a header, never in the URL, so availability can leave that booking out', async () => {
+    const fake = recorder();
+    await createReservaClient({ fetch: fake.fetchFn }).availability({ serviceSlug: 'vintage', from: '2026-06-15', to: '2026-06-30', manageToken: 'tok-1' });
+    expect(headersOf(fake.last())[MANAGE_TOKEN_HEADER]).toBe('tok-1');
+    expect(fake.last().url).not.toContain('tok-1');
+
+    const anonymous = recorder();
+    await createReservaClient({ fetch: anonymous.fetchFn }).availability({ serviceSlug: 'vintage', from: '2026-06-15', to: '2026-06-30' });
+    expect(headersOf(anonymous.last())[MANAGE_TOKEN_HEADER]).toBeUndefined();
+  });
+
   it('posts the checkout payload verbatim as JSON', async () => {
     const fake = recorder({ body: { checkoutUrl: 'https://pay.test/c', bookingId: 'b1', reference: 'LVT-1', paymentDeadline: '2026-06-15T08:35:00.000Z' } });
     const response = await createReservaClient({ fetch: fake.fetchFn }).checkout(checkout);
@@ -153,6 +164,12 @@ describe('createReservaClient route resolution', () => {
   it('hangs the default patterns off `base` for a cross-origin funnel', async () => {
     const fake = recorder();
     await createReservaClient({ fetch: fake.fetchFn, base: 'https://booking.example.com' }).catalog();
+    expect(fake.last().url).toBe('https://booking.example.com/api/booking/catalog');
+  });
+
+  it('treats a trailing slash on `base` as the same origin, not an empty path segment', async () => {
+    const fake = recorder();
+    await createReservaClient({ fetch: fake.fetchFn, base: 'https://booking.example.com/' }).catalog();
     expect(fake.last().url).toBe('https://booking.example.com/api/booking/catalog');
   });
 

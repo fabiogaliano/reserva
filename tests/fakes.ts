@@ -21,6 +21,7 @@ import {
   type AdminChangeAudit,
   type AdminChangeDomain,
   type AdminChangeHistoryEntry,
+  type AdminBookingWindow,
   type BookingRepository,
   type OperationalIncidentRecord,
   type RefundOperationRecord,
@@ -158,6 +159,10 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
   // COALESCE(units, 1) / COALESCE(endsAt, row.endsAt) fallback applies.
   const occupancyMeta = new Map<string, { units: number; endsAt: string }>();
   const find = (predicate: (item: Booking) => boolean) => [...rows.values()].find(predicate) ?? null;
+  const adminWindowRows = (window: AdminBookingWindow): Booking[] => [...rows.values()]
+    .filter((item) => (window.from === undefined || item.startsAt >= window.from)
+      && (window.before === undefined || item.startsAt < window.before)
+      && (window.status === undefined || item.status === window.status));
   const hydrateBooking = (item: Booking): Booking => {
     const state = tokenState.get(item.id);
     if (!state || options.tokenEncryptionKey === undefined) return item;
@@ -649,20 +654,26 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     listOccupancyBookings: async (from, to) => [...rows.values()]
       .filter((item) => (item.status === 'hold' || item.status === 'confirmed') && item.startsAt >= from && item.startsAt < to)
       .sort((a, b) => a.startsAt.localeCompare(b.startsAt)),
-    // Mirrors src/repo.ts:260-267 — starts_at >= now AND (confirmed OR (hold AND hold_expires_at > now)), ordered by starts_at.
-    listUpcoming: async (now) => [...rows.values()]
-      .filter((item) => item.startsAt >= now && (item.status === 'confirmed' || (item.status === 'hold' && item.holdExpiresAt !== null && item.holdExpiresAt > now)))
-      .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
+    // Mirrors src/repo.ts listAdminBookings — optional [from, before) window and status, ordered by
+    // (starts_at, id) in the requested direction, then paged.
+    listAdminBookings: async (window, page) => {
+      const direction = page.order === 'desc' ? -1 : 1;
+      return adminWindowRows(window)
+        .sort((a, b) => direction * (a.startsAt.localeCompare(b.startsAt) || a.id.localeCompare(b.id)))
+        .slice(page.offset, page.offset + page.limit)
+        .map(hydrateBooking);
+    },
+    countAdminBookings: async (window) => adminWindowRows(window).length,
+    // Mirrors src/repo.ts listLiveBookings — confirmed or unexpired holds starting in [from, before).
+    listLiveBookings: async (from, before, now, limit) => [...rows.values()]
+      .filter((item) => item.startsAt >= from && item.startsAt < before
+        && (item.status === 'confirmed' || (item.status === 'hold' && item.holdExpiresAt !== null && item.holdExpiresAt > now)))
+      .sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.id.localeCompare(b.id))
+      .slice(0, limit)
       .map(hydrateBooking),
     // Mirrors src/repo.ts: the list queries leave tokens as stored and the caller hydrates only the
     // rows it renders. Idempotent, so a row that arrived hydrated stays correct.
     hydrateBookingTokens: async (bookings) => bookings.map(hydrateBooking),
-    // Mirrors src/repo.ts listAllFrom — starts_at >= bound, any status, ordered by starts_at.
-    listAllFrom: async (startsAtFrom, options = {}) => [...rows.values()]
-      .filter((item) => item.startsAt >= startsAtFrom)
-      .sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.id.localeCompare(b.id))
-      .slice(options.offset ?? 0, (options.offset ?? 0) + (options.limit ?? Number.MAX_SAFE_INTEGER))
-      .map(hydrateBooking),
     // Mirrors src/repo.ts's reminder query: confirmed, starting inside (now, until], booked before
     // the window opened, and with no reminder row for that exact start yet.
     listReminderCandidates: async (now, until, reminderHours, limit) => [...rows.values()]

@@ -192,9 +192,11 @@ export interface OperationalIncidentRecord {
 }
 
 // Closed set mirrored by a DB CHECK. The first four are one-shot rows identified solely by
-// family; the last three carry a name/event (and, for repeatable events, a discriminator) too.
+// family; `calendar_patch` repeats once per reschedule, keyed by its version discriminator; the
+// last three carry a name/event (and, for repeatable events, a discriminator) too.
 export const SIDE_EFFECT_FAMILIES = [
   'calendar_create', 'calendar_delete', 'email_confirmation', 'oversell',
+  'calendar_patch',
   'email', 'hook', 'webhook',
 ] as const;
 export type SideEffectFamily = (typeof SIDE_EFFECT_FAMILIES)[number];
@@ -318,6 +320,14 @@ export interface BookingUpdate {
   cancelledBy?: CancellationActor | null;
   rescheduledFrom?: string | null;
   updatedAt: string;
+}
+
+// The admin list's time window and status filter. Each bound is optional so one shape serves both
+// the Upcoming (from) and Past (before) views.
+export interface AdminBookingWindow {
+  from?: string;
+  before?: string;
+  status?: BookingStatus;
 }
 
 export interface BookingRepository {
@@ -475,18 +485,17 @@ export interface BookingRepository {
   // Narrow by design: occupancy needs seven columns, not the whole booking, and this query runs
   // on every availability/checkout request.
   listOccupancyBookings(from: string, to: string): Promise<OccupancyBooking[]>;
-  // Bounded on both axes: `untilDays` keeps a far-future booking out of the default admin view,
-  // `limit` keeps one busy season from rendering thousands of rows. Tokens are NOT hydrated here —
-  // the caller hydrates the rows it actually emits (see `hydrateBookingTokens`).
-  listUpcoming(now: string, options?: { untilDays?: number; limit?: number }): Promise<Booking[]>;
+  // The admin list's one query: a starts_at window plus an optional status predicate, paged in SQL.
+  // Tokens are NOT hydrated here — the caller hydrates the rows it actually emits (see
+  // `hydrateBookingTokens`).
+  listAdminBookings(window: AdminBookingWindow, page: { order: 'asc' | 'desc'; limit: number; offset: number }): Promise<Booking[]>;
+  countAdminBookings(window: AdminBookingWindow): Promise<number>;
+  // Confirmed bookings and holds still live at `now`, starting in [from, before) — what the admin
+  // calendar's day panel lists. Unhydrated, like the list above.
+  listLiveBookings(from: string, before: string, now: string, limit: number): Promise<Booking[]>;
   // Restores cancel/operator tokens (AES-GCM) on rows loaded by the unhydrated list queries, for
   // the subset that will really be rendered as manage links.
   hydrateBookingTokens(bookings: readonly Booking[]): Promise<Booking[]>;
-  // Every booking regardless of status from a starts_at lower bound — the admin's search/status
-  // filters need cancelled/expired/past rows that listUpcoming (live upcoming only) never returns.
-  // `offset` lets the admin search walk the whole window page by page instead of judging
-  // the earliest `limit` rows only.
-  listAllFrom(startsAtFrom: string, options?: { limit?: number; offset?: number }): Promise<Booking[]>;
   // Confirmed bookings whose start falls in (now, until] and that have no reminder row for that
   // exact start yet. `reminderHours` also excludes bookings made inside the window: they just
   // received a confirmation email, so a reminder minutes later is noise.
@@ -754,10 +763,24 @@ interface OccupancyBookingRow {
   calendar_event_id: string | null;
 }
 
-// The admin's default window and row cap: a year-long list is a report, not a dashboard, and the
-// page offers an explicit "show later bookings" link for the rest.
-const DEFAULT_UPCOMING_UNTIL_DAYS = 90;
-const DEFAULT_BOOKING_LIST_LIMIT = 500;
+function adminWindowPredicate(window: AdminBookingWindow): { where: string; params: string[] } {
+  const clauses: string[] = [];
+  const params: string[] = [];
+  if (window.from !== undefined) {
+    clauses.push('starts_at >= ?');
+    params.push(window.from);
+  }
+  if (window.before !== undefined) {
+    clauses.push('starts_at < ?');
+    params.push(window.before);
+  }
+  if (window.status !== undefined) {
+    clauses.push('status = ?');
+    params.push(window.status);
+  }
+  return { where: clauses.length > 0 ? clauses.join(' AND ') : '1 = 1', params };
+}
+
 // D1 caps bound parameters per statement well below a full admin page of rows.
 const TOKEN_HYDRATION_CHUNK = 50;
 
@@ -1863,23 +1886,30 @@ export function createBookingRepository(
     },
     // Not hydrated: the admin dashboard decrypts tokens only for the rows it ends up emitting,
     // through hydrateBookingTokens — a per-row AES-GCM decrypt for a row nobody renders is waste.
-    async listUpcoming(now, options = {}) {
-      const untilDays = options.untilDays ?? DEFAULT_UPCOMING_UNTIL_DAYS;
-      const limit = options.limit ?? DEFAULT_BOOKING_LIST_LIMIT;
-      const until = new Date(Date.parse(now) + untilDays * 86_400_000).toISOString();
+    // `id` breaks starts_at ties so OFFSET paging never repeats or skips a row between pages.
+    async listAdminBookings(window, page) {
+      const { where, params } = adminWindowPredicate(window);
+      const direction = page.order === 'desc' ? 'DESC' : 'ASC';
       const result = await db.prepare(
-        `SELECT ${bookingColumns} FROM bookings
-         WHERE starts_at >= ? AND starts_at <= ? AND (status = 'confirmed' OR (status = 'hold' AND hold_expires_at > ?))
-         ORDER BY starts_at
-         LIMIT ?`,
-      ).bind(now, until, now, limit).all<BookingRow>();
+        `SELECT ${bookingColumns} FROM bookings WHERE ${where}
+         ORDER BY starts_at ${direction}, id ${direction}
+         LIMIT ? OFFSET ?`,
+      ).bind(...params, page.limit, page.offset).all<BookingRow>();
       return result.results.map(mapBooking);
     },
-    // Not hydrated, for the same reason as listUpcoming.
-    async listAllFrom(startsAtFrom, options = {}) {
+    async countAdminBookings(window) {
+      const { where, params } = adminWindowPredicate(window);
+      const row = await first(db.prepare(`SELECT COUNT(*) AS count FROM bookings WHERE ${where}`).bind(...params).all<{ count: number }>());
+      return Number(row?.count ?? 0);
+    },
+    // Not hydrated, for the same reason as listAdminBookings.
+    async listLiveBookings(from, before, now, limit) {
       const result = await db.prepare(
-        `SELECT ${bookingColumns} FROM bookings WHERE starts_at >= ? ORDER BY starts_at, id LIMIT ? OFFSET ?`,
-      ).bind(startsAtFrom, options.limit ?? DEFAULT_BOOKING_LIST_LIMIT, options.offset ?? 0).all<BookingRow>();
+        `SELECT ${bookingColumns} FROM bookings
+         WHERE starts_at >= ? AND starts_at < ? AND (status = 'confirmed' OR (status = 'hold' AND hold_expires_at > ?))
+         ORDER BY starts_at, id
+         LIMIT ?`,
+      ).bind(from, before, now, limit).all<BookingRow>();
       return result.results.map(mapBooking);
     },
     async hydrateBookingTokens(bookings) {

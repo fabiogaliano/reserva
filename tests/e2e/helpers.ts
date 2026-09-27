@@ -10,6 +10,9 @@ export interface BookingOpts {
   // The page hosting `opts.service`'s widget — defaults to the homepage (oldTown). A
   // location-less service is demoed from its own page (see river-cruise.astro).
   path?: string;
+  // The service's declared details (metadataFields), keyed by the visible label the widget renders
+  // for each — filled the way a visitor fills them. A select takes its option value or label.
+  fields?: Record<string, string>;
 }
 
 export async function createBooking(page: Page, opts: BookingOpts) {
@@ -52,6 +55,13 @@ export async function createBooking(page: Page, opts: BookingOpts) {
   // pre-checks the first declared point, so this is skipped for the common case.
   if (opts.meetingPointId) {
     await page.locator(`input[name="meetingPointId"][value="${opts.meetingPointId}"]`).check();
+  }
+
+  // 5c. Fill the service's declared details.
+  for (const [label, value] of Object.entries(opts.fields ?? {})) {
+    const control = page.getByLabel(label);
+    if (await control.evaluate((element) => element.tagName === 'SELECT')) await control.selectOption(value);
+    else await control.fill(value);
   }
 
   // 6. Book

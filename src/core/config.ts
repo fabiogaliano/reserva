@@ -29,7 +29,9 @@ const monthDayPattern = /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 const scheduleSchema = z.object({
   from: z.string().regex(monthDayPattern).optional(),
   to: z.string().regex(monthDayPattern).optional(),
-  days: z.array(z.number().int().min(0).max(6)).min(1),
+  // A set, so it is stored as one: sorted and deduplicated, or the settings page would see
+  // `[5, 1]` in config and `[1, 5]` from its checkboxes as different values and store a no-op override.
+  days: z.array(z.number().int().min(0).max(6)).min(1).transform((days) => [...new Set(days)].sort((a, b) => a - b)),
   // A conventional 09:00–18:00 day so a minimal config only has to say which days it operates;
   // both remain per-rule overridable here and per-deployment from the admin settings page.
   firstStart: z.string().regex(timePattern).default(DEFAULT_FIRST_START),
@@ -396,7 +398,29 @@ const webhookEndpointSchema = z.object({
 // (font lists, gradients); anything that could end the declaration or the rule, or open a comment
 // swallowing the rest of the sheet, is refused at build time instead of breaking the page's CSS.
 const cssDeclarationValueSchema = z.string().trim().min(1)
-  .refine((value) => !/[;{}<>\\]|\/\*|\*\//.test(value), 'must be a single CSS value without ; { } < > \\ or comment markers');
+  .refine((value) => !/[;{}<>\\]|\/\*|\*\//.test(value), 'must be a single CSS value without ; { } < > \\ or comment markers')
+  .refine(hasBalancedCssBrackets, 'must have balanced ( ) and [ ] and closed quotes');
+
+// An unclosed ( or [ or string does not stay inside its declaration: the CSS parser keeps
+// consuming until the matching close, taking every rule after it in the served sheet with it.
+// Brackets inside a quoted string are text, so they are skipped rather than counted.
+function hasBalancedCssBrackets(value: string): boolean {
+  const open: string[] = [];
+  let quote: string | null = null;
+  for (const char of value) {
+    if (quote) {
+      if (char === quote) quote = null;
+      else if (char === '\n') return false;
+    } else if (char === '"' || char === "'") {
+      quote = char;
+    } else if (char === '(' || char === '[') {
+      open.push(char === '(' ? ')' : ']');
+    } else if (char === ')' || char === ']') {
+      if (open.pop() !== char) return false;
+    }
+  }
+  return quote === null && open.length === 0;
+}
 
 const clientConfigShape = z.object({
   business: z.object({

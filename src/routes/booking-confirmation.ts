@@ -18,7 +18,12 @@ export async function GET({ request, locals }: APIContext): Promise<Response> {
   const statusRequest = new Request(statusUrl, { headers: request.headers });
   const response = await handleStatus(statusRequest, context);
   if (!response.headers.get('content-type')?.includes('application/json')) return response;
-  const payload = await response.json() as StatusResponse;
+  // A server error (a provider or D1 outage mid-poll) says nothing about the booking, so it keeps
+  // the page waiting within the same attempt budget rather than claiming the booking doesn't
+  // exist. A 4xx (no session id at all) is about the link itself and still reads as not found.
+  const payload: StatusResponse = response.ok
+    ? await response.json() as StatusResponse
+    : { status: response.status >= 500 ? 'pending' : 'not_found', booking: null };
   return new Response(confirmationPage(context, payload, request.url, requestedLocale), {
     status: response.ok ? 200 : response.status,
     headers: {

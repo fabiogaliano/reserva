@@ -5,7 +5,7 @@
 // --- Wire contract -----------------------------------------------------------------------------
 // Every request/response shape a client sends or parses, plus the closed error catalog. All of
 // src/core/api.ts is contract, so this group mirrors it exactly.
-export { API_ERROR_CODES, isApiErrorCode } from './api.js';
+export { API_ERROR_CODES, isApiErrorCode, MANAGE_TOKEN_HEADER } from './api.js';
 export type {
   ApiErrorCode,
   ApiErrorEnvelope,

@@ -23,8 +23,9 @@ async function closedOn(page: Page, date: string): Promise<boolean> {
 }
 
 // Proves the accessible day-selection replacement: button semantics + aria-pressed on cells, a
-// role="status" count announcement, the visible "To date" field staying in sync with a contiguous
-// selection, and a scattered selection never being describable as a "To date" range.
+// heading that stays a heading beside a separate live region announcing the selection, the
+// submitted toDate staying in sync with a contiguous selection, and a scattered selection never
+// being describable as a "To date" range.
 
 test('a contiguous 3-day pointer selection gets button semantics, aria-pressed, live-region copy, and matching visible inputs, and closes all three days', async ({ page }) => {
   const day1 = format(addDays(new Date(), 60), 'yyyy-MM-dd');
@@ -43,12 +44,17 @@ test('a contiguous 3-day pointer selection gets button semantics, aria-pressed, 
   await expect(cell2).toHaveAttribute('aria-pressed', 'true');
   await expect(cell3).toHaveAttribute('aria-pressed', 'true');
 
-  const title = page.locator('[data-reserva-day-title]');
-  await expect(title).toHaveAttribute('role', 'status');
-  await expect(title).toHaveText('3 days selected');
+  const title = page.getByRole('heading', { level: 2, name: '3 days selected' });
+  await expect(title).toBeVisible();
+  await expect(page.locator('[data-reserva-day-title]')).not.toHaveAttribute('role', /.+/);
+  await expect(page.locator('[data-reserva-day-announce]')).toHaveAttribute('role', 'status');
+  await expect(page.locator('[data-reserva-day-announce]')).toHaveText('3 days selected');
 
   const overrideForm = page.locator('#bk-override');
   await expect(overrideForm.locator('input[name="date"]')).toHaveValue(day1);
+  // Multi-select replaces the visible To date; the range still travels through a hidden toDate.
+  await expect(overrideForm.getByLabel('To date (optional)')).toHaveCount(0);
+  await expect(overrideForm.locator('input[name="toDate"]')).toHaveAttribute('type', 'hidden');
   await expect(overrideForm.locator('input[name="toDate"]')).toHaveValue(day3);
   // Contiguous shape: date+toDate only, no repeated hidden date fields — the two shapes must
   // never both be populated.
@@ -112,7 +118,27 @@ test('toggling the final selected day off clears every submitted date field', as
   await expect(overrideForm.locator('input[data-reserva-extra-date]')).toHaveCount(0);
 });
 
-test('keyboard-only: Space toggles a day, and typing a range into the two date inputs produces the same server-side result as pointer selection', async ({ page }) => {
+// The toDate is hidden once the enhancer runs, so nothing but the enhancer can clear it: a date
+// typed after a range selection must not submit with the old range's end still attached.
+test('typing a date after a range selection drops the hidden toDate of that range', async ({ page }) => {
+  const rangeStart = format(addDays(new Date(), 64), 'yyyy-MM-dd');
+  const rangeEnd = format(addDays(new Date(), 65), 'yyyy-MM-dd');
+  const typed = format(addDays(new Date(), 67), 'yyyy-MM-dd');
+
+  await page.goto('/booking/admin?tab=availability');
+  await (await revealDay(page, rangeStart)).click();
+  await (await revealDay(page, rangeEnd)).click({ modifiers: ['Shift'] });
+  const overrideForm = page.locator('#bk-override');
+  await expect(overrideForm.locator('input[name="toDate"]')).toHaveValue(rangeEnd);
+
+  await overrideForm.locator('input[name="date"]').fill(typed);
+  await overrideForm.locator('input[name="date"]').blur();
+  await expect(overrideForm.locator('input[name="toDate"]')).toHaveValue('');
+  await expect(page.locator(`.bk-day[data-date="${typed}"]`)).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator(`.bk-day[data-date="${rangeEnd}"]`)).toHaveAttribute('aria-pressed', 'false');
+});
+
+test('keyboard-only: Space toggles a day, and arrows plus Shift+Space select a range with the same server-side result as pointer selection', async ({ page }) => {
   const soloDay = format(addDays(new Date(), 70), 'yyyy-MM-dd');
   const rangeStart = format(addDays(new Date(), 75), 'yyyy-MM-dd');
   const rangeMid = format(addDays(new Date(), 76), 'yyyy-MM-dd');
@@ -131,15 +157,20 @@ test('keyboard-only: Space toggles a day, and typing a range into the two date i
   await expect(page).toHaveURL(new RegExp(`date=${soloDay}`));
   expect(await closedOn(page, soloDay)).toBe(true);
 
-  // Part 2: a 3-day range typed directly into the visible date/toDate inputs — no calendar
-  // interaction at all — must reach the enhanced selection (title/aria-pressed follow the typed
-  // values) and close the same three days a pointer shift-click range would.
+  // Part 2: the start typed into the date input, then two ArrowRights and Shift+Space — no
+  // pointer at all — must reach the enhanced selection and close the same three days a pointer
+  // shift-click range would.
   await page.goto('/booking/admin?tab=availability');
   const rangeStartCell = await revealDay(page, rangeStart);
   const form2 = page.locator('#bk-override');
   await form2.locator('input[name="date"]').fill(rangeStart);
-  await form2.locator('input[name="toDate"]').fill(rangeEnd);
-  await form2.locator('input[name="toDate"]').blur();
+  await form2.locator('input[name="date"]').blur();
+  await expect(rangeStartCell).toHaveAttribute('aria-pressed', 'true');
+  await rangeStartCell.focus();
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator(`.bk-day[data-date="${rangeEnd}"]`)).toBeFocused();
+  await page.keyboard.press('Shift+Space');
 
   await expect(rangeStartCell).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator(`.bk-day[data-date="${rangeMid}"]`)).toHaveAttribute('aria-pressed', 'true');
@@ -151,4 +182,30 @@ test('keyboard-only: Space toggles a day, and typing a range into the two date i
   expect(await closedOn(page, rangeStart)).toBe(true);
   expect(await closedOn(page, rangeMid)).toBe(true);
   expect(await closedOn(page, rangeEnd)).toBe(true);
+});
+
+// One Tab stop for the whole calendar: arrows move a day or a week, walking off a month turns the
+// pager, and Tab leaves the grid instead of visiting every day.
+test('the calendar is a single Tab stop with arrow-key navigation across months', async ({ page }) => {
+  await page.goto('/booking/admin?tab=availability');
+  const tabStop = page.locator('.bk-day[data-date][tabindex="0"]');
+  await expect(tabStop).toHaveCount(1);
+
+  const start = (await tabStop.getAttribute('data-date'))!;
+  const dayAfter = (days: number) => format(addDays(new Date(`${start}T12:00:00Z`), days), 'yyyy-MM-dd');
+  await tabStop.focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.locator(`.bk-day[data-date="${dayAfter(7)}"]`)).toBeFocused();
+  await expect(tabStop).toHaveAttribute('data-date', dayAfter(7));
+
+  // Six weeks on always crosses a month boundary, so the pager must have followed focus.
+  for (let step = 0; step < 5; step += 1) await page.keyboard.press('ArrowDown');
+  const farther = page.locator(`.bk-day[data-date="${dayAfter(42)}"]`);
+  await expect(farther).toBeFocused();
+  await expect(farther).toBeVisible();
+
+  await page.keyboard.press('Enter');
+  await expect(farther).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('Tab');
+  await expect(page.locator('.bk-day[data-date]:focus')).toHaveCount(0);
 });

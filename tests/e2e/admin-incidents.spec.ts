@@ -64,8 +64,8 @@ test('a one-shot provider failure opens an incident, "Try again" resolves it, a 
   const retryCard = page.locator('.bk-incident-card', { hasText: retryTarget.reference });
   const manualCard = page.locator('.bk-incident-card', { hasText: manualTarget.reference });
   const oversellCard = page.locator('.bk-incident-card', { hasText: oversellTarget.reference });
-  await expect(retryCard).toContainText('Calendar booking not created');
-  await expect(manualCard).toContainText('Calendar booking not created');
+  await expect(retryCard).toContainText('Calendar not updated');
+  await expect(manualCard).toContainText('Calendar not updated');
   await expect(oversellCard).toContainText('Booking may exceed capacity');
 
   // Oversell: no Retry button, only the manual-handling note.

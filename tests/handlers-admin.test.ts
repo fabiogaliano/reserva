@@ -50,6 +50,16 @@ function adminPostRequest(fields: Record<string, string> | Array<[string, string
   });
 }
 
+// A rejected admin action goes back to the page it was posted from with ?error=<code> (and the
+// offending ?field=), never as a raw JSON body, and never with a stale saved= notice.
+function adminErrorOf(response: Response): { code: string | null; field: string | null } {
+  expect(response.status).toBe(303);
+  expect(response.headers.get('cache-control')).toBe('no-store');
+  const location = new URL(response.headers.get('location') ?? '');
+  expect(location.searchParams.has('saved')).toBe(false);
+  return { code: location.searchParams.get('error'), field: location.searchParams.get('field') };
+}
+
 // Proves the real handler wiring rejects an oversized declared Content-Length with 413, ahead of
 // the CSRF check — the body must be read before csrf_token can be extracted from the form.
 describe('request body size limit (audit finding #10)', () => {
@@ -93,8 +103,10 @@ describe('access control (spec §11: admin requires Cloudflare Access)', () => {
   });
 });
 
-describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
-  it('lists only upcoming confirmed and unexpired-hold bookings, excluding swept-expired holds, cancelled, and past rows', async () => {
+describe('GET /admin listing (one window + status query)', () => {
+  // "All" is every status inside the window: cancelled and swept-expired rows included, so a status
+  // filter can only ever narrow it, never show more than "All" does.
+  it('lists every status in the Upcoming window by default and keeps past rows out of it', async () => {
     const futureConfirmed = booking({ id: 'b-admin-future-confirmed', reference: 'LVT-2026-100', status: 'confirmed', startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z', operatorToken: 'op-future-confirmed', cancelToken: 'cancel-future-confirmed' });
     const futureUnexpiredHold = booking({ id: 'b-admin-future-hold', reference: 'LVT-2026-101', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', startsAt: '2026-06-21T09:00:00.000Z', endsAt: '2026-06-21T10:00:00.000Z', operatorToken: 'op-future-hold', cancelToken: 'cancel-future-hold' });
     const futureExpiredHold = booking({ id: 'b-admin-expired-hold', reference: 'LVT-2026-102', status: 'hold', holdExpiresAt: '2026-06-14T07:00:00.000Z', startsAt: '2026-06-22T09:00:00.000Z', endsAt: '2026-06-22T10:00:00.000Z', operatorToken: 'op-expired-hold', cancelToken: 'cancel-expired-hold' });
@@ -108,16 +120,113 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
     const body = await response.text();
     expect(body).toContain(futureConfirmed.reference);
     expect(body).toContain(futureUnexpiredHold.reference);
-    expect(body).not.toContain(futureExpiredHold.reference);
-    expect(body).not.toContain(cancelledFuture.reference);
+    expect(body).toContain(futureExpiredHold.reference);
+    expect(body).toContain(cancelledFuture.reference);
     expect(body).not.toContain(pastConfirmed.reference);
+    expect(body).toContain('Showing 1–4 of 4');
     // The sweep (called inside handleAdminGet) must have flipped the time-expired hold.
     expect(repo.rows.get(futureExpiredHold.id)?.status).toBe('expired');
+
+    const confirmedOnly = await (await handleAdminGet(new Request(`${ADMIN_URL}?status=confirmed`), context)).text();
+    expect(confirmedOnly).toContain(futureConfirmed.reference);
+    expect(confirmedOnly).not.toContain(cancelledFuture.reference);
+    expect(confirmedOnly).toContain('Showing 1–1 of 1');
+
+    const past = await (await handleAdminGet(new Request(`${ADMIN_URL}?when=past`), context)).text();
+    expect(past).toContain(pastConfirmed.reference);
+    expect(past).not.toContain(futureConfirmed.reference);
   });
 
-  // An active search/status filter widens the table's source (repo.listAllFrom) — the default
-  // upcoming-only view can never contain the cancelled/past rows those filters exist to find.
-  it('surfaces cancelled and past rows when a status or search filter is active', async () => {
+  // A trip already under way is still today's work (a no-show is marked once it has started), so
+  // Upcoming starts at the business's midnight, not at the render clock.
+  it('starts Upcoming at 00:00 today in the business timezone, so an in-progress booking stays listed', async () => {
+    // The clock is 08:00Z = 09:00 Europe/Lisbon; midnight there was 23:00Z the day before.
+    const earlierToday = booking({ id: 'b-admin-today', reference: 'LVT-2026-120', startsAt: '2026-06-14T07:00:00.000Z', endsAt: '2026-06-14T09:00:00.000Z', operatorToken: 'op-today', cancelToken: 'cancel-today' });
+    const justAfterMidnight = booking({ id: 'b-admin-midnight', reference: 'LVT-2026-121', startsAt: '2026-06-13T23:30:00.000Z', endsAt: '2026-06-14T00:30:00.000Z', operatorToken: 'op-midnight', cancelToken: 'cancel-midnight' });
+    const yesterday = booking({ id: 'b-admin-yesterday', reference: 'LVT-2026-122', startsAt: '2026-06-13T22:30:00.000Z', endsAt: '2026-06-13T23:30:00.000Z', operatorToken: 'op-yesterday', cancelToken: 'cancel-yesterday' });
+    const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository([earlierToday, justAfterMidnight, yesterday]), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+
+    const upcoming = await (await handleAdminGet(adminGetRequest(), context)).text();
+    expect(config.business.timezone).toBe('Europe/Lisbon');
+    expect(upcoming).toContain(earlierToday.reference);
+    expect(upcoming).toContain(justAfterMidnight.reference);
+    expect(upcoming).not.toContain(yesterday.reference);
+
+    const past = await (await handleAdminGet(new Request(`${ADMIN_URL}?when=past`), context)).text();
+    expect(past).toContain(yesterday.reference);
+    expect(past).not.toContain(earlierToday.reference);
+  });
+
+  it('pages the list: Upcoming ascending, Past descending, with the range and prev/next links', async () => {
+    const upcomingRows = Array.from({ length: 55 }, (_, index) => booking({
+      id: `b-admin-up-${String(index).padStart(2, '0')}`, reference: `LVT-2026-U${String(index).padStart(2, '0')}`,
+      startsAt: new Date(Date.UTC(2026, 5, 15, 9) + index * 3_600_000).toISOString(),
+      endsAt: new Date(Date.UTC(2026, 5, 15, 10) + index * 3_600_000).toISOString(),
+      operatorToken: `op-up-${index}`, cancelToken: `cancel-up-${index}`,
+    }));
+    const pastRows = Array.from({ length: 3 }, (_, index) => booking({
+      id: `b-admin-past-${index}`, reference: `LVT-2026-P${index}`,
+      startsAt: `2026-06-0${index + 1}T09:00:00.000Z`, endsAt: `2026-06-0${index + 1}T10:00:00.000Z`,
+      operatorToken: `op-past-${index}`, cancelToken: `cancel-past-${index}`,
+    }));
+    const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository([...upcomingRows, ...pastRows]), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+
+    const first = await (await handleAdminGet(new Request(`${ADMIN_URL}?q=LVT-2026-U`), context)).text();
+    expect(first).toContain('Showing 1–50 of 55');
+    expect(first.indexOf('LVT-2026-U00')).toBeLessThan(first.indexOf('LVT-2026-U01'));
+    expect(first).not.toContain('LVT-2026-U50');
+    expect(first).toContain('rel="next" href="?q=LVT-2026-U&amp;page=2&amp;tab=upcoming#bk-upcoming"');
+    expect(first).not.toContain('rel="prev"');
+
+    const second = await (await handleAdminGet(new Request(`${ADMIN_URL}?page=2`), context)).text();
+    expect(second).toContain('Showing 51–55 of 55');
+    expect(second).toContain('LVT-2026-U54');
+    expect(second).not.toContain('LVT-2026-U49');
+    expect(second).toContain('rel="prev" href="?tab=upcoming#bk-upcoming"');
+    expect(second).not.toContain('rel="next"');
+
+    // A stale page number past the end lands on the last real page, search or not.
+    expect(await (await handleAdminGet(new Request(`${ADMIN_URL}?page=9`), context)).text()).toContain('Showing 51–55 of 55');
+    expect(await (await handleAdminGet(new Request(`${ADMIN_URL}?q=LVT-2026-U&page=9`), context)).text()).toContain('Showing 51–55 of 55');
+
+    const past = await (await handleAdminGet(new Request(`${ADMIN_URL}?when=past`), context)).text();
+    expect(past.indexOf('LVT-2026-P2')).toBeLessThan(past.indexOf('LVT-2026-P0'));
+  });
+
+  // Every generated link rebuilds the list state, so the enhancer's replaceState to a tab href, a
+  // day link and the filter form never lose it — and never carry a one-shot notice along.
+  it('carries when/q/status/page through tabs and day links, drops saved=, and Clear filters resets them all', async () => {
+    const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+    const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?when=past&q=Ana&status=cancelled&page=2&saved=day&date=2026-06-20&tab=upcoming`), context)).text();
+    const state = 'when=past&amp;q=Ana&amp;status=cancelled&amp;page=2';
+    expect(body).toContain(`href="?${state}&amp;date=2026-06-20&amp;tab=availability" data-reserva-admin-tab="availability"`);
+    expect(body).toContain(`href="?${state}&amp;tab=availability&amp;date=2026-06-21#bk-override"`);
+    expect(body).not.toMatch(/href="[^"]*saved=/);
+    expect(body).toContain('<option value="past" selected>Past</option>');
+    expect(body).toContain('<option value="cancelled" selected>Cancelled</option>');
+    expect(body).toContain('class="bk-filter-clear" href="?date=2026-06-20&amp;tab=upcoming#bk-upcoming"');
+    // An unknown status is ignored rather than matching nothing.
+    const bogus = await (await handleAdminGet(new Request(`${ADMIN_URL}?status=bogus`), context)).text();
+    expect(bogus).toContain('<option value="" selected>All</option>');
+    expect(bogus).not.toContain('bk-filter-clear');
+  });
+
+  it('labels filters apart from row badges and words the filtered-empty state, in pt-PT too', async () => {
+    const localizedConfig: ResolvedClientConfig = { ...config, admin: { ...config.admin, locale: 'pt-PT' } };
+    const context = createReservaContext({ config: localizedConfig, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+    const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?status=no_show`), context)).text();
+    for (const label of ['Todas', 'Confirmadas', 'A aguardar pagamento', 'Expiradas', 'Canceladas', 'Não compareceram', 'Próximas', 'Passadas']) {
+      expect(body).toContain(`>${label}</option>`);
+    }
+    expect(body).toContain('Nenhuma reserva corresponde aos filtros.');
+    expect(body).not.toContain('Mostrar reservas mais distantes');
+    const unfiltered = await (await handleAdminGet(adminGetRequest(), context)).text();
+    expect(unfiltered).toContain('Não há próximas reservas.');
+  });
+
+  // Status narrows the window it is applied to; past rows are one window switch away, and the
+  // search runs inside whichever window is chosen.
+  it('surfaces cancelled rows by status and past rows through the Past window', async () => {
     const cancelledFuture = booking({ id: 'b-admin-filter-cancelled', reference: 'LVT-2026-110', status: 'cancelled', cancelledAt: '2026-06-13T08:00:00.000Z', cancelledBy: 'customer', startsAt: '2026-06-23T09:00:00.000Z', endsAt: '2026-06-23T10:00:00.000Z', operatorToken: 'op-filter-cancelled', cancelToken: 'cancel-filter-cancelled' });
     const pastConfirmed = booking({ id: 'b-admin-filter-past', reference: 'LVT-2026-111', status: 'confirmed', startsAt: '2026-06-10T09:00:00.000Z', endsAt: '2026-06-10T10:00:00.000Z', operatorToken: 'op-filter-past', cancelToken: 'cancel-filter-past' });
     const repo = fakeRepository([cancelledFuture, pastConfirmed]);
@@ -129,24 +238,50 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
     // Terminal rows carry no manage link — the operator page would have no actions to offer.
     expect(byStatus).not.toContain('op-filter-cancelled');
 
-    const bySearch = await (await handleAdminGet(new Request(`${ADMIN_URL}?q=LVT-2026-111`), context)).text();
-    expect(bySearch).toContain(pastConfirmed.reference);
+    const upcomingSearch = await (await handleAdminGet(new Request(`${ADMIN_URL}?q=LVT-2026-111`), context)).text();
+    // The reference also sits in the search box's own value, so look for the row's rendering of it.
+    expect(upcomingSearch).not.toContain(`<span class="bk-mono">${pastConfirmed.reference}</span>`);
+    expect(upcomingSearch).toContain('No bookings match the filters.');
+    const pastSearch = await (await handleAdminGet(new Request(`${ADMIN_URL}?when=past&q=LVT-2026-111`), context)).text();
+    expect(pastSearch).toContain(`<span class="bk-mono">${pastConfirmed.reference}</span>`);
   });
 
-  // The search filters in memory, so it has to walk every page of the window: judging only the
-  // earliest 500 rows would make a recent booking unfindable on a busy deployment.
-  it('finds a booking beyond the first page of the search window', async () => {
+  // The search filters in memory, so it has to walk every chunk of the window: judging only the
+  // first chunk would make an older booking unfindable on a busy deployment.
+  it('finds a booking beyond the first chunk of the search window', async () => {
     const filler = Array.from({ length: 520 }, (_, index) => booking({
       id: `b-admin-filler-${index}`, reference: `LVT-2026-F${String(index).padStart(3, '0')}`, status: 'cancelled', cancelledAt: '2026-06-01T08:00:00.000Z', cancelledBy: 'customer',
       startsAt: `2026-06-0${1 + (index % 9)}T09:00:00.000Z`, endsAt: `2026-06-0${1 + (index % 9)}T10:00:00.000Z`, operatorToken: `op-filler-${index}`, cancelToken: `cancel-filler-${index}`,
     }));
-    const recent = booking({ id: 'b-admin-recent', reference: 'LVT-2026-999', status: 'confirmed', startsAt: '2026-06-12T09:00:00.000Z', endsAt: '2026-06-12T10:00:00.000Z', operatorToken: 'op-recent', cancelToken: 'cancel-recent' });
-    const repo = fakeRepository([...filler, recent]);
+    // Past runs newest first, so the oldest booking is the last row the walk reaches.
+    const oldest = booking({ id: 'b-admin-oldest', reference: 'LVT-2026-999', status: 'confirmed', startsAt: '2026-05-20T09:00:00.000Z', endsAt: '2026-05-20T10:00:00.000Z', operatorToken: 'op-oldest', cancelToken: 'cancel-oldest' });
+    const repo = fakeRepository([...filler, oldest]);
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
-    const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?q=LVT-2026-999`), context)).text();
+    const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?when=past&q=LVT-2026-999`), context)).text();
     expect(body).toContain('LVT-2026-999');
     expect(body).not.toContain('LVT-2026-F000');
+    expect(body).toContain('Showing 1–1 of 1');
+    expect(body).not.toContain('The search only looked at');
+  });
+
+  it('says so when a search stops at its scan cap, since the count then covers only what it read', async () => {
+    const repo = fakeRepository();
+    const scanned: number[] = [];
+    // A window far larger than the cap, served cheaply: every row matches the search.
+    repo.countAdminBookings = async () => 30_000;
+    repo.listAdminBookings = async (_window, page) => {
+      scanned.push(page.offset);
+      return Array.from({ length: page.limit }, (_, index) => booking({
+        id: `b-admin-cap-${page.offset + index}`, reference: `LVT-2026-C${page.offset + index}`,
+        startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
+      }));
+    };
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+    const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?q=LVT-2026-C`), context)).text();
+    expect(Math.max(...scanned)).toBeLessThan(20_000);
+    expect(body).toContain('Showing 1–50 of 20000');
+    expect(body).toContain('The search only looked at the first 20000 bookings in this period.');
   });
 
   it('separates page destinations from the dashboard’s own tab strip', async () => {
@@ -265,12 +400,40 @@ describe('GET /admin listing (spec §11 + repo.ts:260-267 filter)', () => {
     // One booking, two capacity units, capacity 2 (fixture's capacity.defaultCapacity) — the load
     // must read the unit count against capacity, not "1/2" (a raw booking count). It lives in the
     // cell's accessible name and tooltip rather than as printed text under every number.
-    expect(body).toContain('2/2 units booked');
-    expect(body).not.toContain('1/2 units booked');
+    expect(body).toContain('2/2 peak · 1 booking');
+    expect(body).not.toContain('1/2 peak');
     // The island carries the same preformatted line per day so a client-side selection can show
     // it; the cell's aria-label alone would be lost the moment the enhancer rewrites the panel.
     expect(body).toContain('"loads":{');
-    expect(body).toContain('"2026-06-20":"2/2 units booked"');
+    expect(body).toContain('"2026-06-20":"2/2 peak · 1 booking"');
+  });
+
+  // Checkout compares capacity against the most units in use at one instant, so back-to-back trips
+  // on one vehicle never make a day "over capacity" the way a daily sum would claim.
+  it('shows the day peak of concurrent units against capacity, plus the booking count', async () => {
+    const morning = booking({ id: 'b-admin-peak-1', reference: 'LVT-2026-310', startsAt: '2026-06-20T08:00:00.000Z', endsAt: '2026-06-20T09:00:00.000Z', operatorToken: 'op-peak-1', cancelToken: 'cancel-peak-1' });
+    // Starts after the morning trip's 30-minute turnaround: sequential, not concurrent.
+    const noon = booking({ id: 'b-admin-peak-2', reference: 'LVT-2026-311', startsAt: '2026-06-20T10:00:00.000Z', endsAt: '2026-06-20T11:00:00.000Z', operatorToken: 'op-peak-2', cancelToken: 'cancel-peak-2' });
+    const overlapping = booking({ id: 'b-admin-peak-3', reference: 'LVT-2026-312', startsAt: '2026-06-20T10:30:00.000Z', endsAt: '2026-06-20T11:30:00.000Z', operatorToken: 'op-peak-3', cancelToken: 'cancel-peak-3' });
+    // A cancelled booking never consumes capacity, whatever the list window shows.
+    const cancelled = booking({ id: 'b-admin-peak-4', reference: 'LVT-2026-313', status: 'cancelled', cancelledAt: '2026-06-14T07:00:00.000Z', cancelledBy: 'customer', startsAt: '2026-06-20T10:30:00.000Z', endsAt: '2026-06-20T11:30:00.000Z', operatorToken: 'op-peak-4', cancelToken: 'cancel-peak-4' });
+    const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository([morning, noon, overlapping, cancelled]), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+
+    const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?date=2026-06-20`), context)).text();
+    expect(body).toContain('"2026-06-20":"2/2 peak · 3 bookings"');
+    // The selected day's panel spells out the same line and lists only the live bookings.
+    expect(body).toContain('<div class="bk-day-detail" data-reserva-day-detail><p class="bk-hint">2/2 peak · 3 bookings</p>');
+    const panel = /<div class="bk-day-detail"[^]*?<\/div>/.exec(body)?.[0] ?? '';
+    expect(panel).not.toContain('Cancelled');
+  });
+
+  // The calendar has its own query over the whole horizon: neither the list's window, its status
+  // filter nor its page size can change a day's load.
+  it('counts the calendar over the whole horizon, independent of the list filters', async () => {
+    const farOut = booking({ id: 'b-admin-far', reference: 'LVT-2026-320', startsAt: '2026-12-01T10:00:00.000Z', endsAt: '2026-12-01T11:00:00.000Z', operatorToken: 'op-far', cancelToken: 'cancel-far' });
+    const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository([farOut]), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+    const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?when=past&status=cancelled`), context)).text();
+    expect(body).toContain('"2026-12-01":"1/2 peak · 1 booking"');
   });
 
   // With a date in the URL the handler infers the availability tab, so the list's own filter
@@ -507,11 +670,45 @@ describe('POST /admin day overrides (spec §11)', () => {
     expect(deletes).toEqual([['2026-06-20', '2026-06-21']]);
   });
 
-  it('rejects toDate before date with 400 validation_failed', async () => {
+  it('rejects toDate before date, redirecting back to availability with the field named', async () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', toDate: '2026-06-19', capacity: '1', action: 'set' }), context);
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed' } });
+    expect(adminErrorOf(response)).toEqual({ code: 'validation_failed', field: 'toDate' });
+    expect(new URL(response.headers.get('location') ?? '').searchParams.get('tab')).toBe('availability');
+  });
+
+  // Number('') is 0: a blank capacity used to close the day silently. Only Close means 0.
+  it('rejects a blank capacity on set and default-set instead of writing 0', async () => {
+    const repo = fakeRepository();
+    const dayWrites: number[] = [];
+    const defaultWrites: number[] = [];
+    repo.upsertDayOverrides = async (_dates, capacity) => { dayWrites.push(capacity); };
+    repo.upsertCapacityDefault = async (_date, capacity) => { defaultWrites.push(capacity); };
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+
+    for (const action of ['set', 'default-set']) {
+      for (const capacity of ['', '   ', '1.5', '-1']) {
+        const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', capacity, action }), context);
+        expect(adminErrorOf(response), `${action} with capacity ${JSON.stringify(capacity)}`).toEqual({ code: 'validation_failed', field: 'capacity' });
+      }
+    }
+    expect(dayWrites).toEqual([]);
+    expect(defaultWrites).toEqual([]);
+
+    // Close needs no capacity at all.
+    const close = await handleAdminPost(adminPostRequest({ date: '2026-06-20', capacity: '', action: 'close' }), context);
+    expect(close.status).toBe(303);
+    expect(dayWrites).toEqual([0]);
+  });
+
+  it('marks the day form capacity required, and lets Close and Reset skip validation', async () => {
+    const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+    const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?date=2026-06-20`), context)).text();
+    const dayForm = /<form method="post" id="bk-override"[^]*?<\/form>/.exec(body)?.[0] ?? '';
+    expect(dayForm).toMatch(/<input class="bk-input" name="capacity" type="number" min="0" step="1" required/);
+    expect(dayForm).toContain('name="action" value="close" formnovalidate');
+    expect(dayForm).toContain('name="action" value="clear" formnovalidate');
+    expect(dayForm).not.toContain('name="action" value="set" formnovalidate');
   });
 
   it('action=set with a blank reason passes null', async () => {
@@ -536,18 +733,43 @@ describe('POST /admin day overrides (spec §11)', () => {
     expect(calls).toEqual([['2026-06-20']]);
   });
 
-  it('rejects an unknown action with 400 validation_failed', async () => {
+  it('rejects an unknown action with validation_failed', async () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'delete-everything' }), context);
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed' } });
+    expect(adminErrorOf(response).code).toBe('validation_failed');
   });
 
-  it('rejects an invalid date with 400', async () => {
+  it('rejects an invalid date with validation_failed', async () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminPost(adminPostRequest({ date: 'not-a-date', action: 'clear' }), context);
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed' } });
+    expect(adminErrorOf(response).code).toBe('validation_failed');
+  });
+
+  it('keeps the page state it was posted from, drops an earlier notice, and renders a readable alert', async () => {
+    const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+    const request = new Request(`${ADMIN_URL}?when=past&q=LVT&saved=day&tab=availability&date=2026-06-20`, {
+      method: 'POST',
+      body: new URLSearchParams({ date: '2026-06-20', capacity: '', action: 'set', csrf_token: DEFAULT_CSRF_TOKEN }),
+      headers: { origin: ADMIN_ORIGIN, 'sec-fetch-site': 'same-origin' },
+    });
+    const response = await handleAdminPost(request, context);
+    expect(adminErrorOf(response)).toEqual({ code: 'validation_failed', field: 'capacity' });
+    const location = new URL(response.headers.get('location') ?? '');
+    expect(location.searchParams.get('when')).toBe('past');
+    expect(location.searchParams.get('q')).toBe('LVT');
+    expect(location.searchParams.get('date')).toBe('2026-06-20');
+
+    const page = await (await handleAdminGet(new Request(location), context)).text();
+    expect(page).toContain('<p class="bk-alert bk-alert--danger" role="alert">Nothing was saved: check “Capacity”.</p>');
+
+    // A crafted field is never echoed unless it is a plain key path.
+    const crafted = await (await handleAdminGet(new Request(`${ADMIN_URL}?error=validation_failed&field=%3Cscript%3E`), context)).text();
+    expect(crafted).toContain('Nothing was saved: a value is missing or not valid.');
+    expect(crafted).not.toContain('&lt;script&gt;');
+
+    const localized = createReservaContext({ config: { ...config, admin: { ...config.admin, locale: 'pt-PT' } }, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+    const expired = await (await handleAdminGet(new Request(`${ADMIN_URL}?error=csrf_expired`), localized)).text();
+    expect(expired).toContain('Esta página expirou. Tente novamente.');
   });
 });
 
@@ -590,8 +812,13 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     expect(repo.settings.has('capacity.default')).toBe(false);
 
     const invalid = await handleAdminPost(adminPostRequest({ action: 'settings-save', section: 'capacity', 'capacity.default': '-1' }), context);
-    expect(invalid.status).toBe(400);
-    await expect(invalid.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('capacity.default') } });
+    expect(adminErrorOf(invalid)).toEqual({ code: 'validation_failed', field: 'capacity.default' });
+    // Back on the settings section it came from, with the field named by its label.
+    const location = new URL(invalid.headers.get('location') ?? '');
+    expect(location.searchParams.get('view')).toBe('settings');
+    expect(location.searchParams.get('section')).toBe('capacity');
+    const page = await (await handleAdminGet(new Request(location), context)).text();
+    expect(page).toContain('role="alert">Nothing was saved: check “Concurrent bookings”.</p>');
   });
 
   // The holdMinutes kind declares max: 1440 (core/settings.ts); the rendered input must carry it
@@ -687,21 +914,35 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
       'services.vintage.schedule.0.firstStart': '10:00', 'services.vintage.schedule.0.lastStart': '12:00',
       'services.vintage.schedule.0.intervalMin': '30',
     }), context);
-    expect(noDays.status).toBe(400);
-    await expect(noDays.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('select at least one day') } });
+    expect(adminErrorOf(noDays)).toEqual({ code: 'validation_failed', field: 'services.vintage.schedule.0.days' });
 
-    // Cross-field rule from validateConfig surfaces as a 400 naming the rule.
+    // Cross-field rule from validateConfig surfaces naming the rule's field.
     const inverted = await handleAdminPost(adminPostRequest([
       ['action', 'settings-save'], ['section', 'hours'],
       ['services.vintage.schedule.0.firstStart', '13:00'], ['services.vintage.schedule.0.lastStart', '12:00'],
       ['services.vintage.schedule.0.intervalMin', '30'], ['services.vintage.schedule.0.days', '1'],
     ]), context);
-    expect(inverted.status).toBe(400);
-    await expect(inverted.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('firstStart must not be after lastStart') } });
+    expect(adminErrorOf(inverted).field).toContain('services.vintage.schedule.0');
 
     const reset = await handleAdminPost(adminPostRequest({ action: 'settings-reset:services.vintage.schedule.0.firstStart' }), context);
     expect(reset.status).toBe(303);
     expect(repo.settings.has('services.vintage.schedule.0.firstStart')).toBe(false);
+  });
+
+  it('treats config days written in any order as equal to the same checkboxes, storing no override', async () => {
+    const repo = fakeRepository();
+    const vintage = config.services.vintage!;
+    const unsorted = { ...config, services: { vintage: { ...vintage, schedule: [{ ...vintage.schedule[0]!, days: [5, 1, 5] }] } } } as ResolvedClientConfig;
+    const context = createReservaContext({ config: unsorted, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+    const save = await handleAdminPost(adminPostRequest([
+      ['action', 'settings-save'], ['section', 'hours'],
+      ['services.vintage.schedule.0.firstStart', '09:00'], ['services.vintage.schedule.0.lastStart', '12:00'],
+      ['services.vintage.schedule.0.intervalMin', '30'],
+      ['services.vintage.schedule.0.days', '1'], ['services.vintage.schedule.0.days', '5'],
+    ]), context);
+    expect(save.status).toBe(303);
+    expect(new URL(save.headers.get('location') ?? '').searchParams.get('saved')).toBe('1');
+    expect(repo.settings.size).toBe(0);
   });
 
   it('renders a pricing tab with a major-unit amount per tier and saves it in minor units', async () => {
@@ -740,8 +981,7 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
       'services.vintage.pricing.2.priceMinor': '180',
       'services.vintage.pricing.3.priceMinor': '200',
     }), context);
-    expect(invalid.status).toBe(400);
-    await expect(invalid.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('services.vintage.pricing.0.priceMinor') } });
+    expect(adminErrorOf(invalid)).toEqual({ code: 'validation_failed', field: 'services.vintage.pricing.0.priceMinor' });
 
     const reset = await handleAdminPost(adminPostRequest({ action: 'settings-reset:services.vintage.pricing.0.priceMinor' }), context);
     expect(reset.status).toBe(303);
@@ -762,15 +1002,54 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     expect(repo.settings.has('legal.termsUrl')).toBe(true);
   });
 
-  it('rejects invalid values and unknown sections with 400 validation_failed', async () => {
+  it('rejects invalid values and unknown sections with validation_failed', async () => {
     const repo = fakeRepository();
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const bad = await handleAdminPost(adminPostRequest({ action: 'settings-save', section: 'legal', 'legal.termsUrl': 'not a url' }), context);
-    expect(bad.status).toBe(400);
-    await expect(bad.json()).resolves.toMatchObject({ error: { code: 'validation_failed' } });
+    expect(adminErrorOf(bad)).toEqual({ code: 'validation_failed', field: 'legal.termsUrl' });
     expect(repo.settings.size).toBe(0);
     const unknown = await handleAdminPost(adminPostRequest({ action: 'settings-save', section: 'nope' }), context);
-    expect(unknown.status).toBe(400);
+    expect(adminErrorOf(unknown).code).toBe('validation_failed');
+  });
+
+  // A reset can leave an invalid merged config as easily as a save can. The unvalidated baseConfig
+  // below (the same device as the field-attribution test) makes every remaining merge invalid, so
+  // both reset shapes must be refused, naming the conflicting field, without deleting anything.
+  it('runs the same merged validation on settings-reset and settings-reset:<key>, refusing an invalid combination', async () => {
+    const repo = fakeRepository();
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+    const brokenWithoutOverride: ResolvedClientConfig = { ...config, locales: { supported: ['pt-BR'], default: 'en' } };
+    context.baseConfig = brokenWithoutOverride;
+    repo.settings.set('legal.termsUrl', '"https://elsewhere.test/terms"');
+
+    // The file config alone fails validateConfig, so removing any override leaves an invalid merge.
+    const single = await handleAdminPost(adminPostRequest({ action: 'settings-reset:legal.termsUrl', section: 'legal' }), context);
+    expect(adminErrorOf(single).field).toContain('locales');
+    expect(repo.settings.get('legal.termsUrl')).toBe('"https://elsewhere.test/terms"');
+
+    const section = await handleAdminPost(adminPostRequest({ action: 'settings-reset', section: 'legal' }), context);
+    expect(adminErrorOf(section).field).toContain('locales');
+    expect(repo.settings.get('legal.termsUrl')).toBe('"https://elsewhere.test/terms"');
+  });
+
+  // Enter in a field submits through the form's first submit button; the per-field Reset buttons
+  // come before Save, so a hidden Save must come first.
+  it('makes Save the first submit button of every settings form, out of the tab order and accessibility tree', async () => {
+    const repo = fakeRepository();
+    repo.settings.set('booking.minNoticeHours', '2');
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+    const body = await (await handleAdminGet(settingsGetRequest(), context)).text();
+    const forms = [...body.matchAll(/<form method="post" class="bk-settings-form"[^]*?<\/form>/g)].map((match) => match[0]);
+    expect(forms.length).toBeGreaterThan(0);
+    for (const form of forms) {
+      const firstSubmit = /<button type="submit"[^>]*>/.exec(form)?.[0] ?? '';
+      expect(firstSubmit).toContain('value="settings-save"');
+      expect(firstSubmit).toContain('tabindex="-1"');
+      expect(firstSubmit).toContain('aria-hidden="true"');
+    }
+    // The policy form really does carry a Reset before its visible Save.
+    const policy = forms.find((form) => form.includes('id="bk-s-policy"')) ?? '';
+    expect(policy.indexOf('settings-reset:booking.minNoticeHours')).toBeLessThan(policy.lastIndexOf('value="settings-save"'));
   });
 
   // holdMinutes outside [35, 1440] must be unsaveable, not just clamped elsewhere (a value below 35
@@ -796,10 +1075,9 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
     const bad = await handleAdminPost(adminPostRequest(policyFields({ 'booking.holdMinutes': '0' })), context);
-    expect(bad.status).toBe(400);
-    // The message names the offending field (parseSettingForm's `${key}: ...` shape) — see the
-    // field-attribution test below for the mergeAndValidateSettings/SettingsMergeError case.
-    await expect(bad.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('booking.holdMinutes') } });
+    // The redirect names the offending field — see the field-attribution test below for the
+    // mergeAndValidateSettings/SettingsMergeError case.
+    expect(adminErrorOf(bad)).toEqual({ code: 'validation_failed', field: 'booking.holdMinutes' });
     expect(repo.settings.size).toBe(0);
 
     const good = await handleAdminPost(adminPostRequest(policyFields({ 'booking.holdMinutes': '40' })), context);
@@ -807,10 +1085,9 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     expect(repo.settings.get('booking.holdMinutes')).toBe('40');
   });
 
-  // Every admin action throws HttpError on failure (never an HTML re-render), so mapping
-  // SettingsMergeError to HttpError(400, ...) must still name which field failed — exercised via a
-  // genuinely cross-field validateConfig rejection reaching mergeAndValidateSettings.
-  it('field-attributes a mergeAndValidateSettings cross-field rejection in the HttpError message', async () => {
+  // Mapping SettingsMergeError to the error redirect must still name which field failed —
+  // exercised via a genuinely cross-field validateConfig rejection reaching mergeAndValidateSettings.
+  it('field-attributes a mergeAndValidateSettings cross-field rejection in the error redirect', async () => {
     const repo = fakeRepository();
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     // `config` is validated by createReservaContext, but `baseConfig` (the pristine file config the
@@ -820,21 +1097,23 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     context.baseConfig = brokenLocalesConfig;
 
     const response = await handleAdminPost(adminPostRequest({ action: 'settings-save', section: 'legal', 'legal.termsUrl': 'https://example.test/terms' }), context);
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('locales.default') } });
+    expect(adminErrorOf(response)).toEqual({ code: 'validation_failed', field: 'locales.default' });
     expect(repo.settings.size).toBe(0);
   });
 
-  // Proves handleAdminPost surfaces an applySettingsBatch failure as a 500 and never redirects to a
-  // saved state. The atomicity guarantee itself is proven at the repo unit level in tests/repo.test.ts.
-  it('propagates an applySettingsBatch failure as a 500 without redirecting to a saved state', async () => {
+  // Proves handleAdminPost surfaces an applySettingsBatch failure as an error and never redirects to
+  // a saved state. The atomicity guarantee itself is proven at the repo unit level in tests/repo.test.ts.
+  it('reports an applySettingsBatch failure as internal_error without redirecting to a saved state', async () => {
     const repo = fakeRepository();
     repo.applySettingsBatch = async () => { throw new Error('D1 batch failed'); };
-    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+    const errors: unknown[] = [];
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets, logger: { error: (...args: unknown[]) => { errors.push(args); } } });
 
     const response = await handleAdminPost(adminPostRequest(policyFields({ 'booking.minNoticeHours': '2', 'booking.maxHorizonDays': '90' })), context);
-    expect(response.status).toBe(500);
+    expect(adminErrorOf(response)).toEqual({ code: 'internal_error', field: null });
     expect(repo.settings.size).toBe(0);
+    // Turned into a redirect, the failure must still reach the operator's logs.
+    expect(errors).toHaveLength(1);
   });
 });
 
@@ -877,26 +1156,40 @@ describe('admin mutation origin + CSRF guard (src/admin-csrf.ts)', () => {
     expect(calls).toEqual(['2026-06-20']);
   });
 
+  // Past the origin guard, a token that fails is a page left open too long, so the operator is sent
+  // back with "page expired" rather than a raw 403 — and, as before, nothing runs.
+  function csrfRejectionContext(): { context: ReturnType<typeof createReservaContext>; calls: string[] } {
+    const repo = fakeRepository();
+    const calls: string[] = [];
+    repo.deleteDayOverrides = async (dates) => { calls.push(...dates); };
+    return { context: createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets }), calls };
+  }
+
   it('rejects a POST with no csrf_token field even with valid same-origin headers and Access', async () => {
-    const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+    const { context, calls } = csrfRejectionContext();
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'clear' }, { csrfToken: null }), context);
-    expect(response.status).toBe(403);
+    expect(adminErrorOf(response).code).toBe('csrf_expired');
+    expect(calls).toEqual([]);
   });
 
   it('rejects an expired csrf_token', async () => {
-    const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+    const { context, calls } = csrfRejectionContext();
     // Minted far enough in the past that its expiry already fell before CSRF_NOW (the fixed clock
     // every context in this file uses).
     const expired = await mintTestCsrfToken('', CSRF_NOW - ADMIN_CSRF_TOKEN_TTL_MS - 1_000);
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'clear' }, { csrfToken: expired }), context);
-    expect(response.status).toBe(403);
+    expect(adminErrorOf(response).code).toBe('csrf_expired');
+    expect(calls).toEqual([]);
+    const page = await (await handleAdminGet(new Request(response.headers.get('location') ?? ''), context)).text();
+    expect(page).toContain('role="alert">This page expired. Please try again.</p>');
   });
 
   it('rejects a csrf_token minted for a different Access user (foreign subject)', async () => {
-    const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+    const { context, calls } = csrfRejectionContext();
     const foreignUser = await mintTestCsrfToken('someone-else@example.test', CSRF_NOW);
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'clear' }, { csrfToken: foreignUser }), context);
-    expect(response.status).toBe(403);
+    expect(adminErrorOf(response).code).toBe('csrf_expired');
+    expect(calls).toEqual([]);
   });
 
   it('accepts the exact token embedded in a GET-rendered admin form on a subsequent same-origin POST (render -> submit end to end)', async () => {
@@ -976,10 +1269,18 @@ describe('admin mutation origin + CSRF guard (src/admin-csrf.ts)', () => {
     expect(response.headers.get('cache-control')).toBe('no-store');
   });
 
-  it('sets Cache-Control: no-store on an admin POST that 400s (validation failure)', async () => {
+  it('sets Cache-Control: no-store on an admin POST that fails validation', async () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'delete-everything' }), context);
-    expect(response.status).toBe(400);
+    expect(adminErrorOf(response).code).toBe('validation_failed');
+  });
+
+  // Access failures are not the operator's to retry on this page, so they stay a plain 403.
+  it('still answers 403, not a redirect, when Access rejects the POST', async () => {
+    const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => null, providers: providers(), secrets: csrfSecrets });
+    const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', capacity: '', action: 'set' }), context);
+    expect(response.status).toBe(403);
+    expect(response.headers.get('location')).toBeNull();
     expect(response.headers.get('cache-control')).toBe('no-store');
   });
 });

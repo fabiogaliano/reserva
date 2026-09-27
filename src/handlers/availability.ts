@@ -1,4 +1,4 @@
-import type { AvailabilityDay, AvailabilityResponse } from '../core/api.js';
+import { MANAGE_TOKEN_HEADER, type AvailabilityDay, type AvailabilityResponse } from '../core/api.js';
 import { maxQuantityFor, resolveService } from '../core/config.js';
 import { availabilityForDay, capacityForDate, defaultCapacityForDate, type CalEvent, type DayAvailability } from '../core/occupancy.js';
 import { priceFor, pricingPickupKeys } from '../core/pricing.js';
@@ -145,6 +145,8 @@ interface AvailabilityInput {
   quantity: number;
   dates: string[];
   service: ReturnType<typeof resolveService>;
+  // The booking a manage-token holder is moving, left out of the occupancy count.
+  excludeBookingId?: string;
 }
 
 function availabilityInput(request: Request, context: ReservaContext): AvailabilityInput {
@@ -184,7 +186,7 @@ function availabilityInput(request: Request, context: ReservaContext): Availabil
   return { quantity, dates, service };
 }
 
-// `remaining` is published only at or below `limitedThreshold` so a consumer can say "only N left";
+// `remaining` is published only at or below `limitedThreshold` so a consumer can say "room for N more";
 // above it the field is null so real capacity stays private. Slots that fit nothing are filtered
 // out upstream, so `remaining` is never 0.
 function wireDay(day: DayAvailability, limitedThreshold: number, localByStart: Map<string, { date: string; time: string }>): AvailabilityDay {
@@ -207,7 +209,7 @@ function wireDay(day: DayAvailability, limitedThreshold: number, localByStart: M
 }
 
 async function availabilityPayload(context: ReservaContext, now: string, input: AvailabilityInput): Promise<{ payload: AvailabilityResponse; stale: boolean }> {
-  const { quantity, dates, service } = input;
+  const { quantity, dates, service, excludeBookingId } = input;
   const firstDay = dates[0];
   const lastDay = dates[dates.length - 1];
   if (!firstDay || !lastDay) {
@@ -257,6 +259,7 @@ async function availabilityPayload(context: ReservaContext, now: string, input: 
       minNoticeHours: context.config.booking.minNoticeHours,
       maxHorizonDays: context.config.booking.maxHorizonDays,
       limitedThreshold,
+      ...(excludeBookingId ? { excludeBookingId } : {}),
     }), limitedThreshold, localByStart);
   });
   return {
@@ -267,12 +270,28 @@ async function availabilityPayload(context: ReservaContext, now: string, input: 
   };
 }
 
+// Only the token's own booking is ever excluded, and only a live token excludes anything: an
+// unknown, expired or revoked one gets exactly the answer (and the cache path) no token would.
+async function manageTokenBookingId(context: ReservaContext, token: string, now: string): Promise<string | undefined> {
+  const booking = await context.repo.getBookingByCancelToken(token, now)
+    ?? await context.repo.getBookingByOperatorToken(token, now);
+  return booking?.id;
+}
+
 export function handleAvailability(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const input = availabilityInput(request, context);
     const now = nowIso(context);
     await sweepExpiredHoldsThrottled(context, now);
+    const manageToken = request.headers.get(MANAGE_TOKEN_HEADER);
+    const excludeBookingId = manageToken ? await manageTokenBookingId(context, manageToken, now) : undefined;
+    if (excludeBookingId) {
+      // One booking's view of the calendar: never read from or written to the shared cache, and
+      // never cacheable downstream, where it would be served to everyone asking for the same URL.
+      const { payload } = await availabilityPayload(context, now, { ...input, excludeBookingId });
+      return json(payload, 200, { 'cache-control': 'private, no-store' });
+    }
     const availabilityCache = context.providers.calendar ? undefined : context.cache;
     let cacheKey: Request | undefined;
     if (availabilityCache) {

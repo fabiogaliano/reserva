@@ -1,6 +1,6 @@
 import { minorUnitDigits, toMajorUnits } from '../core/currency.js';
 import { formatLocaleFor } from '../core/locale.js';
-import { parseUtcInstant } from '../core/time.js';
+import { localDateKey, parseUtcInstant } from '../core/time.js';
 
 // Booking summaries carry local ISO strings with an explicit offset, so parsing them yields the
 // correct instant and Intl re-projects it into the business timezone for display.
@@ -27,11 +27,16 @@ export function formatDateTimeRange(startIso: string, endIso: string, locale: st
   const start = formatDateTime(startIso, locale, timezone);
   if (!endIso || endIso === startIso) return start;
   try {
+    const endInstant = parseUtcInstant(endIso);
+    // A booking that runs past midnight (business-local) must say which day it ends on, or an
+    // overnight trip reads as ending before it starts.
+    const sameDay = localDateKey(parseUtcInstant(startIso), timezone) === localDateKey(endInstant, timezone);
+    if (!sameDay) return `${start} – ${formatDateTime(endIso, locale, timezone)}`;
     const endTime = new Intl.DateTimeFormat(formatLocaleFor(locale), {
       timeZone: timezone,
       hour: '2-digit',
       minute: '2-digit',
-    }).format(parseUtcInstant(endIso));
+    }).format(endInstant);
     return `${start} – ${endTime}`;
   } catch {
     return start;
@@ -84,8 +89,9 @@ export function formatPrice(amountMinor: number, locale: string, currency: strin
   }
 }
 
-function calendarStamp(isoWithOffset: string): string {
-  return parseUtcInstant(isoWithOffset).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+function calendarStamp(isoWithOffset: string | Date): string {
+  const instant = typeof isoWithOffset === 'string' ? parseUtcInstant(isoWithOffset) : isoWithOffset;
+  return instant.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
 }
 
 export interface CalendarEvent {
@@ -94,6 +100,22 @@ export interface CalendarEvent {
   end: string;
   location: string;
   description: string;
+}
+
+// The identity a calendar app files the event under: one per booking, the same in every copy of
+// the file and across reschedules (the old start-time UID collided for two bookings sharing a
+// start). Whether a re-import replaces the entry is the app's call — no SEQUENCE is emitted. Keyed
+// on the booking reference — unique,
+// immutable across reschedules, and already on every customer surface — because the pages that
+// offer this file are deliberately never given the internal booking id.
+export function calendarUid(reference: string, businessUrl: string): string {
+  let host = '';
+  try {
+    host = new URL(businessUrl).host;
+  } catch {
+    // A config that got past validation always parses; the bare reference is still unique.
+  }
+  return host ? `${reference}@${host}` : reference;
 }
 
 export function googleCalendarUrl(event: CalendarEvent): string {
@@ -107,17 +129,24 @@ export function googleCalendarUrl(event: CalendarEvent): string {
   return `https://calendar.google.com/calendar/render?${params}`;
 }
 
+// What an .ics needs beyond the event itself: its stable identity and when the file was produced
+// (DTSTAMP).
+export interface IcsStamp {
+  uid: string;
+  generatedAt: Date;
+}
+
 // The calendar file itself, shared with the email renderer: the confirmation page hands it to the
 // browser as a data URL, the confirmation mail attaches the very same bytes.
-export function icsText(event: CalendarEvent): string {
+export function icsText(event: CalendarEvent, stamp: IcsStamp): string {
   const escapeIcs = (value: string): string => value.replace(/\\/g, '\\\\').replace(/[,;]/g, (c) => `\\${c}`).replace(/\n/g, '\\n');
   return [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
     'PRODID:-//reserva//EN',
     'BEGIN:VEVENT',
-    `UID:${calendarStamp(event.start)}-reserva`,
-    `DTSTAMP:${calendarStamp(event.start)}`,
+    `UID:${escapeIcs(stamp.uid)}`,
+    `DTSTAMP:${calendarStamp(stamp.generatedAt)}`,
     `DTSTART:${calendarStamp(event.start)}`,
     `DTEND:${calendarStamp(event.end)}`,
     `SUMMARY:${escapeIcs(event.title)}`,
@@ -128,6 +157,6 @@ export function icsText(event: CalendarEvent): string {
   ].join('\r\n');
 }
 
-export function icsDataUrl(event: CalendarEvent): string {
-  return `data:text/calendar;charset=utf-8,${encodeURIComponent(icsText(event))}`;
+export function icsDataUrl(event: CalendarEvent, stamp: IcsStamp): string {
+  return `data:text/calendar;charset=utf-8,${encodeURIComponent(icsText(event, stamp))}`;
 }

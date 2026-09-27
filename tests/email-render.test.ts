@@ -19,6 +19,7 @@ function context(overrides: Partial<EmailTemplateContext> = {}): EmailTemplateCo
     customerManageUrl: 'https://example.test/booking/manage?token=cancel-token',
     operatorManageUrl: 'https://example.test/booking/manage?token=operator-token',
     startsAtLocal: '15 Jun 2026, 09:00',
+    generatedAt: new Date('2026-06-01T10:00:00.000Z'),
     ...overrides,
   };
 }
@@ -106,6 +107,22 @@ describe('calendar attachment', () => {
 
     expect(renderDefaultEmail(context({ recipient: 'owner' })).attachments).toBeUndefined();
     expect(renderDefaultEmail(context({ event: 'booking.cancelled_by_customer' })).attachments).toBeUndefined();
+  });
+
+  it('names the event by reference and business host, so a reschedule updates the entry, and stamps when the file was made', () => {
+    const confirmed = atob(renderDefaultEmail(context()).attachments![0]!.content);
+    const rescheduled = atob(renderDefaultEmail(context({
+      event: 'booking.rescheduled',
+      booking: booking({ startsAt: '2026-06-16T08:00:00.000Z', endsAt: '2026-06-16T09:00:00.000Z' }),
+      generatedAt: new Date('2026-06-02T11:30:00.000Z'),
+    })).attachments![0]!.content);
+    const host = new URL(config.business.url).host;
+    expect(confirmed).toContain(`UID:${booking().reference}@${host}`);
+    expect(rescheduled).toContain(`UID:${booking().reference}@${host}`);
+    // DTSTAMP is the generation time, never the event start it used to copy.
+    expect(confirmed).toContain('DTSTAMP:20260601T100000Z');
+    expect(rescheduled).toContain('DTSTAMP:20260602T113000Z');
+    expect(rescheduled).toContain('DTSTART:20260616T080000Z');
   });
 });
 

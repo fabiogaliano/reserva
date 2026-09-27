@@ -15,13 +15,20 @@ import { escapeHtml } from '../../http.js';
 import { cssAssetHref, jsAssetHref } from '../asset-hrefs.js';
 import { factList, pageShell, themeToggle } from '../layout.js';
 import { formatMessage, resolveMessages } from '../messages.js';
-import { adminSidebar } from './admin-page.js';
+import { adminErrorAlert, adminSidebar, type AdminErrorNotice } from './admin-page.js';
 
 // The admin settings page (?view=settings). A two-column form: each group's title on the left,
 // its always-editable fields on the right, so the control is the value and there is no reveal
 // step. Sections sit behind a tab bar that degrades to links. csrfToken is undefined when CSRF
 // isn't configured.
-export function settingsPage(context: ReservaContext, storedRows: Record<string, string>, saved: boolean, sectionParam: string, csrfToken: string | undefined): string {
+export function settingsPage(
+  context: ReservaContext,
+  storedRows: Record<string, string>,
+  saved: boolean,
+  sectionParam: string,
+  csrfToken: string | undefined,
+  error: AdminErrorNotice | null = null,
+): string {
   const locale = adminLocaleFor(context.config);
   const messages = resolveMessages(context.config, locale);
   const catalog = messages as Record<string, string>;
@@ -216,9 +223,13 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
     const sectionReset = hasOverrides
       ? `<button type="submit" class="bk-linkbtn" name="action" value="settings-reset" formnovalidate>${escapeHtml(messages['admin.resetSection'])}</button>`
       : '';
+    // Enter in a field submits through the form's first submit button, which would otherwise be a
+    // field's Reset. This invisible Save comes first in tree order so implicit submission always
+    // saves; it is kept out of the tab order and the accessibility tree, where the visible Save is.
+    const defaultSave = `<button type="submit" class="bk-sr-only" name="action" value="settings-save" tabindex="-1" aria-hidden="true">${escapeHtml(messages['admin.save'])}</button>`;
     // Save is the step operators miss, so the bar pins to the bottom of the viewport and, once
     // anything changes, says so beside the button.
-    return `<form method="post" class="bk-settings-form" id="bk-s-${section}"${section === activeSection ? '' : ' hidden'}><h2>${escapeHtml(sectionTitles[section])}</h2>`
+    return `<form method="post" class="bk-settings-form" id="bk-s-${section}"${section === activeSection ? '' : ' hidden'}>${defaultSave}<h2>${escapeHtml(sectionTitles[section])}</h2>`
       + `<p class="bk-hint">${escapeHtml(sectionHints[section])}</p>`
       + `<input type="hidden" name="csrf_token" value="${escapeHtml(csrfToken)}"><input type="hidden" name="section" value="${escapeHtml(section)}">${body}`
       + `<div class="bk-actions bk-actions--split bk-savebar"><span class="bk-savebar-status"><button type="submit" class="bk-btn" name="action" value="settings-save">${escapeHtml(messages['admin.save'])}</button>`
@@ -246,6 +257,10 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
     + `</nav>`;
 
   const savedAlert = saved ? `<p class="bk-alert bk-alert--ok" role="status">${escapeHtml(messages['admin.saved'])}</p>` : '';
+  const errorAlert = adminErrorAlert(messages, error, (field) => {
+    const definition = definitions.find((candidate) => candidate.key === field);
+    return definition ? labelFor(definition) : undefined;
+  });
   return pageShell({
     lang: locale,
     page: 'settings',
@@ -261,6 +276,7 @@ export function settingsPage(context: ReservaContext, storedRows: Record<string,
     themeToggle: themeToggle(messages, context.viewerTheme),
     body: `<header class="bk-admin-header"><h1>${escapeHtml(messages['admin.settings'])}</h1></header>`
       + savedAlert
+      + errorAlert
       + tabs
       + `<div class="bk-settings-sections">${sections}${readonlySection}</div>`,
   });

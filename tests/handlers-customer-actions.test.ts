@@ -287,7 +287,7 @@ describe('POST /reschedule (customer, spec §11)', () => {
     expect(emails).toEqual(['booking.rescheduled']);
   });
 
-  it('retries a failed calendar patch at the same target without a second reschedule notification, and a later genuine move is not suppressed by the no-op guard', async () => {
+  it('reports success once the move commits, owes a failed calendar patch to the outbox, and a same-target resubmit drains it without a second notification', async () => {
     const seeded = booking({
       id: 'b-reschedule-patch-retry', startsAt: '2026-06-15T09:00:00.000Z',
       endsAt: '2026-06-15T10:00:00.000Z', calendarEventId: 'cal-retry',
@@ -295,8 +295,7 @@ describe('POST /reschedule (customer, spec §11)', () => {
     const repo = fakeRepository([seeded]);
     let patches = 0;
     const emails: string[] = [];
-    // The no-op guard (rescheduleWithToken: next.startsAt === booking.startsAt) must skip
-    // rescheduleWithCapacity entirely on the same-target retry — only calendarPatch may run again.
+    // The same-target resubmit must skip rescheduleWithCapacity entirely.
     const realRescheduleWithCapacity = repo.rescheduleWithCapacity;
     let capacityWrites = 0;
     repo.rescheduleWithCapacity = async (id, input) => {
@@ -315,18 +314,19 @@ describe('POST /reschedule (customer, spec §11)', () => {
     });
 
     const first = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, validNewStart), context);
-    expect(first.status).toBe(500);
+    expect(first.status).toBe(200);
     expect(repo.rows.get(seeded.id)?.startsAt).toBe(validNewStart);
-    expect(repo.sideEffectOperations.size).toBe(1);
+    expect(patches).toBe(1);
+    expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_patch:1`)).toMatchObject({ status: 'failed' });
+    expect(repo.sideEffectOperations.get(`${seeded.id}:email:booking.rescheduled:1`)).toMatchObject({ status: 'succeeded' });
     expect(capacityWrites).toBe(1);
 
     const retry = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, validNewStart), context);
     expect(retry.status).toBe(200);
     expect(patches).toBe(2);
+    expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_patch:1`)).toMatchObject({ status: 'succeeded' });
     expect(emails).toEqual(['booking.rescheduled']);
-    expect(repo.sideEffectOperations.size).toBe(1);
-    // The no-op retry repaired the calendar patch but made no capacity-changing repository write —
-    // rescheduleWithCapacity was called only for the original (real) move, never for this retry.
+    expect(repo.sideEffectOperations.size).toBe(2);
     expect(capacityWrites).toBe(1);
 
     // A genuine follow-up move (B -> C) must not be swallowed by the no-op guard: it creates a
@@ -337,11 +337,12 @@ describe('POST /reschedule (customer, spec §11)', () => {
     expect(capacityWrites).toBe(2);
     expect(patches).toBe(3);
     expect(emails).toEqual(['booking.rescheduled', 'booking.rescheduled']);
-    expect(repo.sideEffectOperations.size).toBe(2);
+    expect(repo.sideEffectOperations.size).toBe(4);
     expect(repo.sideEffectOperations.get(`${seeded.id}:email:booking.rescheduled:2`)).toMatchObject({ status: 'succeeded' });
+    expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_patch:2`)).toMatchObject({ status: 'succeeded' });
   });
 
-  it('operator path: retries a failed calendar patch at the same target without a second reschedule notification', async () => {
+  it('operator path: a failed calendar patch still reports success and is owed to the outbox', async () => {
     const seeded = booking({
       id: 'b-op-reschedule-patch-retry', startsAt: '2026-06-15T09:00:00.000Z',
       endsAt: '2026-06-15T10:00:00.000Z', calendarEventId: 'cal-op-retry',
@@ -371,17 +372,63 @@ describe('POST /reschedule (customer, spec §11)', () => {
     });
 
     const first = await handleOperatorReschedule(operatorRescheduleRequest(validNewStart), context);
-    expect(first.status).toBe(500);
+    expect(first.status).toBe(200);
     expect(repo.rows.get(seeded.id)?.startsAt).toBe(validNewStart);
-    expect(repo.sideEffectOperations.size).toBe(1);
+    expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_patch:1`)).toMatchObject({ status: 'failed' });
     expect(capacityWrites).toBe(1);
 
     const retry = await handleOperatorReschedule(operatorRescheduleRequest(validNewStart), context);
     expect(retry.status).toBe(200);
     expect(patches).toBe(2);
     expect(emails).toEqual(['booking.rescheduled']);
-    expect(repo.sideEffectOperations.size).toBe(1);
+    expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_patch:1`)).toMatchObject({ status: 'succeeded' });
     expect(capacityWrites).toBe(1);
+  });
+
+  it('treats a resubmit to the current start as a no-op success even once the new start is inside the cutoff', async () => {
+    // Moved to a start 20h away (inside the 24h cutoff): the resubmitted form must not bounce
+    // off past_cutoff, because the booking is already exactly where it asked to be.
+    const seeded = booking({ id: 'b-reschedule-noop-cutoff', startsAt: '2026-06-15T04:00:00.000Z', endsAt: '2026-06-15T05:00:00.000Z' });
+    const repo = fakeRepository([seeded]);
+    const emails: string[] = [];
+    const context = createReservaContext({
+      config, db: {} as D1Database, repo, clock,
+      providers: providers({ email: { send: async (event) => { emails.push(event); } } }),
+    });
+
+    const response = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, seeded.startsAt), context);
+    expect(response.status).toBe(200);
+    expect(emails).toEqual([]);
+    expect(repo.rows.get(seeded.id)?.updatedAt).toBe(seeded.updatedAt);
+  });
+
+  // The no-op must not become a way to hear "rescheduled" from a deployment that offers no
+  // rescheduling at all.
+  it('refuses even a same-start resubmit when rescheduling is switched off', async () => {
+    const seeded = booking({ id: 'b-reschedule-noop-disabled', startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z' });
+    const disabled = { ...config, booking: { ...config.booking, reschedule: { ...config.booking.reschedule, enabled: false } } };
+    const context = createReservaContext({ config: disabled, db: {} as D1Database, repo: fakeRepository([seeded]), clock, providers: providers() });
+
+    const response = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, seeded.startsAt), context);
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'past_cutoff' } });
+  });
+
+  it('reports success when it loses the write to a concurrent move to the very same slot', async () => {
+    const seeded = booking({ id: 'b-reschedule-concurrent-same', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z' });
+    const repo = fakeRepository([seeded]);
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+    // The twin request commits between this one's read and its write.
+    const realRescheduleWithCapacity = repo.rescheduleWithCapacity;
+    repo.rescheduleWithCapacity = async (id, input) => {
+      const current = repo.rows.get(id)!;
+      repo.rows.set(id, { ...current, startsAt: input.startsAt, endsAt: input.endsAt });
+      return realRescheduleWithCapacity(id, input);
+    };
+
+    const response = await handleCustomerReschedule(rescheduleRequest(seeded.cancelToken, validNewStart), context);
+    expect(response.status).toBe(200);
+    expect(repo.rows.get(seeded.id)?.startsAt).toBe(validNewStart);
   });
 
   it('excludes its own occupancy at the route layer: moving within an overlapping window at capacity 1 must not 409 against itself', async () => {

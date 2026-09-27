@@ -6,22 +6,32 @@
 import { darkTokens, lightTokens } from './generated/tokens.js';
 
 export const themeCss = `
-:root {
+/* Every default sits inside :where() so it has zero specificity: a consumer's plain
+   \`:root { --bk-accent: … }\` wins in both schemes without having to outrank these selectors. */
+:where(:root) {
   /* Keeps native control chrome (select dropdowns, date pickers, scrollbars) in step with the
      token flip below — without it they stay light inside the dark theme. */
   color-scheme: light dark;${lightTokens}
 }
 /* Applies when the OS prefers dark and no theme is forced, or when the viewer picks dark via the
    bk_theme cookie (reflected onto <html data-theme> server-side for a flash-free first paint).
-   :root[data-theme] outranks the media query, so a forced light theme wins under a dark OS. */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) {${darkTokens}
+   The media rule skips a forced theme, and forced dark follows it, so at equal (zero)
+   specificity a forced choice wins either way. Screen-only, so paper always gets light tokens. */
+@media screen and (prefers-color-scheme: dark) {
+  :where(:root:not([data-theme])) {${darkTokens}
   }
 }
-:root[data-theme="dark"] {
-  color-scheme: dark;${darkTokens}
+@media screen {
+  :where(:root[data-theme="dark"]) {
+    color-scheme: dark;${darkTokens}
+  }
 }
-:root[data-theme="light"] { color-scheme: light; }
+:where(:root[data-theme="light"]) { color-scheme: light; }
+
+/* Focus is a solid outline in the element's own accent rather than a box-shadow: forced-colors
+   mode drops box-shadows but repaints outlines in a system color, and reading var(--bk-accent)
+   at each rule keeps the ring in step with an accent scoped below :root. The offset puts the
+   ring on the surrounding surface, where the accent clears 3:1, instead of on the control. */
 
 .bk-page {
   margin: 0;
@@ -44,7 +54,9 @@ export const themeCss = `
   background: var(--bk-surface);
   color: var(--bk-text);
   font-weight: 600;
-  box-shadow: var(--bk-focus), var(--bk-shadow);
+  outline: 2px solid var(--bk-accent);
+  outline-offset: 2px;
+  box-shadow: var(--bk-shadow);
   translate: 0 -200%;
 }
 .bk-skip:focus { translate: 0; }
@@ -88,6 +100,10 @@ export const themeCss = `
   border-color: rgb(255 255 255 / 0.16);
 }
 .bk-masthead .bk-pagehead .bk-lead { margin-bottom: 0; }
+/* The lead has no bottom margin on the band, so the body's pull-up on a following list would run
+   the two together; --bk-text-muted is tuned for light surfaces, not this one. */
+.bk-masthead .bk-lead + .bk-list { margin: 0.5rem 0 0; color: var(--bk-masthead-muted); }
+.bk-masthead .bk-list, .bk-masthead .bk-list li::marker { color: var(--bk-masthead-muted); }
 
 /* Per-viewer toggle (System → Light → Dark), server-rendered hidden; the enhancer reveals it so
    no-JS viewers get the OS default instead of a dead control. Uses the masthead's glass button
@@ -111,7 +127,7 @@ export const themeCss = `
 @media (hover: hover) and (pointer: fine) {
   .bk-theme-toggle:hover { background: rgb(255 255 255 / 0.13); }
 }
-.bk-theme-toggle:focus-visible { outline: none; box-shadow: var(--bk-focus); }
+.bk-theme-toggle:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; }
 .bk-theme-toggle svg { flex: none; opacity: 0.85; }
 /* In-flow as the masthead's first row, right-aligned, so title text below can't underlap the
    control on a narrow screen. */
@@ -200,7 +216,8 @@ export const themeCss = `
   .bk-sidebar a:hover { background: rgb(255 255 255 / 0.06); color: #ededef; }
 }
 .bk-sidebar a.bk-active { background: rgb(255 255 255 / 0.1); color: #ffffff; }
-.bk-sidebar a:focus-visible { outline: none; box-shadow: var(--bk-focus); }
+/* Inset: on narrow screens the links scroll inside an overflow box that would clip an outer ring. */
+.bk-sidebar a:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: -2px; }
 .bk-sidebar svg { flex: none; opacity: 0.82; }
 .bk-sidebar-label { display: none; }
 @media (max-width: 879px) {
@@ -251,7 +268,7 @@ export const themeCss = `
   text-decoration: none;
 }
 .bk-admin-attention:hover { text-decoration: underline; }
-.bk-admin-attention:focus-visible { outline: none; box-shadow: var(--bk-focus); border-radius: 4px; }
+.bk-admin-attention:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; border-radius: 4px; }
 /* Panels are all server-rendered and all but one carry [hidden], so the tab strip works as plain
    links before the enhancer upgrades it to an in-page toggle. */
 .bk-panels > [hidden] { display: none; }
@@ -308,7 +325,7 @@ export const themeCss = `
 @media (hover: hover) and (pointer: fine) {
   .bk-booking > summary:hover { background: color-mix(in srgb, var(--bk-surface-2) 55%, transparent); }
 }
-.bk-booking > summary:focus-visible { outline: none; box-shadow: var(--bk-focus); }
+.bk-booking > summary:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; }
 .bk-booking[open] > summary { background: color-mix(in srgb, var(--bk-surface-2) 45%, transparent); }
 @media (prefers-reduced-motion: reduce) { .bk-booking > summary { transition: none; } }
 .bk-booking-time { min-width: 3.25rem; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -363,7 +380,7 @@ export const themeCss = `
   background: var(--bk-surface-2);
   border-right: 1px dashed var(--bk-border);
 }
-.bk-ticket-month { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--bk-accent); }
+.bk-ticket-month { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--bk-accent-text); }
 .bk-ticket-day { font-size: 2.3rem; font-weight: 700; line-height: 1.05; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .bk-ticket-time { font-size: 0.85rem; color: var(--bk-text-muted); font-variant-numeric: tabular-nums; }
 .bk-ticket-body { flex: 1; min-width: 0; padding: 1.25rem 1.5rem; }
@@ -414,8 +431,12 @@ export const themeCss = `
 .bk-brand { margin: 0; font-size: 0.78rem; font-weight: 600; letter-spacing: 0.1em; color: var(--bk-text-muted); text-transform: uppercase; }
 .bk-brand a { color: inherit; text-decoration: none; }
 .bk-brand a:hover { text-decoration: underline; }
-.bk-brand a:focus-visible { outline: none; box-shadow: var(--bk-focus); border-radius: 2px; }
+.bk-brand a:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; border-radius: 2px; }
 .bk-brand-logo { display: inline-block; vertical-align: top; max-width: 100%; height: auto; }
+/* The dark bands stay dark in both schemes, where a brand accent picked for light surfaces can
+   fall under 3:1; their own text color is the ring that always reads there. After the rules
+   above on purpose: .bk-brand a and .bk-sidebar a tie with this on specificity. */
+:is(.bk-masthead, .bk-sidebar) :is(a, button):focus-visible { outline-color: var(--bk-masthead-text); }
 
 .bk-card {
   background: var(--bk-surface);
@@ -447,7 +468,7 @@ export const themeCss = `
 .bk-badge--ok { background: var(--bk-ok-soft); color: var(--bk-ok); }
 .bk-badge--warn { background: var(--bk-warning-soft); color: var(--bk-warning); }
 .bk-badge--danger { background: var(--bk-danger-soft); color: var(--bk-danger); }
-.bk-badge--accent { background: var(--bk-accent-soft); color: var(--bk-accent); }
+.bk-badge--accent { background: var(--bk-accent-soft); color: var(--bk-accent-text); }
 
 .bk-btn {
   display: inline-flex;
@@ -476,7 +497,7 @@ export const themeCss = `
   .bk-btn { transition: none; }
   .bk-btn:active:not([disabled]) { transform: none; }
 }
-.bk-btn:focus-visible { outline: none; box-shadow: var(--bk-focus); }
+.bk-btn:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; }
 .bk-btn[disabled] { opacity: 0.55; cursor: not-allowed; }
 .bk-btn--secondary { background: var(--bk-surface); color: var(--bk-text); border-color: var(--bk-border); box-shadow: 0 1px 2px rgb(20 21 26 / 0.05); }
 .bk-btn--danger { background: var(--bk-danger); border-color: var(--bk-danger); color: var(--bk-danger-contrast); }
@@ -498,9 +519,9 @@ export const themeCss = `
   color: var(--bk-text);
   font: inherit;
   font-size: 0.95rem;
-  transition: border-color 140ms ease, box-shadow 140ms ease;
+  transition: border-color 140ms ease;
 }
-.bk-input:focus-visible, .bk-select:focus-visible { outline: none; border-color: var(--bk-accent); box-shadow: var(--bk-focus); }
+.bk-input:focus-visible, .bk-select:focus-visible { border-color: var(--bk-accent); outline: 2px solid var(--bk-accent); outline-offset: 2px; }
 
 .bk-alert { border-radius: var(--bk-radius-sm); border: 1px solid transparent; padding: 0.7rem 0.95rem; margin: 0 0 1rem; font-size: 0.95rem; }
 .bk-alert--danger { background: var(--bk-danger-soft); color: var(--bk-danger); border-color: color-mix(in srgb, var(--bk-danger) 25%, transparent); }
@@ -544,11 +565,11 @@ export const themeCss = `
 
 .bk-disclosure { border: 1px solid var(--bk-border); border-radius: var(--bk-radius-sm); margin: 0 0 0.75rem; background: var(--bk-surface); }
 .bk-disclosure > summary { cursor: pointer; padding: 0.7rem 1rem; font-weight: 500; font-size: 0.95rem; list-style-position: inside; }
-.bk-disclosure > summary:focus-visible { outline: none; box-shadow: var(--bk-focus); border-radius: var(--bk-radius-sm); }
+.bk-disclosure > summary:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; border-radius: var(--bk-radius-sm); }
 .bk-disclosure > div { padding: 0 1rem 1rem; }
 
 .bk-filter-clear { display: inline-flex; align-items: center; color: var(--bk-text-muted); font-size: 0.85rem; font-weight: 500; text-underline-offset: 0.18em; }
-.bk-filter-clear:focus-visible { outline: none; box-shadow: var(--bk-focus); border-radius: 3px; }
+.bk-filter-clear:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; border-radius: 3px; }
 
 /* Availability calendar. A tinted tile per day plus a used/capacity label under every number read
    as a heat map the operator had to decode; the number carries the day and a single dot carries
@@ -574,7 +595,7 @@ export const themeCss = `
 @media (hover: hover) and (pointer: fine) {
   .bk-day:hover { background: var(--bk-surface-2); }
 }
-.bk-day:focus-visible { outline: none; box-shadow: var(--bk-focus); }
+.bk-day:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { .bk-day { transition: none; } }
 .bk-day--empty { visibility: hidden; }
 /* The dot is the whole state vocabulary: present means something is true of this day, and its
@@ -662,14 +683,14 @@ export const themeCss = `
 
 /* Settings keep one section visible at a time; the tab strip scrolls on narrow screens rather
    than wrapping into a second navigation hierarchy. */
-.bk-tabs { display: flex; flex-wrap: nowrap; gap: 1.5rem; margin: 0 0 2rem; overflow-x: auto; border-bottom: 1px solid var(--bk-border); scrollbar-width: none; }
+.bk-tabs { display: flex; flex-wrap: nowrap; gap: 0.5rem; margin: 0 -0.5rem 2rem; overflow-x: auto; border-bottom: 1px solid var(--bk-border); scrollbar-width: none; }
 .bk-tabs::-webkit-scrollbar { display: none; }
 .bk-tabs a {
   display: inline-flex;
   align-items: center;
   min-height: 2.75rem;
   box-sizing: border-box;
-  padding: 0 0 0.7rem;
+  padding: 0 0.5rem 0.7rem;
   margin-bottom: -1px;
   white-space: nowrap;
   color: var(--bk-text-muted);
@@ -680,7 +701,9 @@ export const themeCss = `
   transition: color 100ms ease;
 }
 .bk-tabs a:hover { color: var(--bk-text); }
-.bk-tabs a:focus-visible { outline: none; box-shadow: var(--bk-focus); }
+/* Inset for the same reason as the sidebar links: the strip scrolls, and its overflow box clips.
+   The tabs' inline padding (offset by the strip's negative margin) keeps the ring off the label. */
+.bk-tabs a:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: -2px; }
 .bk-tabs a[aria-current="page"] { color: var(--bk-text); border-bottom-color: var(--bk-text); }
 .bk-settings-sections { min-width: 0; }
 .bk-settings-sections > [hidden] { display: none; }
@@ -752,13 +775,13 @@ export const themeCss = `
   color: var(--bk-accent-contrast);
   font-weight: 500;
 }
-.bk-days .bk-check:has(input:focus-visible) { box-shadow: var(--bk-focus); }
+.bk-days .bk-check:has(input:focus-visible) { outline: 2px solid var(--bk-accent); outline-offset: 2px; }
 .bk-days .bk-check input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 @media (prefers-reduced-motion: reduce) { .bk-days .bk-check { transition: none; } }
 
 .bk-check { display: flex; align-items: center; gap: 0.5rem; min-height: 2.75rem; margin: 0 0 0.25rem; font-size: 0.92rem; cursor: pointer; }
 .bk-check input { width: 1.1rem; height: 1.1rem; accent-color: var(--bk-accent); }
-.bk-check input:focus-visible { outline: none; box-shadow: var(--bk-focus); border-radius: 2px; }
+.bk-check input:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; border-radius: 2px; }
 .bk-fieldset { border: 0; margin: 0; padding: 0; }
 .bk-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .bk-fieldset legend { font-size: 0.85rem; font-weight: 500; margin-bottom: 0.3rem; padding: 0; }
@@ -787,7 +810,7 @@ export const themeCss = `
 }
 .bk-switch input:checked { background: var(--bk-accent); }
 .bk-switch input:checked::after { translate: 1.05rem 0; }
-.bk-switch input:focus-visible { outline: none; box-shadow: var(--bk-focus); }
+.bk-switch input:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) {
   .bk-switch input, .bk-switch input::after { transition: none; }
 }
@@ -799,7 +822,7 @@ export const themeCss = `
   text-decoration: underline;
   cursor: pointer;
 }
-.bk-linkbtn:focus-visible { outline: none; box-shadow: var(--bk-focus); border-radius: 2px; }
+.bk-linkbtn:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; border-radius: 2px; }
 
 /* Calendar + slot picker injected by the manage-page enhancer at runtime */
 .bk-cal-wrap { margin: 0 0 1rem; }
@@ -826,7 +849,7 @@ export const themeCss = `
   padding: 0.3rem;
   cursor: pointer;
 }
-.bk-cal::part(button):focus-visible { outline: none; box-shadow: var(--bk-focus); }
+.bk-cal::part(button):focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; }
 .bk-cal calendar-month {
   --color-accent: var(--bk-accent);
   --color-text-on-accent: var(--bk-accent-contrast);
@@ -834,7 +857,7 @@ export const themeCss = `
 }
 .bk-cal calendar-month::part(head) { color: var(--bk-text-muted); font-size: 0.75rem; }
 .bk-cal calendar-month::part(button) { border-radius: var(--bk-radius-sm); font-variant-numeric: tabular-nums; }
-.bk-cal calendar-month::part(button):focus-visible { outline: none; box-shadow: var(--bk-focus); }
+.bk-cal calendar-month::part(button):focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; }
 .bk-cal calendar-month::part(today) { font-weight: 700; color: var(--bk-accent); }
 .bk-cal calendar-month::part(selected) { font-weight: 700; color: var(--bk-accent-contrast); }
 .bk-cal calendar-month::part(disallowed) { color: var(--bk-text-muted); opacity: 0.45; text-decoration: line-through; }
@@ -870,7 +893,7 @@ export const themeCss = `
   .bk-slot { transition: none; }
   .bk-slot:active { transform: none; }
 }
-.bk-slot:focus-visible { outline: none; box-shadow: var(--bk-focus); }
+.bk-slot:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 2px; }
 .bk-slot[aria-pressed="true"] {
   border-color: var(--bk-accent);
   background: var(--bk-accent);

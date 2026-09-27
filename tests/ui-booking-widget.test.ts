@@ -114,6 +114,17 @@ describe('BookingWidget.astro', () => {
     expect(widgetCssSource).toMatch(/\.bk-widget \.bkw-field\[hidden\] \{ display: none; \}/);
   });
 
+  it('Retry actually renders display:none while hidden — its display:block rule does not win the cascade over [hidden]', () => {
+    expect(widgetCssSource).toMatch(/\.bk-widget \.bkw-retry\[hidden\] \{ display: none; \}/);
+  });
+
+  // The deployment's `ui.messages` overrides only reach the widget's library keys through the
+  // resolved config.
+  it('resolves library copy against the deployment config, not a bare catalog', () => {
+    expect(widgetSource).toContain('resolveMessages(virtualConfig.config, locale)');
+    expect(widgetSource).not.toContain('resolveMessages(undefined');
+  });
+
   it('submit payload includes meetingPointId only when FormData actually carries it, never an empty string', () => {
     expect(widgetSource).toContain("const meetingPointId = formData.get('meetingPointId');");
     expect(widgetSource).toContain('if (meetingPointId !== null) payload.meetingPointId = String(meetingPointId);');

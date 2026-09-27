@@ -64,6 +64,17 @@ export function localDateTimeToUtcIso(value: string, timezone: string): string {
   return localDateTimeToUtc(value, timezone).toISOString();
 }
 
+// A few zones spring forward at midnight itself, so 00:00 does not exist on that date; the day
+// then starts at the first wall-clock hour that does.
+export function localDayStartUtcIso(date: string, timezone: string): string {
+  try {
+    return localDateTimeToUtcIso(`${date}T00:00`, timezone);
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+    return localDateTimeToUtcIso(`${date}T01:00`, timezone);
+  }
+}
+
 export function localDateAndTimeToUtc(date: string, time: string, timezone: string): Date {
   return localDateTimeToUtc(`${date}T${time}`, timezone);
 }

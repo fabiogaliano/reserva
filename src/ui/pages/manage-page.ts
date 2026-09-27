@@ -1,7 +1,7 @@
 import type { ManageBooking } from '../../core/api.js';
 import { escapeHtml } from '../../http.js';
 import { toMajorUnits } from '../../core/currency.js';
-import { formatDateTime, formatDateTimeRange, formatPrice, googleCalendarUrl, icsDataUrl } from '../format.js';
+import { calendarUid, formatDateTime, formatDateTimeRange, formatPrice, googleCalendarUrl, icsDataUrl } from '../format.js';
 import { brandMark, customerPageTheme, type PageBranding } from '../branding.js';
 import { contactBlock, factList, messageHtml, pageShell, statusBadge, themeToggle, type ContactConfig } from '../layout.js';
 import { defaultLocale, formatMessage, resolveMessages, type ReservaMessages } from '../messages.js';
@@ -32,8 +32,14 @@ export interface ManagePageOptions {
   // Post-redirect feedback: which action just succeeded, or the error code it failed with.
   notice?: 'rescheduled';
   errorCode?: string;
-  // When present, the page loads this module (the assetsJs route) and annotates the reschedule
-  // form so the served enhancer can swap the native datetime-local for a calendar + slot picker.
+  // `config.booking.reschedule.enabled`: tells "rescheduling is switched off" (say nothing) apart
+  // from "its deadline has passed" (say so). Absent is treated as enabled.
+  rescheduleEnabled?: boolean;
+  // The request's clock reading, stamped into the calendar file as when it was generated.
+  now?: Date;
+  // When present, the page loads this module (the assetsJs route): it guards every form against a
+  // double submit and, with `availability` set, swaps the reschedule form's native datetime-local
+  // for a calendar + slot picker.
   scriptHref?: string;
   availability?: {
     endpoint: string;
@@ -63,6 +69,7 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
   const deadline = typeof payload.cancelDeadline === 'string'
     ? payload.cancelDeadline
     : typeof payload.deadline === 'string' ? payload.deadline : '';
+  const rescheduleDeadline = typeof payload.rescheduleDeadline === 'string' ? payload.rescheduleDeadline : '';
   const status = typeof booking.status === 'string' ? booking.status : '';
   const action = escapeHtml(managePagePath);
   const tokenField = role === 'operator' ? 'operatorToken' : 'token';
@@ -72,6 +79,9 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
   const end = typeof booking.end === 'string' ? booking.end : start;
   const displayStart = start && options.timezone ? formatDateTimeRange(start, end, locale, options.timezone) : start;
   const displayDeadline = deadline && options.timezone ? formatDateTime(deadline, locale, options.timezone) : deadline;
+  const displayRescheduleDeadline = rescheduleDeadline && options.timezone
+    ? formatDateTime(rescheduleDeadline, locale, options.timezone)
+    : rescheduleDeadline;
 
   const quantityLabel = typeof booking.quantity === 'number'
     ? formatMessage(messages[booking.quantity === 1 ? 'widget.person' : 'widget.quantityCount'], { n: booking.quantity })
@@ -149,8 +159,11 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
     calendar_unavailable: 'manage.actionFailed',
     internal_error: 'manage.actionFailed',
   };
+  // Own-property lookup: the code comes straight off the query string, and `?error=constructor`
+  // must not resolve to something inherited from Object.prototype.
+  const errorKey = options.errorCode && Object.hasOwn(errorKeyByCode, options.errorCode) ? errorKeyByCode[options.errorCode] : undefined;
   const errorNotice = options.errorCode
-    ? `<p class="bk-alert bk-alert--danger" role="alert">${escapeHtml(messages[errorKeyByCode[options.errorCode] ?? 'manage.actionFailed'])}</p>`
+    ? `<p class="bk-alert bk-alert--danger" role="alert">${escapeHtml(messages[errorKey ?? 'manage.actionFailed'])}</p>`
     : '';
 
   const cancelledNotice = status === 'cancelled' ? `<p class="bk-alert bk-alert--danger" role="status">${escapeHtml(messages['manage.cancelled'])}</p>` : '';
@@ -159,9 +172,21 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
   const cutoffNotice = pastCutoff
     ? `<p class="bk-alert bk-alert--warn">${escapeHtml(messages['manage.pastCutoff'])}</p>`
     : '';
-  const cutoffContact = pastCutoff && options.contactConfig ? contactBlock(options.contactConfig, messages) : '';
+  // Exactly one action closed: the customer still has the other, so the page says which one is
+  // gone and when it closed, in the place its form would have been, instead of silently omitting it.
+  const oneClosed = status === 'confirmed' && role === 'customer' && !pastCutoff;
+  const cancelClosed = oneClosed && !canCancel && displayDeadline
+    ? `<p class="bk-alert bk-alert--warn">${escapeHtml(formatMessage(messages['manage.cancelClosed'], { deadline: displayDeadline }))}</p>`
+    : '';
+  const rescheduleClosed = oneClosed && !canReschedule && options.rescheduleEnabled !== false && displayRescheduleDeadline
+    ? `<p class="bk-alert bk-alert--warn">${escapeHtml(formatMessage(messages['manage.rescheduleClosed'], { deadline: displayRescheduleDeadline }))}</p>`
+    : '';
+  const cutoffContact = (pastCutoff || cancelClosed || rescheduleClosed) && options.contactConfig ? contactBlock(options.contactConfig, messages) : '';
   const policyNote = canCancel && displayDeadline && role === 'customer'
     ? `<p class="bk-hint">${escapeHtml(formatMessage(messages['manage.cancelPolicy'], { deadline: displayDeadline }))}</p>`
+    : '';
+  const reschedulePolicyNote = canReschedule && displayRescheduleDeadline && role === 'customer'
+    ? `<p class="bk-hint">${escapeHtml(formatMessage(messages['manage.reschedulePolicy'], { deadline: displayRescheduleDeadline }))}</p>`
     : '';
 
   const availability = options.availability;
@@ -173,6 +198,7 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
       loading: messages['widget.loadingSlots'],
       noSlots: messages['widget.noSlots'],
       limited: messages['widget.limited'],
+      limitedOne: messages['widget.limitedOne'],
       pickDate: messages['widget.date'],
       pickTime: messages['widget.time'],
       time: messages['widget.time'],
@@ -182,15 +208,16 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
   // calendar + slot chips when availability loads.
   const rescheduleForm = canReschedule
     ? `<section class="bk-card bk-reschedule"><h2>${escapeHtml(messages['manage.rescheduleTitle'])}</h2>`
-      + `<p class="bk-hint">${escapeHtml(messages['manage.rescheduleHint'])}</p>`
+      + `<p class="bk-hint">${escapeHtml(messages['manage.rescheduleHint'])}</p>${reschedulePolicyNote}`
       + `<form method="post" action="${action}" data-reserva-reschedule${rescheduleData}>${rescheduleIsland}<input type="hidden" name="action" value="reschedule">${hiddenToken}`
       + `<label class="bk-field" data-reserva-native-start><span>${escapeHtml(messages['manage.newStart'])}</span><input class="bk-input" name="start" type="datetime-local" required></label>`
       + `<button type="submit" class="bk-btn">${escapeHtml(messages['manage.rescheduleSubmit'])}</button></form></section>`
-    : '';
+    : rescheduleClosed;
 
   // Major units, not the minor ones the API takes: an operator types "15.00", and the manage route
-  // converts. The page carries no script, so the amount field cannot be revealed by the select —
-  // it is always visible and simply ignored unless "partial" is chosen, which the hint states.
+  // converts. Without script the amount field cannot be revealed by the select, so it is always
+  // visible and simply ignored unless "partial" is chosen, which the hint states; the enhancer only
+  // marks it required while "partial" is selected, and the route rejects a missing amount either way.
   const refundCurrency = currency;
   const partialRefundControl = typeof booking.priceMinor === 'number' && refundCurrency && booking.priceMinor > 1
     ? `<label class="bk-field"><span>${escapeHtml(messages['manage.refundAmount'])}</span>`
@@ -213,7 +240,7 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
       + `<p>${escapeHtml(messages['manage.cancelWarning'])}</p>${policyNote}`
       + `<form method="post" action="${action}"><input type="hidden" name="action" value="cancel">${hiddenToken}${refundControl}`
       + `<button type="submit" class="bk-btn bk-btn--danger">${escapeHtml(messages['manage.cancelConfirm'])}</button></form></div></details>`
-    : '';
+    : cancelClosed;
 
   // No-show is as irreversible as cancel, so it gets the same two-step disclosure treatment
   // instead of a bare one-click button.
@@ -241,7 +268,10 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
       };
       return `<div class="bk-actions"><span class="bk-sub">${escapeHtml(messages['confirmation.addToCalendar'])}</span>`
         + `<a class="bk-btn bk-btn--secondary bk-btn--sm" href="${escapeHtml(googleCalendarUrl(event))}" rel="noopener" target="_blank">${escapeHtml(messages['confirmation.addGoogle'])}</a>`
-        + `<a class="bk-btn bk-btn--secondary bk-btn--sm" href="${escapeHtml(icsDataUrl(event))}" download="booking.ics">${escapeHtml(messages['confirmation.addIcs'])}</a></div>`;
+        + `<a class="bk-btn bk-btn--secondary bk-btn--sm" href="${escapeHtml(icsDataUrl(event, {
+          uid: calendarUid(String(booking.reference ?? ''), options.businessUrl ?? ''),
+          generatedAt: options.now ?? new Date(),
+        }))}" download="booking.ics">${escapeHtml(messages['confirmation.addIcs'])}</a></div>`;
     })()
     : '';
   const summaryCard = `<section class="bk-card bk-summary${hasActions ? ' bk-col-side' : ''}" aria-label="${escapeHtml(messages['manage.yourBooking'])}"><h2>${escapeHtml(messages['manage.yourBooking'])}</h2>${factList(facts)}${calendar}</section>`;
@@ -262,7 +292,8 @@ export function renderManagePage(payload: Record<string, unknown>, managePagePat
     cssHref: options.cssHref ?? '',
     favicon: options.favicon,
     headHtml: options.headHtml,
-    ...(canReschedule && options.scriptHref ? { scriptHref: options.scriptHref } : {}),
+    ...(options.scriptHref ? { scriptHref: options.scriptHref } : {}),
+    skipLabel: messages['common.skipContent'],
     header,
     theme,
     ...(pinned ? {} : { themeToggle: themeToggle(messages, theme) }),
@@ -291,6 +322,45 @@ export function renderManageErrorPage(managePagePath: string, options: ManagePag
     cssHref: options.cssHref ?? '',
     favicon: options.favicon,
     headHtml: options.headHtml,
+    ...(options.scriptHref ? { scriptHref: options.scriptHref } : {}),
+    skipLabel: messages['common.skipContent'],
+    header,
+    theme,
+    ...(pinned ? {} : { themeToggle: themeToggle(messages, theme) }),
+    body,
+  });
+}
+
+// What a customer sees straight after cancelling. The cancel revokes their link in the same write,
+// so this is rendered from the POST itself: sending them back to the manage URL would land on
+// "Link not valid" for the booking they just cancelled.
+export function renderCancelledPage(
+  cancelled: { reference: string; priceMinor: number },
+  options: ManagePageOptions = {},
+): string {
+  const locale = options.locale ?? defaultLocale;
+  const messages = options.messages ?? resolveMessages(undefined, locale);
+  const brand = options.businessName ? brandMark(options.businessName, options.businessUrl, options.branding) : '';
+  const header = brand
+    + `<h1>${escapeHtml(messages['manage.cancelDoneTitle'])}</h1>`
+    + `<p class="bk-lead">${escapeHtml(formatMessage(messages['manage.cancelDoneBody'], { reference: cancelled.reference }))}</p>`;
+  const refund = cancelled.priceMinor > 0 ? messageHtml(messages['manage.cancelDoneRefund'], 'bk-lead') : '';
+  const bookAgain = options.businessUrl
+    ? `<div class="bk-actions"><a class="bk-btn" href="${escapeHtml(options.businessUrl)}">${escapeHtml(messages['manage.bookAgain'])}</a></div>`
+    : '';
+  const body = (refund || bookAgain ? `<section class="bk-card bk-message">${refund}${bookAgain}</section>` : '')
+    + (options.contactConfig ? contactBlock(options.contactConfig, messages) : '');
+  const { theme, pinned } = customerPageTheme(options.branding, options.theme);
+  return pageShell({
+    lang: locale,
+    page: 'manage',
+    status: 'cancelled',
+    title: `${messages['manage.cancelDoneTitle']} ${cancelled.reference}${options.businessName ? ` — ${options.businessName}` : ''}`,
+    cssHref: options.cssHref ?? '',
+    favicon: options.favicon,
+    headHtml: options.headHtml,
+    ...(options.scriptHref ? { scriptHref: options.scriptHref } : {}),
+    skipLabel: messages['common.skipContent'],
     header,
     theme,
     ...(pinned ? {} : { themeToggle: themeToggle(messages, theme) }),

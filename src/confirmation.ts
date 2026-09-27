@@ -565,6 +565,20 @@ function attemptForOperation(context: ReservaContext, booking: Booking, operatio
       },
     };
   }
+  if (operation.family === 'calendar_patch') {
+    const calendar = context.providers.calendar;
+    if (!calendar) return null;
+    return {
+      provider: 'calendar',
+      // Pushes the booking as it is NOW, not as it was when the row was written: a later
+      // reschedule's row and an older one converge on the same event, whichever runs last. A
+      // booking cancelled since has nothing left to sync (its own row deletes the event).
+      run: async () => {
+        if (!booking.calendarEventId || booking.status !== 'confirmed') return;
+        await calendar.patchEvent(booking.calendarEventId, booking, context.config);
+      },
+    };
+  }
   if (operation.family === 'email') {
     const email = context.providers.email;
     if (!email || !operation.event) return null;

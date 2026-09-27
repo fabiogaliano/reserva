@@ -1,9 +1,10 @@
 import type { ConfirmationBooking, ConfirmationSummary, StatusResponse } from '../../core/api.js';
 import type { ReservaContext } from '../../context.js';
 import { escapeHtml } from '../../http.js';
-import { cssAssetHref } from '../asset-hrefs.js';
+import { resolveLocale } from '../../core/locale.js';
+import { cssAssetHref, jsAssetHref } from '../asset-hrefs.js';
 import { brandMark, customerPageTheme } from '../branding.js';
-import { formatDateParts, formatDateTime, formatDateTimeRange, formatPrice, googleCalendarUrl, icsDataUrl } from '../format.js';
+import { calendarUid, formatDateParts, formatDateTimeRange, formatPrice, googleCalendarUrl, icsDataUrl } from '../format.js';
 import { contactBlock, factList, messageHtml, pageShell, themeToggle } from '../layout.js';
 import { formatMessage, resolveMessages, type ReservaMessages } from '../messages.js';
 
@@ -18,7 +19,7 @@ function isFullBooking(booking: ConfirmationBooking | ConfirmationSummary): book
 }
 
 // `statusBadge` is set only when `ui.confirmation.statusPlacement` moves the badge into the ticket.
-function confirmedBody(context: Pick<ReservaContext, 'config'>, messages: ReservaMessages, booking: ConfirmedBooking, locale: string, statusBadge: string): string {
+function confirmedBody(context: Pick<ReservaContext, 'config'>, messages: ReservaMessages, booking: ConfirmedBooking, locale: string, statusBadge: string, generatedAt: Date): string {
   const timezone = context.config.business.timezone;
   const start = typeof booking.start === 'string' ? booking.start : '';
   const end = typeof booking.end === 'string' ? booking.end : start;
@@ -63,7 +64,7 @@ function confirmedBody(context: Pick<ReservaContext, 'config'>, messages: Reserv
     };
     calendar = `<div class="bk-actions"><span class="bk-sub">${escapeHtml(messages['confirmation.addToCalendar'])}</span>`
       + `<a class="bk-btn bk-btn--secondary bk-btn--sm" href="${escapeHtml(googleCalendarUrl(event))}" rel="noopener" target="_blank">${escapeHtml(messages['confirmation.addGoogle'])}</a>`
-      + `<a class="bk-btn bk-btn--secondary bk-btn--sm" href="${escapeHtml(icsDataUrl(event))}" download="booking.ics">${escapeHtml(messages['confirmation.addIcs'])}</a></div>`;
+      + `<a class="bk-btn bk-btn--secondary bk-btn--sm" href="${escapeHtml(icsDataUrl(event, { uid: calendarUid(booking.reference, context.config.business.url), generatedAt }))}" download="booking.ics">${escapeHtml(messages['confirmation.addIcs'])}</a></div>`;
   }
   const foot = `<div class="bk-ticket-foot">`
     + `<div class="bk-ticket-ref"><span>${escapeHtml(messages['common.reference'])}</span><span class="bk-mono">${escapeHtml(booking.reference)}</span></div>`
@@ -81,26 +82,27 @@ function confirmedBody(context: Pick<ReservaContext, 'config'>, messages: Reserv
 // service and when it is, then say where the rest went.
 function summaryBody(context: Pick<ReservaContext, 'config'>, messages: ReservaMessages, summary: ConfirmationSummary, locale: string): string {
   const start = typeof summary.start === 'string' ? summary.start : '';
+  const end = typeof summary.end === 'string' ? summary.end : start;
   const facts: Array<[string, string]> = [
     [messages['common.service'], escapeHtml(summary.serviceTitle)],
-    [messages['common.date'], escapeHtml(start ? formatDateTime(start, locale, context.config.business.timezone) : '')],
+    [messages['common.date'], escapeHtml(start ? formatDateTimeRange(start, end, locale, context.config.business.timezone) : '')],
     [messages['common.reference'], escapeHtml(summary.reference)],
   ];
   return `<section class="bk-card bk-summary">${factList(facts)}</section>`
     + `<section class="bk-card bk-message">${messageHtml(messages['confirmation.detailsEmailed'], 'bk-lead')}</section>`;
 }
 
-function simpleBody(body: string, options: { pending?: boolean; actionHtml?: string; afterHtml?: string } = {}): string {
+function simpleBody(body: string, options: { pending?: boolean; actionHtml?: string; afterHtml?: string; sectionAttrs?: string } = {}): string {
   const spinner = options.pending ? '<div class="bk-spinner" aria-hidden="true"></div>' : '';
-  return `<section class="bk-card bk-message">${spinner}${messageHtml(body, 'bk-lead')}${options.actionHtml ?? ''}</section>`
+  return `<section class="bk-card bk-message"${options.sectionAttrs ?? ''}>${spinner}${messageHtml(body, 'bk-lead')}${options.actionHtml ?? ''}</section>`
     + (options.afterHtml ?? '');
 }
 
-// The meta refresh is the whole polling mechanism (no script, so the page survives script-src
-// 'none'), which means the only place to keep a count is the URL. Twenty refreshes at three
-// seconds is about a minute — past that the webhook is late enough that waiting on a browser tab
-// is the wrong thing to ask of the customer.
-const MAX_CONFIRMATION_ATTEMPTS = 20;
+// The meta refresh is the polling mechanism that survives script-src 'none', which means the only
+// place to keep a count is the URL; the served enhancer takes over from it when script runs and
+// keeps the same count. Twenty polls at three seconds is about a minute — past that the webhook is
+// late enough that waiting on a browser tab is the wrong thing to ask of the customer.
+export const MAX_CONFIRMATION_ATTEMPTS = 20;
 
 function attemptOf(requestUrl: string): number {
   const raw = Number(new URL(requestUrl).searchParams.get('attempt'));
@@ -114,22 +116,35 @@ function urlWithAttempt(requestUrl: string, attempt: number): string {
 }
 
 export function confirmationPage(
-  context: Pick<ReservaContext, 'config' | 'routeConfig' | 'viewerTheme'>,
+  context: Pick<ReservaContext, 'config' | 'routeConfig' | 'viewerTheme'> & Partial<Pick<ReservaContext, 'clock'>>,
   payload: StatusResponse,
   requestUrl: string,
   requestedLocale: string | null,
 ): string {
   const status = payload.status;
   const booking = payload.booking;
-  const locale = booking?.locale ?? requestedLocale ?? context.config.locales.default;
+  // The hint is negotiated, never trusted verbatim: `?locale=pt` must land on the deployment's
+  // `pt-PT` copy, and an unsupported tag must not end up in <html lang>.
+  const locale = booking?.locale ?? resolveLocale(context.config.locales, requestedLocale);
   const messages = resolveMessages(context.config, locale);
   const attempt = attemptOf(requestUrl);
   const pendingTimedOut = status === 'pending' && attempt >= MAX_CONFIRMATION_ATTEMPTS;
-  // Meta refresh (not script polling) keeps the pending→confirmed webhook race handled without
-  // any inline script, so the page works under script-src 'none'.
-  const refresh = status === 'pending' && !pendingTimedOut
+  // The meta refresh handles the pending→confirmed webhook race with no script at all, so the page
+  // still works under script-src 'none'; the enhancer cancels it when it can poll instead.
+  const polling = status === 'pending' && !pendingTimedOut;
+  const refresh = polling
     ? `<meta http-equiv="refresh" content="3;url=${escapeHtml(urlWithAttempt(requestUrl, attempt + 1))}">`
     : '';
+  // What the enhancer needs to poll the status API in place of the refresh. The session id is
+  // already in this page's own URL, so carrying it here exposes nothing new.
+  const query = new URL(requestUrl).searchParams;
+  const sessionId = query.get('sessionId') ?? query.get('session_id') ?? '';
+  const pollAttrs = polling && sessionId
+    ? ` data-reserva-status-poll data-endpoint="${escapeHtml(context.routeConfig.paths.status)}" data-session-id="${escapeHtml(sessionId)}"`
+      + ` data-attempt="${attempt}" data-max="${MAX_CONFIRMATION_ATTEMPTS}"`
+      + ` data-l-checking="${escapeHtml(messages['confirmation.pollChecking'])}" data-l-updated="${escapeHtml(messages['confirmation.pollUpdated'])}"`
+    : '';
+  const liveRegion = pollAttrs ? '<p class="bk-sub" role="status" aria-live="polite" data-reserva-poll-live></p>' : '';
   // Both dead-end states tell the visitor to start over, so give them the button that does it.
   const startOver = `<div class="bk-actions"><a class="bk-btn" href="${escapeHtml(context.config.business.url)}">${escapeHtml(messages['confirmation.startOver'])}</a></div>`;
   // Restarting the count rather than reloading the current URL, so the link polls afresh instead
@@ -143,12 +158,14 @@ export function confirmationPage(
     && context.config.ui?.confirmation?.statusPlacement === 'ticket';
   const body = status === 'confirmed'
     ? booking !== null && booking.reference.length > 0
-      ? isFullBooking(booking) ? confirmedBody(context, messages, booking, locale, badgeInTicket ? confirmedBadge : '') : summaryBody(context, messages, booking, locale)
+      ? isFullBooking(booking)
+        ? confirmedBody(context, messages, booking, locale, badgeInTicket ? confirmedBadge : '', context.clock ? context.clock() : new Date())
+        : summaryBody(context, messages, booking, locale)
       : simpleBody(messages['confirmation.detailsEmailed'])
     : status === 'pending'
       ? pendingTimedOut
         ? simpleBody(messages['confirmation.pendingTimeoutBody'], { actionHtml: checkAgain, afterHtml: contact })
-        : simpleBody(messages['confirmation.pendingBody'], { pending: true })
+        : simpleBody(messages['confirmation.pendingBody'], { pending: true, sectionAttrs: pollAttrs, actionHtml: liveRegion })
       : status === 'failed'
         ? simpleBody(messages['confirmation.failedBody'], { afterHtml: contact })
         : status === 'expired'
@@ -172,10 +189,17 @@ export function confirmationPage(
     : status === 'pending'
       ? `<span class="bk-badge bk-badge--warn">${escapeHtml(messages['status.hold'])}</span>`
       : '';
+  // Past the detail grace window the visit is a return trip, not the moment of payment, so the
+  // lead no longer promises an email that went out hours ago.
+  const lead = status !== 'confirmed'
+    ? ''
+    : booking !== null && booking.reference.length > 0 && !isFullBooking(booking)
+      ? messages['confirmation.summaryLead']
+      : messages['confirmation.lead'];
   const header = brandMark(context.config.business.name, context.config.business.url, branding)
     + badge
     + `<h1>${escapeHtml(title)}</h1>`
-    + (status === 'confirmed' ? `<p class="bk-lead">${escapeHtml(messages['confirmation.lead'])}</p>` : '');
+    + (lead ? `<p class="bk-lead">${escapeHtml(lead)}</p>` : '');
   const { theme, pinned } = customerPageTheme(branding, context.viewerTheme);
   return pageShell({
     lang: locale,
@@ -186,6 +210,9 @@ export function confirmationPage(
     favicon: context.config.ui?.faviconUrl,
     headHtml: context.config.ui?.headHtml,
     headExtra: refresh,
+    // Every state, not just pending: the theme toggle in the header is script-revealed too.
+    scriptHref: jsAssetHref(context.routeConfig.paths.assetsJs),
+    skipLabel: messages['common.skipContent'],
     header,
     theme,
     ...(pinned ? {} : { themeToggle: themeToggle(messages, theme) }),

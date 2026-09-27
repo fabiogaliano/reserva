@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// The two generated source modules are committed, not built on install: a git checkout must
+// The generated sources are committed, not built on install: a git checkout must
 // typecheck and run its tests without a build step. This keeps them honest the same way
 // contract-docs keeps the README tables honest — `--check` fails when an input changed without
 // the output being regenerated and committed.
@@ -7,7 +7,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildSchemaFingerprint, generateSchemaFingerprint, renderSchemaFingerprintModule } from './generate-schema-fingerprint';
-import { generateUiTokens, readTokensCss, renderUiTokensModule } from './generate-ui-tokens';
+import { generateUiTokens, readTokensCss, UI_TOKEN_OUTPUTS } from './generate-ui-tokens';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const check = process.argv.includes('--check');
@@ -18,11 +18,11 @@ const expected: Array<{ file: string; render: () => string; write: () => string 
     render: () => renderSchemaFingerprintModule(buildSchemaFingerprint(resolve(repoRoot, 'migrations'))),
     write: () => generateSchemaFingerprint(repoRoot),
   },
-  {
-    file: 'src/ui/generated/tokens.ts',
-    render: () => renderUiTokensModule(readTokensCss(repoRoot)),
+  ...UI_TOKEN_OUTPUTS.map(({ file, render }) => ({
+    file,
+    render: () => render(readTokensCss(repoRoot)),
     write: () => generateUiTokens(repoRoot),
-  },
+  })),
 ];
 
 let drifted = false;

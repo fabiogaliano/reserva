@@ -140,6 +140,8 @@ function assertPackagedLayout(consumerDir: string): void {
     'dist/reserva-migrate.js',
     'dist/components/ManageBooking.astro',
     'dist/ui/components.css',
+    // components.css @imports it, and no packaged gate bundles the component to notice it missing.
+    'dist/ui/generated/embed-tokens.css',
   ]) {
     if (!existsSync(resolve(installedRoot, relativePath))) fail('layout', `missing from packed package: ${relativePath}`);
   }

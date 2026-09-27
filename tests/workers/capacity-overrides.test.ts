@@ -7,7 +7,7 @@ interface TestEnv {
 }
 
 // Real-D1 coverage for the capacity feature (per-day overrides + capacity defaults) and the two
-// hottest list queries (listOccupancyBookings/listUpcoming), following repo-d1.test.ts's
+// hottest list queries (listOccupancyBookings and the admin list queries), following repo-d1.test.ts's
 // established pattern (createBookingRepository(db), beforeEach DELETEs, encRepo round trip).
 const db = (env as unknown as TestEnv).RESERVA_DB;
 const repo = createBookingRepository(db);
@@ -181,10 +181,11 @@ describe('listOccupancyBookings(from, to) against real D1', () => {
   });
 });
 
-describe('listUpcoming(now) against real D1', () => {
+describe('listLiveBookings against real D1', () => {
   const now = '2026-08-01T00:00:00.000Z';
+  const before = '2026-09-01T00:00:00.000Z';
 
-  it('includes future confirmed and live holds, excludes an exactly-expired hold and a past confirmed booking, ordered by starts_at', async () => {
+  it('includes confirmed and live holds in [from, before), excludes an exactly-expired hold and rows outside the window, ordered by starts_at', async () => {
     await seedHold(repo, 'future-confirmed', '2026-08-05T09:00:00.000Z', '2026-08-05T10:00:00.000Z', '2026-12-31T00:00:00.000Z');
     await repo.transitionToConfirmed('future-confirmed', { expectedStatusIn: ['hold'], updatedAt: now });
 
@@ -197,8 +198,13 @@ describe('listUpcoming(now) against real D1', () => {
     await seedHold(repo, 'past-confirmed', '2026-07-01T09:00:00.000Z', '2026-07-01T10:00:00.000Z', '2026-12-31T00:00:00.000Z');
     await repo.transitionToConfirmed('past-confirmed', { expectedStatusIn: ['hold'], updatedAt: now });
 
-    const result = await repo.listUpcoming(now);
+    // Exactly on `before`: the upper bound is exclusive.
+    await seedHold(repo, 'on-before', before, '2026-09-01T01:00:00.000Z', '2026-12-31T00:00:00.000Z');
+    await repo.transitionToConfirmed('on-before', { expectedStatusIn: ['hold'], updatedAt: now });
+
+    const result = await repo.listLiveBookings(now, before, now, 10);
     expect(result.map((booking) => booking.id)).toEqual(['live-hold', 'future-confirmed']);
+    await expect(repo.listLiveBookings(now, before, now, 1)).resolves.toHaveLength(1);
   });
 
   it('without a token encryption key, hydrates nohash:-prefixed placeholder tokens (mirrors repo-d1.test.ts\'s no-key expectations)', async () => {
@@ -206,7 +212,7 @@ describe('listUpcoming(now) against real D1', () => {
       cancelToken: 'plain-cancel', operatorToken: 'plain-operator',
     });
 
-    const listed = await repo.listUpcoming(now);
+    const listed = await repo.listAdminBookings({ from: now }, { order: 'asc', limit: 10, offset: 0 });
     expect(listed[0]?.cancelToken).toMatch(/^nohash:/);
     expect(listed[0]?.operatorToken).toMatch(/^nohash:/);
 
@@ -223,12 +229,55 @@ describe('listUpcoming(now) against real D1', () => {
 
     // The list query itself no longer decrypts — an AES-GCM pass per row the renderer may never
     // emit is waste — so the placeholders survive until the caller asks for the real tokens.
-    const listed = await encRepo.listUpcoming(now);
+    const listed = await encRepo.listAdminBookings({ from: now }, { order: 'asc', limit: 10, offset: 0 });
     expect(listed[0]?.cancelToken).toMatch(/^nohash:/);
     expect(listed[0]?.operatorToken).toMatch(/^nohash:/);
 
     const [result] = await encRepo.hydrateBookingTokens(listed);
     expect(result?.cancelToken).toBe('real-cancel');
     expect(result?.operatorToken).toBe('real-operator');
+  });
+});
+
+describe('listAdminBookings/countAdminBookings against real D1', () => {
+  const now = '2026-08-01T00:00:00.000Z';
+
+  async function seedConfirmed(id: string, startsAt: string): Promise<void> {
+    await seedHold(repo, id, startsAt, new Date(Date.parse(startsAt) + 3_600_000).toISOString(), '2026-12-31T00:00:00.000Z');
+    await repo.transitionToConfirmed(id, { expectedStatusIn: ['hold'], updatedAt: now });
+  }
+
+  it('applies the window and status in SQL, so "All" is every status and a status filter is a subset of it', async () => {
+    await seedConfirmed('adm-past', '2026-07-20T09:00:00.000Z');
+    await seedConfirmed('adm-upcoming', '2026-08-05T09:00:00.000Z');
+    // A hold that lapsed and was swept: still an upcoming row, with status expired.
+    await seedHold(repo, 'adm-expired', '2026-08-06T09:00:00.000Z', '2026-08-06T10:00:00.000Z', '2026-07-31T00:00:00.000Z');
+    await repo.sweepExpiredHolds(now);
+
+    const all = await repo.listAdminBookings({ from: now }, { order: 'asc', limit: 10, offset: 0 });
+    expect(all.map((booking) => booking.id)).toEqual(['adm-upcoming', 'adm-expired']);
+    await expect(repo.countAdminBookings({ from: now })).resolves.toBe(2);
+
+    const confirmed = await repo.listAdminBookings({ from: now, status: 'confirmed' }, { order: 'asc', limit: 10, offset: 0 });
+    expect(confirmed.map((booking) => booking.id)).toEqual(['adm-upcoming']);
+    await expect(repo.countAdminBookings({ from: now, status: 'expired' })).resolves.toBe(1);
+
+    const past = await repo.listAdminBookings({ before: now }, { order: 'desc', limit: 10, offset: 0 });
+    expect(past.map((booking) => booking.id)).toEqual(['adm-past']);
+  });
+
+  it('pages in the requested direction with an id tie-break, so no row repeats or goes missing across pages', async () => {
+    await seedConfirmed('adm-b', '2026-08-05T09:00:00.000Z');
+    await seedConfirmed('adm-a', '2026-08-05T09:00:00.000Z');
+    await seedConfirmed('adm-c', '2026-08-06T09:00:00.000Z');
+
+    const ascending = [
+      ...await repo.listAdminBookings({ from: now }, { order: 'asc', limit: 2, offset: 0 }),
+      ...await repo.listAdminBookings({ from: now }, { order: 'asc', limit: 2, offset: 2 }),
+    ];
+    expect(ascending.map((booking) => booking.id)).toEqual(['adm-a', 'adm-b', 'adm-c']);
+
+    const descending = await repo.listAdminBookings({ from: now }, { order: 'desc', limit: 10, offset: 0 });
+    expect(descending.map((booking) => booking.id)).toEqual(['adm-c', 'adm-b', 'adm-a']);
   });
 });

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ResolvedClientConfig, ResolvedServiceConfig } from '../src/core/config';
 import type { Booking } from '../src/core/booking';
 import type { EmailBookingEvent } from '../src/core/events';
@@ -49,6 +49,15 @@ async function renderAll(overrides: Partial<Booking>): Promise<Record<string, Ca
 }
 
 describe('email renderer output', () => {
+  // The calendar attachment stamps its generation time, so the clock is pinned for stable bytes.
+  beforeAll(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-06-01T10:00:00.000Z'));
+  });
+  afterAll(() => {
+    vi.useRealTimers();
+  });
+
   it('location-ful booking, English', async () => {
     expect(await renderAll({ serviceSlug: 'vintage', locale: 'en', pickupType: 'default', pickupAddress: null, meetingPointId: null, meetingPointLabel: null })).toMatchSnapshot();
   });

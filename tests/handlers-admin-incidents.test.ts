@@ -34,6 +34,13 @@ function adminPostRequest(fields: Record<string, string>, csrfToken: string | nu
   });
 }
 
+// A rejected action redirects back to the dashboard with ?error= (see adminErrorRedirect).
+function adminErrorOf(response: Response): { code: string | null; field: string | null; tab: string | null } {
+  expect(response.status).toBe(303);
+  const location = new URL(response.headers.get('location') ?? '');
+  return { code: location.searchParams.get('error'), field: location.searchParams.get('field'), tab: location.searchParams.get('tab') };
+}
+
 function seedSideEffect(repo: FakeRepository, bookingId: string, identity: SideEffectOperationIdentity): void {
   seedSideEffectOperation(repo, bookingId, identity, {
     status: 'abandoned', attemptCount: 10, attemptedAt: '2026-06-14T07:00:00.000Z',
@@ -78,7 +85,7 @@ describe('admin incidents', () => {
     const response = await handleAdminGet(new Request(ADMIN_URL), context);
     expect(response.status).toBe(200);
     const html = await response.text();
-    expect(html).toContain('Calendar booking not created');
+    expect(html).toContain('Calendar not updated');
     expect(html).toContain(seeded.reference);
     expect(html).toContain('data-reserva-admin-tab="attention"');
     expect(html).toContain('<span class="bk-tab-count">1</span>');
@@ -185,10 +192,11 @@ describe('admin incidents', () => {
     const opsToken = await mintTestCsrfToken('ops@example.test', CSRF_NOW);
 
     const blank = await handleAdminPost(adminPostRequest({ action: 'incident-resolve', source_type: 'side_effect', source_key: `${seeded.id}:calendar_create`, note: '   ' }, opsToken), context);
-    expect(blank.status).toBe(400);
+    expect(adminErrorOf(blank)).toEqual({ code: 'validation_failed', field: 'note', tab: 'attention' });
 
     const tooLong = await handleAdminPost(adminPostRequest({ action: 'incident-resolve', source_type: 'side_effect', source_key: `${seeded.id}:calendar_create`, note: 'x'.repeat(501) }, opsToken), context);
-    expect(tooLong.status).toBe(400);
+    expect(adminErrorOf(tooLong)).toEqual({ code: 'validation_failed', field: 'note', tab: 'attention' });
+    expect(await repo.getIncidentBySource('side_effect', `${seeded.id}:calendar_create`)).toMatchObject({ status: 'open' });
 
     const ok = await handleAdminPost(adminPostRequest({ action: 'incident-resolve', source_type: 'side_effect', source_key: `${seeded.id}:calendar_create`, note: '  called the customer directly  ' }, opsToken), context);
     expect(ok.status).toBe(303);
@@ -200,12 +208,51 @@ describe('admin incidents', () => {
     expect(repo.rows.get(seeded.id)?.calendarEventId).toBeNull();
   });
 
-  it('rejects incident-retry/incident-resolve for an unknown or already-resolved incident with 400', async () => {
+  it('rejects incident-retry/incident-resolve for an unknown or already-resolved incident, back on the Attention tab', async () => {
     const repo = fakeRepository();
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminPost(adminPostRequest({ action: 'incident-retry', source_type: 'side_effect', source_key: 'missing:calendar_create' }), context);
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed' } });
+    expect(adminErrorOf(response)).toEqual({ code: 'validation_failed', field: null, tab: 'attention' });
+  });
+
+  // The server refuses a retry for these (nothing to re-run), so the card must not offer one.
+  it('hides Retry for payment_verification and reconciliation incidents, as for oversell', async () => {
+    const seeded = booking({ id: 'inc-payment', status: 'expired' });
+    const repo = fakeRepository([seeded]);
+    await repo.upsertOpenIncident({
+      id: 'incident-payment', bookingId: seeded.id, sourceType: 'payment_verification', sourceKey: seeded.id,
+      action: 'payment_verification_rejected', severity: 'action_required', attemptCount: 1, sourceUpdatedAt: '2026-06-14T07:00:00.000Z',
+      now: '2026-06-14T07:00:00.000Z', escalate: false,
+    });
+    await repo.upsertOpenIncident({
+      id: 'incident-reconciliation', bookingId: null, sourceType: 'reconciliation', sourceKey: 'sweep',
+      action: 'reconciliation_stale', severity: 'action_required', attemptCount: 1, sourceUpdatedAt: '2026-06-14T07:00:00.000Z',
+      now: '2026-06-14T07:00:00.000Z', escalate: false,
+    });
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+
+    const html = await (await handleAdminGet(new Request(ADMIN_URL), context)).text();
+    expect(html).toContain('Payment refused after checkout');
+    expect(html).toContain('Reconciliation has stopped running');
+    expect(html).not.toContain('value="incident-retry"');
+    expect(html.match(/needs manual handling/g)).toHaveLength(2);
+  });
+
+  // The badge is a real COUNT; only the rendered card list is bounded.
+  it('counts every open incident in the badge and says when the card list is truncated', async () => {
+    const repo = fakeRepository();
+    for (let index = 0; index < 105; index += 1) {
+      await repo.upsertOpenIncident({
+        id: `incident-many-${index}`, bookingId: null, sourceType: 'reconciliation', sourceKey: `sweep-${index}`,
+        action: 'reconciliation_stale', severity: 'delayed', attemptCount: 1, sourceUpdatedAt: '2026-06-14T07:00:00.000Z',
+        now: '2026-06-14T07:00:00.000Z', escalate: false,
+      });
+    }
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+    const html = await (await handleAdminGet(new Request(ADMIN_URL), context)).text();
+    expect(html).toContain('<span class="bk-tab-count">105</span>');
+    expect(html).toContain('105 need attention');
+    expect(html).toContain('Showing the first 100 of 105 open incidents.');
   });
 
   it('enforces the same Origin/CSRF guards as every other admin POST action', async () => {
@@ -217,7 +264,8 @@ describe('admin incidents', () => {
     }), context);
     expect(badOrigin.status).toBe(403);
 
+    // Past the origin guard a failed token is a stale page: told to retry, and nothing ran.
     const badCsrf = await handleAdminPost(adminPostRequest({ action: 'incident-retry', source_type: 'refund', source_key: 'x' }, 'not-a-real-token'), context);
-    expect(badCsrf.status).toBe(403);
+    expect(adminErrorOf(badCsrf)).toEqual({ code: 'csrf_expired', field: null, tab: 'attention' });
   });
 });

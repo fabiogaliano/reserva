@@ -1,10 +1,11 @@
 // The browser-safe half of the package: everything a booking funnel needs to call the API with the
-// same types the handlers answer with. Imports nothing but `src/core/api.ts` (types plus the error
-// catalog) and the Astro-free route pattern table, so bundling it pulls in no Astro, Node or
+// same types the handlers answer with. Imports nothing but `src/core/api.ts` (types plus its runtime
+// constants) and the Astro-free route pattern table, so bundling it pulls in no Astro, Node or
 // Cloudflare code.
 
 import {
   isApiErrorCode,
+  MANAGE_TOKEN_HEADER,
   type ApiErrorCode,
   type ApiErrorDetails,
   type ApiErrorEnvelope,
@@ -24,7 +25,7 @@ import {
 } from '../core/api.js';
 import { resolvedRoutePaths, type ReservaRoutePaths } from '../core/route-paths.js';
 
-export { API_ERROR_CODES, isApiErrorCode } from '../core/api.js';
+export { API_ERROR_CODES, isApiErrorCode, MANAGE_TOKEN_HEADER } from '../core/api.js';
 export * from './availability.js';
 
 // Only the routes a browser client may legitimately call: the payment webhook, the asset routes and
@@ -90,6 +91,9 @@ export interface AvailabilityQuery {
   quantity?: number;
   from: string;
   to: string;
+  // The booking's own manage token (customer or operator): leaves that booking out of the count,
+  // for a reschedule picker. Sent as a header, never in the URL.
+  manageToken?: string;
 }
 
 export interface OperatorNoShowRequest {
@@ -139,7 +143,9 @@ export function createReservaClient(options: ReservaClientOptions = {}): Reserva
   if (options.paths && options.base !== undefined) {
     throw new Error('createReservaClient: pass either `paths` or `base`, not both');
   }
-  const defaults = resolvedRoutePaths(options.base ?? '');
+  // `https://booking.example.com/` and `https://booking.example.com` are the same base; without the
+  // trim every default path would start with `//`.
+  const defaults = resolvedRoutePaths((options.base ?? '').replace(/\/+$/, ''));
   const pathFor = (id: ReservaClientRouteId): string => options.paths?.[id] ?? defaults[id];
   const doFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
 
@@ -150,11 +156,12 @@ export function createReservaClient(options: ReservaClientOptions = {}): Reserva
     // record) must never come from the bfcache or a shared HTTP cache.
     noStore?: boolean;
     authorized?: boolean;
+    headers?: Record<string, string>;
     init?: ReservaRequestInit;
   }
 
   async function call<T>(url: string, callOptions: CallOptions): Promise<T> {
-    const headers: Record<string, string> = { accept: 'application/json' };
+    const headers: Record<string, string> = { accept: 'application/json', ...callOptions.headers };
     if (callOptions.body !== undefined) headers['content-type'] = 'application/json';
     if (callOptions.authorized && options.bearer) headers.authorization = `Bearer ${options.bearer}`;
     let response: Response;
@@ -193,7 +200,12 @@ export function createReservaClient(options: ReservaClientOptions = {}): Reserva
         from: query.from,
         to: query.to,
       });
-      return call<AvailabilityResponse>(url, { method: 'GET', noStore: true, ...(init ? { init } : {}) });
+      return call<AvailabilityResponse>(url, {
+        method: 'GET',
+        noStore: true,
+        ...(query.manageToken ? { headers: { [MANAGE_TOKEN_HEADER]: query.manageToken } } : {}),
+        ...(init ? { init } : {}),
+      });
     },
     quote(body, init) {
       return call<QuoteResponse>(pathFor('quote'), { method: 'POST', body, ...(init ? { init } : {}) });
