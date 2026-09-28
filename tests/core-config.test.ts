@@ -852,15 +852,16 @@ describe('metadata fields', () => {
       expect(() => validateConfig(withFields([{ ...dietaryField, adminBadge: false }]))).not.toThrow();
     });
 
-    it('drops operator-only values from raw metadata, keeping customer fields and keys no longer declared', () => {
+    it('keeps only customer-visible declared keys, dropping operator-only values and keys no longer declared', () => {
       const vintage = { ...service, metadataFields: [dietaryField, partnerField] };
       expect(customerVisibleMetadata(vintage, { dietary_notes: 'Vegan', partner: 'acme', retired_field: 'x' }))
-        .toEqual({ dietary_notes: 'Vegan', retired_field: 'x' });
+        .toEqual({ dietary_notes: 'Vegan' });
     });
 
-    it('leaves raw metadata untouched when no field is operator-only', () => {
+    it('keeps every declared key when no field is operator-only, and nothing for a service that declares none', () => {
       const metadata = { dietary_notes: 'Vegan', seat_pref: 'window' };
-      expect(customerVisibleMetadata(configWithMetadata.services.vintage!, metadata)).toBe(metadata);
+      expect(customerVisibleMetadata(configWithMetadata.services.vintage!, metadata)).toEqual(metadata);
+      expect(customerVisibleMetadata(service, { retired_field: 'x' })).toEqual({});
       expect(customerVisibleMetadata(service, {})).toEqual({});
     });
 

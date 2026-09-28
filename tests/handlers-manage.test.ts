@@ -441,14 +441,25 @@ describe('operator-only metadata on the manage page', () => {
     expect(html).toContain('Acme Stays');
   });
 
-  it('gives both roles the same metadata when no field is operator-only', async () => {
-    const plain = booking({ id: 'b-manage-plain-metadata', status: 'confirmed', metadata: { dietary_notes: 'Vegan', retired_field: 'x' } });
+  it('gives both roles the same metadata when every stored key is declared customer-visible', async () => {
+    const plain = booking({ id: 'b-manage-plain-metadata', status: 'confirmed', metadata: { dietary_notes: 'Vegan' } });
     const plainConfig = { ...config, services: { ...config.services, vintage: { ...service, metadataFields: [dietaryField] } } };
     const context = createReservaContext({ config: plainConfig, db: {} as D1Database, repo: fakeRepository([plain]), clock, providers: providers() });
     const customer = await (await handleManage(manageRequest(plain.cancelToken), context)).json() as { booking: Record<string, unknown> };
     const operator = await (await handleManage(manageRequest(plain.operatorToken), context)).json() as { booking: Record<string, unknown> };
-    expect(customer.booking.metadata).toEqual({ dietary_notes: 'Vegan', retired_field: 'x' });
+    expect(customer.booking.metadata).toEqual({ dietary_notes: 'Vegan' });
     expect(customer.booking.metadata).toEqual(operator.booking.metadata);
     expect(customer.booking.metadataRows).toEqual(operator.booking.metadataRows);
+  });
+
+  // Removing the field declaration erases the only record that its values were operator-only.
+  it('keeps a retired field from the customer once its declaration is removed from config', async () => {
+    const retired = booking({ id: 'b-manage-retired-field', status: 'confirmed', metadata: { dietary_notes: 'Vegan', partner: 'acme' } });
+    const retiredConfig = { ...config, services: { ...config.services, vintage: { ...service, metadataFields: [dietaryField] } } };
+    const context = createReservaContext({ config: retiredConfig, db: {} as D1Database, repo: fakeRepository([retired]), clock, providers: providers() });
+    const customer = await (await handleManage(manageRequest(retired.cancelToken), context)).json() as { booking: Record<string, unknown> };
+    const operator = await (await handleManage(manageRequest(retired.operatorToken), context)).json() as { booking: Record<string, unknown> };
+    expect(customer.booking.metadata).toEqual({ dietary_notes: 'Vegan' });
+    expect(operator.booking.metadata).toEqual({ dietary_notes: 'Vegan', partner: 'acme' });
   });
 });

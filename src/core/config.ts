@@ -1082,10 +1082,10 @@ export function customerMetadataFields(service: ResolvedServiceConfig): Metadata
 }
 
 // Applied to the raw object before anything customer-facing reads it, so the raw values and the
-// rows built from them can never disagree about what a customer sees. A key the service no longer
-// declares is kept: with no declaration left, nothing marks it operator-only.
+// rows built from them can never disagree about what a customer sees. Only keys still declared as
+// customer-visible pass: once an operator-only field is removed from config, nothing would mark its
+// stored values as hidden any more.
 export function customerVisibleMetadata(service: ResolvedServiceConfig, metadata: Record<string, unknown>): Record<string, unknown> {
-  const hidden = new Set((service.metadataFields ?? []).filter(isOperatorOnlyMetadataField).map((field) => field.key));
-  if (hidden.size === 0) return metadata;
-  return Object.fromEntries(Object.entries(metadata).filter(([key]) => !hidden.has(key)));
+  const visible = new Set(customerMetadataFields(service).map((field) => field.key));
+  return Object.fromEntries(Object.entries(metadata).filter(([key]) => visible.has(key)));
 }

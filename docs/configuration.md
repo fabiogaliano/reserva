@@ -178,7 +178,9 @@ Two display settings, independent of each other:
   verified fact. Checkout's `validation_failed` answer for a bad value still names the field
   and, for a `select`, lists its options. Webhook and hook payloads carry every field, and a
   custom `EmailRenderer` receives the stored booking as is, so it must leave operator-only
-  fields out of customer mail itself.
+  fields out of customer mail itself. The customer's `metadata` carries only keys the service
+  currently declares as customer-visible, so retiring an operator-only field by deleting its
+  declaration keeps the values stored before that away from customers too.
 - `adminBadge: boolean` (default `false`) — shows the booking's value as a tag next to its
   status in the admin bookings list and calendar day panel, using the option's label in the
   admin locale (the raw value once that option is no longer declared), with the field's label
