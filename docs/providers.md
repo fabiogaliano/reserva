@@ -62,6 +62,14 @@ the one you requested, so an idempotent replay reports the original session's ex
 page never asked, and return `null` when it asked and got no usable answer. Reserva writes these
 at confirmation and only fills blanks afterwards, so a replayed or late event cannot overwrite them.
 
+### Refunds and disputes
+
+Report every refund as a `refunded` event, partial ones and ones made outside Reserva included.
+Its `amountRefunded` is the payment's cumulative refunded amount, not the amount of the refund just
+made: Reserva keeps the largest total it has seen, so deliveries may arrive in any order. A
+`dispute_closed` event carries `disputeOutcome` — `'won'` when the money stayed, `'lost'` when it
+went back. Leave it out when the processor's status is neither, and Reserva keeps the dispute open.
+
 ### Optional members
 
 - `cancelPayment?(paymentRef)` — best effort by contract. Reserva calls it to stop money that

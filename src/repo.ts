@@ -1,6 +1,6 @@
 import type { D1Database, D1Result } from '@cloudflare/workers-types';
 import type { ApiErrorCode } from './core/api.js';
-import type { Booking, BookingStatus, CancellationActor } from './core/booking.js';
+import type { Booking, BookingStatus, CancellationActor, DisputeOutcome, DisputeStatus } from './core/booking.js';
 import type { PickupType } from './core/config.js';
 import type { EmailRecipientRole } from './core/events.js';
 import { sha256Base64Url } from './http.js';
@@ -456,6 +456,15 @@ export interface BookingRepository {
     claimedAt: string;
     nextAttemptAt?: string | null;
   }): Promise<boolean>;
+  // The provider reports refunds as a cumulative total with no refund id, so the stored value only
+  // ever grows: a delayed, smaller total from an earlier refund is a no-op.
+  recordRefundedAmount(id: string, amountMinor: number): Promise<void>;
+  // Opens a dispute unless one is already recorded, keeping the first date and any outcome that a
+  // close delivered ahead of this event already stored.
+  markDisputed(id: string, at: string): Promise<void>;
+  // Always overwrites the status (the last close wins when a payment is disputed twice), and fills
+  // the date when the close arrives before the event that opened the dispute.
+  closeDispute(id: string, outcome: DisputeOutcome, at: string): Promise<void>;
   // For an event that isn't a booking transition (today only payment.dispute_created). Every
   // other seed rides the transition batch that owes it; this one has none, so the row itself is
   // the record and a plain conflict-free insert is enough.
@@ -663,6 +672,9 @@ interface BookingRow {
   locale: string;
   price_minor: number;
   currency: string;
+  amount_refunded_minor: number;
+  disputed_at: string | null;
+  dispute_status: DisputeStatus | null;
   status: BookingStatus;
   hold_expires_at: string | null;
   payment_session_ref: string | null;
@@ -741,6 +753,9 @@ function mapBooking(row: BookingRow): Booking {
     locale: row.locale,
     priceMinor: Number(row.price_minor),
     currency: row.currency,
+    amountRefundedMinor: Number(row.amount_refunded_minor),
+    disputedAt: row.disputed_at,
+    disputeStatus: row.dispute_status,
     status: row.status,
     holdExpiresAt: row.hold_expires_at,
     paymentSessionRef: row.payment_session_ref,
@@ -799,7 +814,8 @@ const TOKEN_HYDRATION_CHUNK = 50;
 
 const bookingColumns = `id, reference, service_slug, quantity, guest_count, pickup_type, pickup_address, meeting_point_id,
   meeting_point_label, starts_at, ends_at,
-  customer_name, customer_email, customer_phone, locale, price_minor, currency, status, hold_expires_at,
+  customer_name, customer_email, customer_phone, locale, price_minor, currency,
+  amount_refunded_minor, disputed_at, dispute_status, status, hold_expires_at,
   payment_session_ref, payment_ref, calendar_event_id, metadata, cancel_token, operator_token,
   cancel_token_hash, operator_token_hash, cancel_token_enc, operator_token_enc, tokens_expire_at,
   cancel_token_revoked_at, cancelled_at, cancelled_by, rescheduled_from, created_at, updated_at`;
@@ -1671,6 +1687,20 @@ export function createBookingRepository(
          VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, 0, NULL, NULL, NULL, ?, ?)
          ON CONFLICT DO NOTHING`,
       ).bind(bookingId, ...sideEffectIdentityParams(seed), seed.eventPayloadJson, now, now)));
+    },
+    async recordRefundedAmount(id, amountMinor) {
+      await db.prepare('UPDATE bookings SET amount_refunded_minor = MAX(amount_refunded_minor, ?) WHERE id = ?')
+        .bind(amountMinor, id).run();
+    },
+    async markDisputed(id, at) {
+      await db.prepare(
+        `UPDATE bookings SET disputed_at = COALESCE(disputed_at, ?), dispute_status = COALESCE(dispute_status, 'open')
+         WHERE id = ?`,
+      ).bind(at, id).run();
+    },
+    async closeDispute(id, outcome, at) {
+      await db.prepare('UPDATE bookings SET dispute_status = ?, disputed_at = COALESCE(disputed_at, ?) WHERE id = ?')
+        .bind(outcome, at, id).run();
     },
     async listSideEffectOperations(bookingId) {
       const result = await db.prepare(

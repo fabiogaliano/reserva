@@ -1,5 +1,5 @@
 import type { ResolvedClientConfig } from './config.js';
-import type { Booking, WireBooking } from './booking.js';
+import type { Booking, DisputeOutcome, WireBooking } from './booking.js';
 import type { CalEvent } from './occupancy.js';
 import type { ReservaResolvedRouteConfig } from '../routes-manifest.js';
 
@@ -65,6 +65,7 @@ export const PAYMENT_EVENTS = [
   'async_payment_succeeded',
   'refunded',
   'dispute_created',
+  'dispute_closed',
 ] as const;
 
 export type PaymentEvent = (typeof PAYMENT_EVENTS)[number];
@@ -76,7 +77,11 @@ export interface PaymentEventParsed extends PaymentCustomerDetails {
   sessionRef?: string;
   paymentRef?: string;
   amountCaptured?: number;
+  // Cumulative across every refund on the payment, not the amount of the refund just made.
   amountRefunded?: number;
+  // Only on 'dispute_closed'. Absent when the provider closed the dispute with a status the
+  // adapter cannot read as either outcome; Reserva then leaves the dispute open.
+  disputeOutcome?: DisputeOutcome;
   currency?: string;
   paymentStatus?: 'paid' | 'unpaid' | 'no_payment_required' | string;
   // The provider's own id for the refund a 'refunded' event describes, so the webhook branch can

@@ -4,6 +4,9 @@ import { addMinutes, compareInstants, parseUtcInstant } from './time.js';
 export const bookingStatuses = ['hold', 'confirmed', 'cancelled', 'expired', 'no_show'] as const;
 export type BookingStatus = (typeof bookingStatuses)[number];
 export type CancellationActor = 'customer' | 'operator';
+// How a closed dispute ended, reduced to whether the money stayed with the business.
+export type DisputeOutcome = 'won' | 'lost';
+export type DisputeStatus = 'open' | DisputeOutcome;
 
 export interface Booking {
   id: string;
@@ -30,6 +33,14 @@ export interface Booking {
   priceMinor: number;
   // Captured per booking so a currency change in config can never re-denominate money already taken.
   currency: string;
+  // The provider's running total of refunds sent on this payment, partial or full, whether Reserva
+  // or the provider's dashboard issued them. A refund the bank later bounces stays counted: the
+  // business still owes that money to the customer.
+  amountRefundedMinor: number;
+  // When a dispute (or a bank inquiry) was first seen, and how it stands. Both NULL when the
+  // payment was never disputed; a dispute stays 'open' until the provider reports its outcome.
+  disputedAt: string | null;
+  disputeStatus: DisputeStatus | null;
   status: BookingStatus;
   holdExpiresAt: string | null;
   paymentSessionRef: string | null;

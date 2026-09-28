@@ -71,7 +71,7 @@ describe('schema fingerprint catches targeted drift in `bookings`', () => {
 
   it.each([
     'occupancy_units', 'cancel_token_hash', 'operator_token_hash', 'cancel_token_revoked_at',
-    'reschedule_transition_version', 'meeting_point_id', 'currency', 'metadata',
+    'reschedule_transition_version', 'meeting_point_id', 'currency', 'metadata', 'amount_refunded_minor', 'dispute_status',
   ])('a required column missing: %s', async (column) => {
     await applyRealSchema();
     const dependentIndex = BOOKINGS_COLUMN_INDEX[column];

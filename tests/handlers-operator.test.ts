@@ -757,8 +757,8 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
   });
 
   // A partial refund (amountRefunded < amountCaptured) never
-  // cancels the booking or touches the refund-operation row; it only logs. This pins that guard
-  // against silently overwriting an existing (unrelated) operation record too.
+  // cancels the booking or touches the refund-operation row; it only records the refunded total.
+  // This pins that guard against silently overwriting an existing (unrelated) operation record too.
   it('a partial-refund webhook does not rewrite an existing refund operation row or cancel the booking', async () => {
     const paymentRef = 'pi_partial_refund_guard';
     const seeded = booking({ id: 'b-partial-refund-guard', status: 'confirmed', paymentRef: paymentRef });
@@ -791,7 +791,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
 
     const response = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), context);
     expect(response.status).toBe(200);
-    expect(repo.rows.get(seeded.id)?.status).toBe('confirmed');
+    expect(repo.rows.get(seeded.id)).toMatchObject({ status: 'confirmed', amountRefundedMinor: Math.floor(seeded.priceMinor / 2) });
     expect(repo.refundOperations.get(seeded.id)).toEqual(preexisting);
   });
 
@@ -990,7 +990,8 @@ describe('operator cancel with a partial refund', () => {
       context,
     );
     expect(response.status).toBe(200);
-    expect(repo.rows.get(seeded.id)?.status).toBe('cancelled');
+    // Recorded from the executor's own result, so it shows without waiting for the refund webhook.
+    expect(repo.rows.get(seeded.id)).toMatchObject({ status: 'cancelled', amountRefundedMinor: 4500 });
     // The booking's own price (10000) never reaches the provider — only the decision does.
     expect(tracker.expectedAmounts).toEqual([4500]);
     expect(repo.refundOperations.get(seeded.id)).toMatchObject({

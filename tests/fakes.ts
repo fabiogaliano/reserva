@@ -324,7 +324,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         );
         if (active.length >= input.maxActiveHoldsForIp) throw new HoldLimitExceededError();
       }
-      const created: Booking = { ...booking(), ...input, guestCount: null, pickupAddress: null, customerName: null, customerEmail: null, customerPhone: null, status: 'hold', paymentSessionRef: null, paymentRef: null, calendarEventId: null, cancelledAt: null, cancelledBy: null, rescheduledFrom: null };
+      const created: Booking = { ...booking(), ...input, guestCount: null, amountRefundedMinor: 0, disputedAt: null, disputeStatus: null, pickupAddress: null, customerName: null, customerEmail: null, customerPhone: null, status: 'hold', paymentSessionRef: null, paymentRef: null, calendarEventId: null, cancelledAt: null, cancelledBy: null, rescheduledFrom: null };
       const stored = storeTokens(created);
       rows.set(stored.id, stored);
       // A newly created row is hash-backed from the start (never "legacy"), mirroring
@@ -363,7 +363,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       }
       const used = maxConcurrentInInterval(input.startsAt, input.occupancyEndsAt, input.createdAt);
       if (used + input.occupancyUnits > capacity) return null;
-      const created: Booking = { ...booking(), ...input, guestCount: null, pickupAddress: null, customerName: null, customerEmail: null, customerPhone: null, status: 'hold', paymentSessionRef: null, paymentRef: null, calendarEventId: null, cancelledAt: null, cancelledBy: null, rescheduledFrom: null };
+      const created: Booking = { ...booking(), ...input, guestCount: null, amountRefundedMinor: 0, disputedAt: null, disputeStatus: null, pickupAddress: null, customerName: null, customerEmail: null, customerPhone: null, status: 'hold', paymentSessionRef: null, paymentRef: null, calendarEventId: null, cancelledAt: null, cancelledBy: null, rescheduledFrom: null };
       const stored = storeTokens(created);
       rows.set(stored.id, stored);
       occupancyMeta.set(stored.id, { units: input.occupancyUnits, endsAt: input.occupancyEndsAt });
@@ -506,6 +506,20 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       // this booking was confirmed — always 'pending', because the row's own status is the only
       // record of whether that subscriber has been told.
       for (const seed of eventSeeds ?? []) insertOperation(id, seed, now, { eventPayloadJson: seed.eventPayloadJson });
+    },
+    // Mirrors src/repo.ts's MAX / COALESCE updates, so a test can deliver refund and dispute
+    // events out of order and see the same end state D1 would keep.
+    recordRefundedAmount: async (id, amountMinor) => {
+      const current = rows.get(id);
+      if (current) rows.set(id, { ...current, amountRefundedMinor: Math.max(current.amountRefundedMinor, amountMinor) });
+    },
+    markDisputed: async (id, at) => {
+      const current = rows.get(id);
+      if (current) rows.set(id, { ...current, disputedAt: current.disputedAt ?? at, disputeStatus: current.disputeStatus ?? 'open' });
+    },
+    closeDispute: async (id, outcome, at) => {
+      const current = rows.get(id);
+      if (current) rows.set(id, { ...current, disputeStatus: outcome, disputedAt: current.disputedAt ?? at });
     },
     recordBookingEventOperations: async (bookingId, seeds, now) => {
       for (const seed of seeds) insertOperation(bookingId, seed, now, { eventPayloadJson: seed.eventPayloadJson });

@@ -105,7 +105,7 @@ export { pickupOptionFor, resolveService, resolveLocalizedText, resolveMetadataF
 // The record a provider port receives and the canonical wire projection of it. The state
 // transitions that produce these stay internal to the library's handlers.
 export { toWireBooking } from './booking.js';
-export type { Booking, WireBooking, BookingStatus, CancellationActor } from './booking.js';
+export type { Booking, WireBooking, BookingStatus, CancellationActor, DisputeOutcome, DisputeStatus } from './booking.js';
 
 // --- Money -------------------------------------------------------------------------------------
 // Prices cross the wire in minor units, so any consumer rendering `priceMinor` needs the conversion.

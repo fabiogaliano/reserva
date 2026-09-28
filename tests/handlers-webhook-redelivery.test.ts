@@ -321,9 +321,9 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
   });
 
   // The already-cancelled branch of the charge.refunded handler never runs a second transition on
-  // the booking row — a standalone redelivery must leave the row byte-identical, converging only
-  // the refund operation and minting no new side-effect debt.
-  it('two redeliveries of the same charge.refunded webhook against an already-cancelled booking never touch the booking row again', async () => {
+  // the booking row — a standalone redelivery must leave the row as it was apart from the refunded
+  // total, converging only the refund operation and minting no new side-effect debt.
+  it('two redeliveries of the same charge.refunded webhook against an already-cancelled booking only record the refunded total', async () => {
     const paymentRef = 'pi_redelivery_already_cancelled';
     const seeded = booking({ id: 'b-redelivery-already-cancelled', paymentRef: paymentRef });
     const repo = fakeRepository([seeded]);
@@ -361,7 +361,7 @@ describe('webhook partial-failure redelivery re-runs only the unsynced sink', ()
 
     // status, cancelledBy, cancelledAt, updatedAt (and every other field) must deep-equal the
     // ordinary cancellation's row exactly — no second transition, no re-stamped updatedAt.
-    expect(repo.rows.get(seeded.id)).toEqual(beforeWebhook);
+    expect(repo.rows.get(seeded.id)).toEqual({ ...beforeWebhook, amountRefundedMinor: seeded.priceMinor });
     expect(repo.refundOperations.get(seeded.id)).toMatchObject({
       choice: 'full', status: 'succeeded', stripeRefundId: 're_redelivery_already_cancelled', amountCents: seeded.priceMinor,
     });

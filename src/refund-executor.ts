@@ -113,6 +113,11 @@ export async function attemptRefund(
   // D1 must never be classified as a provider failure. Let a write failure here propagate as a
   // plain error instead: the row stays 'requested'/'in_flight', and a retry recovers the same
   // result via the provider's own idempotency guarantees rather than ever double-refunding.
+  //
+  // The booking's refunded total is written first: the provider's refund webhook would record it
+  // too, but a deployment without one (the dev providers, a missing subscription) still has to
+  // show the refund. It only ever grows, so the retry after a failed resolve replays it harmlessly.
+  await context.repo.recordRefundedAmount(bookingId, result.amountMinor);
   await context.repo.resolveRefundOperation(operationId, {
     status: 'succeeded', stripeRefundId: result.refundRef, amountCents: result.amountMinor, resolvedAt: nowIso(context),
   });

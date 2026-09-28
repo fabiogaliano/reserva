@@ -77,6 +77,15 @@ async function refundRefusedDelayedPayment(context: ReservaContext, booking: Boo
   });
 }
 
+// Charge-level events (refunds, disputes) carry the payment reference and only sometimes the
+// booking id, since the provider copies metadata onto the payment object, not onto a dispute.
+async function bookingForPaymentEvent(context: ReservaContext, event: PaymentEventParsed): Promise<Booking | null> {
+  const byPayment = event.paymentRef && context.repo.getBookingByPaymentRef
+    ? await context.repo.getBookingByPaymentRef(event.paymentRef)
+    : null;
+  return byPayment ?? (event.bookingId ? await context.repo.getBookingById(event.bookingId) : null);
+}
+
 export function handlePaymentWebhook(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
@@ -124,17 +133,10 @@ export function handlePaymentWebhook(request: Request, context: ReservaContext):
       const booking = event.bookingId ? await context.repo.getBookingById(event.bookingId) : event.sessionRef ? await context.repo.getBookingBySessionRef(event.sessionRef) : null;
       if (booking) await refundRefusedDelayedPayment(context, booking, event);
     } else if (event.type === 'refunded') {
-      const byPayment = event.paymentRef && context.repo.getBookingByPaymentRef
-        ? await context.repo.getBookingByPaymentRef(event.paymentRef)
-        : null;
-      const booking = byPayment ?? (event.bookingId ? await context.repo.getBookingById(event.bookingId) : null);
-      if (event.amountCaptured === undefined || event.amountRefunded === undefined || event.amountRefunded !== event.amountCaptured) {
-        // A partial refund leaves the booking standing, so there is nothing to transition. Reserva
-        // issues partials itself now, and those already have a durable row — only a refund it has
-        // no record of is worth an operator's attention.
-        const recorded = booking ? await context.repo.getRefundOperationByBookingId(booking.id) : null;
-        if (!recorded) context.logger.warn?.('non-full refund does not cancel booking', { eventId: event.id, bookingId: booking?.id });
-      } else {
+      const booking = await bookingForPaymentEvent(context, event);
+      if (booking && event.amountRefunded !== undefined) await context.repo.recordRefundedAmount(booking.id, event.amountRefunded);
+      // A partial refund leaves the booking standing, so the running total above is all it changes.
+      if (event.amountCaptured !== undefined && event.amountRefunded !== undefined && event.amountRefunded === event.amountCaptured) {
         if (booking) {
           const timestamp = nowIso(context);
           // Reconcile the durable operation record regardless of which side ends up owning
@@ -177,12 +179,24 @@ export function handlePaymentWebhook(request: Request, context: ReservaContext):
         }
       }
     } else if (event.type === 'dispute_created') {
-      const byPayment = event.paymentRef && context.repo.getBookingByPaymentRef
-        ? await context.repo.getBookingByPaymentRef(event.paymentRef)
-        : null;
-      const booking = byPayment ?? (event.bookingId ? await context.repo.getBookingById(event.bookingId) : null);
+      const booking = await bookingForPaymentEvent(context, event);
       context.logger.warn?.('payment dispute created', { eventId: event.id, bookingId: booking?.id ?? event.bookingId });
-      if (booking) await dispatchDisputeEvent(context, booking, event.id);
+      if (booking) {
+        await context.repo.markDisputed(booking.id, nowIso(context));
+        // Hooks receive the booking as it now stands, dispute recorded.
+        await dispatchDisputeEvent(context, await context.repo.getBookingById(booking.id) ?? booking, event.id);
+      }
+    } else if (event.type === 'dispute_closed') {
+      // Recorded only: the booking was never changed by the dispute, so its close changes nothing
+      // either, and the operator already heard about it from the provider.
+      const booking = await bookingForPaymentEvent(context, event);
+      if (booking && event.disputeOutcome) {
+        await context.repo.closeDispute(booking.id, event.disputeOutcome, nowIso(context));
+      } else if (booking) {
+        // The close still proves a dispute existed, so it is recorded as open rather than dropped.
+        context.logger.warn?.('payment dispute closed without a known outcome', { eventId: event.id, bookingId: booking.id });
+        await context.repo.markDisputed(booking.id, nowIso(context));
+      }
     }
     return json({ received: true });
   });

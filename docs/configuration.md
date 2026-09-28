@@ -188,3 +188,21 @@ reserva({
   routePrefix: '/en', // mounts every route under /en/..., e.g. /en/api/booking/checkout
 })
 ```
+
+## Refunds and disputes on a booking
+
+There is nothing to configure: every booking carries what happened to its money after payment.
+
+- `booking.amountRefundedMinor` is the running total of refunds sent on the payment, partial or
+  full, whether Reserva issued them (an operator cancellation) or someone did it in the payment
+  provider's dashboard. It counts refunds *sent*: one the bank later bounces (rare, such as a closed
+  card) stays counted, because the business still owes the customer that money. Reserva does not
+  listen for Stripe's `refund.failed`; Stripe notifies the account owner of a failed refund itself.
+  A refund event changes nothing else about the booking unless it returns the whole payment, which
+  cancels the booking.
+- `booking.disputedAt` and `booking.disputeStatus` (`'open' | 'won' | 'lost'`, both `null` when the
+  payment was never disputed) record a chargeback or a bank inquiry. The date is when Reserva first
+  saw the dispute. The status turns `won` or `lost` when the provider reports the outcome (with
+  Stripe, `charge.dispute.closed`; an inquiry that closes without a chargeback counts as won), and
+  stays `open` on an endpoint that is not subscribed to it. When one payment is disputed twice, the
+  last outcome wins.

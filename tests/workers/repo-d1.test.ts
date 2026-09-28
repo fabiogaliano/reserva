@@ -353,6 +353,52 @@ describe('D1 booking repository', () => {
     await expect(db.prepare('UPDATE bookings SET guest_count = 0 WHERE id = ?').bind(created.id).run()).rejects.toThrow(/CHECK/);
   });
 
+  describe('refund total and dispute status', () => {
+    const insertMoneyBooking = (id: string) => repo.insertHold({
+      id, reference: `BKT-2026-${id}`, serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
+      startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
+      holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: `${id}-cancel`, operatorToken: `${id}-operator`,
+      createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
+    });
+
+    it('starts a booking with nothing refunded and no dispute', async () => {
+      await expect(insertMoneyBooking('money-new')).resolves.toMatchObject({ amountRefundedMinor: 0, disputedAt: null, disputeStatus: null });
+    });
+
+    it('keeps the largest refunded total whatever order the totals arrive in', async () => {
+      const created = await insertMoneyBooking('money-refund');
+
+      await repo.recordRefundedAmount(created.id, 5000);
+      await repo.recordRefundedAmount(created.id, 2000);
+      await expect(repo.getBookingById(created.id)).resolves.toMatchObject({ amountRefundedMinor: 5000, updatedAt: created.updatedAt });
+      await repo.recordRefundedAmount(created.id, 12000);
+      await expect(repo.getBookingById(created.id)).resolves.toMatchObject({ amountRefundedMinor: 12000 });
+
+      await expect(db.prepare('UPDATE bookings SET amount_refunded_minor = -1 WHERE id = ?').bind(created.id).run()).rejects.toThrow(/CHECK/);
+    });
+
+    it('opens a dispute once and lets its close set the outcome', async () => {
+      const created = await insertMoneyBooking('money-dispute');
+
+      await repo.markDisputed(created.id, '2026-07-22T08:00:00.000Z');
+      await repo.markDisputed(created.id, '2026-07-23T08:00:00.000Z');
+      await expect(repo.getBookingById(created.id)).resolves.toMatchObject({ disputedAt: '2026-07-22T08:00:00.000Z', disputeStatus: 'open' });
+
+      await repo.closeDispute(created.id, 'won', '2026-09-01T08:00:00.000Z');
+      await expect(repo.getBookingById(created.id)).resolves.toMatchObject({ disputedAt: '2026-07-22T08:00:00.000Z', disputeStatus: 'won' });
+    });
+
+    it('ends in the outcome when the close is recorded before the dispute opens', async () => {
+      const created = await insertMoneyBooking('money-dispute-reversed');
+
+      await repo.closeDispute(created.id, 'lost', '2026-09-01T08:00:00.000Z');
+      await repo.markDisputed(created.id, '2026-09-01T08:05:00.000Z');
+      await expect(repo.getBookingById(created.id)).resolves.toMatchObject({ disputedAt: '2026-09-01T08:00:00.000Z', disputeStatus: 'lost' });
+
+      await expect(db.prepare("UPDATE bookings SET dispute_status = 'pending' WHERE id = ?").bind(created.id).run()).rejects.toThrow(/CHECK/);
+    });
+  });
+
   describe('token hashing, expiry, and revocation', () => {
     // A second repository instance bound to the same D1 database but with RESERVA_TOKEN_ENC_KEY
     // configured, so these tests can exercise the full encrypt-at-insert/decrypt-at-read round trip
