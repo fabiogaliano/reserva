@@ -138,8 +138,10 @@ regenerable — a row written without it never has its plaintext at rest again.
    canonical names. With `@reservajs/stripe`, subscribe the webhook endpoint to
    `checkout.session.completed`, `checkout.session.expired`,
    `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`,
-   `charge.refunded` and `charge.dispute.created`, and manage payment methods in the Stripe
-   dashboard. **Reserva does not support delayed payment methods. Do not enable Multibanco, SEPA
+   `charge.refunded`, `charge.dispute.created` and `charge.dispute.closed`, and manage payment
+   methods in the Stripe dashboard. An endpoint created before 0.12 lacks
+   `charge.dispute.closed`: add it, or every dispute stays `open` on its booking (nothing else
+   breaks). **Reserva does not support delayed payment methods. Do not enable Multibanco, SEPA
    Direct Debit, or bank transfer in the Stripe dashboard** — their money arrives days after the
    capacity hold expires. One enabled by mistake is refused at the webhook (hold released, payment
    cancelled, customer told) and refunded in full if it settles anyway. Set the webhook endpoint's

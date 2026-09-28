@@ -152,9 +152,10 @@ session cap against `booking.holdMinutes`, presentable currencies) are validated
 at startup. Point a Stripe webhook at `/api/booking/webhooks/payment` and subscribe to
 `checkout.session.completed`, `checkout.session.expired`,
 `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`,
-`charge.refunded`, and `charge.dispute.created`. Payment methods are managed in the Stripe
-dashboard; delayed methods (Multibanco, SEPA Direct Debit, bank transfer) are not supported and
-are refused safely.
+`charge.refunded`, `charge.dispute.created`, and `charge.dispute.closed`. An endpoint without
+`charge.dispute.closed` keeps working; its disputes just stay open on the booking. Payment methods
+are managed in the Stripe dashboard; delayed methods (Multibanco, SEPA Direct Debit, bank
+transfer) are not supported and are refused safely.
 
 ## Booking events
 

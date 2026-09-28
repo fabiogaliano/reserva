@@ -8,6 +8,7 @@ import {
   PAYMENT_WEBHOOK_BODY_LIMIT_BYTES,
   type ApiErrorCode,
   type Booking,
+  type DisputeOutcome,
   type ResolvedClientConfig,
   type PaymentEventParsed,
   type PaymentProvider,
@@ -269,6 +270,20 @@ const PAYMENT_EVENT_BY_STRIPE_TYPE: Record<string, PaymentEventParsed['type']> =
   'checkout.session.async_payment_failed': 'checkout_expired',
   'charge.refunded': 'refunded',
   'charge.dispute.created': 'dispute_created',
+  'charge.dispute.closed': 'dispute_closed',
+};
+
+// A closed dispute's status, reduced to whether the money stayed with the business. Any status not
+// listed here (Stripe's type leaves the set open) yields no outcome, so Reserva keeps the dispute
+// open for the operator to check in the dashboard rather than guessing.
+const DISPUTE_OUTCOME_BY_STRIPE_STATUS: Record<string, DisputeOutcome> = {
+  won: 'won',
+  // A bank inquiry that closed without becoming a chargeback: no money was ever withdrawn.
+  warning_closed: 'won',
+  lost: 'lost',
+  // Settled through a prevention programme (Visa RDR, Ethoca alerts) by refunding the cardholder,
+  // so the money went back even though no chargeback was filed.
+  prevented: 'lost',
 };
 
 export function stripeEventToParsed(event: Stripe.Event): PaymentEventParsed {
@@ -301,7 +316,7 @@ export function stripeEventToParsed(event: Stripe.Event): PaymentEventParsed {
     }
     return parsed;
   }
-  if (event.type === 'charge.refunded' || event.type === 'charge.dispute.created') {
+  if (event.type === 'charge.refunded' || event.type === 'charge.dispute.created' || event.type === 'charge.dispute.closed') {
     const charge = object as { metadata?: Record<string, string> | null; paid?: boolean };
     const bookingId = bookingIdOf(charge);
     const paymentIntent = paymentIntentOf(charge);
@@ -315,6 +330,10 @@ export function stripeEventToParsed(event: Stripe.Event): PaymentEventParsed {
     // 2022-11-15), and the refund id is only needed by `refund.created` subscribers. The
     // cancel-on-full-refund path keys off the amounts, not the id.
     if (charge.paid !== undefined) parsed.paid = charge.paid;
+    if (event.type === 'charge.dispute.closed') {
+      const outcome = DISPUTE_OUTCOME_BY_STRIPE_STATUS[(object as Stripe.Dispute).status];
+      if (outcome) parsed.disputeOutcome = outcome;
+    }
   }
   return parsed;
 }

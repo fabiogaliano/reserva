@@ -81,7 +81,7 @@ customer sees a "we couldn't take this payment" page. Money that settles regardl
 ## Webhooks
 
 Create a Stripe webhook endpoint pointing at `https://<your site>/api/booking/webhooks/payment` and
-subscribe to exactly these six events:
+subscribe to exactly these seven events:
 
 - `checkout.session.completed`
 - `checkout.session.expired`
@@ -89,6 +89,21 @@ subscribe to exactly these six events:
 - `checkout.session.async_payment_failed`
 - `charge.refunded`
 - `charge.dispute.created`
+- `charge.dispute.closed`
+
+`charge.refunded` fires for partial refunds too, including ones made in the Stripe dashboard, and
+carries the charge's cumulative refunded amount; Reserva stores it as the booking's refunded total.
+`charge.dispute.closed` records how a dispute ended. An endpoint set up for an earlier release keeps
+working without it, but its disputes stay open on the booking until you add it. Stripe's closing
+statuses map to an outcome by whether the money stayed with you:
+
+| Stripe `status` | Outcome |
+|---|---|
+| `won` | won |
+| `warning_closed` (an inquiry closed without a chargeback) | won |
+| `lost` | lost |
+| `prevented` (settled by refunding the cardholder through a prevention programme) | lost |
+| anything else | none: the dispute stays open and Reserva logs a warning |
 
 Put its signing secret in `STRIPE_WEBHOOK_SECRET`. Signatures are verified
 against the raw body before anything is parsed, and an unsigned or tampered request is rejected

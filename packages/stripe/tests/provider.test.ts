@@ -744,6 +744,46 @@ describe('Stripe mapping helpers', () => {
     } } } as unknown as Stripe.Event).refundRef).toBeUndefined();
   });
 
+  it('maps a partial refund to the charge’s cumulative refunded amount', () => {
+    expect(stripeEventToParsed({ id: 'evt_partial', type: 'charge.refunded', data: { object: {
+      payment_intent: 'pi_1', amount_captured: 10000, amount_refunded: 2500,
+    } } } as unknown as Stripe.Event)).toMatchObject({ type: 'refunded', paymentRef: 'pi_1', amountCaptured: 10000, amountRefunded: 2500 });
+  });
+
+  describe('charge.dispute.closed', () => {
+    // A Dispute object, not a Charge: the booking id lives on the payment intent, so the payment
+    // reference is what finds the booking.
+    const closed = (status: string) => stripeEventToParsed({ id: `evt_closed_${status}`, type: 'charge.dispute.closed', data: { object: {
+      id: 'du_1', object: 'dispute', charge: 'ch_1', payment_intent: 'pi_1', amount: 10000, metadata: {}, status,
+    } } } as unknown as Stripe.Event);
+
+    it.each([
+      ['won', 'won'],
+      // An inquiry that closed without a chargeback: the money never left.
+      ['warning_closed', 'won'],
+      ['lost', 'lost'],
+      // Resolved by refunding the cardholder through a prevention programme.
+      ['prevented', 'lost'],
+    ] as const)('maps status %s to outcome %s', (status, outcome) => {
+      expect(closed(status)).toMatchObject({ type: 'dispute_closed', paymentRef: 'pi_1', disputeOutcome: outcome });
+    });
+
+    it.each(['needs_response', 'under_review', 'warning_needs_response', 'warning_under_review', 'some_future_status'])(
+      'leaves the outcome out for status %s, which is not a closed outcome',
+      (status) => {
+        const parsed = closed(status);
+        expect(parsed).toMatchObject({ type: 'dispute_closed', paymentRef: 'pi_1' });
+        expect(parsed).not.toHaveProperty('disputeOutcome');
+      },
+    );
+
+    it('never sets an outcome on the event that opens a dispute', () => {
+      expect(stripeEventToParsed({ id: 'evt_created', type: 'charge.dispute.created', data: { object: {
+        id: 'du_1', object: 'dispute', payment_intent: 'pi_1', status: 'lost', metadata: {},
+      } } } as unknown as Stripe.Event)).not.toHaveProperty('disputeOutcome');
+    });
+  });
+
   it('reads the optional headcount as a positive integer, and a blank or unusable one as null', () => {
     const withGuestCount = (value: string | null) => ({
       id: 'cs_1', status: 'complete', payment_status: 'paid', payment_intent: 'pi_1', metadata: null,
