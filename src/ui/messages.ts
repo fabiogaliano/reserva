@@ -236,6 +236,18 @@ export const defaultMessages = {
   'admin.guestCount': '{n} guests',
   'admin.guestCountOne': '1 guest',
   'admin.holdUntil': 'until {time}',
+  // What happened to a booking's money after payment: a badge beside the status, and the matching
+  // fact in the row's disclosure. `{amount}` is the running refund total; `{date}` is the day the
+  // dispute was first seen.
+  'admin.refundedBadge': 'Refunded {amount}',
+  'admin.disputeOpen': 'Dispute open',
+  'admin.disputeWon': 'Dispute won',
+  'admin.disputeLost': 'Dispute lost',
+  'admin.refunded': 'Refunded',
+  'admin.dispute': 'Dispute',
+  'admin.disputeOpenSince': 'Open since {date}',
+  'admin.disputeWonOpened': 'Won (opened {date})',
+  'admin.disputeLostOpened': 'Lost (opened {date})',
   'admin.copyReference': 'Copy reference',
   'admin.copyEmail': 'Copy email',
   'admin.copied': 'Copied',

@@ -316,6 +316,12 @@ export const adminEnhancerJs = `(() => {
       figure.setAttribute('aria-hidden', 'true');
       guests.append(figure, el('span', 'bk-sr-only', row.gl));
       const end = el('span', 'bk-daylist-end');
+      // Field tags and money badges, in the order the server rendered them ahead of the status.
+      for (const tag of row.b || []) {
+        const badge = el('span', 'bk-badge' + (tag.m ? ' bk-badge--' + tag.m : ''), tag.t);
+        if (tag.h) badge.title = tag.h;
+        end.append(badge);
+      }
       if (row.s) end.append(el('span', 'bk-badge' + (row.sc ? ' bk-badge--' + row.sc : ''), row.s));
       // row.u is present only when the server found a presentable operator token — otherwise
       // render plain text, never a link that would 403 the instant it's clicked.

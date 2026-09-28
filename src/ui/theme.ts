@@ -468,8 +468,9 @@ export const themeCss = `
 .bk-booking-sub { display: block; margin-top: 0.15rem; font-size: 0.85rem; color: var(--bk-text-muted); }
 .bk-booking-guests { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.875rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .bk-booking-guests svg { flex: none; color: var(--bk-text-muted); }
-/* Only a status that is not the happy path earns a badge; a list of confirmed bookings stays quiet. */
-.bk-booking-status { justify-self: end; font-size: 0.85rem; white-space: nowrap; color: var(--bk-text-muted); }
+/* Only a status that is not the happy path earns a badge; a list of confirmed bookings stays quiet.
+   Field tags and money badges share the slot, wrapping between badges rather than inside one. */
+.bk-booking-status { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.35rem; justify-self: end; font-size: 0.85rem; white-space: nowrap; color: var(--bk-text-muted); }
 .bk-booking-chevron { justify-self: end; color: var(--bk-text-muted); transition: rotate 160ms var(--bk-ease); }
 .bk-booking[open] > summary .bk-booking-chevron { rotate: 90deg; }
 @media (prefers-reduced-motion: reduce) { .bk-booking-chevron { transition: none; } }
@@ -524,7 +525,7 @@ export const themeCss = `
   /* All pinned: auto-placement would otherwise carry the chevron down to a later row instead of
      keeping it on the name's line. */
   .bk-booking-guests { grid-row: 2; grid-column: 2; }
-  .bk-booking-status { grid-row: 3; grid-column: 2; justify-self: start; }
+  .bk-booking-status { grid-row: 3; grid-column: 2; justify-self: start; justify-content: flex-start; }
   .bk-booking-status:empty { display: none; }
   .bk-booking-chevron { grid-row: 1; grid-column: 3; }
   .bk-booking-time small { display: block; margin: 0; }
@@ -643,6 +644,10 @@ export const themeCss = `
 .bk-badge--warn { background: var(--bk-warning-soft); color: var(--bk-warning); }
 .bk-badge--danger { background: var(--bk-danger-soft); color: var(--bk-danger); }
 .bk-badge--accent { background: var(--bk-accent-soft); color: var(--bk-accent-text); }
+/* A declared field's value, not a state: no dot, a hairline border and the body colour keep it
+   from ever reading as a booking status. */
+.bk-badge--field { color: var(--bk-text); border-color: var(--bk-border); }
+.bk-badge--field::before { content: none; }
 
 .bk-btn {
   display: inline-flex;
@@ -863,9 +868,11 @@ a.bk-day { padding-bottom: 0.35rem; box-sizing: border-box; }
 .bk-loadline-top { display: flex; justify-content: space-between; gap: 1rem; font-size: 0.85rem; }
 .bk-loadline-top span:last-child { color: var(--bk-text-muted); font-variant-numeric: tabular-nums; }
 .bk-daylist { list-style: none; margin: 0; padding: 0; }
+/* The name keeps a floor: an auto column takes its full width before a 1fr one gets any, so a
+   row's badges would otherwise squeeze the name to nothing instead of wrapping. */
 .bk-daylist li {
   display: grid;
-  grid-template-columns: 4.2rem minmax(0, 1fr) auto auto;
+  grid-template-columns: 4.2rem minmax(8rem, 1fr) auto auto;
   align-items: center;
   gap: 0.75rem;
   padding: 0.55rem 0;
@@ -876,7 +883,7 @@ a.bk-day { padding-bottom: 0.35rem; box-sizing: border-box; }
 .bk-daylist time { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .bk-daylist strong { font-weight: 500; }
 .bk-daylist .bk-sub { display: inline; margin-left: 0.35rem; font-size: 0.82rem; }
-.bk-daylist-end { display: inline-flex; align-items: center; justify-content: flex-end; gap: 0.6rem; white-space: nowrap; }
+.bk-daylist-end { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.35rem 0.6rem; white-space: nowrap; }
 .bk-editrow { display: flex; align-items: flex-end; gap: 0.75rem 1rem; flex-wrap: wrap; }
 .bk-editrow .bk-field { margin: 0; }
 .bk-field > label { display: block; font-size: 0.85rem; font-weight: 500; margin-bottom: 0.3rem; }

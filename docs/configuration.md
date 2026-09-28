@@ -160,8 +160,12 @@ metadataFields: [
 Four types (`text`, `number`, `boolean`, `select`) and three modifiers (`options`, `required`,
 `maxLength`) are the entire language; there are no conditional fields, cross-field rules, or
 custom validators. Declared fields are published by the catalog endpoint, validated at
-checkout, stored on the booking, and rendered on the manage page and admin dashboard. A
-service that declares none rejects a non-empty `metadata` body.
+checkout, stored on the booking, and rendered on the manage page and admin dashboard. The
+dashboard lists every declared field a booking has a value for in that booking's details, after
+the price, in declaration order and the admin locale, whatever its `visibility` — including on
+cancelled and no-show bookings, which have no manage link. Its search matches a `select` value
+by the option label it shows as well as by the stored value. A service that declares none
+rejects a non-empty `metadata` body.
 
 Two display settings, independent of each other:
 
@@ -177,8 +181,10 @@ Two display settings, independent of each other:
   fields out of customer mail itself.
 - `adminBadge: boolean` (default `false`) — shows the booking's value as a tag next to its
   status in the admin bookings list and calendar day panel, using the option's label in the
-  admin locale (the raw value once that option is no longer declared); a booking with no value
-  shows no tag. Allowed on `type: 'select'` only: `adminBadge: true` on any other type fails
+  admin locale (the raw value once that option is no longer declared), with the field's label
+  as its tooltip; a booking with no value shows no tag. Tags come in declaration order, ahead of
+  the refund and dispute badges and the status, and are drawn without a status dot so they never
+  read as one. Allowed on `type: 'select'` only: `adminBadge: true` on any other type fails
   validation, because a tag has to come from a closed set of labels.
 
 ## Moving and disabling routes
@@ -226,3 +232,10 @@ There is nothing to configure: every booking carries what happened to its money 
   Stripe, `charge.dispute.closed`; an inquiry that closes without a chargeback counts as won), and
   stays `open` on an endpoint that is not subscribed to it. When one payment is disputed twice, the
   last outcome wins.
+
+The admin dashboard shows both in the bookings list and the calendar day panel, beside the
+booking's status: a "Refunded €X" badge (warning tone) whenever any amount was refunded, and a
+dispute badge — "Dispute open" and "Dispute lost" in the danger tone, "Dispute won" in the
+neutral one, since the money stayed. The booking's details add matching rows after its declared
+fields: "Refunded" with the total, and "Dispute" with the outcome and the date it was first seen
+("Open since …", "Won (opened …)", "Lost (opened …)").

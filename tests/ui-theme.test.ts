@@ -73,7 +73,7 @@ describe('themeCss (OS default + forced overrides)', () => {
     expect(themeCss).toContain('.bk-legend-ring { display: inline-block;');
     expect(themeCss).toContain('.bk-legend-strike { color: var(--bk-danger); text-decoration: line-through;');
     expect(themeCss).toContain('.bk-booking-guests { grid-row: 2; grid-column: 2; }');
-    expect(themeCss).toContain('.bk-booking-status { grid-row: 3; grid-column: 2; justify-self: start; }');
+    expect(themeCss).toContain('.bk-booking-status { grid-row: 3; grid-column: 2; justify-self: start; justify-content: flex-start; }');
     expect(themeCss).toContain('.bk-booking-chevron { grid-row: 1; grid-column: 3; }');
     // Adjusted and closed must not differ by hue alone: one is a ring, the other a struck-through day.
     expect(themeCss).toContain('.bk-day--adjusted { box-shadow: inset 0 0 0 1px var(--bk-warning); }');
@@ -86,6 +86,12 @@ describe('themeCss (OS default + forced overrides)', () => {
     expect(themeCss.match(/^\.bk-pager \{/gm)).toHaveLength(1);
     expect(themeCss.match(/^\.bk-meter \{/gm)).toHaveLength(1);
     expect(themeCss.match(/^\.bk-daylist \{/gm)).toHaveLength(1);
+  });
+
+  // A field tag is a value, not a state, so it must never borrow the status badges' dot or tone.
+  it('draws field tags without a status dot, in the body colour with a hairline border', () => {
+    expect(themeCss).toContain('.bk-badge--field { color: var(--bk-text); border-color: var(--bk-border); }');
+    expect(themeCss).toContain('.bk-badge--field::before { content: none; }');
   });
 });
 
@@ -108,6 +114,15 @@ describe('admin dashboard enhancement', () => {
   it('renders the day peak in units and its load bar in the day card from the island', () => {
     expect(adminEnhancerJs).toContain('fill(i18n.peak, { peak: meta[2], capacity })');
     expect(adminEnhancerJs).toContain('meter.dataset.fill = String(meterFill(meta[2], capacity));');
+  });
+
+  // Same classes, title and order as the server's day panel, so a re-selected day looks unchanged.
+  it('rebuilds a day row\'s field tags and money badges from the island, ahead of its status', () => {
+    const tags = adminEnhancerJs.indexOf("for (const tag of row.b || [])");
+    expect(tags).toBeGreaterThan(-1);
+    expect(adminEnhancerJs).toContain("el('span', 'bk-badge' + (tag.m ? ' bk-badge--' + tag.m : ''), tag.t)");
+    expect(adminEnhancerJs).toContain('if (tag.h) badge.title = tag.h;');
+    expect(tags).toBeLessThan(adminEnhancerJs.indexOf('if (row.s) end.append('));
   });
 });
 

@@ -1,6 +1,6 @@
 import type { OpsHealthSecurity } from '../../core/api.js';
-import type { Booking, BookingStatus } from '../../core/booking.js';
-import { adminLocaleFor, meetingPointForBooking, pickupOptionFor, pickupPresentationFor, resolveLocalizedText, resolveService, resolveServiceTitle, type ResolvedServiceConfig } from '../../core/config.js';
+import type { Booking, BookingStatus, DisputeStatus } from '../../core/booking.js';
+import { adminLocaleFor, meetingPointForBooking, metadataRowsForBooking, pickupOptionFor, pickupPresentationFor, resolveLocalizedText, resolveService, resolveServiceTitle, type MetadataRow, type ResolvedServiceConfig } from '../../core/config.js';
 import { formatLocaleFor } from '../../core/locale.js';
 import { defaultCapacityForDate, type CapacityDefault } from '../../core/occupancy.js';
 import { addDaysToDateKey, enumerateDateKeys, localDateKey, parseUtcInstant } from '../../core/time.js';
@@ -174,6 +174,17 @@ function adminMeetingPointSubLabel(config: ReservaContext['config'], booking: Bo
   }
 }
 
+// Every declared field the booking has a value for, customer-visible or operator-only, labelled in
+// the operator's locale. Shared by the row, its tags and the search, so all three name a value the
+// same way. A service no longer declared leaves nothing to label the values with.
+function adminMetadataRows(config: ReservaContext['config'], booking: Booking): MetadataRow[] {
+  try {
+    return metadataRowsForBooking(resolveService(config, booking.serviceSlug), booking.metadata, adminLocaleFor(config), config.locales.default);
+  } catch {
+    return [];
+  }
+}
+
 // The status and time window are SQL predicates; only the free-text search runs here, because it
 // matches config-resolved text no query can see.
 export function matchesAdminSearch(booking: Booking, q: string, config: ReservaContext['config']): boolean {
@@ -182,8 +193,12 @@ export function matchesAdminSearch(booking: Booking, q: string, config: ReservaC
   // adminMeetingPointSubLabel is exactly what the row displays, so a hidden meeting point can
   // never make a booking match.
   // Metadata is operator-declared per service (booth number, flight code…), so whatever an
-  // operator put there is exactly what they will later search the dashboard for.
-  const metadataValues = Object.values(booking.metadata ?? {}).map((value) => (value === null || value === undefined ? '' : String(value)));
+  // operator put there is exactly what they will later search the dashboard for. A select is
+  // stored as its option code but shown by its label, and either one finds it.
+  const metadataValues = [
+    ...Object.values(booking.metadata ?? {}).map((value) => (value === null || value === undefined ? '' : String(value))),
+    ...adminMetadataRows(config, booking).map((row) => String(row.value)),
+  ];
   const phone = booking.customerPhone ?? '';
   const haystack = [booking.reference, resolveServiceTitle(config, booking.serviceSlug, adminLocaleFor(config)), booking.pickupType, booking.pickupAddress ?? '', adminMeetingPointSubLabel(config, booking), booking.customerName ?? '', booking.customerEmail ?? '', phone, ...metadataValues].join(' ').toLowerCase();
   if (haystack.includes(needle)) return true;
@@ -454,6 +469,19 @@ function meterMarkup(peak: number, capacity: number, className = 'bk-meter'): st
   return `<span class="${className}${peak >= capacity && capacity > 0 ? ' bk-meter--full' : ''}" data-fill="${meterFill(peak, capacity)}" aria-hidden="true"><i></i></span>`;
 }
 
+// A tag or badge ahead of the status in a row's status slot: its text, its bk-badge modifier and
+// its hover title. Short keys because the day panel's JSON island carries it per booking, and the
+// enhancer rebuilds the same markup from it.
+interface AdminRowBadge {
+  t: string;
+  m?: 'field' | 'warn' | 'danger';
+  h?: string;
+}
+
+function rowBadgeMarkup(badge: AdminRowBadge): string {
+  return `<span class="bk-badge${badge.m ? ` bk-badge--${badge.m}` : ''}"${badge.h ? ` title="${escapeHtml(badge.h)}"` : ''}>${escapeHtml(badge.t)}</span>`;
+}
+
 export function adminPage(context: ReservaContext, input: AdminPageInput): string {
   const { list, filters, calendar, editDate, saved, csrfToken, incidentsHtml, attention, glance, activeTab } = input;
   const { fromDate, toDate, overrides, capacityDefaults } = calendar;
@@ -487,6 +515,31 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
       : label;
     const tone = statusToneOf(booking.status);
     return `<span class="bk-badge${tone ? ` bk-badge--${tone}` : ''}">${escapeHtml(text)}</span>`;
+  };
+  const formatAmount = (amountMinor: number): string => formatPrice(amountMinor, locale, context.config.business.currency);
+  // A won dispute kept the money, so only open and lost ones carry the danger tone.
+  const disputeBadges: Record<DisputeStatus, AdminRowBadge> = {
+    open: { t: messages['admin.disputeOpen'], m: 'danger' },
+    won: { t: messages['admin.disputeWon'] },
+    lost: { t: messages['admin.disputeLost'], m: 'danger' },
+  };
+  const disputeFactKeys: Record<DisputeStatus, 'admin.disputeOpenSince' | 'admin.disputeWonOpened' | 'admin.disputeLostOpened'> = {
+    open: 'admin.disputeOpenSince',
+    won: 'admin.disputeWonOpened',
+    lost: 'admin.disputeLostOpened',
+  };
+  // What precedes the status in a row, in one order for the list and the day panel: the fields the
+  // operator opted to see at a glance (declaration order), then what happened to the money.
+  const leadingBadges = (booking: Booking, metadataRows: MetadataRow[]): AdminRowBadge[] => {
+    const tagged = new Set((serviceOf(booking)?.metadataFields ?? []).filter((field) => field.adminBadge === true).map((field) => field.key));
+    const badges: AdminRowBadge[] = metadataRows
+      .filter((row) => tagged.has(row.key))
+      .map((row) => ({ t: String(row.value), m: 'field', h: row.label }));
+    if (booking.amountRefundedMinor > 0) {
+      badges.push({ t: formatMessage(messages['admin.refundedBadge'], { amount: formatAmount(booking.amountRefundedMinor) }), m: 'warn' });
+    }
+    if (booking.disputeStatus) badges.push(disputeBadges[booking.disputeStatus]);
+    return badges;
   };
 
   // A booking row states what an operator scans by — when, who, what, where, how many — and keeps
@@ -526,7 +579,22 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
     // mail client that isn't the default one.
     if (booking.customerEmail) facts.push([messages['common.email'], `${emailLink(booking.customerEmail)}${copyButton(booking.customerEmail, messages['admin.copyEmail'], messages['admin.copied'])}`]);
     if (booking.customerPhone) facts.push([messages['common.phone'], phoneLinks(booking.customerPhone, messages)]);
-    facts.push([messages['common.price'], escapeHtml(formatPrice(booking.priceMinor, locale, context.config.business.currency))]);
+    facts.push([messages['common.price'], escapeHtml(formatAmount(booking.priceMinor))]);
+    // Every declared field, whoever else may see it: a terminal row has no Manage link, so this
+    // is the only place its values can be read. Boolean copy matches the manage page's.
+    const metadataRows = adminMetadataRows(context.config, booking);
+    for (const row of metadataRows) {
+      const value = typeof row.value === 'boolean' ? (row.value ? messages['admin.on'] : messages['admin.off']) : String(row.value);
+      facts.push([row.label, escapeHtml(value)]);
+    }
+    if (booking.amountRefundedMinor > 0) facts.push([messages['admin.refunded'], escapeHtml(formatAmount(booking.amountRefundedMinor))]);
+    if (booking.disputeStatus) {
+      const opened = booking.disputedAt ? formatDayDate(localDateKey(booking.disputedAt, timezone), locale, now) : null;
+      const outcome = opened
+        ? formatMessage(messages[disputeFactKeys[booking.disputeStatus]], { date: opened })
+        : disputeBadges[booking.disputeStatus].t;
+      facts.push([messages['admin.dispute'], escapeHtml(outcome)]);
+    }
     if (requiresAddress && booking.pickupAddress) facts.push([messages['common.pickupAddress'], escapeHtml(booking.pickupAddress)]);
     if (meetingPointLabel && pickupLabel) facts.push([messages['common.pickup'], escapeHtml(pickupLabel)]);
     facts.push([messages['admin.bookedOn'], escapeHtml(formatDayDate(localDateKey(booking.createdAt, timezone), locale, now))]);
@@ -535,7 +603,7 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
       + `<span class="bk-booking-time">${time.html(booking.startsAt)}</span>`
       + `<span><span class="bk-booking-who">${escapeHtml(who)}</span><span class="bk-booking-sub">${escapeHtml(summaryParts.join(' · '))}</span></span>`
       + guestsMarkup(guestFigure(context.config, booking, messages))
-      + `<span class="bk-booking-status">${statusMarkup(booking)}</span>`
+      + `<span class="bk-booking-status">${leadingBadges(booking, metadataRows).map(rowBadgeMarkup).join('')}${statusMarkup(booking)}</span>`
       + chevronIcon
       + `</summary>`
       + `<div class="bk-booking-detail">${factList(facts)}${manageMarkup}</div>`
@@ -761,16 +829,18 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
     : '';
   // Per-day booking rows, display-ready (times and labels formatted here so the enhancer renders
   // them without duplicating locale logic). Bounded by the handler's detail cap.
-  const dayRow = (entry: Booking): { t: string; c: string; v: string; g: string; gl: string; s?: string; sc?: string; u?: string } => {
+  const dayRow = (entry: Booking): { t: string; c: string; v: string; g: string; gl: string; b?: AdminRowBadge[]; s?: string; sc?: string; u?: string } => {
     const figure = guestFigure(context.config, entry, messages);
     const manageHref = manageLinkHref(context.routeConfig, entry.operatorToken);
     const tone = statusToneOf(entry.status);
+    const badges = leadingBadges(entry, adminMetadataRows(context.config, entry));
     return {
       t: time.text(entry.startsAt),
       c: entry.customerName ?? entry.customerEmail ?? '—',
       v: resolveServiceTitle(context.config, entry.serviceSlug, locale),
       g: figure.value,
       gl: figure.label,
+      ...(badges.length > 0 ? { b: badges } : {}),
       // Confirmed needs no badge; omitted keys keep the island small.
       ...(entry.status === 'confirmed' ? {} : { s: messages[`status.${entry.status}` as keyof typeof messages] ?? entry.status, ...(tone ? { sc: tone } : {}) }),
       // Omitted (not a dead-link href) when the token isn't presentable — the enhancer renders
@@ -844,7 +914,7 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
       : `<span class="bk-sub">${escapeHtml(messages['admin.manageUnavailable'])}</span>`;
     return `<li><time>${escapeHtml(row.t)}</time><span><strong>${escapeHtml(row.c)}</strong><span class="bk-sub">${escapeHtml(row.v)}</span></span>`
       + guestsMarkup({ value: row.g, label: row.gl })
-      + `<span class="bk-daylist-end">${row.s ? `<span class="bk-badge${row.sc ? ` bk-badge--${row.sc}` : ''}">${escapeHtml(row.s)}</span>` : ''}${manage}</span></li>`;
+      + `<span class="bk-daylist-end">${(row.b ?? []).map(rowBadgeMarkup).join('')}${row.s ? `<span class="bk-badge${row.sc ? ` bk-badge--${row.sc}` : ''}">${escapeHtml(row.s)}</span>` : ''}${manage}</span></li>`;
   };
   const dayBookings = [...calendar.editDayBookings].sort(byStart);
   const dayDetail = `<div class="bk-day-detail" data-reserva-day-detail>${loadLine}`

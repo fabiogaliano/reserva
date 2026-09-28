@@ -2,8 +2,9 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { ADMIN_CSRF_TOKEN_TTL_MS, mintAdminCsrfToken } from '../src/admin-csrf';
 import { createReservaContext } from '../src/context';
-import type { ResolvedClientConfig, ResolvedServiceConfig } from '../src/core/config';
+import type { MetadataField, ResolvedClientConfig, ResolvedServiceConfig } from '../src/core/config';
 import { handleAdminGet, handleAdminPost } from '../src/handlers';
+import { formatDayDate } from '../src/ui/format';
 import { booking, config, rowsOf } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
@@ -663,6 +664,172 @@ describe('pickup option label + sub-lines', () => {
     expect(unfiltered).not.toContain('The Station');
     const searched = await (await handleAdminGet(new Request(`${ADMIN_URL}?q=station`), context)).text();
     expect(searched).not.toContain(seeded.reference);
+  });
+});
+
+// Every declared field is readable in the admin whoever else may see it; a field opted into
+// `adminBadge` also tags the row, and refunds and disputes badge it, in the list and the day panel.
+describe('declared fields, refunds and disputes in the bookings list and day panel', () => {
+  const metadataFields: MetadataField[] = [
+    { key: 'partner', label: { en: 'Partner', 'pt-PT': 'Parceiro' }, type: 'select', visibility: 'operator', adminBadge: true, options: [{ value: 'acme-stays', label: 'Acme Stays' }] },
+    { key: 'dietary_notes', label: { en: 'Dietary notes', 'pt-PT': 'Notas alimentares' }, type: 'text' },
+    { key: 'language', label: { en: 'Tour language', 'pt-PT': 'Idioma do tour' }, type: 'select', adminBadge: true, options: [{ value: 'de', label: { en: 'German', 'pt-PT': 'Alemão' } }] },
+    { key: 'seat_pref', label: 'Seat preference', type: 'select', options: [{ value: 'window', label: 'Window seat' }] },
+    { key: 'wheelchair', label: 'Wheelchair', type: 'boolean' },
+  ];
+  const fieldsConfig = (adminLocale?: string): ResolvedClientConfig => ({
+    ...config,
+    admin: { ...config.admin, ...(adminLocale ? { locale: adminLocale } : {}) },
+    services: { ...config.services, vintage: { ...config.services.vintage!, metadataFields } },
+  });
+  const contextFor = (rows: ReturnType<typeof booking>[], adminLocale?: string) =>
+    createReservaContext({ config: fieldsConfig(adminLocale), db: {} as D1Database, repo: fakeRepository(rows), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+  const on = (day: number, extra: Partial<ReturnType<typeof booking>>) => booking({
+    startsAt: `2026-06-${day}T09:00:00.000Z`, endsAt: `2026-06-${day}T10:00:00.000Z`, ...extra,
+    operatorToken: `op-${extra.id}`, cancelToken: `cancel-${extra.id}`,
+  });
+  // One booking row's markup, found by the reference in its disclosure.
+  const rowOf = (body: string, reference: string): string =>
+    body.split('<details class="bk-booking').find((chunk) => chunk.includes(reference))?.split('</details>')[0] ?? '';
+  const statusSlotOf = (row: string): string => /<span class="bk-booking-status">(.*?)<\/span><svg class="bk-booking-chevron"/.exec(row)?.[1] ?? '';
+  const islandOf = (body: string): { days: Record<string, Array<Record<string, unknown>>> } =>
+    JSON.parse(/<script type="application\/json" data-reserva-i18n>(.*?)<\/script>/.exec(body)?.[1] ?? '{}');
+
+  it('tags only opted-in fields, with the option label in the admin locale, in declaration order', async () => {
+    const tagged = on(20, { id: 'b-tags', reference: 'LVT-2026-600', metadata: { language: 'de', seat_pref: 'window', partner: 'acme-stays', dietary_notes: 'Vegan' } });
+    const untagged = on(21, { id: 'b-untagged', reference: 'LVT-2026-601', metadata: { seat_pref: 'window', dietary_notes: 'Vegan' } });
+    const bare = on(22, { id: 'b-bare', reference: 'LVT-2026-602', metadata: null });
+    const body = await (await handleAdminGet(adminGetRequest(), contextFor([tagged, untagged, bare], 'pt-PT'))).text();
+
+    // The partner comes first because it is declared first, whatever order the stored object has.
+    expect(statusSlotOf(rowOf(body, tagged.reference))).toBe(
+      '<span class="bk-badge bk-badge--field" title="Parceiro">Acme Stays</span>'
+      + '<span class="bk-badge bk-badge--field" title="Idioma do tour">Alemão</span>',
+    );
+    expect(statusSlotOf(rowOf(body, untagged.reference))).toBe('');
+    expect(statusSlotOf(rowOf(body, bare.reference))).toBe('');
+  });
+
+  it('tags and lists a value its field no longer offers as the raw stored value', async () => {
+    const stale = on(20, { id: 'b-stale', reference: 'LVT-2026-603', metadata: { partner: 'old-partner' } });
+    const row = rowOf(await (await handleAdminGet(adminGetRequest(), contextFor([stale]))).text(), stale.reference);
+    expect(statusSlotOf(row)).toBe('<span class="bk-badge bk-badge--field" title="Partner">old-partner</span>');
+    expect(row).toContain('<dt>Partner</dt><dd>old-partner</dd>');
+  });
+
+  it('lists every declared field after the price, customer and operator-only alike, on cancelled and no-show rows too', async () => {
+    const metadata = { wheelchair: true, seat_pref: 'window', partner: 'acme-stays', dietary_notes: 'Vegan & <nut-free>', language: 'de' };
+    const confirmed = on(20, { id: 'b-facts', reference: 'LVT-2026-604', metadata });
+    const cancelled = on(21, { id: 'b-facts-cancelled', reference: 'LVT-2026-605', status: 'cancelled', cancelledAt: '2026-06-13T08:00:00.000Z', cancelledBy: 'customer', metadata });
+    const noShow = booking({ id: 'b-facts-no-show', reference: 'LVT-2026-606', status: 'no_show', startsAt: '2026-06-14T06:00:00.000Z', endsAt: '2026-06-14T07:00:00.000Z', operatorToken: 'op-no-show', cancelToken: 'cancel-no-show', metadata });
+    const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?status=all`), contextFor([confirmed, cancelled, noShow]))).text();
+
+    const facts = '<dt>Total price</dt><dd>€100.00</dd>'
+      + '<dt>Partner</dt><dd>Acme Stays</dd>'
+      + '<dt>Dietary notes</dt><dd>Vegan &amp; &lt;nut-free&gt;</dd>'
+      + '<dt>Tour language</dt><dd>German</dd>'
+      + '<dt>Seat preference</dt><dd>Window seat</dd>'
+      + '<dt>Wheelchair</dt><dd>On</dd>';
+    for (const row of [confirmed, cancelled, noShow]) expect(rowOf(body, row.reference)).toContain(facts);
+    // A terminal row has no Manage link, so the disclosure is the only place these values show.
+    expect(rowOf(body, cancelled.reference)).not.toContain('bk-booking-open');
+    expect(rowOf(body, noShow.reference)).not.toContain('bk-booking-open');
+  });
+
+  it('badges refunds and disputes after the field tags and before the status, with matching facts after the fields', async () => {
+    const disputedAt = '2026-06-10T12:00:00.000Z';
+    const refunded = on(20, { id: 'b-refunded', reference: 'LVT-2026-607', amountRefundedMinor: 2000, metadata: { partner: 'acme-stays' } });
+    const open = on(21, { id: 'b-open', reference: 'LVT-2026-608', disputedAt, disputeStatus: 'open' });
+    const won = on(22, { id: 'b-won', reference: 'LVT-2026-609', disputedAt, disputeStatus: 'won' });
+    const lost = on(23, {
+      id: 'b-lost', reference: 'LVT-2026-610', status: 'cancelled', cancelledAt: '2026-06-13T08:00:00.000Z', cancelledBy: 'operator',
+      amountRefundedMinor: 10000, disputedAt, disputeStatus: 'lost', metadata: { partner: 'acme-stays' },
+    });
+    const untouched = on(24, { id: 'b-untouched', reference: 'LVT-2026-611' });
+    const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?status=all`), contextFor([refunded, open, won, lost, untouched]))).text();
+
+    expect(statusSlotOf(rowOf(body, refunded.reference))).toBe(
+      '<span class="bk-badge bk-badge--field" title="Partner">Acme Stays</span><span class="bk-badge bk-badge--warn">Refunded €20.00</span>',
+    );
+    expect(statusSlotOf(rowOf(body, open.reference))).toBe('<span class="bk-badge bk-badge--danger">Dispute open</span>');
+    // A won dispute kept the money, so its badge is the neutral one.
+    expect(statusSlotOf(rowOf(body, won.reference))).toBe('<span class="bk-badge">Dispute won</span>');
+    expect(statusSlotOf(rowOf(body, lost.reference))).toBe(
+      '<span class="bk-badge bk-badge--field" title="Partner">Acme Stays</span>'
+      + '<span class="bk-badge bk-badge--warn">Refunded €100.00</span>'
+      + '<span class="bk-badge bk-badge--danger">Dispute lost</span>'
+      + '<span class="bk-badge bk-badge--danger">Cancelled</span>',
+    );
+    expect(statusSlotOf(rowOf(body, untouched.reference))).toBe('');
+
+    expect(rowOf(body, refunded.reference)).toContain('<dt>Partner</dt><dd>Acme Stays</dd><dt>Refunded</dt><dd>€20.00</dd><dt>Booked</dt>');
+    // Dated the way the Booked row is, in the business timezone.
+    const opened = formatDayDate('2026-06-10', 'en', clock());
+    expect(rowOf(body, open.reference)).toContain(`<dt>Total price</dt><dd>€100.00</dd><dt>Dispute</dt><dd>Open since ${opened}</dd>`);
+    expect(rowOf(body, won.reference)).toContain(`<dt>Dispute</dt><dd>Won (opened ${opened})</dd>`);
+    expect(rowOf(body, lost.reference)).toContain(`<dt>Partner</dt><dd>Acme Stays</dd><dt>Refunded</dt><dd>€100.00</dd><dt>Dispute</dt><dd>Lost (opened ${opened})</dd>`);
+    expect(rowOf(body, untouched.reference)).not.toContain('<dt>Refunded</dt>');
+    expect(rowOf(body, untouched.reference)).not.toContain('<dt>Dispute</dt>');
+  });
+
+  it('words the money badges and facts in the admin locale', async () => {
+    const disputedAt = '2026-06-10T12:00:00.000Z';
+    const rows = [
+      on(20, { id: 'b-pt-open', reference: 'LVT-2026-612', disputedAt, disputeStatus: 'open' }),
+      on(21, { id: 'b-pt-won', reference: 'LVT-2026-613', disputedAt, disputeStatus: 'won' }),
+      on(22, { id: 'b-pt-lost', reference: 'LVT-2026-614', disputedAt, disputeStatus: 'lost', amountRefundedMinor: 2000 }),
+    ];
+    const body = await (await handleAdminGet(adminGetRequest(), contextFor(rows, 'pt-PT'))).text();
+    expect(statusSlotOf(rowOf(body, 'LVT-2026-612'))).toBe('<span class="bk-badge bk-badge--danger">Contestação aberta</span>');
+    expect(statusSlotOf(rowOf(body, 'LVT-2026-613'))).toBe('<span class="bk-badge">Contestação ganha</span>');
+    expect(statusSlotOf(rowOf(body, 'LVT-2026-614'))).toContain('>Reembolsado 20,00');
+    expect(statusSlotOf(rowOf(body, 'LVT-2026-614'))).toContain('<span class="bk-badge bk-badge--danger">Contestação perdida</span>');
+    const opened = formatDayDate('2026-06-10', 'pt-PT', clock());
+    expect(rowOf(body, 'LVT-2026-612')).toContain(`<dt>Contestação</dt><dd>Aberta desde ${opened}</dd>`);
+    expect(rowOf(body, 'LVT-2026-613')).toContain(`<dd>Ganha (aberta a ${opened})</dd>`);
+    expect(rowOf(body, 'LVT-2026-614')).toContain('<dt>Reembolsado</dt>');
+    expect(rowOf(body, 'LVT-2026-614')).toContain(`<dd>Perdida (aberta a ${opened})</dd>`);
+  });
+
+  // The enhancer rebuilds the day panel from the island, so the island must carry the same badges
+  // the server rendered, in the same order.
+  it('puts the same badges in the day panel markup and its island, ahead of the Manage link', async () => {
+    const tagged = on(20, { id: 'b-day-tagged', reference: 'LVT-2026-615', amountRefundedMinor: 2000, disputedAt: '2026-06-10T12:00:00.000Z', disputeStatus: 'won', metadata: { partner: 'acme-stays', language: 'de' } });
+    const plain = booking({ id: 'b-day-plain', reference: 'LVT-2026-616', startsAt: '2026-06-20T11:00:00.000Z', endsAt: '2026-06-20T12:00:00.000Z', operatorToken: 'op-day-plain', cancelToken: 'cancel-day-plain' });
+    const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?date=2026-06-20`), contextFor([tagged, plain]))).text();
+
+    const [taggedRow, plainRow] = islandOf(body).days['2026-06-20'] ?? [];
+    expect(taggedRow?.b).toEqual([
+      { t: 'Acme Stays', m: 'field', h: 'Partner' },
+      { t: 'German', m: 'field', h: 'Tour language' },
+      { t: 'Refunded €20.00', m: 'warn' },
+      { t: 'Dispute won' },
+    ]);
+    // No badges, no key: the island stays small on the common row.
+    expect(plainRow).not.toHaveProperty('b');
+
+    const panel = /<div class="bk-day-detail"[^]*?<\/ul>/.exec(body)?.[0] ?? '';
+    expect(panel).toContain('<span class="bk-daylist-end">'
+      + '<span class="bk-badge bk-badge--field" title="Partner">Acme Stays</span>'
+      + '<span class="bk-badge bk-badge--field" title="Tour language">German</span>'
+      + '<span class="bk-badge bk-badge--warn">Refunded €20.00</span>'
+      + '<span class="bk-badge">Dispute won</span>'
+      + '<a class="bk-link" href="/booking/manage?token=op-b-day-tagged">Manage</a></span>');
+    expect(panel).toContain('<span class="bk-daylist-end"><a class="bk-link" href="/booking/manage?token=op-day-plain">Manage</a></span>');
+  });
+
+  it('finds a booking by the label its select value shows, as well as by the stored code', async () => {
+    const partnered = on(20, { id: 'b-search-partner', reference: 'LVT-2026-617', metadata: { partner: 'acme-stays', language: 'de' } });
+    const other = on(21, { id: 'b-search-other', reference: 'LVT-2026-618', metadata: { dietary_notes: 'Vegan' } });
+    const context = contextFor([partnered, other], 'pt-PT');
+    const search = async (q: string) => (await handleAdminGet(new Request(`${ADMIN_URL}?q=${encodeURIComponent(q)}`), context)).text();
+
+    // "Acme Stays" is only ever shown, never stored: the stored code is acme-stays.
+    for (const q of ['Acme Stays', 'acme-stays', 'alemão']) {
+      const body = await search(q);
+      expect(body, q).toContain(partnered.reference);
+      expect(body, q).not.toContain(other.reference);
+    }
   });
 });
 
