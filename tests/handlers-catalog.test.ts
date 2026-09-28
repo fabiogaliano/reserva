@@ -150,6 +150,31 @@ describe('GET /api/booking/catalog', () => {
     expect(cruiseEntry.metadataFields[1].label).toBe('Seat preference');
   });
 
+  it('publishes only customer-visible metadata fields, without their display settings', async () => {
+    const withOperatorOnly = context({
+      services: {
+        ...catalogConfig.services,
+        cruise: {
+          ...cruise,
+          metadataFields: [
+            { ...cruise.metadataFields![0]!, visibility: 'customer' },
+            { key: 'partner', label: 'Partner', type: 'select', visibility: 'operator', adminBadge: true, options: [{ value: 'acme', label: 'Acme Stays' }] },
+            { ...cruise.metadataFields![1]!, adminBadge: true },
+          ],
+        },
+      },
+    });
+    const { payload } = await catalog('https://example.test/api/booking/catalog', withOperatorOnly);
+    const cruiseEntry = payload.services.find((entry: any) => entry.slug === 'cruise');
+    expect(cruiseEntry.metadataFields.map((field: any) => field.key)).toEqual(['dietary_notes', 'seat_pref']);
+    const keys = allKeys(cruiseEntry.metadataFields);
+    expect(keys).not.toContain('visibility');
+    expect(keys).not.toContain('adminBadge');
+    const serialized = JSON.stringify(payload);
+    expect(serialized).not.toContain('partner');
+    expect(serialized).not.toContain('Acme Stays');
+  });
+
   it('publishes the deployment-level rendering facts a consumer would otherwise hardcode', async () => {
     const { payload } = await catalog();
     expect(payload.locales).toEqual({ supported: ['en', 'pt-BR'], default: 'en' });

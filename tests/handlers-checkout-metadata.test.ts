@@ -132,6 +132,33 @@ describe('checkout metadata validation', () => {
     expect(response.status).toBe(201);
   });
 
+  // Visibility decides who is shown a value, not whether checkout takes it: the visitor's browser
+  // is the only thing that ever sends one.
+  describe('an operator-only field', () => {
+    const partnerField: MetadataField = {
+      key: 'partner', label: 'Partner', type: 'select', visibility: 'operator', adminBadge: true,
+      options: [{ value: 'acme', label: 'Acme Stays' }],
+    };
+    const partnerConfig = { ...config, services: { ...config.services, vintage: { ...service, metadataFields: [dietaryField, partnerField] } } };
+
+    it('is accepted and stored like any other field', async () => {
+      const { context, repo } = contextFor(partnerConfig);
+      const response = await handleCheckout(checkoutRequest({ metadata: { dietary_notes: 'Vegan', partner: 'acme' } }), context);
+      expect(response.status).toBe(201);
+      const { bookingId } = await response.json() as { bookingId: string };
+      expect(repo.rows.get(bookingId)?.metadata).toEqual({ dietary_notes: 'Vegan', partner: 'acme' });
+    });
+
+    it('is validated like any other field', async () => {
+      const { context } = contextFor(partnerConfig);
+      const response = await handleCheckout(checkoutRequest({ metadata: { dietary_notes: 'Vegan', partner: 'unlisted' } }), context);
+      expect(response.status).toBe(400);
+      const body = await response.json() as { error: { code: string; details?: { field?: string } } };
+      expect(body.error.code).toBe('validation_failed');
+      expect(body.error.details?.field).toBe('metadata.partner');
+    });
+  });
+
   it('rejects a non-object metadata value', async () => {
     const { context } = contextFor(metadataConfig);
     const response = await handleCheckout(checkoutRequest({ metadata: 'not-an-object' }), context);

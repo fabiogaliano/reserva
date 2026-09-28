@@ -1,6 +1,6 @@
-import type { ConfirmationBooking, ConfirmationSummary, ManageBooking, ManageResponse, StatusResponse } from '../core/api.js';
+import type { ConfirmationBooking, ConfirmationSummary, ManageBooking, ManageResponse, ManageRole, StatusResponse } from '../core/api.js';
 import { canCancelBooking, canRescheduleBooking, toWireBooking, type Booking } from '../core/booking.js';
-import { meetingPointForBooking, metadataRowsForBooking, pickupPresentationFor, resolveService } from '../core/config.js';
+import { customerVisibleMetadata, meetingPointForBooking, metadataRowsForBooking, pickupPresentationFor, resolveService } from '../core/config.js';
 import { verifyPayment } from '../core/payment-verification.js';
 import { parseUtcInstant, utcToLocalIso } from '../core/time.js';
 import {
@@ -20,9 +20,10 @@ import { run, warnDeprecatedField, withSensitiveHeaders } from './shared.js';
 // Both summaries are built from `toWireBooking` and typed via `Pick<WireBooking>`, so a projection
 // change breaks these at compile time instead of letting pushed and pulled bookings diverge. They
 // add only presentation: local start/end, the resolved meeting point, and locale-resolved labels.
-function manageBookingPayload(context: ReservaContext, booking: Booking): ManageBooking {
+function manageBookingPayload(context: ReservaContext, booking: Booking, role: ManageRole): ManageBooking {
   const service = resolveService(context.config, booking.serviceSlug);
   const wire = toWireBooking(booking, context.config);
+  const metadata = role === 'operator' ? wire.metadata : customerVisibleMetadata(service, wire.metadata);
   // Gates on the booking ROW's data, not config — a location-less booking has no pickup presentation,
   // and an older booking whose service later drops its location module still renders correctly. The
   // fields stay present as `null` rather than vanishing, so a consumer never branches on key presence.
@@ -49,10 +50,10 @@ function manageBookingPayload(context: ReservaContext, booking: Booking): Manage
     status: wire.status,
     priceMinor: wire.priceMinor,
     currency: wire.currency,
-    metadata: wire.metadata,
+    metadata,
     // Labeled rows for rendering; the raw values stay on `metadata` above. This payload doubles as
     // the admin operator's view of the same booking (a role toggle, not a separate render path).
-    metadataRows: metadataRowsForBooking(service, booking.metadata, wire.locale, context.config.locales.default),
+    metadataRows: metadataRowsForBooking(service, metadata, wire.locale, context.config.locales.default),
   };
 }
 
@@ -88,7 +89,7 @@ function confirmationBookingPayload(context: ReservaContext, booking: Booking): 
       ? meetingPointForBooking(service, wire.meetingPointId, wire.meetingPointLabel, wire.locale, context.config.locales.default)
       : null,
     locale: wire.locale,
-    metadataRows: metadataRowsForBooking(service, booking.metadata, wire.locale, context.config.locales.default),
+    metadataRows: metadataRowsForBooking(service, customerVisibleMetadata(service, wire.metadata), wire.locale, context.config.locales.default),
   };
 }
 
@@ -236,6 +237,7 @@ export function handleManage(request: Request, context: ReservaContext): Promise
     // mutation's undelivered side effects should get to piggyback on.
     await runOwedMutationSideEffects(context, booking);
     const operator = !customer;
-    return json<ManageResponse>({ booking: manageBookingPayload(context, booking), role: operator ? 'operator' : 'customer', canCancel: operator ? booking.status === 'confirmed' : canCancelBooking(booking, now, context.config.booking.cancelCutoffHours), canReschedule: operator ? booking.status === 'confirmed' : canRescheduleBooking(booking, now, context.config.booking.reschedule.cutoffHours, context.config.booking.reschedule.enabled), canNoShow: operator && booking.status === 'confirmed' && parseUtcInstant(booking.startsAt).getTime() < parseUtcInstant(now).getTime(), ...manageDeadlines(context, booking) });
+    const role: ManageRole = operator ? 'operator' : 'customer';
+    return json<ManageResponse>({ booking: manageBookingPayload(context, booking, role), role, canCancel: operator ? booking.status === 'confirmed' : canCancelBooking(booking, now, context.config.booking.cancelCutoffHours), canReschedule: operator ? booking.status === 'confirmed' : canRescheduleBooking(booking, now, context.config.booking.reschedule.cutoffHours, context.config.booking.reschedule.enabled), canNoShow: operator && booking.status === 'confirmed' && parseUtcInstant(booking.startsAt).getTime() < parseUtcInstant(now).getTime(), ...manageDeadlines(context, booking) });
   }).then(withSensitiveHeaders);
 }

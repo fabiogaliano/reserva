@@ -151,9 +151,9 @@ const metadataFieldOptionSchema = z.object({
   label: localizedTextSchema,
 });
 
-// The whole consumer-declared metadata DSL: four types, three optional modifiers, no conditional
-// fields, cross-field rules, or custom validators. `maxLength` applies to `text` only (default
-// 500, enforced at checkout).
+// The whole consumer-declared metadata DSL: four types, three optional modifiers, two display
+// settings, no conditional fields, cross-field rules, or custom validators. `maxLength` applies to
+// `text` only (default 500, enforced at checkout).
 const metadataFieldSchema = z.object({
   key: z.string().regex(METADATA_FIELD_KEY_PATTERN),
   label: localizedTextSchema,
@@ -161,6 +161,12 @@ const metadataFieldSchema = z.object({
   options: z.array(metadataFieldOptionSchema).min(1).optional(),
   required: z.boolean().optional(),
   maxLength: z.number().int().positive().optional(),
+  // Absent means `customer`. `operator` only hides the value from customer surfaces: the visitor's
+  // browser still sends it at checkout, so it is a claim, never a verified fact.
+  visibility: z.enum(['customer', 'operator']).optional(),
+  // Independent of `visibility`: what an operator wants at a glance has nothing to do with who else
+  // may see the field. Only a `select` can opt in (see `validateService`).
+  adminBadge: z.boolean().optional(),
 });
 
 // A location module may declare only `meetingPoints`: the transform implies a single
@@ -690,14 +696,20 @@ function validateService(service: ResolvedServiceConfig, serviceSlug: string, ad
   }
 
   validateSchedule(service, serviceSlug, add);
-  // Config validation only checks key uniqueness and select-needs-options; per-value
-  // type/required/maxLength enforcement happens at checkout, where the request body is available.
+  // Config validation only checks key uniqueness, select-needs-options and where `adminBadge` may
+  // go; per-value type/required/maxLength enforcement happens at checkout, where the request body
+  // is available.
   const seenMetadataKeys = new Set<string>();
   for (const [index, field] of (service.metadataFields ?? []).entries()) {
     if (seenMetadataKeys.has(field.key)) {
       add(['services', serviceSlug, 'metadataFields', index, 'key'], `duplicate metadata field key (${field.key}); keys must be unique within a service`);
     }
     seenMetadataKeys.add(field.key);
+    // A tag shows one of a closed set of option labels; any other type would make a tag out of
+    // free text or a bare number.
+    if (field.adminBadge && field.type !== 'select') {
+      add(['services', serviceSlug, 'metadataFields', index, 'adminBadge'], `metadata field ${field.key} declares type '${field.type}'; adminBadge is only allowed on type 'select'`);
+    }
     if (field.type === 'select') {
       if (!field.options || field.options.length === 0) {
         add(['services', serviceSlug, 'metadataFields', index, 'options'], `metadata field ${field.key} declares type 'select' and must declare at least one option`);
@@ -1058,4 +1070,22 @@ export function metadataRowsForBooking(
     }
   }
   return rows;
+}
+
+function isOperatorOnlyMetadataField(field: MetadataField): boolean {
+  return field.visibility === 'operator';
+}
+
+// What a customer surface may declare to a visitor, e.g. the public catalog.
+export function customerMetadataFields(service: ResolvedServiceConfig): MetadataField[] {
+  return (service.metadataFields ?? []).filter((field) => !isOperatorOnlyMetadataField(field));
+}
+
+// Applied to the raw object before anything customer-facing reads it, so the raw values and the
+// rows built from them can never disagree about what a customer sees. A key the service no longer
+// declares is kept: with no declaration left, nothing marks it operator-only.
+export function customerVisibleMetadata(service: ResolvedServiceConfig, metadata: Record<string, unknown>): Record<string, unknown> {
+  const hidden = new Set((service.metadataFields ?? []).filter(isOperatorOnlyMetadataField).map((field) => field.key));
+  if (hidden.size === 0) return metadata;
+  return Object.fromEntries(Object.entries(metadata).filter(([key]) => !hidden.has(key)));
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MetadataField, ResolvedServiceConfig } from '../src/core/config';
-import { meetingPointForBooking, metadataRowsForBooking, quantityValuesForService, pickupOptionFor, pickupPresentationFor, resolveMeetingPoint, resolveMetadataFieldLabel, validateConfig } from '../src/core/config';
+import { customerMetadataFields, customerVisibleMetadata, meetingPointForBooking, metadataRowsForBooking, quantityValuesForService, pickupOptionFor, pickupPresentationFor, resolveMeetingPoint, resolveMetadataFieldLabel, validateConfig } from '../src/core/config';
 import { priceFor } from '../src/core/pricing';
 import { config, rowsOf, service } from './fixtures';
 
@@ -801,6 +801,73 @@ describe('metadata fields', () => {
       expect(metadataRowsForBooking(vintageWithMetadata, { seat_pref: 'no_longer_declared' }, 'en', 'en')).toEqual([
         { key: 'seat_pref', label: 'Seat preference', value: 'no_longer_declared' },
       ]);
+    });
+  });
+
+  // Who may see a field and whether the admin tags it are separate settings; both default to
+  // today's behaviour, so a config that sets neither resolves and renders exactly as before.
+  describe('visibility and adminBadge', () => {
+    const partnerField: MetadataField = {
+      key: 'partner', label: 'Partner', type: 'select', visibility: 'operator', adminBadge: true,
+      options: [{ value: 'acme', label: 'Acme Stays' }],
+    };
+    const withFields = (metadataFields: unknown[]) => ({ ...config, services: { ...config.services, vintage: { ...service, metadataFields } } });
+
+    function issuesOf(input: unknown): Array<{ path: (string | number)[]; message: string }> {
+      try {
+        validateConfig(input);
+      } catch (error) {
+        return ((error as { issues?: Array<{ path: (string | number)[]; message: string }> }).issues ?? [])
+          .map(({ path, message }) => ({ path, message }));
+      }
+      throw new Error('expected validation to fail');
+    }
+
+    it('carries both settings through to the resolved field, and neither when undeclared', () => {
+      const [dietary, partner] = validateConfig(withFields([dietaryField, partnerField])).services.vintage!.metadataFields!;
+      expect(dietary).not.toHaveProperty('visibility');
+      expect(dietary).not.toHaveProperty('adminBadge');
+      expect(partner).toMatchObject({ visibility: 'operator', adminBadge: true });
+    });
+
+    it('accepts an explicit customer visibility and adminBadge on a customer-visible select', () => {
+      const validated = validateConfig(withFields([{ ...seatField, visibility: 'customer', adminBadge: true }]));
+      expect(validated.services.vintage!.metadataFields![0]).toMatchObject({ visibility: 'customer', adminBadge: true });
+    });
+
+    it('rejects a visibility outside customer and operator, naming the key path', () => {
+      const issues = issuesOf(withFields([{ ...dietaryField, visibility: 'internal' }]));
+      expect(issues.map((issue) => issue.path)).toEqual([['services', 'vintage', 'metadataFields', 0, 'visibility']]);
+    });
+
+    it.each(['text', 'number', 'boolean'] as const)('rejects adminBadge on a %s field, naming the key path', (type) => {
+      const issues = issuesOf(withFields([dietaryField, { key: 'flagged', label: 'Flagged', type, adminBadge: true }]));
+      expect(issues).toEqual([{
+        path: ['services', 'vintage', 'metadataFields', 1, 'adminBadge'],
+        message: `metadata field flagged declares type '${type}'; adminBadge is only allowed on type 'select'`,
+      }]);
+    });
+
+    it('accepts adminBadge: false on any type, since it asks for no tag', () => {
+      expect(() => validateConfig(withFields([{ ...dietaryField, adminBadge: false }]))).not.toThrow();
+    });
+
+    it('drops operator-only values from raw metadata, keeping customer fields and keys no longer declared', () => {
+      const vintage = { ...service, metadataFields: [dietaryField, partnerField] };
+      expect(customerVisibleMetadata(vintage, { dietary_notes: 'Vegan', partner: 'acme', retired_field: 'x' }))
+        .toEqual({ dietary_notes: 'Vegan', retired_field: 'x' });
+    });
+
+    it('leaves raw metadata untouched when no field is operator-only', () => {
+      const metadata = { dietary_notes: 'Vegan', seat_pref: 'window' };
+      expect(customerVisibleMetadata(configWithMetadata.services.vintage!, metadata)).toBe(metadata);
+      expect(customerVisibleMetadata(service, {})).toEqual({});
+    });
+
+    it('lists only customer-visible fields, in declaration order', () => {
+      const vintage = { ...service, metadataFields: [partnerField, dietaryField, { ...seatField, visibility: 'customer' as const }] };
+      expect(customerMetadataFields(vintage).map((field) => field.key)).toEqual(['dietary_notes', 'seat_pref']);
+      expect(customerMetadataFields(service)).toEqual([]);
     });
   });
 });

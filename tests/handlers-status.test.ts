@@ -1,6 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createReservaContext } from '../src/context';
+import type { MetadataField } from '../src/core/config';
 import { handleStatus, handlePaymentWebhook } from '../src/handlers';
 import { utcToLocalIso } from '../src/core/time';
 import { booking, config, service } from './fixtures';
@@ -625,5 +626,47 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     const noShowResponse = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_no_show'), noShowContext);
     expectSensitiveHeaders(noShowResponse);
     await expect(noShowResponse.json()).resolves.toEqual({ status: 'cancelled', booking: null });
+  });
+});
+
+// Reachable by anyone holding the payment session id, so an operator-only field must never reach
+// it, while a customer-visible one on the same booking still does.
+describe('GET /status leaves operator-only metadata out of the confirmation', () => {
+  const dietaryField: MetadataField = { key: 'dietary_notes', label: 'Dietary notes', type: 'text' };
+  const partnerField: MetadataField = {
+    key: 'partner', label: 'Partner', type: 'select', visibility: 'operator',
+    options: [{ value: 'acme', label: 'Acme Stays' }],
+  };
+
+  async function confirmationRows(metadataFields: MetadataField[]): Promise<unknown> {
+    const seeded = booking({
+      id: 'b-status-operator-only', status: 'confirmed', paymentSessionRef: 'cs_status_operator_only',
+      createdAt: '2026-06-14T07:00:00.000Z', metadata: { dietary_notes: 'Vegan', partner: 'acme' },
+    });
+    const repo = fakeRepository([seeded]);
+    seedSettledConfirmation(repo, seeded.id);
+    const context = createReservaContext({
+      config: { ...config, services: { ...config.services, vintage: { ...service, metadataFields } } },
+      db: {} as D1Database,
+      repo,
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      providers: providers(),
+    });
+    const response = await handleStatus(new Request('https://example.test/api/booking/status?sessionId=cs_status_operator_only'), context);
+    const payload = await response.json() as { status: string; booking: { metadataRows: unknown } };
+    expect(payload.status).toBe('confirmed');
+    return payload.booking.metadataRows;
+  }
+
+  it('omits the operator-only row and keeps the customer one', async () => {
+    expect(await confirmationRows([dietaryField, partnerField])).toEqual([{ key: 'dietary_notes', label: 'Dietary notes', value: 'Vegan' }]);
+  });
+
+  it('shows the same field once it is customer-visible, as it did before visibility existed', async () => {
+    const { visibility: _operator, ...customerPartner } = partnerField;
+    expect(await confirmationRows([dietaryField, customerPartner])).toEqual([
+      { key: 'dietary_notes', label: 'Dietary notes', value: 'Vegan' },
+      { key: 'partner', label: 'Partner', value: 'Acme Stays' },
+    ]);
   });
 });

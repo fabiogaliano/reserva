@@ -6,6 +6,7 @@ import type {
   CatalogService,
 } from '../core/api.js';
 import {
+  customerMetadataFields,
   maxQuantityFor,
   resolveLocalizedText,
   resolveServiceTitle,
@@ -53,8 +54,9 @@ function catalogLocation(service: ResolvedServiceConfig, locales: Locales, messa
   };
 }
 
+// Public and uncredentialed, so an operator-only field is not even named here.
 function catalogMetadataFields(service: ResolvedServiceConfig, locale: string, defaultLocale: string): CatalogMetadataField[] {
-  return (service.metadataFields ?? []).map((field) => ({
+  return customerMetadataFields(service).map((field) => ({
     key: field.key,
     label: resolveLocalizedText(field.label, locale, defaultLocale),
     type: field.type,

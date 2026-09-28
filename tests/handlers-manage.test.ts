@@ -400,3 +400,55 @@ describe('metadata on the manage page', () => {
     }
   });
 });
+
+// An operator-only field is stored like any other, so the customer token has to be refused it in
+// both halves of the payload: the raw `metadata` a custom page might read and the rendered rows.
+describe('operator-only metadata on the manage page', () => {
+  const dietaryField: MetadataField = { key: 'dietary_notes', label: 'Dietary notes', type: 'text' };
+  const partnerField: MetadataField = {
+    key: 'partner', label: 'Partner', type: 'select', visibility: 'operator', adminBadge: true,
+    options: [{ value: 'acme', label: 'Acme Stays' }],
+  };
+  const partnerConfig = { ...config, services: { ...config.services, vintage: { ...service, metadataFields: [dietaryField, partnerField] } } };
+  const seeded = booking({ id: 'b-manage-operator-only', status: 'confirmed', metadata: { dietary_notes: 'Vegan', partner: 'acme' } });
+
+  function partnerContext() {
+    return createReservaContext({ config: partnerConfig, db: {} as D1Database, repo: fakeRepository([seeded]), clock, providers: providers() });
+  }
+
+  it('leaves it out of the customer payload and page', async () => {
+    const response = await handleManage(manageRequest(seeded.cancelToken), partnerContext());
+    const payload = await response.json() as { role: string; booking: { metadata: Record<string, unknown>; metadataRows: unknown[] } };
+    expect(payload.role).toBe('customer');
+    expect(payload.booking.metadata).toEqual({ dietary_notes: 'Vegan' });
+    expect(payload.booking.metadataRows).toEqual([{ key: 'dietary_notes', label: 'Dietary notes', value: 'Vegan' }]);
+    const html = renderManagePage(payload as unknown as Record<string, unknown>, '/manage', { locale: 'en' });
+    expect(html).toContain('Vegan');
+    expect(html).not.toContain('Partner');
+    expect(html).not.toContain('Acme Stays');
+  });
+
+  it('keeps it in the operator payload and page', async () => {
+    const response = await handleManage(manageRequest(seeded.operatorToken), partnerContext());
+    const payload = await response.json() as { role: string; booking: { metadata: Record<string, unknown>; metadataRows: unknown[] } };
+    expect(payload.role).toBe('operator');
+    expect(payload.booking.metadata).toEqual({ dietary_notes: 'Vegan', partner: 'acme' });
+    expect(payload.booking.metadataRows).toEqual([
+      { key: 'dietary_notes', label: 'Dietary notes', value: 'Vegan' },
+      { key: 'partner', label: 'Partner', value: 'Acme Stays' },
+    ]);
+    const html = renderManagePage(payload as unknown as Record<string, unknown>, '/manage', { locale: 'en' });
+    expect(html).toContain('Acme Stays');
+  });
+
+  it('gives both roles the same metadata when no field is operator-only', async () => {
+    const plain = booking({ id: 'b-manage-plain-metadata', status: 'confirmed', metadata: { dietary_notes: 'Vegan', retired_field: 'x' } });
+    const plainConfig = { ...config, services: { ...config.services, vintage: { ...service, metadataFields: [dietaryField] } } };
+    const context = createReservaContext({ config: plainConfig, db: {} as D1Database, repo: fakeRepository([plain]), clock, providers: providers() });
+    const customer = await (await handleManage(manageRequest(plain.cancelToken), context)).json() as { booking: Record<string, unknown> };
+    const operator = await (await handleManage(manageRequest(plain.operatorToken), context)).json() as { booking: Record<string, unknown> };
+    expect(customer.booking.metadata).toEqual({ dietary_notes: 'Vegan', retired_field: 'x' });
+    expect(customer.booking.metadata).toEqual(operator.booking.metadata);
+    expect(customer.booking.metadataRows).toEqual(operator.booking.metadataRows);
+  });
+});

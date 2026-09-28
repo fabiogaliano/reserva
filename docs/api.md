@@ -25,7 +25,8 @@ table inside the published tarball.
   never varies by locale), so one payload builder can serve quote and checkout.
 - `GET /api/booking/catalog?locale=` — everything needed to build a booking flow before a date
   is chosen: per service `slug`, locale-resolved `title`, `durationMin`, `location` (or
-  `null`), `metadataFields` (`[]` for none), `pricing` (as configured: rows, each
+  `null`), `metadataFields` (`[]` for none; fields declared `visibility: 'operator'` are left
+  out), `pricing` (as configured: rows, each
   `{ maxQuantity, pickup, priceMinor }` with `pickup` null where the service has no pickup axis,
   or a formula `{ baseMinor, surcharges, maxUnits, surchargeScope, seatsPerUnit }` with every
   inherited field already filled in), `maxQuantity` (the largest party it prices) and
@@ -52,10 +53,12 @@ table inside the published tarball.
   terminal: polling again cannot change it. For four hours after the booking was created a
   `confirmed` answer carries the full `ConfirmationBooking`; after that it carries the
   `ConfirmationSummary` `{ reference, serviceTitle, start, end, locale }` instead, and the
-  confirmation page says the details were emailed.
+  confirmation page says the details were emailed. `metadataRows` never includes an
+  operator-only field.
 - `GET /api/booking/manage?token=` — `cancelDeadline` and `rescheduleDeadline` are the two
   cutoffs, as UTC instants; they are independent policies. `deadline` remains as an alias of
-  `cancelDeadline` for one minor and is then removed.
+  `cancelDeadline` for one minor and is then removed. With a customer token, `booking.metadata`
+  and `booking.metadataRows` leave out operator-only fields; an operator token gets them all.
 - `GET /api/booking/ops/health` — deployment health behind admin auth: `schema` (migrations
   and fingerprint), `outbox` (pending/abandoned counts by family, oldest pending age),
   `incidents` (open count), `security`, `reconciliation` (`lastRunAt`, `lastSummary`). Reads

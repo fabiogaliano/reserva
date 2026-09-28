@@ -1,5 +1,5 @@
 import { cancellationDeadline, type Booking } from '../core/booking.js';
-import { meetingPointForBooking, metadataRowsForBooking, pickupPresentationFor, resolveServiceTitle, type ResolvedClientConfig } from '../core/config.js';
+import { customerVisibleMetadata, meetingPointForBooking, metadataRowsForBooking, pickupPresentationFor, resolveServiceTitle, type ResolvedClientConfig } from '../core/config.js';
 import { toMajorUnits } from '../core/currency.js';
 import type { EmailBookingEvent, EmailRecipientRole } from '../core/events.js';
 import { formatLocaleFor } from '../core/locale.js';
@@ -137,8 +137,10 @@ function buildModel(context: EmailTemplateContext): EmailModel {
 
   // Same `metadataRowsForBooking` projection the manage/confirmation payloads use, built into
   // card rows here since this renderer builds its own HTML. Every value is attacker-controlled
-  // free text, escaped like every other card row.
-  const metadataRows = service ? metadataRowsForBooking(service, booking.metadata, locale, config.locales.default) : [];
+  // free text, escaped like every other card row. Only the owner sees operator-only fields, so any
+  // other recipient gets the customer's view.
+  const visibleMetadata = service && recipient !== 'owner' ? customerVisibleMetadata(service, booking.metadata ?? {}) : booking.metadata;
+  const metadataRows = service ? metadataRowsForBooking(service, visibleMetadata, locale, config.locales.default) : [];
   const onOffMessages = metadataRows.length > 0 ? resolveMessages(config, locale) : null;
   const metadataCardRows: EmailCardRow[] = metadataRows.map((row) => {
     const displayValue = typeof row.value === 'boolean'

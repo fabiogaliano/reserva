@@ -3,7 +3,7 @@ import type { ResolvedClientConfig } from '../src/core/config';
 // Imported the same way an external transport author reaches it: the package's own
 // @reservajs/astro/email subpath (src/email/index.ts) resolves to this path.
 import { renderDefaultEmail, type EmailRenderer, type EmailTemplateContext } from '../src/email';
-import { booking, config } from './fixtures';
+import { booking, config, service } from './fixtures';
 
 // Renderer-level tests exercising the public seam directly, distinct from
 // tests/providers-email.test.ts's Brevo-transport-level coverage (HTTP posting, address routing,
@@ -161,5 +161,51 @@ describe('value.guests', () => {
     const rendered = renderDefaultEmail(context({ config: overriddenConfig, booking: booking({ quantity: 8 }) }));
     expect(guestsCell(rendered.html)).toContain('<strong>8 &lt;b&gt;seats&lt;/b&gt; &amp; more</strong>');
     expect(rendered.text).toContain('Guests: 8 <b>seats</b> & more\n');
+  });
+});
+
+// The owner mail is the operator's copy of the booking; the customer mail is the customer's view,
+// which never names an operator-only field.
+describe('operator-only metadata', () => {
+  const partnerConfig: ResolvedClientConfig = {
+    ...config,
+    services: {
+      ...config.services,
+      vintage: {
+        ...service,
+        metadataFields: [
+          { key: 'dietary_notes', label: 'Dietary notes', type: 'text' },
+          { key: 'partner', label: 'Partner', type: 'select', visibility: 'operator', adminBadge: true, options: [{ value: 'acme', label: 'Acme Stays' }] },
+        ],
+      },
+    },
+  };
+  const partnerBooking = booking({ metadata: { dietary_notes: 'Vegan', partner: 'acme' } });
+
+  it.each(['booking.confirmed', 'booking.rescheduled', 'booking.reminder'] as const)('leaves it out of the customer %s mail', (event) => {
+    const rendered = renderDefaultEmail(context({ event, config: partnerConfig, booking: partnerBooking, recipient: 'customer' }));
+    for (const body of [rendered.html, rendered.text!]) {
+      expect(body).toContain('Vegan');
+      expect(body).not.toContain('Partner');
+      expect(body).not.toContain('Acme Stays');
+    }
+  });
+
+  it('keeps it in the owner mail', () => {
+    const rendered = renderDefaultEmail(context({ config: partnerConfig, booking: partnerBooking, recipient: 'owner' }));
+    for (const body of [rendered.html, rendered.text!]) {
+      expect(body).toContain('Dietary notes');
+      expect(body).toContain('Partner');
+      expect(body).toContain('Acme Stays');
+    }
+  });
+
+  it('shows a customer-visible field to both recipients', () => {
+    const [dietary, partner] = partnerConfig.services.vintage!.metadataFields!;
+    const { visibility: _operator, ...customerPartner } = partner!;
+    const visibleConfig: ResolvedClientConfig = { ...partnerConfig, services: { vintage: { ...service, metadataFields: [dietary!, customerPartner] } } };
+    for (const recipient of ['customer', 'owner'] as const) {
+      expect(renderDefaultEmail(context({ config: visibleConfig, booking: partnerBooking, recipient })).text).toContain('Partner: Acme Stays');
+    }
   });
 });

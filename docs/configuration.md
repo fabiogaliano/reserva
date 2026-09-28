@@ -150,8 +150,10 @@ dietary notes, skill level, a table preference:
 ```ts
 metadataFields: [
   { key: 'hotel', label: { en: 'Hotel name', 'pt-PT': 'Nome do hotel' }, type: 'text', required: true, maxLength: 120 },
-  { key: 'language', label: 'Preferred language', type: 'select',
+  { key: 'language', label: 'Preferred language', type: 'select', adminBadge: true,
     options: [{ value: 'en', label: 'English' }, { value: 'pt', label: 'Português' }] },
+  { key: 'partner', label: 'Partner', type: 'select', visibility: 'operator',
+    options: [{ value: 'acme', label: 'Acme Stays' }] },
 ],
 ```
 
@@ -160,6 +162,24 @@ Four types (`text`, `number`, `boolean`, `select`) and three modifiers (`options
 custom validators. Declared fields are published by the catalog endpoint, validated at
 checkout, stored on the booking, and rendered on the manage page and admin dashboard. A
 service that declares none rejects a non-empty `metadata` body.
+
+Two display settings, independent of each other:
+
+- `visibility: 'customer' | 'operator'` (default `'customer'`) — who is shown the field. An
+  `'operator'` field is validated at checkout and stored exactly like any other, but is left
+  out of the catalog, the confirmation page and its status payload, the customer's manage page
+  and `/api/booking/manage` answer (both `metadata` and `metadataRows`), and customer emails.
+  The operator's manage view, owner emails and the admin dashboard still show it. Hidden from
+  customers, but still sent by the visitor's browser — treat the value as a claim, not a
+  verified fact. Checkout's `validation_failed` answer for a bad value still names the field
+  and, for a `select`, lists its options. Webhook and hook payloads carry every field, and a
+  custom `EmailRenderer` receives the stored booking as is, so it must leave operator-only
+  fields out of customer mail itself.
+- `adminBadge: boolean` (default `false`) — shows the booking's value as a tag next to its
+  status in the admin bookings list and calendar day panel, using the option's label in the
+  admin locale (the raw value once that option is no longer declared); a booking with no value
+  shows no tag. Allowed on `type: 'select'` only: `adminBadge: true` on any other type fails
+  validation, because a tag has to come from a closed set of labels.
 
 ## Moving and disabling routes
 
