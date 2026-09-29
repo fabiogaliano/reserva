@@ -1,6 +1,5 @@
 import {
   pickupOptionFor,
-  priceFor,
   requestText,
   resolveService,
   resolveServiceTitle,
@@ -400,9 +399,11 @@ export class StripeProvider implements PaymentProvider {
     const expiresInMinutes = Math.max(30, config.booking.holdMinutes - 5);
     const params: StripeCheckoutSessionCreateParams = {
       mode: 'payment',
+      // The stored price and currency, never a config recomputation: the webhook verifies the
+      // payment against booking.priceMinor, and config may have changed since the hold was quoted.
       line_items: [{ quantity: 1, price_data: {
-        currency: config.business.currency,
-        unit_amount: priceFor(service, booking.quantity, booking.pickupType),
+        currency: booking.currency,
+        unit_amount: booking.priceMinor,
         product_data: { name, ...(description ? { description } : {}) },
       } }],
       expires_at: Math.floor(nowMs(this.now) / 1000) + expiresInMinutes * 60,

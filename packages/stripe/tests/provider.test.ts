@@ -34,9 +34,6 @@ const mazeTour: ResolvedServiceConfig = {
     { maxQuantity: 8, pickup: 'custom_pickup', priceMinor: 20000 },
     { maxQuantity: 8, pickup: 'custom_dropoff', priceMinor: 21000 },
     { maxQuantity: 8, pickup: 'meet_elsewhere', priceMinor: 18000 },
-    // A leftover pricing row for an id no longer in pickupOptions — models a config change after a
-    // still-open hold's original checkout, exercising the safe-degrade test below.
-    { maxQuantity: 8, pickup: 'removed_option', priceMinor: 19000 },
   ],
 };
 const mazeConfig: ResolvedClientConfig = { ...config, services: { vintage: mazeTour } };
@@ -113,6 +110,20 @@ describe('stripe() adapter', () => {
       line_items: [{ quantity: 1, price_data: { currency: 'eur', unit_amount: 12000, product_data: { name: 'Vintage service (en)' } } }],
       // Every checkout.sessions.create call carries a deterministic idempotency key.
     }), { idempotencyKey: 'reserva-checkout-booking-1' });
+  });
+
+  // The webhook verifies amount_total against booking.priceMinor, so a checkout priced from config
+  // that changed after the hold was taken would charge one amount and then refuse it.
+  it('charges the stored priceMinor and currency when pricing config has drifted since the hold', async () => {
+    const { client, sessions } = makeClient();
+    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
+
+    // Config now prices 4 x default at 10000 EUR; the booking was quoted and stored at 9500 USD.
+    await provider.createCheckout(booking({ quantity: 4, pickupType: 'default', priceMinor: 9500, currency: 'usd' }), config);
+
+    expect(sessions.create.mock.calls[0]![0].line_items).toEqual([
+      { quantity: 1, price_data: { currency: 'usd', unit_amount: 9500, product_data: { name: expect.any(String) } } },
+    ]);
   });
 
   it('maps the pt-PT application locale to Stripe’s European Portuguese locale', async () => {
