@@ -12,6 +12,8 @@ interface PaymentCase {
   paymentStatus: 'paid' | 'unpaid' | 'no_payment_required';
   amountTotal?: number;
   currency?: string;
+  // The currency stored on the booking at hold time, when it differs from today's config.
+  bookingCurrency?: string;
   allowed: boolean;
 }
 
@@ -23,7 +25,7 @@ function factsFor(scenario: PaymentCase): VerifiedPaymentFacts {
     paymentStatus: scenario.paymentStatus,
     ...(scenario.amountTotal !== undefined ? { amountTotal: scenario.amountTotal } : {}),
     ...(scenario.currency !== undefined ? { currency: scenario.currency } : {}),
-    expectedCurrency: config.business.currency,
+    expectedCurrency: scenario.bookingCurrency ?? config.business.currency,
   };
 }
 
@@ -37,6 +39,7 @@ const cases: PaymentCase[] = [
   { name: 'paid booking with missing amount', priceMinor: 10000, paymentStatus: 'paid', currency: 'eur', allowed: false },
   { name: 'paid booking with wrong amount', priceMinor: 10000, paymentStatus: 'paid', amountTotal: 9999, currency: 'eur', allowed: false },
   { name: 'paid booking with wrong currency', priceMinor: 10000, paymentStatus: 'paid', amountTotal: 10000, currency: 'usd', allowed: false },
+  { name: 'paid in the currency held before a business.currency change', priceMinor: 10000, paymentStatus: 'paid', amountTotal: 10000, currency: 'usd', bookingCurrency: 'usd', allowed: true },
 ];
 
 describe('payment verification parity', () => {
@@ -48,6 +51,7 @@ describe('payment verification parity', () => {
       paymentSessionRef: 'cs_1',
       paymentRef: null,
       priceMinor: scenario.priceMinor,
+      ...(scenario.bookingCurrency !== undefined ? { currency: scenario.bookingCurrency } : {}),
     });
     expect(verifyPayment(current, factsFor(scenario)).allowed).toBe(scenario.allowed);
 

@@ -52,7 +52,7 @@ async function refundRefusedDelayedPayment(context: ReservaContext, booking: Boo
     context.logger.warn?.('async payment for a different session', { eventId: event.id, bookingId: booking.id });
     return;
   }
-  if (event.amountCaptured !== booking.priceMinor || (event.currency !== undefined && event.currency !== context.config.business.currency)) {
+  if (event.amountCaptured !== booking.priceMinor || (event.currency !== undefined && event.currency !== booking.currency)) {
     context.logger.warn?.('async payment amount does not match the refused booking', {
       eventId: event.id, bookingId: booking.id, amountCaptured: event.amountCaptured, currency: event.currency,
     });
@@ -108,7 +108,7 @@ export function handlePaymentWebhook(request: Request, context: ReservaContext):
         paymentStatus: event.paymentStatus,
         amountTotal: event.amountCaptured,
         currency: event.currency,
-        expectedCurrency: context.config.business.currency,
+        expectedCurrency: booking.currency,
       });
       // 'payment_not_paid' can no longer reach here: an unpaid completed session was refused above.
       if (!verification.allowed) {

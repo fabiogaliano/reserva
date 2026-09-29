@@ -127,7 +127,7 @@ export function handleStatus(request: Request, context: ReservaContext): Promise
         paymentStatus: session.paymentStatus,
         amountTotal: session.amountTotal,
         currency: session.currency,
-        expectedCurrency: context.config.business.currency,
+        expectedCurrency: current.currency,
       });
       if (verification.allowed) {
         try {

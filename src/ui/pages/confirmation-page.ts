@@ -36,7 +36,7 @@ function confirmedBody(context: Pick<ReservaContext, 'config'>, messages: Reserv
     [messages['common.quantity'], escapeHtml(quantityLabel)],
   ];
   if (typeof booking.priceMinor === 'number') {
-    facts.push([messages['common.price'], escapeHtml(formatPrice(booking.priceMinor, locale, context.config.business.currency))]);
+    facts.push([messages['common.price'], escapeHtml(formatPrice(booking.priceMinor, locale, booking.currency ?? context.config.business.currency))]);
   }
   if (meetingLabel) {
     const maps = mapsUrl ? ` <a href="${escapeHtml(mapsUrl)}" rel="noopener" target="_blank">${escapeHtml(messages['common.openInMaps'])}</a>` : '';
