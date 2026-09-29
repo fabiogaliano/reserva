@@ -131,6 +131,8 @@
   "admin.defaultHint": "Utilize quando a capacidade mudar a partir de uma data específica, por exemplo, quando uma unidade ficar indisponível. Esta definição substitui a capacidade normal. Os dias ajustados individualmente mantêm o seu próprio valor.",
   "admin.defaultScheduled": "{n} agendados",
   "admin.monthFlagged": "{n} ajustados",
+  "admin.calendarEarlier": "Meses anteriores",
+  "admin.calendarLater": "Meses seguintes",
   "admin.defaultFrom": "Data de início",
   "admin.defaultEntry": "{n} a partir de {date}",
   "admin.remove": "Remover",

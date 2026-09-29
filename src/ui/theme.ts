@@ -794,6 +794,9 @@ export const themeCss = `
 .bk-days-layout { display: grid; gap: 2rem; align-items: start; }
 .bk-calendar { min-width: 0; }
 .bk-months { display: grid; gap: 1.25rem; min-width: 0; }
+.bk-monthnav { display: flex; justify-content: space-between; gap: 1rem; margin-top: 0.75rem; font-size: 0.875rem; }
+.bk-monthnav a:only-child { margin-left: auto; }
+.bk-monthnav a:first-child:not(:only-child) { margin-right: auto; }
 .bk-month h3 { margin: 0 0 0.5rem; font-size: 0.8rem; font-weight: 600; letter-spacing: 0.02em; color: var(--bk-text-muted); }
 .bk-month[hidden] { display: none; }
 .bk-months .bk-disclosure { margin: 0; }

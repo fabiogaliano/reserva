@@ -85,6 +85,10 @@ const ADMIN_SELECTED_DAY_LIMIT = 200;
 const ADMIN_OPEN_INCIDENT_LIMIT = 100;
 // Unpaid checkouts are short-lived and few, so the "awaiting payment" figure reads them directly.
 const ADMIN_HOLD_SCAN_LIMIT = 200;
+// Months of availability calendar one page renders. Every rendered day costs a cell, its load, and
+// its entry in the day island; a whole booking horizon (500 days on some deployments) rendered on
+// every admin load was most of the page's CPU. Later months are a click away.
+export const ADMIN_CALENDAR_MONTHS = 3;
 
 function adminFiltersFrom(url: URL): AdminFilters {
   const statusParam = url.searchParams.get('status')?.trim() ?? '';
@@ -197,6 +201,38 @@ export function calendarLoadByDate(
   return load;
 }
 
+function validMonthOrEmpty(value: string): string {
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(value) ? value : '';
+}
+
+function addMonthsToMonthKey(month: string, months: number): string {
+  const [year = 0, monthNumber = 1] = month.split('-').map(Number);
+  const shifted = new Date(Date.UTC(year, monthNumber - 1 + months, 1));
+  return `${String(shifted.getUTCFullYear()).padStart(4, '0')}-${String(shifted.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+// The calendar's window: the asked-for month (or the edited day's, or today's) and the months after
+// it, never before today or past the horizon. An edited day outside the asked-for months moves the
+// window to it, so the day card always has its own day's figures.
+function calendarWindow(fromDate: string, horizonDate: string, monthParam: string, editDate: string): { from: string; to: string; prevMonth: string | null; nextMonth: string | null } {
+  const firstMonth = fromDate.slice(0, 7);
+  const lastMonth = horizonDate.slice(0, 7);
+  let month = monthParam || (editDate ? editDate.slice(0, 7) : firstMonth);
+  const lastShown = (start: string) => addMonthsToMonthKey(start, ADMIN_CALENDAR_MONTHS - 1);
+  if (editDate && (editDate.slice(0, 7) < month || editDate.slice(0, 7) > lastShown(month))) month = editDate.slice(0, 7);
+  if (month < firstMonth) month = firstMonth;
+  if (month > lastMonth) month = lastMonth;
+  const endMonth = lastShown(month);
+  const from = month === firstMonth ? fromDate : `${month}-01`;
+  const endOfWindow = addDaysToDateKey(`${addMonthsToMonthKey(endMonth, 1)}-01`, -1);
+  return {
+    from,
+    to: endOfWindow < horizonDate ? endOfWindow : horizonDate,
+    prevMonth: month > firstMonth ? addMonthsToMonthKey(month, -ADMIN_CALENDAR_MONTHS) < firstMonth ? firstMonth : addMonthsToMonthKey(month, -ADMIN_CALENDAR_MONTHS) : null,
+    nextMonth: endMonth < lastMonth ? addMonthsToMonthKey(endMonth, 1) : null,
+  };
+}
+
 function validDateOrEmpty(value: string): string {
   if (!value) return '';
   try {
@@ -234,21 +270,27 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
     // Upcoming starts at the business's midnight, not at `now`: a trip already under way is still
     // today's work (a no-show is marked once it has started), so it must not drop into Past.
     const todayStart = localDayStartUtcIso(fromDate, timezone);
-    const horizonEnd = localDayStartUtcIso(addDaysToDateKey(toDate, 1), timezone);
     // A booking that started before today can still occupy today's first units.
     const lookbackMinutes = Math.max(0, ...Object.values(context.config.services).map((service) => service.durationMin + service.turnaroundMin));
     const occupancyFrom = new Date(parseUtcInstant(todayStart).getTime() - lookbackMinutes * 60_000).toISOString();
+    // The glance strip reads the next seven days' load whatever months the calendar shows.
+    const weekTo = addDaysToDateKey(fromDate, 6);
     const editDate = validDateOrEmpty(url.searchParams.get('date')?.trim() ?? '');
     // The day card always shows a day: the one asked for, or today.
     const dayDate = editDate || fromDate;
-    const [list, occupancyBookings, detailRows, editDayBookings, overrides, capacityDefaults, holdRows] = await Promise.all([
+    const shown = calendarWindow(fromDate, toDate, validMonthOrEmpty(url.searchParams.get('month')?.trim() ?? ''), editDate);
+    const windowStart = localDayStartUtcIso(shown.from, timezone);
+    const windowEnd = localDayStartUtcIso(addDaysToDateKey(shown.to, 1), timezone);
+    const windowOccupancyFrom = new Date(parseUtcInstant(windowStart).getTime() - lookbackMinutes * 60_000).toISOString();
+    const [list, occupancyBookings, weekOccupancyBookings, detailRows, editDayBookings, overrides, capacityDefaults, holdRows] = await Promise.all([
       loadBookingList(context, filters, todayStart),
-      // The calendar's own query: the whole horizon, independent of the list's window, filters and
+      // The calendar's own query: the shown months, independent of the list's window, filters and
       // page, so a day's load never depends on what the list happens to show.
-      context.repo.listOccupancyBookings(occupancyFrom, horizonEnd),
-      context.repo.listLiveBookings(todayStart, horizonEnd, now, ADMIN_DAY_DETAIL_LIMIT + 1),
+      context.repo.listOccupancyBookings(windowOccupancyFrom, windowEnd),
+      shown.from <= weekTo ? Promise.resolve([]) : context.repo.listOccupancyBookings(occupancyFrom, localDayStartUtcIso(addDaysToDateKey(weekTo, 1), timezone)),
+      context.repo.listLiveBookings(windowStart, windowEnd, now, ADMIN_DAY_DETAIL_LIMIT + 1),
       context.repo.listLiveBookings(localDayStartUtcIso(dayDate, timezone), localDayStartUtcIso(addDaysToDateKey(dayDate, 1), timezone), now, ADMIN_SELECTED_DAY_LIMIT),
-      context.repo.listDayOverrides(fromDate, toDate),
+      context.repo.listDayOverrides(shown.from, shown.to),
       context.repo.listCapacityDefaults(),
       context.repo.listAdminBookings({ from: todayStart, status: 'hold' }, { order: 'asc', limit: ADMIN_HOLD_SCAN_LIMIT, offset: 0 }),
     ]);
@@ -313,10 +355,16 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
       filters,
       calendar: {
         fromDate,
-        toDate,
+        toDate: shown.to,
+        windowFrom: shown.from,
+        prevMonth: shown.prevMonth,
+        nextMonth: shown.nextMonth,
         overrides,
         capacityDefaults,
-        load: calendarLoadByDate(context.config, occupancyBookings, fromDate, toDate, now),
+        load: new Map([
+          ...(shown.from <= weekTo ? [] : calendarLoadByDate(context.config, weekOccupancyBookings, fromDate, weekTo, now)),
+          ...calendarLoadByDate(context.config, occupancyBookings, shown.from, shown.to, now),
+        ]),
         dayBookings: withTokens(dayBookings),
         detailBefore,
         editDayBookings: withTokens(editDayBookings),

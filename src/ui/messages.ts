@@ -217,6 +217,8 @@ export const defaultMessages = {
   'admin.defaultHint': 'Use when capacity changes from a specific date, like a unit becoming unavailable. This overrides the normal capacity. Individually adjusted days keep their own value.',
   'admin.defaultScheduled': '{n} scheduled',
   'admin.monthFlagged': '{n} adjusted',
+  'admin.calendarEarlier': 'Earlier months',
+  'admin.calendarLater': 'Later months',
   'admin.defaultFrom': 'From date',
   'admin.defaultEntry': '{n} from {date}',
   'admin.remove': 'Remove',
@@ -440,7 +442,26 @@ function catalogFor(catalogs: Record<string, Record<string, string>>, locale: st
 
 // Regional catalogs layer over their base language, and deployment overrides layer over bundled
 // copy so a business can customize wording without maintaining a complete catalog.
+// Every render resolved the full catalog again by copying several hundred strings; the answer only
+// changes with the config object and locale, so it is kept per pair. Callers only read it.
+const resolvedByConfig = new WeakMap<object, Map<string, ReservaMessages>>();
+const resolvedWithoutConfig = new Map<string, ReservaMessages>();
+
 export function resolveMessages(config: ResolvedClientConfig | undefined, locale: string | undefined): ReservaMessages {
+  const key = locale ?? '';
+  let byLocale = config ? resolvedByConfig.get(config) : resolvedWithoutConfig;
+  const cached = byLocale?.get(key);
+  if (cached) return cached;
+  const resolved = buildMessages(config, locale);
+  if (!byLocale) {
+    byLocale = new Map();
+    if (config) resolvedByConfig.set(config, byLocale);
+  }
+  byLocale.set(key, resolved);
+  return resolved;
+}
+
+function buildMessages(config: ResolvedClientConfig | undefined, locale: string | undefined): ReservaMessages {
   const merged: Record<string, string> = { ...defaultMessages };
   const candidates = localeCandidates(locale ?? defaultLocale);
   for (const candidate of candidates) {

@@ -44,6 +44,25 @@ export function formatDateTimeRange(startIso: string, endIso: string, locale: st
   }
 }
 
+// Called once per calendar day on the admin page, so its formatter is looked up without building
+// the generic cache's key.
+const dayDateFormats = new Map<string, Intl.DateTimeFormat>();
+function dayDateFormat(locale: string, showYear: boolean): Intl.DateTimeFormat {
+  const key = `${locale}|${showYear}`;
+  let formatter = dayDateFormats.get(key);
+  if (!formatter) {
+    formatter = dateTimeFormat(formatLocaleFor(locale), {
+      timeZone: 'UTC',
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      ...(showYear ? { year: 'numeric' as const } : {}),
+    });
+    dayDateFormats.set(key, formatter);
+  }
+  return formatter;
+}
+
 // Formats a plain YYYY-MM-DD business-day key. Pinning both the parse and the formatter to UTC
 // keeps the calendar date exactly as written — no timezone re-projection can shift it a day.
 // `now` is injectable so the year rule below is testable without travelling the clock.
@@ -53,13 +72,7 @@ export function formatDayDate(dateKey: string, locale: string, now: Date = new D
     // "Sat, 3 Jan" is ambiguous every December: a day in another year always names it, so an
     // operator reading a list across New Year can't mistake next January for this one.
     const showYear = date.getUTCFullYear() !== now.getUTCFullYear();
-    return dateTimeFormat(formatLocaleFor(locale), {
-      timeZone: 'UTC',
-      weekday: 'short',
-      day: 'numeric',
-      month: 'short',
-      ...(showYear ? { year: 'numeric' as const } : {}),
-    }).format(date);
+    return dayDateFormat(locale, showYear).format(date);
   } catch {
     return dateKey;
   }

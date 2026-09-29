@@ -50,8 +50,14 @@ export interface AdminDayLoad {
 }
 
 export interface AdminCalendar {
+  // Today; days before it render as past.
   fromDate: string;
+  // The last day the calendar shows, and the first (today, or the first of a later month).
   toDate: string;
+  windowFrom: string;
+  // Where the earlier/later links page to (YYYY-MM), or null at either end of the horizon.
+  prevMonth: string | null;
+  nextMonth: string | null;
   overrides: Awaited<ReturnType<ReservaContext['repo']['listDayOverrides']>>;
   capacityDefaults: CapacityDefault[];
   load: ReadonlyMap<string, AdminDayLoad>;
@@ -756,7 +762,10 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
   const dowLabels = Array.from({ length: 7 }, (_, index) =>
     // 2024-01-01 is a Monday; formatting it +index yields locale weekday names, Monday-first.
     dateTimeFormat(locale, { weekday: 'narrow', timeZone: 'UTC' }).format(new Date(Date.UTC(2024, 0, 1 + index))));
-  const weekStart = addDaysToDateKey(fromDate, -((new Date(`${fromDate}T00:00:00Z`).getUTCDay() + 6) % 7));
+  const windowFrom = calendar.windowFrom;
+  const weekStart = addDaysToDateKey(windowFrom, -((new Date(`${windowFrom}T00:00:00Z`).getUTCDay() + 6) % 7));
+  // Built once: every day link shares the page's filters and differs only in its date.
+  const dayLinkBase = String(adminStateParams(filters, { tab: 'availability' }));
   const byMonth = new Map<string, string[]>();
   for (const date of enumerateDateKeys(weekStart, toDate)) {
     const month = date.slice(0, 7);
@@ -776,8 +785,6 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
       const dayNumber = `<span class="bk-day-num">${Number(date.slice(8, 10))}</span>`;
       if (date < fromDate) return `<span class="bk-day bk-day--past">${dayNumber}</span>`;
       // Day links keep the active booking filters so selecting a day never resets the search.
-      const dayParams = new URLSearchParams(adminStateParams(filters, { tab: 'availability' }));
-      dayParams.set('date', date);
       const override = overridesByDate.get(date);
       const capacity = capacityOn(date);
       const load = loadOn(date);
@@ -795,7 +802,7 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
       // data-* carries each day's effective values so the enhancer can prefill the form without a
       // page load; the href stays as the no-JS path.
       const dayData = ` data-date="${date}" data-capacity="${capacity}"${override?.reason ? ` data-reason="${escapeHtml(override.reason)}"` : ''}`;
-      return `<a class="bk-day${tone}${date === fromDate ? ' bk-day--today' : ''}${selected ? ' bk-day--selected' : ''}"${selected ? ' aria-current="date"' : ''} href="?${escapeHtml(String(dayParams))}#bk-override" aria-label="${escapeHtml(label)}"${title}${dayData}>`
+      return `<a class="bk-day${tone}${date === fromDate ? ' bk-day--today' : ''}${selected ? ' bk-day--selected' : ''}"${selected ? ' aria-current="date"' : ''} href="?${escapeHtml(`${dayLinkBase}&date=${date}`)}#bk-override" aria-label="${escapeHtml(label)}"${title}${dayData}>`
         + dayNumber + (capacity > 0 ? meterMarkup(load.peak, capacity) : '') + `</a>`;
     }).join('');
     const grid = `<div class="bk-monthgrid">${header}${blanks}${cells}</div>`;
@@ -914,7 +921,7 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
   // Every calendar day's figures as [capacity, default, peak, bookings, adjusted, reason?], so a
   // client-side selection shows the same card the server would render for that day.
   const dayMeta: Record<string, Array<number | string>> = {};
-  for (const date of enumerateDateKeys(fromDate, toDate)) {
+  for (const date of enumerateDateKeys(windowFrom > fromDate ? windowFrom : fromDate, toDate)) {
     const override = overridesByDate.get(date);
     const load = loadOn(date);
     dayMeta[date] = [capacityOn(date), defaultOn(date), load.peak, load.bookings, override ? 1 : 0, ...(override?.reason ? [override.reason] : [])];
@@ -1056,7 +1063,13 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
     + `<span><i class="bk-legend-swatch bk-legend-swatch--full"></i>${escapeHtml(messages['admin.legendFull'])}</span>`
     + `<span><i class="bk-legend-ring"></i>${escapeHtml(messages['admin.stateOverride'])}</span>`
     + `<span><i class="bk-legend-strike">12</i>${escapeHtml(messages['widget.closed'])}</span></p>`;
-  const availabilityPanel = `<div class="bk-days-layout"><div class="bk-calendar"><div class="bk-months">${monthGrids}</div>${legend}</div>`
+  const monthLink = (month: string | null, label: string): string => month
+    ? `<a class="bk-link" href="?${escapeHtml(String(adminStateParams(filters, { tab: 'availability' })))}&amp;month=${month}">${escapeHtml(label)}</a>`
+    : '';
+  const monthNav = calendar.prevMonth || calendar.nextMonth
+    ? `<nav class="bk-monthnav">${monthLink(calendar.prevMonth, messages['admin.calendarEarlier'])}${monthLink(calendar.nextMonth, messages['admin.calendarLater'])}</nav>`
+    : '';
+  const availabilityPanel = `<div class="bk-days-layout"><div class="bk-calendar"><div class="bk-months">${monthGrids}</div>${monthNav}${legend}</div>`
     + `<div class="bk-day-editor">${overrideForm}${defaultForm}</div></div>`;
 
   // --- page chrome: header, attention banner, tabs ---
