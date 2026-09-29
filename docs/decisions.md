@@ -49,7 +49,7 @@ two routes.
 **Revisit when.** The spec is next revised — add `invalid_transition` to the documented
 error codes for `/cancel` and `/reschedule`.
 
-## 3. §11 checkout-race bullet contradicts §6's accepted TOCTOU
+## 3. §11 checkout-race bullet contradicts §6's accepted TOCTOU (resolved)
 
 **Context.** The spec's §11 test matrix asks for "checkout race (two concurrent
 checkouts for last slot → at most one hold, oversell path handled)". But §6
@@ -60,23 +60,19 @@ last slot. §6 sizes the risk (negligible at ~50 bookings/year, worst case a one
 oversell resolved by a phone call) and declines to eliminate it. The two sections
 cannot both be satisfied.
 
-**Current behavior.** The implementation follows §6, and
-`tests/handlers-checkout-race.test.ts` pins it: two interleaved checkouts for the last
-slot both receive `201` and both holds exist (the documented oversell window), while a
-sequential second checkout is correctly rejected with `409 slot_unavailable`. Neither
-the test nor the spec file is changed here — §6 is treated as normative because it is
-the section that reasons about the trade-off, while the §11 bullet reads as a summary
-that drifted from it.
+**Current behavior.** Superseded: c0754de (BK-CAP-001) made checkout allocate
+atomically — `insertHoldWithCapacity` re-evaluates occupancy inside the same D1 `INSERT`
+as the write, so the §6 window no longer exists. `tests/handlers-checkout-race.test.ts`
+pins the new behavior: two interleaved checkouts for the last slot yield one `201` and
+one `409 slot_unavailable` with exactly one hold, and a sequential second checkout is
+rejected the same way. The real-D1 guarantee is owned by
+`tests/workers/capacity-allocation.test.ts`.
 
-**Decision / recommendation.** The next spec revision should reword the §11 bullet to
-match §6 — e.g. "checkout race: two interleaved checkouts for the last slot may both
-hold (the accepted §6 oversell, pinned by test); a sequential second checkout is
-rejected `409 slot_unavailable`" — so the test matrix stops implying an atomicity
-guarantee §6 explicitly declines to provide.
+**Decision / recommendation.** The next spec revision should keep the §11 bullet ("at
+most one hold") and retire §6's accepted-TOCTOU paragraph, which now describes behavior
+the implementation no longer has.
 
-**Revisit when.** The spec is next revised, or if the accepted oversell occurs in
-practice often enough to justify §6's optional recount-and-delete insurance, which
-would make "at most one hold" the intended behavior after all.
+**Revisit when.** The spec is next revised.
 
 ## 4. Admin CSRF guard: rejecting `Sec-Fetch-Site: same-site`, and the token's key material
 
