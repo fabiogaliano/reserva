@@ -340,73 +340,32 @@ describe('stripe() adapter', () => {
     expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 100 });
   });
 
-  it('does not reconcile a historical partial refund as this request’s full refund', async () => {
+  // Every refund on file that is not this request's own full, succeeded refund leaves the create
+  // error as the answer: reconciling any of these would report money Stripe never returned.
+  it.each([
+    { name: 'a historical partial refund under another request’s marker', error: 'Request failed with status code 500',
+      data: [stripeRefund('re_partial', 2000, { metadata: { reserva_refund_key: 'other-request' } })] },
+    { name: 'an unrelated historical full refund without this request’s marker', error: 'Request failed with status code 500',
+      data: [stripeRefund('re_other_full', 10000)] },
+    { name: 'a marked partial refund topped up by a historical partial', error: 'Request failed with status code 500',
+      data: [
+        stripeRefund('re_marked_partial', 8000, { metadata: { reserva_refund_key: 'reserva-refund-pi_1' } }),
+        stripeRefund('re_historical_partial', 2000, { metadata: { source: 'dashboard' } }),
+      ] },
+    { name: 'a pending refund on file', error: 'Your card was declined.',
+      data: [{ id: 're_pending', amount: 12000, status: 'pending' }] },
+    { name: 'no refund on file', error: 'Your card was declined.', data: [] },
+  ])('does not reconcile $name — the create failure surfaces unchanged', async ({ error, data }) => {
     const client = {
       checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
       refunds: {
-        create: vi.fn(async () => { throw new Error('Request failed with status code 500'); }),
-        list: vi.fn(async () => ({ data: [stripeRefund('re_partial', 2000, { metadata: { reserva_refund_key: 'other-request' } })] })),
+        create: vi.fn(async () => { throw new Error(error); }),
+        list: vi.fn(async () => ({ data })),
       },
       webhooks: { constructEventAsync: vi.fn() },
     } as unknown as StripeClient;
     const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
-    await expect(provider.refund('pi_1', 10000)).rejects.toThrow('Request failed with status code 500');
-  });
-
-  it('does not reconcile an unrelated historical full refund without this request’s marker', async () => {
-    const client = {
-      checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
-      refunds: {
-        create: vi.fn(async () => { throw new Error('Request failed with status code 500'); }),
-        list: vi.fn(async () => ({ data: [stripeRefund('re_other_full', 10000)] })),
-      },
-      webhooks: { constructEventAsync: vi.fn() },
-    } as unknown as StripeClient;
-    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
-    await expect(provider.refund('pi_1', 10000)).rejects.toThrow('Request failed with status code 500');
-  });
-
-  it('does not reconcile a marked partial refund by adding a historical partial', async () => {
-    const client = {
-      checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
-      refunds: {
-        create: vi.fn(async () => { throw new Error('Request failed with status code 500'); }),
-        list: vi.fn(async () => ({ data: [
-          stripeRefund('re_marked_partial', 8000, { metadata: { reserva_refund_key: 'reserva-refund-pi_1' } }),
-          stripeRefund('re_historical_partial', 2000, { metadata: { source: 'dashboard' } }),
-        ] })),
-      },
-      webhooks: { constructEventAsync: vi.fn() },
-    } as unknown as StripeClient;
-    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
-    await expect(provider.refund('pi_1', 10000)).rejects.toThrow('Request failed with status code 500');
-  });
-
-  it('does not treat a pending/failed refund on file as success-equivalent — the original error still surfaces', async () => {
-    const client = {
-      checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
-      refunds: {
-        create: vi.fn(async () => { throw new Error('Your card was declined.'); }),
-        list: vi.fn(async () => ({ data: [{ id: 're_pending', amount: 12000, status: 'pending' }] })),
-      },
-      webhooks: { constructEventAsync: vi.fn() },
-    } as unknown as StripeClient;
-    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
-    await expect(provider.refund('pi_1', 10000)).rejects.toThrow('Your card was declined.');
-    expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 100 });
-  });
-
-  it('surfaces a genuine refund failure unchanged when no successful refund is on file', async () => {
-    const client = {
-      checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
-      refunds: {
-        create: vi.fn(async () => { throw new Error('Your card was declined.'); }),
-        list: vi.fn(async () => ({ data: [] })),
-      },
-      webhooks: { constructEventAsync: vi.fn() },
-    } as unknown as StripeClient;
-    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
-    await expect(provider.refund('pi_1', 10000)).rejects.toThrow('Your card was declined.');
+    await expect(provider.refund('pi_1', 10000)).rejects.toThrow(error);
     expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 100 });
   });
 

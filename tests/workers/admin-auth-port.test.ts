@@ -43,6 +43,12 @@ const runtime = defineCloudflareReservaRuntime({
   secretBindings: ['RESERVA_OPERATOR_SECRET', ADMIN_TOKEN_SECRET, 'RESERVA_CSRF_SECRET', 'RESERVA_TOKEN_ENC_KEY'],
 });
 
+// Setup guard, not a test: if the virtual-config drop above ever stops reaching the runtime, every
+// case below would pass against Access instead of the custom port.
+if (runtime.config.admin.access !== undefined || JSON.stringify(runtime.config).includes('cloudflareaccess.com')) {
+  throw new Error('admin-auth-port setup: runtime config still declares Cloudflare Access');
+}
+
 function buildContext(request: Request) {
   return runtime.createContext({
     request,
@@ -106,11 +112,6 @@ async function seedConfirmedPastBooking(context: ReservaContext): Promise<void> 
 }
 
 describe('admin auth port: custom adminAuth drives the whole admin surface (no admin.access, no cloudflareaccess.com)', () => {
-  it('config declares no admin.access anywhere', () => {
-    expect(runtime.config.admin.access).toBeUndefined();
-    expect(JSON.stringify(runtime.config)).not.toContain('cloudflareaccess.com');
-  });
-
   it('rejects an unauthenticated admin GET/POST with 403, and never mutates', async () => {
     const context = await buildContext(adminGetRequest());
     const getResponse = await handleAdminGet(adminGetRequest(), context);

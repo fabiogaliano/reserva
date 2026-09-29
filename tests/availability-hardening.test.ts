@@ -248,4 +248,16 @@ describe('calendar availability hardening', () => {
     const response = await handleAvailability(availabilityRequest('maze', 2), context);
     expect(response.status).toBe(200);
   });
+
+  it('rejects impossible availability dates as validation errors', async () => {
+    const context = createReservaContext({
+      config,
+      db: {} as D1Database,
+      repo: fakeRepository(),
+      providers: providers(),
+    });
+    const response = await handleAvailability(new Request('https://example.test/api/booking/availability?service=vintage&quantity=2&from=2026-02-30&to=2026-03-01'), context);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed' } });
+  });
 });

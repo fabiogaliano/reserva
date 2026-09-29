@@ -2,7 +2,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createReservaContext } from '../src/context';
 import type { MetadataField } from '../src/core/config';
-import { handleStatus, handlePaymentWebhook } from '../src/handlers';
+import { handleManage, handleStatus, handlePaymentWebhook } from '../src/handlers';
 import { utcToLocalIso } from '../src/core/time';
 import { booking, config, service } from './fixtures';
 import type { SideEffectOperationIdentity } from '../src/repo';
@@ -677,5 +677,61 @@ describe('GET /status leaves operator-only metadata out of the confirmation', ()
       { key: 'dietary_notes', label: 'Dietary notes', value: 'Vegan' },
       { key: 'partner', label: 'Partner', value: 'Acme Stays' },
     ]);
+  });
+});
+
+// The retired calendar_synced/email_synced flags used to gate whether a confirmed booking's read
+// paths re-ran fulfillment. With delivery state living only in the outbox rows, /status and the
+// manage page must agree on the same booking and leave a settled confirmation alone.
+describe('/status and manage report the same settled confirmation without re-running fulfillment', () => {
+  it('reports the same booking facts from both read paths and touches no provider', async () => {
+    const seeded = booking({
+      id: 'b-port-settled', status: 'confirmed', paymentSessionRef: 'cs_port_settled',
+      createdAt: '2026-06-14T07:30:00.000Z', updatedAt: '2026-06-14T07:31:00.000Z',
+    });
+    const repo = fakeRepository([seeded]);
+    const now = '2026-06-14T08:00:00.000Z';
+    await repo.recordBookingEventOperations(seeded.id, [
+      { family: 'calendar_create', eventPayloadJson: null, eventIdPrefix: null },
+      { family: 'email_confirmation', eventPayloadJson: null, eventIdPrefix: null },
+    ], now);
+    for (const row of repo.sideEffectOperations.values()) Object.assign(row, { status: 'succeeded', resolvedAt: now });
+
+    let calendarCalls = 0;
+    let emailCalls = 0;
+    const context = createReservaContext({
+      config, db: {} as D1Database, repo, clock: () => new Date(now),
+      providers: providers({
+        calendar: {
+          listEvents: async () => [],
+          createEvent: async () => { calendarCalls += 1; return 'cal_unexpected'; },
+          patchEvent: async () => undefined,
+          deleteEvent: async () => undefined,
+        },
+        email: { send: async () => { emailCalls += 1; } },
+      }),
+    });
+
+    const facts = {
+      reference: seeded.reference,
+      serviceSlug: seeded.serviceSlug,
+      quantity: seeded.quantity,
+      priceMinor: seeded.priceMinor,
+    };
+    const status = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_port_settled'), context);
+    expect(status.status).toBe(200);
+    const payload = await status.json() as { status: string; booking: Record<string, unknown> };
+    expect(payload.status).toBe('confirmed');
+    expect(payload.booking).toMatchObject(facts);
+
+    const manage = await handleManage(new Request(`https://example.test/api/booking/manage?token=${seeded.cancelToken}`), context);
+    expect(manage.status).toBe(200);
+    const managed = await manage.json() as { booking: Record<string, unknown> };
+    expect(managed.booking).toMatchObject({ ...facts, status: 'confirmed' });
+
+    const stored = repo.rows.get(seeded.id);
+    expect(stored).toMatchObject({ status: 'confirmed', updatedAt: seeded.updatedAt });
+    expect(calendarCalls).toBe(0);
+    expect(emailCalls).toBe(0);
   });
 });

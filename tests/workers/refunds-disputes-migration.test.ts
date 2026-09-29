@@ -5,6 +5,7 @@ import { env } from 'cloudflare:workers';
 import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createBookingRepository } from '../../src/repo';
+import { dropReservaSchema } from './schema';
 
 interface TestEnv {
   RESERVA_DB: D1Database;
@@ -14,8 +15,6 @@ interface TestEnv {
 const bindings = env as unknown as TestEnv;
 const db = bindings.RESERVA_DB;
 const MIGRATION = '0007_refunds_disputes.sql';
-
-const RESERVA_TABLES = ['admin_change_history', 'operational_incidents', 'side_effect_operations', 'refund_operations', 'reconciliation_lease', 'settings', 'capacity_defaults', 'day_overrides', 'bookings'];
 
 async function insertBooking(id: string, status: string) {
   await db.prepare(
@@ -42,8 +41,7 @@ async function insertSideEffect(bookingId: string, family: string, name: string 
 
 describe(`migration ${MIGRATION} backfill`, () => {
   beforeAll(async () => {
-    for (const table of RESERVA_TABLES) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
-    await db.prepare('DROP TABLE IF EXISTS d1_migrations').run();
+    await dropReservaSchema(db);
     const earlier = bindings.TEST_MIGRATIONS.filter((migration) => migration.name !== MIGRATION);
     // Guards the premise: had the name not matched, 0007 would already have run on an empty table.
     expect(earlier).toHaveLength(bindings.TEST_MIGRATIONS.length - 1);

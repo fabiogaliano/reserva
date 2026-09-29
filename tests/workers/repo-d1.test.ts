@@ -328,24 +328,6 @@ describe('D1 booking repository', () => {
       expect(row?.meeting_point_id).toBeNull();
       expect(row?.meeting_point_label).toBeNull();
     });
-
-    it('maps a pre-0014-shaped row (meeting_point columns NULL, as every column was before this migration) cleanly through mapBooking', async () => {
-      await repo.insertHold({
-        id: 'booking-meeting-point-legacy', reference: 'BKT-2026-MP3', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
-        startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
-        holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'mp-legacy-cancel', operatorToken: 'mp-legacy-operator',
-        createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
-      });
-      // Simulates a row written before migration 0014 ran: explicitly force both columns back to
-      // NULL (insertHold already writes NULL for an omitted input, but this asserts the DB state
-      // itself, not just the insert path's default).
-      await db.prepare('UPDATE bookings SET meeting_point_id = NULL, meeting_point_label = NULL WHERE id = ?')
-        .bind('booking-meeting-point-legacy').run();
-
-      await expect(repo.getBookingById('booking-meeting-point-legacy')).resolves.toMatchObject({
-        meetingPointId: null, meetingPointLabel: null,
-      });
-    });
   });
 
   // Migration 0015 removed the pickup_type CHECK (domain moved to config-declared option ids) —

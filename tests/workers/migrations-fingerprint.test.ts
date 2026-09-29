@@ -9,6 +9,7 @@ import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { RESERVA_MIGRATIONS } from '../../src/generated/schema-fingerprint';
 import { checkReservaMigrationsApplied } from '../../src/schema-check';
+import { dropReservaSchema } from './schema';
 
 interface TestEnv {
   RESERVA_DB: D1Database;
@@ -18,14 +19,10 @@ interface TestEnv {
 const bindings = env as unknown as TestEnv;
 const db = bindings.RESERVA_DB;
 
-// Every table reserva's schema creates, so each test can tear the schema back to nothing before
-// rebuilding exactly the state its scenario needs -- self-contained regardless of whether the pool
-// isolates storage per test.
-const RESERVA_TABLES = ['admin_change_history', 'operational_incidents', 'side_effect_operations', 'refund_operations', 'reconciliation_lease', 'settings', 'capacity_defaults', 'day_overrides', 'bookings'];
-
+// Each test tears the schema back to nothing before rebuilding exactly the state its scenario
+// needs -- self-contained regardless of whether the pool isolates storage per test.
 async function resetSchema() {
-  for (const table of RESERVA_TABLES) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
-  await db.prepare('DROP TABLE IF EXISTS d1_migrations').run();
+  await dropReservaSchema(db);
 }
 
 // The real schema and a complete ledger, so any subsequent failure can only come from the damage a

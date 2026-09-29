@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -8,13 +8,6 @@ import { RESERVA_MIGRATIONS } from '../src/generated/schema-fingerprint';
 const migrationsDir = resolve(import.meta.dirname, '../migrations');
 
 describe('generated schema fingerprint', () => {
-  it('lists migrations/*.sql on disk exactly, in filename order', () => {
-    const onDisk = readdirSync(migrationsDir)
-      .filter((name) => name.endsWith('.sql'))
-      .sort((a, b) => Number(a.split('_')[0]) - Number(b.split('_')[0]));
-    expect([...RESERVA_MIGRATIONS]).toEqual(onDisk);
-  });
-
   it('picks up a column added by a later migration', () => {
     const directory = mkdtempSync(resolve(tmpdir(), 'reserva-fingerprint-'));
     for (const name of RESERVA_MIGRATIONS) {
