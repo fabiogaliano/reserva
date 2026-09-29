@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import { runOwedMutationSideEffects } from '../src/confirmation';
+import { retrySideEffectOperation, runOwedMutationSideEffects, runScheduledSideEffectOperation } from '../src/confirmation';
 import { createReservaContext, type ReservaProviders } from '../src/context';
 import { handleStatus, handlePaymentWebhook } from '../src/handlers';
 import { booking, config } from './fixtures';
@@ -137,6 +137,28 @@ describe('confirmation-path per-recipient email outbox', () => {
     expect(calls).toBe(0);
     expect(sideEffectOperation(repo, seeded.id, CUSTOMER)).toMatchObject({ status: 'pending', attemptCount: 0 });
     expect(sideEffectOperation(repo, seeded.id, OWNER)).toMatchObject({ status: 'pending', attemptCount: 0 });
+  });
+
+  it('keeps a failed split owner row owed instead of marking it succeeded unsent when the provider was swapped for one without sendToRecipient', async () => {
+    const seeded = booking({ id: 'b-email-split-provider-swapped', status: 'confirmed', calendarEventId: 'cal_email_swapped' });
+    const repo = fakeRepository([seeded]);
+    const createdAt = '2026-06-14T08:00:00.000Z';
+    seedSideEffectOperation(repo, seeded.id, CUSTOMER, { status: 'succeeded', attemptCount: 1, attemptedAt: createdAt, resolvedAt: createdAt });
+    const owner = seedSideEffectOperation(repo, seeded.id, OWNER, {
+      status: 'failed', attemptCount: 1, attemptedAt: createdAt, resolvedAt: createdAt, error: 'owner temporary failure',
+    });
+    let sendCalls = 0;
+    const context = createReservaContext({
+      config, db: {} as D1Database, repo, clock: () => new Date('2026-06-14T08:10:00.000Z'),
+      providers: providers({ email: { send: async () => { sendCalls += 1; } } }),
+    });
+
+    await runScheduledSideEffectOperation(context, seeded, owner);
+    expect(sideEffectOperation(repo, seeded.id, OWNER)).toMatchObject({ status: 'failed', attemptCount: 1 });
+
+    await expect(retrySideEffectOperation(context, seeded, owner)).resolves.toBe('not_retryable');
+    expect(sideEffectOperation(repo, seeded.id, OWNER)).toMatchObject({ status: 'failed', error: 'Provider not configured' });
+    expect(sendCalls).toBe(0);
   });
 
   it('a repository failure resolving the customer row does not block the independent owner row', async () => {

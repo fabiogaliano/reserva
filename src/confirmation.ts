@@ -174,6 +174,14 @@ function confirmationEmailRecipient(operation: SideEffectOperationIdentity): Ema
   return operation.name === 'customer' || operation.name === 'owner' ? operation.name : undefined;
 }
 
+// A split row can only be paid through sendToRecipient: send() would re-mail the recipient already
+// served, and resolving it unsent would drop the email. So when the provider has been swapped for
+// one without it, the row stays owed, as attemptForOperation leaves it on the mutation path.
+function confirmationEmailUnsendable(context: ReservaContext, operation: SideEffectOperationIdentity): boolean {
+  const email = context.providers.email;
+  return confirmationEmailRecipient(operation) !== undefined && email !== undefined && !email.sendToRecipient;
+}
+
 // Dispatches to the right provider call for a confirmation-path row: calendar_create, a combined
 // email_confirmation row via send(), or a split row via sendToRecipient for exactly the one
 // recipient its kind encodes, so an owner-recipient failure can never re-trigger the customer's
@@ -200,6 +208,7 @@ async function executeOperation(
   token: string,
 ): Promise<void> {
   if (!isActionableSideEffectStatus(operation.status) || operation.family === 'oversell') return;
+  if (confirmationEmailUnsendable(context, operation)) return;
   await renewConfirmationLease(context, booking.id, token);
   const attemptNumber = await context.repo.claimSideEffectOperation(booking.id, operation, token, nowIso(context));
   if (attemptNumber === null) throw new ConfirmationInProgressError();
@@ -733,6 +742,12 @@ async function retryConfirmationSideEffectOperation(
   try {
     const attemptNumber = await context.repo.claimSideEffectOperationForRetry(booking.id, operation, token, nowIso(context));
     if (attemptNumber === null) return 'nothing_to_retry';
+    if (confirmationEmailUnsendable(context, operation)) {
+      await context.repo.resolveSideEffectOperation({
+        bookingId: booking.id, identity: operation, leaseToken: token, status: 'failed', error: 'Provider not configured', resolvedAt: nowIso(context),
+      });
+      return 'not_retryable';
+    }
     try {
       const providerResultId = await runConfirmationOperation(context, booking, operation);
       const resolved = await context.repo.resolveSideEffectOperation({
