@@ -13,16 +13,19 @@ import {
 } from '../../core/settings.js';
 import type { ReservaContext } from '../../context.js';
 import { escapeHtml } from '../../http.js';
+import type { AdminChangeHistoryEntry } from '../../repo.js';
 import { cssAssetHref, jsAssetHref } from '../asset-hrefs.js';
 import { factList, pageShell, themeToggle } from '../layout.js';
 import { formatMessage, resolveMessages } from '../messages.js';
 import { adminErrorAlert, adminTopbar, type AdminErrorNotice } from './admin-page.js';
 import { dateTimeFormat, numberFormat } from '../../core/intl.js';
+import { formatDateTime, formatDayDate } from '../format.js';
 
 // The admin settings page (?view=settings). A two-column form: each group's title on the left,
 // its always-editable fields on the right, so the control is the value and there is no reveal
 // step. Sections sit behind a side list (a tab bar on narrow screens) that degrades to links.
-// csrfToken is undefined when CSRF isn't configured.
+// csrfToken is undefined when CSRF isn't configured. changeHistory is null unless the Recent
+// changes section is the one requested: only then is it loaded, and only then rendered.
 export function settingsPage(
   context: ReservaContext,
   storedRows: Record<string, string>,
@@ -31,13 +34,14 @@ export function settingsPage(
   csrfToken: string | undefined,
   error: AdminErrorNotice | null = null,
   openIncidentCount = 0,
+  changeHistory: readonly AdminChangeHistoryEntry[] | null = null,
 ): string {
   const locale = adminLocaleFor(context.config);
   const messages = resolveMessages(context.config, locale);
   const catalog = messages as Record<string, string>;
   // Section links are plain ?section= links so switching works without JS; the enhancer upgrades
   // them to instant in-page toggles. The section param survives save redirects.
-  const activeSection = ([...settingSections, 'config'] as string[]).includes(sectionParam)
+  const activeSection = ([...settingSections, 'config', 'history'] as string[]).includes(sectionParam)
     ? sectionParam
     : settingSections[0] ?? 'policy';
   // What the operator's values fall back to: the pristine file config when overrides are active.
@@ -315,20 +319,80 @@ export function settingsPage(
     ])
     + `</section>`;
 
+  // A recorded setting key the current config no longer declares keeps its raw key and value.
+  const historyItemLabel = (definition: SettingDefinition): string => {
+    const label = labelFor(definition);
+    const group = definition.scheduleRule ? scheduleRuleHeading(definition.scheduleRule)
+      : definition.pricingTier?.serviceTitle ?? definition.pricingFormula?.serviceTitle;
+    return group ? `${group} · ${label}` : label;
+  };
+  const historyValue = (definition: SettingDefinition | undefined, raw: string): string => {
+    if (!definition) return raw;
+    try {
+      return displayValue(definition, JSON.parse(raw) as SettingValue);
+    } catch {
+      return raw;
+    }
+  };
+  const capacityOf = (raw: string | null): { capacity: number; reason: string | null } | null => {
+    try {
+      const parsed = JSON.parse(raw ?? '') as { capacity?: unknown; reason?: unknown };
+      return typeof parsed.capacity === 'number' ? { capacity: parsed.capacity, reason: typeof parsed.reason === 'string' && parsed.reason ? parsed.reason : null } : null;
+    } catch {
+      return null;
+    }
+  };
+  const historyChange = (entry: AdminChangeHistoryEntry): string => {
+    if (entry.domain === 'setting') {
+      const definition = definitions.find((candidate) => candidate.key === entry.itemKey);
+      const item = definition ? historyItemLabel(definition) : entry.itemKey;
+      return escapeHtml(entry.action === 'delete' || entry.value === null
+        ? formatMessage(messages['admin.historySettingReset'], { item })
+        : formatMessage(messages['admin.historySettingSet'], { item, v: historyValue(definition, entry.value) }));
+    }
+    const date = formatDayDate(entry.itemKey, locale, context.clock());
+    const set = entry.action === 'upsert' ? capacityOf(entry.value) : null;
+    const reason = set?.reason ? `<span class="bk-sub">${escapeHtml(set.reason)}</span>` : '';
+    if (entry.domain === 'day_override') {
+      if (!set) return escapeHtml(formatMessage(messages['admin.historyDayCleared'], { date }));
+      return escapeHtml(set.capacity === 0
+        ? formatMessage(messages['admin.historyDayClosed'], { date })
+        : formatMessage(messages['admin.historyDaySet'], { date, n: set.capacity })) + reason;
+    }
+    if (!set) return escapeHtml(formatMessage(messages['admin.historyDefaultRemoved'], { date }));
+    return escapeHtml(formatMessage(messages['admin.historyDefaultSet'], { date, n: set.capacity })) + reason;
+  };
+  const historyRows = (changeHistory ?? []).map((entry) =>
+    `<tr data-change-domain="${escapeHtml(entry.domain)}" data-change-key="${escapeHtml(entry.itemKey)}">`
+    + `<td><time datetime="${escapeHtml(entry.changedAt)}">${escapeHtml(formatDateTime(entry.changedAt, locale, context.config.business.timezone))}</time></td>`
+    + `<td>${escapeHtml(entry.actor ?? messages['admin.historyUnknownActor'])}</td>`
+    + `<td>${historyChange(entry)}</td></tr>`).join('');
+  const historySection = activeSection === 'history'
+    ? `<section class="bk-settings-form" id="bk-s-history"><h2>${escapeHtml(messages['admin.sectionHistory'])}</h2>`
+      + `<p class="bk-hint">${escapeHtml(messages['admin.historyHint'])}</p>`
+      + (historyRows
+        ? `<table class="bk-history"><thead><tr><th scope="col">${escapeHtml(messages['admin.historyWhen'])}</th><th scope="col">${escapeHtml(messages['admin.historyWho'])}</th><th scope="col">${escapeHtml(messages['admin.historyWhat'])}</th></tr></thead><tbody>${historyRows}</tbody></table>`
+        : `<p class="bk-lead">${escapeHtml(messages['admin.historyEmpty'])}</p>`)
+      + `</section>`
+    : '';
+
   // The same section links twice: a side list on wide screens, where it can also count what each
   // section has modified, and a scrolling tab bar on narrow ones. CSS shows exactly one.
   const modifiedIn = (section: string): number =>
     definitions.filter((definition) => definition.section === section && storedRows[definition.key] !== undefined).length;
+  // Recent changes is loaded only when requested, so its link navigates instead of toggling a
+  // panel the page does not have.
   const sectionLink = (id: string, label: string, count = 0): string =>
-    `<a href="?view=settings&section=${id}" data-reserva-tab="${id}"${id === activeSection ? ' aria-current="page"' : ''}>${escapeHtml(label)}`
+    `<a href="?view=settings&section=${id}"${id === 'history' ? '' : ` data-reserva-tab="${id}"`}${id === activeSection ? ' aria-current="page"' : ''}>${escapeHtml(label)}`
     + (count > 0 ? `<span class="bk-snav-count" title="${escapeHtml(formatMessage(messages['admin.modifiedCount'], { n: count }))}">${count}</span>` : '')
     + `</a>`;
   const sideNav = `<nav class="bk-snav" aria-label="${escapeHtml(messages['admin.settings'])}">`
     + settingSections.map((section) => sectionLink(section, sectionTitles[section], modifiedIn(section))).join('')
-    + `<span class="bk-snav-sep" aria-hidden="true"></span>${sectionLink('config', messages['admin.sectionReadonly'])}</nav>`;
+    + `<span class="bk-snav-sep" aria-hidden="true"></span>${sectionLink('config', messages['admin.sectionReadonly'])}${sectionLink('history', messages['admin.sectionHistory'])}</nav>`;
   const tabs = `<nav class="bk-tabs" aria-label="${escapeHtml(messages['admin.settings'])}">`
     + settingSections.map((section) => sectionLink(section, sectionTitles[section])).join('')
     + sectionLink('config', messages['admin.sectionReadonly'])
+    + sectionLink('history', messages['admin.sectionHistory'])
     + `</nav>`;
 
   const savedAlert = saved ? `<p class="bk-alert bk-alert--ok" role="status">${escapeHtml(messages['admin.saved'])}</p>` : '';
@@ -352,6 +416,6 @@ export function settingsPage(
       + savedAlert
       + errorAlert
       + `<div class="bk-settings-layout">${sideNav}<div class="bk-settings-main">${tabs}`
-      + `<div class="bk-settings-sections">${sections}${readonlySection}</div></div></div>`,
+      + `<div class="bk-settings-sections">${sections}${readonlySection}${historySection}</div></div></div>`,
   });
 }

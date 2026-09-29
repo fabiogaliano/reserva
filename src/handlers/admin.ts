@@ -84,6 +84,8 @@ const ADMIN_SEARCH_SCAN_LIMIT = 20_000;
 const ADMIN_DAY_DETAIL_LIMIT = 500;
 const ADMIN_SELECTED_DAY_LIMIT = 200;
 const ADMIN_OPEN_INCIDENT_LIMIT = 100;
+// Recent changes is a glance at who touched what lately, not an audit export.
+const ADMIN_CHANGE_HISTORY_LIMIT = 20;
 // Unpaid checkouts are short-lived and few, so the "awaiting payment" figure reads them directly.
 const ADMIN_HOLD_SCAN_LIMIT = 200;
 // Months of availability calendar one page renders. Every rendered day costs a cell, its load, and
@@ -248,15 +250,20 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
   return run(async () => {
     if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const access = await accessAllowed(request, context);
-    if (!access) throw new HttpError(403, 'forbidden', 'Cloudflare Access authorization required');
+    if (!access) throw new HttpError(403, 'forbidden', 'Admin authorization required');
     // Minted fresh per render and embedded as a hidden field in every admin form; handleAdminPost
     // verifies it against the same Access-authenticated subject.
     const csrfToken = await mintAdminCsrfToken(context, access.subject, context.clock().getTime());
     const url = new URL(request.url);
     const error = adminErrorFrom(url);
     if (url.searchParams.get('view') === 'settings') {
-      const [storedRows, openIncidentCount] = await Promise.all([context.repo.listSettings(), context.repo.countOpenIncidents()]);
-      return html(settingsPage(context, storedRows, url.searchParams.get('saved') === '1', url.searchParams.get('section') ?? '', csrfToken, error, openIncidentCount), 200, {
+      const section = url.searchParams.get('section') ?? '';
+      const [storedRows, openIncidentCount, changeHistory] = await Promise.all([
+        context.repo.listSettings(),
+        context.repo.countOpenIncidents(),
+        section === 'history' ? context.repo.listAdminChangeHistory(ADMIN_CHANGE_HISTORY_LIMIT) : Promise.resolve(null),
+      ]);
+      return html(settingsPage(context, storedRows, url.searchParams.get('saved') === '1', section, csrfToken, error, openIncidentCount, changeHistory), 200, {
         ...contentSecurityPolicyHeaders(context.config),
         'cache-control': 'no-store',
         // Same referrer-policy reasoning as the dashboard response below.
@@ -499,7 +506,7 @@ export function handleAdminPost(request: Request, context: ReservaContext): Prom
   return runAdminPost(async () => {
     if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const access = await accessAllowed(request, context);
-    if (!access) throw new HttpError(403, 'forbidden', 'Cloudflare Access authorization required');
+    if (!access) throw new HttpError(403, 'forbidden', 'Admin authorization required');
     // Layer 1: Fetch-Metadata / Origin enforcement, wired only on this admin mutation route, never the public booking API.
     if (!adminOriginAllowed(request)) throw new HttpError(403, 'forbidden', 'Cross-origin admin requests are not allowed');
     const form = await requestFormData(request);

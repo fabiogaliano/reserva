@@ -5,6 +5,7 @@ import { createReservaContext } from '../src/context';
 import type { MetadataField, ResolvedClientConfig, ResolvedServiceConfig } from '../src/core/config';
 import { handleAdminGet, handleAdminPost } from '../src/handlers';
 import { formatDayDate } from '../src/ui/format';
+import { resolveMessages } from '../src/ui/messages';
 import { booking, config, rowsOf } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 import { DEFAULT_CONTENT_SECURITY_POLICY } from '../src/csp';
@@ -81,8 +82,10 @@ describe('request body size limit (audit finding #10)', () => {
   });
 });
 
-describe('access control (spec §11: admin requires Cloudflare Access)', () => {
-  it('rejects GET and POST when adminAuth is absent, resolves null, or throws', async () => {
+describe('access control (spec §11: admin requires an admin auth identity)', () => {
+  // None of these contexts uses Cloudflare Access, so a denial naming Access would send the
+  // operator of a custom-adminAuth deployment to configure something they do not run.
+  it('rejects GET and POST when adminAuth is absent, resolves null, or throws, without naming Cloudflare Access', async () => {
     const variants: Array<{ label: string; adminAuth?: () => Promise<{ subject: string } | null> }> = [
       { label: 'absent' },
       { label: 'resolves null', adminAuth: async () => null },
@@ -101,6 +104,11 @@ describe('access control (spec §11: admin requires Cloudflare Access)', () => {
       expect(getResponse.status, `GET with adminAuth ${variant.label}`).toBe(403);
       const postResponse = await handleAdminPost(adminPostRequest({ action: 'clear', date: '2026-06-20' }), context);
       expect(postResponse.status, `POST with adminAuth ${variant.label}`).toBe(403);
+      for (const response of [getResponse, postResponse]) {
+        const { error } = await response.json() as { error: { code: string; message: string } };
+        expect(error.code).toBe('forbidden');
+        expect(error.message, `adminAuth ${variant.label}`).not.toMatch(/cloudflare|access/i);
+      }
     }
   });
 });
@@ -1658,6 +1666,42 @@ describe('admin_change_history (actor-attributed, batch-atomic settings/capacity
 
     expect(repo.adminChangeHistory).toHaveLength(1);
     expect(repo.adminChangeHistory[0]?.actor).toBeNull();
+  });
+
+  it('the settings Recent changes section shows the latest 20 changes newest first, with the actor or the unknown label, escaped', async () => {
+    const repo = fakeRepository();
+    const listHistory = vi.spyOn(repo, 'listAdminChangeHistory');
+    // 21 older day-override rows from an identity-less sign-in; the oldest must fall off the list.
+    const overrideDates = Array.from({ length: 21 }, (_, index) => `2026-07-${String(index + 1).padStart(2, '0')}`);
+    await repo.upsertDayOverrides(overrideDates, 3, null, { actor: null, changedAt: '2026-06-13T08:00:00.000Z' });
+    const subject = '<ops>@example.test';
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject }), providers: providers(), secrets: csrfSecrets });
+    const save = await handleAdminPost(adminPostRequest({
+      action: 'settings-save',
+      section: 'legal',
+      'legal.termsUrl': 'https://example.test/new-terms',
+    }, { csrfToken: await mintTestCsrfToken(subject, CSRF_NOW) }), context);
+    expect(save.status).toBe(303);
+
+    // Only the section that shows the history pays for reading it.
+    await handleAdminGet(new Request(`${ADMIN_URL}?view=settings`), context);
+    expect(listHistory).not.toHaveBeenCalled();
+
+    const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?view=settings&section=history`), context)).text();
+    const rows = [...body.matchAll(/<tr data-change-domain="([^"]+)" data-change-key="([^"]+)">(.*?)<\/tr>/g)]
+      .map(([, domain, key, cells]) => ({ domain, key, cells: [...(cells ?? '').matchAll(/<td>(.*?)<\/td>/g)].map((cell) => cell[1] ?? '') }));
+    expect(rows).toHaveLength(20);
+    expect(rows.map(({ domain, key }) => `${domain}:${key}`)).toEqual([
+      'setting:legal.termsUrl',
+      ...overrideDates.slice(2).reverse().map((date) => `day_override:${date}`),
+    ]);
+    const [newest, older] = rows;
+    expect(newest?.cells[0]).toContain(`datetime="${clock().toISOString()}"`);
+    expect(newest?.cells[1]).toBe('&lt;ops&gt;@example.test');
+    expect(newest?.cells[2]).toContain('https://example.test/new-terms');
+    expect(older?.cells[1]).toBe(resolveMessages(config, 'en')['admin.historyUnknownActor']);
+    expect(older?.cells[2]).toContain(formatDayDate('2026-07-21', 'en', clock()));
+    expect(body).not.toContain('<ops>');
   });
 
   it('default-set records exactly one capacity_default/upsert history row', async () => {
