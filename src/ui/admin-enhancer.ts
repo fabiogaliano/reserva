@@ -1,45 +1,9 @@
-// Progressive enhancement for the admin dashboard: in-place tab switching, one booking row open
-// at a time, the "/" search shortcut, copy buttons, a deferred incident resolve note, and the
-// availability calendar's pager, multi-day selection and day card. Every one of these is an
-// upgrade over markup that already works without it. IIFE so nothing leaks into the concatenated
-// bundle.
+// Progressive enhancement for the admin dashboard: one booking row open at a time, the "/" search
+// shortcut, copy buttons, a deferred incident resolve note, and the availability calendar's pager,
+// multi-day selection and day card. Every one of these is an upgrade over markup that already works
+// without it. IIFE so nothing leaks into the concatenated bundle.
 
 export const adminEnhancerJs = `(() => {
-  // --- tabs: the server already rendered every panel, with all but the current one hidden ---
-  const tabStrip = document.querySelector('nav.bk-tabs');
-  const panelBox = document.querySelector('.bk-panels');
-  if (tabStrip && panelBox) {
-    const panelIds = { upcoming: 'bk-upcoming', availability: 'bk-availability', tags: 'bk-tags', attention: 'bk-attention' };
-    const switchTo = (link) => {
-      const tab = link.dataset.reservaAdminTab;
-      const wanted = panelIds[tab];
-      if (!wanted || !document.getElementById(wanted)) return false;
-      for (const other of tabStrip.querySelectorAll('a[data-reserva-admin-tab]')) {
-        if (other === link) other.setAttribute('aria-current', 'page');
-        else other.removeAttribute('aria-current');
-      }
-      for (const panel of panelBox.children) panel.hidden = panel.id !== wanted;
-      // The totals strip belongs to the bookings list, and the attention banner is redundant on
-      // the tab it points at.
-      for (const el of document.querySelectorAll('[data-reserva-tab-only]')) el.hidden = el.dataset.reservaTabOnly !== tab;
-      for (const el of document.querySelectorAll('[data-reserva-tab-except]')) el.hidden = el.dataset.reservaTabExcept === tab;
-      history.replaceState(null, '', link.href);
-      return true;
-    };
-    tabStrip.addEventListener('click', (event) => {
-      const link = event.target.closest('a[data-reserva-admin-tab]');
-      if (link && switchTo(link)) event.preventDefault();
-    });
-    // The banner's link is a shortcut to the same panel, so it switches in place too.
-    const attentionLink = document.querySelector('[data-reserva-attention-link]');
-    if (attentionLink) attentionLink.addEventListener('click', (event) => {
-      const target = tabStrip.querySelector('a[data-reserva-admin-tab="attention"]');
-      if (!target || !switchTo(target)) return;
-      event.preventDefault();
-      tabStrip.scrollIntoView({ block: 'start' });
-    });
-  }
-
   // --- booking rows: keeping one open stops the list collapsing back into a wall of detail ---
   const bookingList = document.getElementById('bk-upcoming');
   if (bookingList) {

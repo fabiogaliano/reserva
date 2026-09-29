@@ -102,7 +102,7 @@ describe('admin incidents', () => {
     });
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
-    const getResponse = await handleAdminGet(new Request(ADMIN_URL), context);
+    const getResponse = await handleAdminGet(new Request(`${ADMIN_URL}?tab=attention`), context);
     const html = await getResponse.text();
     expect(html).not.toMatch(/name="action" value="incident-retry"[^]*?oversell/);
     // The disclosure copy explaining why is present instead of a button for this card.
@@ -246,7 +246,7 @@ describe('admin incidents', () => {
     });
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
-    const html = await (await handleAdminGet(new Request(ADMIN_URL), context)).text();
+    const html = await (await handleAdminGet(new Request(`${ADMIN_URL}?tab=attention`), context)).text();
     expect(html).toContain('Payment refused after checkout');
     expect(html).toContain('Reconciliation has stopped running');
     expect(html).not.toContain('value="incident-retry"');
@@ -268,7 +268,8 @@ describe('admin incidents', () => {
     expect(html).toContain('<span class="bk-tab-count">105</span>');
     expect(html).toContain('105 issues need attention');
     expect(html).toContain('<span class="bk-topbar-count" aria-hidden="true">105</span>');
-    expect(html).toContain('Showing the first 100 of 105 open incidents.');
+    const attention = await (await handleAdminGet(new Request(`${ADMIN_URL}?tab=attention`), context)).text();
+    expect(attention).toContain('Showing the first 100 of 105 open incidents.');
   });
 
   it('enforces the same Origin/CSRF guards as every other admin POST action', async () => {
