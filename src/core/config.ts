@@ -960,10 +960,6 @@ export function maxQuantityFor(service: { pricing: ReadonlyArray<{ maxQuantity: 
   return formula.maxUnits * formula.seatsPerUnit;
 }
 
-export function quantityValuesForService(service: ResolvedServiceConfig): number[] {
-  return Array.from({ length: maxQuantityFor(service) }, (_, index) => index + 1);
-}
-
 export function resolveService(config: ResolvedClientConfig, serviceSlug: string): ResolvedServiceConfig {
   const service = config.services[serviceSlug];
   if (!service) throw new Error(`Unknown service: ${serviceSlug}`);

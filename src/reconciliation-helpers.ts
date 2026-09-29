@@ -30,14 +30,6 @@ export function isDelayIncidentDue(failureStartedAtIso: string, nowIso: string):
   return Date.parse(nowIso) - Date.parse(failureStartedAtIso) >= INCIDENT_DELAY_THRESHOLD_MS;
 }
 
-// A row is eligible for an ORDINARY (non-admin-retry) automatic claim exactly when it has never
-// failed (next_attempt_at NULL — the first pending execution is immediate) or its backoff window
-// has elapsed. Admin retry claims bypass this entirely via a distinct, separately-gated repository
-// claim method — this helper is never consulted for that path.
-export function isEligibleForAutomaticClaim(nextAttemptAtIso: string | null, nowIso: string): boolean {
-  return nextAttemptAtIso === null || nextAttemptAtIso <= nowIso;
-}
-
 // Maps a side-effect outbox row onto the owner-facing action bucket an incident/alert reports,
 // read off the identity COLUMNS, never a parsed kind string. 'oversell' rows are scanned separately
 // (they're markers, not retryable debt) but still classify here for completeness.

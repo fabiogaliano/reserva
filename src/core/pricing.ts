@@ -1,5 +1,5 @@
-import type { ResolvedClientConfig, PickupType, SurchargeScope } from './config.js';
-import { maxQuantityFor, resolveService } from './config.js';
+import type { PickupType, SurchargeScope } from './config.js';
+import { maxQuantityFor } from './config.js';
 
 export class PricingError extends Error {
   readonly quantity: number;
@@ -104,10 +104,6 @@ export function resolvedPriceTableFor(service: Priceable): ResolvedPriceTable {
     }
   }
   return table;
-}
-
-export function priceForService(config: ResolvedClientConfig, serviceSlug: string, quantity: number, pickup: PickupType | null): number {
-  return priceFor(resolveService(config, serviceSlug), quantity, pickup);
 }
 
 export function pricingCombinations(service: Priceable): Array<{ quantity: number; pickup: PickupType | null; priceMinor: number }> {

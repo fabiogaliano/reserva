@@ -8,9 +8,6 @@ export interface LocalDateTimeParts {
   minute: number;
 }
 
-export type FallBackAmbiguityPolicy = 'earlier';
-export const fallBackAmbiguityPolicy: FallBackAmbiguityPolicy = 'earlier';
-
 const datePattern = /^(\d{4})-(\d{2})-(\d{2})$/;
 const dateTimePattern = /^(\d{4})-(\d{2})-(\d{2})[T ]([01]\d|2[0-3]):([0-5]\d)$/;
 

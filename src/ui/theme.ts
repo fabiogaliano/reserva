@@ -1302,7 +1302,7 @@ a.bk-day { padding-bottom: 0.35rem; box-sizing: border-box; }
 // explicit choice, and clearing it (System) deletes the cookie.
 export type ThemePreference = 'light' | 'dark';
 
-export const themeCookieName = 'bk_theme';
+const themeCookieName = 'bk_theme';
 
 export function readThemePreference(request: Request): ThemePreference | undefined {
   const header = request.headers.get('cookie');

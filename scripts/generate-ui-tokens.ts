@@ -57,7 +57,7 @@ export function renderUiTokensModule(css: string): string {
 // schemes. A host `data-theme` on any ancestor forces the palette the way the pages' <html
 // data-theme> does; forced dark comes after the OS rule because, at equal (zero) specificity,
 // source order is what lets it win. Dark is screen-only so a printout is always the light palette.
-export function renderEmbedTokensCss(css: string): string {
+function renderEmbedTokensCss(css: string): string {
   const light = tokenDeclarations(css, 'light');
   const dark = tokenDeclarations(css, 'dark');
   return [

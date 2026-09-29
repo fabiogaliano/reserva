@@ -175,8 +175,6 @@ export function canCancelBooking(booking: Booking, now: string | Date, cutoffHou
   return parseUtcInstant(now).getTime() <= cancellationDeadline(booking, cutoffHours).getTime();
 }
 
-export const isCancellationAllowed = canCancelBooking;
-
 export function cancelBooking(
   booking: Booking,
   actor: CancellationActor,
@@ -221,8 +219,4 @@ export function markNoShow(booking: Booking, now: string | Date = new Date()): B
     throw new Error('A booking can only be marked no-show after its start');
   }
   return transitionBooking(booking, 'no_show', now);
-}
-
-export function isHoldActive(booking: Pick<Booking, 'status' | 'holdExpiresAt'>, now: string | Date = new Date()): boolean {
-  return booking.status === 'hold' && booking.holdExpiresAt !== null && compareInstants(now, booking.holdExpiresAt) <= 0;
 }
