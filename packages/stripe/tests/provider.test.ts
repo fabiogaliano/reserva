@@ -99,7 +99,7 @@ describe('stripe() adapter', () => {
       successUrl: () => 'https://example.test/booking-confirmation?sessionId={CHECKOUT_SESSION_ID}',
       cancelUrl: (b) => `https://example.test/services/${b.serviceSlug}`,
     });
-    await expect(provider.createCheckout(booking({ pickupType: 'custom' }), config)).resolves.toEqual({
+    await expect(provider.createCheckout(booking({ pickupType: 'custom', priceMinor: 12000 }), config)).resolves.toEqual({
       url: 'https://checkout.test/cs_created', sessionRef: 'cs_created', expiresAt: '2026-01-01T00:30:00.000Z',
     });
     expect(sessions.create).toHaveBeenCalledWith(expect.objectContaining({
