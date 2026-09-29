@@ -239,3 +239,22 @@ test('the calendar is a single Tab stop with arrow-key navigation across months'
   await page.keyboard.press('Tab');
   await expect(page.locator('.bk-day[data-date]:focus')).toHaveCount(0);
 });
+
+// The page renders a few months of the horizon; the pager's last "Next month" loads the following
+// months and its first "Previous month" there comes back, instead of either button going dead.
+test('the month pager crosses into the next rendered window of the horizon and back', async ({ page }) => {
+  const farDay = format(addDays(new Date(), 150), 'yyyy-MM-dd');
+  await page.goto('/booking/admin?tab=availability');
+  await expect(page.locator(`.bk-day[data-date="${farDay}"]`)).toHaveCount(0);
+  await expect(page.locator('.bk-monthnav')).toBeHidden();
+
+  const next = page.getByRole('button', { name: 'Next month' });
+  for (let attempt = 0; attempt < 4 && !page.url().includes('month='); attempt += 1) await next.click();
+  await expect(page).toHaveURL(/month=\d{4}-\d{2}/);
+  await revealDay(page, farDay);
+
+  const windowUrl = page.url();
+  const previous = page.getByRole('button', { name: 'Previous month' });
+  for (let attempt = 0; attempt < 4 && page.url() === windowUrl; attempt += 1) await previous.click();
+  await expect(page.locator(`.bk-day[data-date="${format(new Date(), 'yyyy-MM-dd')}"]`)).toBeVisible();
+});

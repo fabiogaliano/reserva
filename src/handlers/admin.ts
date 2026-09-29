@@ -87,8 +87,9 @@ const ADMIN_OPEN_INCIDENT_LIMIT = 100;
 const ADMIN_HOLD_SCAN_LIMIT = 200;
 // Months of availability calendar one page renders. Every rendered day costs a cell, its load, and
 // its entry in the day island; a whole booking horizon (500 days on some deployments) rendered on
-// every admin load was most of the page's CPU. Later months are a click away.
-export const ADMIN_CALENDAR_MONTHS = 3;
+// every admin load was most of the page's CPU. Four months keep at least the next 90 days on one
+// page, so a multi-day selection there never spans a page load. Later months are a click away.
+export const ADMIN_CALENDAR_MONTHS = 4;
 
 function adminFiltersFrom(url: URL): AdminFilters {
   const statusParam = url.searchParams.get('status')?.trim() ?? '';

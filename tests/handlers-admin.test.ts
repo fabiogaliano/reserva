@@ -493,24 +493,24 @@ describe('GET /admin listing (one window + status query)', () => {
     expect(body).toContain('"2026-12-01":[2,2,1,1,0]');
   });
 
-  // A whole horizon rendered on every load was most of the page's CPU, so the calendar shows three
+  // A whole horizon rendered on every load was most of the page's CPU, so the calendar shows four
   // months and pages through the rest of the horizon.
-  it('shows three months from today and pages through the horizon', async () => {
+  it('shows four months from today and pages through the horizon', async () => {
     const farOut = booking({ id: 'b-admin-far', reference: 'LVT-2026-320', startsAt: '2026-12-01T10:00:00.000Z', endsAt: '2026-12-01T11:00:00.000Z', operatorToken: 'op-far', cancelToken: 'cancel-far' });
     const thisWeek = booking({ id: 'b-admin-week', reference: 'LVT-2026-321', startsAt: '2026-06-16T10:00:00.000Z', endsAt: '2026-06-16T11:00:00.000Z', operatorToken: 'op-week', cancelToken: 'cancel-week' });
     const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository([farOut, thisWeek]), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
     const first = await (await handleAdminGet(new Request(`${ADMIN_URL}?tab=availability`), context)).text();
-    expect(first).toContain('data-month="2026-08"');
-    expect(first).not.toContain('data-month="2026-09"');
+    expect(first).toContain('data-month="2026-09"');
+    expect(first).not.toContain('data-month="2026-10"');
     expect(first).not.toContain('"2026-12-01"');
     expect(first).not.toContain('Earlier months');
-    expect(first).toContain('href="?tab=availability&amp;month=2026-09">Later months</a>');
+    expect(first).toContain('href="?tab=availability&amp;month=2026-10" data-reserva-month-next>Later months</a>');
 
     const later = await (await handleAdminGet(new Request(`${ADMIN_URL}?tab=availability&month=2026-12`), context)).text();
     expect(later).toContain('data-month="2026-12"');
     expect(later).not.toContain('data-month="2026-06"');
-    expect(later).toContain('href="?tab=availability&amp;month=2026-09">Earlier months</a>');
+    expect(later).toContain('href="?tab=availability&amp;month=2026-08" data-reserva-month-prev>Earlier months</a>');
     // The seven-day glance still counts this week while the calendar shows December.
     expect(later).toContain('"2026-12-01":[2,2,1,1,0]');
     expect(later).toMatch(/bk-glance[\s\S]*1 booking/);

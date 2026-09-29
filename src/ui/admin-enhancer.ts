@@ -203,16 +203,29 @@ export const adminEnhancerJs = `(() => {
       : !second ? monthName(first, true)
       : first.slice(0, 4) === second.slice(0, 4) ? monthName(first, false) + ' \\u2013 ' + monthName(second, true)
       : monthName(first, true) + ' \\u2013 ' + monthName(second, true);
-    prev.disabled = active === 0;
-    next.disabled = active >= monthEls.length - 2;
+    prev.disabled = active === 0 && !prevHref;
+    next.disabled = active >= monthEls.length - 2 && !nextHref;
   };
   // Keeps a month on screen without jumping the page when it already is.
   const reveal = (monthIndex) => {
     if (monthIndex < active) show(monthIndex);
     else if (monthIndex > active + 1) show(monthIndex - 1);
   };
-  prev.addEventListener('click', () => { show(active - 1); syncTabStop(); });
-  next.addEventListener('click', () => { show(active + 1); syncTabStop(); });
+  // The page renders a window of the horizon; at its edge the pager loads the neighbouring window
+  // instead of going dead, and the plain links it replaces are hidden.
+  const edgeLink = (direction) => document.querySelector('[data-reserva-month-' + direction + ']');
+  const prevHref = edgeLink('prev') && edgeLink('prev').href;
+  const nextHref = edgeLink('next') && edgeLink('next').href;
+  const monthNav = document.querySelector('.bk-monthnav');
+  if (monthNav) monthNav.hidden = true;
+  prev.addEventListener('click', () => {
+    if (active === 0 && prevHref) { location.assign(prevHref); return; }
+    show(active - 1); syncTabStop();
+  });
+  next.addEventListener('click', () => {
+    if (active >= monthEls.length - 2 && nextHref) { location.assign(nextHref); return; }
+    show(active + 1); syncTabStop();
+  });
   show(Math.max(0, monthEls.findIndex((month) => month.querySelector('[aria-current="date"]'))));
   showMonth = reveal;
 

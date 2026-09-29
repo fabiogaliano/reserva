@@ -1063,11 +1063,11 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
     + `<span><i class="bk-legend-swatch bk-legend-swatch--full"></i>${escapeHtml(messages['admin.legendFull'])}</span>`
     + `<span><i class="bk-legend-ring"></i>${escapeHtml(messages['admin.stateOverride'])}</span>`
     + `<span><i class="bk-legend-strike">12</i>${escapeHtml(messages['widget.closed'])}</span></p>`;
-  const monthLink = (month: string | null, label: string): string => month
-    ? `<a class="bk-link" href="?${escapeHtml(String(adminStateParams(filters, { tab: 'availability' })))}&amp;month=${month}">${escapeHtml(label)}</a>`
+  const monthLink = (month: string | null, label: string, direction: 'prev' | 'next'): string => month
+    ? `<a class="bk-link" href="?${escapeHtml(String(adminStateParams(filters, { tab: 'availability' })))}&amp;month=${month}" data-reserva-month-${direction}>${escapeHtml(label)}</a>`
     : '';
   const monthNav = calendar.prevMonth || calendar.nextMonth
-    ? `<nav class="bk-monthnav">${monthLink(calendar.prevMonth, messages['admin.calendarEarlier'])}${monthLink(calendar.nextMonth, messages['admin.calendarLater'])}</nav>`
+    ? `<nav class="bk-monthnav">${monthLink(calendar.prevMonth, messages['admin.calendarEarlier'], 'prev')}${monthLink(calendar.nextMonth, messages['admin.calendarLater'], 'next')}</nav>`
     : '';
   const availabilityPanel = `<div class="bk-days-layout"><div class="bk-calendar"><div class="bk-months">${monthGrids}</div>${monthNav}${legend}</div>`
     + `<div class="bk-day-editor">${overrideForm}${defaultForm}</div></div>`;
