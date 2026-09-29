@@ -1,5 +1,22 @@
 # @reservajs/stripe
 
+## 0.8.1
+
+### Patch Changes
+
+- b066b5a: Stripe Checkout now charges the booking's stored price and currency instead of recomputing the price from config, so a pricing change after a hold was created can no longer produce a payment the webhook then rejects as mismatched.
+- Updated dependencies [93b2a14]
+- Updated dependencies [93b2a14]
+- Updated dependencies [c243dde]
+- Updated dependencies [3ca9182]
+- Updated dependencies [e88c59c]
+- Updated dependencies [448bf72]
+- Updated dependencies [cebc944]
+- Updated dependencies [e192a5f]
+- Updated dependencies [d643a96]
+- Updated dependencies [da59097]
+  - @reservajs/astro@0.15.0
+
 ## 0.8.0
 
 ### Minor Changes

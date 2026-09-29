@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.15.0
+
+### Minor Changes
+
+- 93b2a14: The admin settings page has a **Recent changes** section listing the latest 20 changes made from the admin to settings, single-day capacity and scheduled capacity changes, newest first: when (in the business timezone), who made it (or "Unknown" when the admin sign-in exposes no identity), and what changed. It is read only when that section is opened. Sites that translate the admin into a locale other than en or pt-PT should add `admin.sectionHistory`, `admin.historyHint`, `admin.historyEmpty`, `admin.historyWhen`, `admin.historyWho`, `admin.historyWhat`, `admin.historyUnknownActor`, `admin.historySettingSet`, `admin.historySettingReset`, `admin.historyDaySet`, `admin.historyDayClosed`, `admin.historyDayCleared`, `admin.historyDefaultSet` and `admin.historyDefaultRemoved`.
+- cebc944: `ReservaContext.repo` no longer has `insertHold`, `upsertDayOverride`, `deleteDayOverride` or `upsertSetting`. Each wrote around a guard Reserva relies on: `insertHold` skipped the slot capacity check, and the other three left no entry in the admin's Recent changes. Use `insertHoldWithCapacity`, `upsertDayOverrides([date], …, audit)`, `deleteDayOverrides([date], audit)` and `applySettingsBatch([{ type: 'upsert', key, value }], audit)` instead.
+  
+  `brevoEmail()` no longer accepts `fetchImpl`; pass `fetch`, the same option `GoogleCalendarProvider` has used since 0.5.0.
+  
+  See "Migrating to 0.15.0" in docs/MIGRATING-v2.md.
+
+### Patch Changes
+
+- 93b2a14: A refused `/booking/admin` request now answers `403 forbidden` with "Admin authorization required" instead of "Cloudflare Access authorization required", which was wrong for a deployment signing in with its own `adminAuth`. It matches the message `/api/booking/ops/health` already used.
+- c243dde: Operational alerts are no longer silently dropped when a deployment has neither an email provider that can send a standalone message nor a configured logger. They now go to `console`, the same default the rest of Reserva logs to.
+- 3ca9182: The admin day view now shows a hold at the exact instant it expires, while it is still blocking capacity, instead of hiding it a moment early.
+- e88c59c: After switching to an email provider without `sendToRecipient`, a booking already confirmed with per-recipient emails no longer gets an extra combined confirmation email, which re-sent the customer's copy.
+- 448bf72: The operator no-show endpoint no longer reports an internal failure after the no-show is saved as a `409 invalid_transition` carrying the raw database error; it now returns the generic `500 internal_error`, like the other booking actions.
+- e192a5f: The booking repository on `ReservaContext.repo` no longer has `transitionReschedule` or `upsertRefundOperation`, two methods Reserva itself stopped calling; reschedules go through `rescheduleWithCapacity` and Stripe refund updates through `reconcileStripeRefundOperation`.
+- d643a96: A per-recipient confirmation email that the configured email provider cannot send on its own (no `sendToRecipient`, e.g. after switching providers) is now abandoned with the operator's side-effect-abandoned log, instead of being marked delivered without being sent.
+- da59097: Payment verification and the confirmation page now use the currency stored on the booking, so a checkout started before a `business.currency` change is no longer rejected as a currency mismatch or shown in the new currency.
+
 ## 0.14.2
 
 ### Patch Changes
