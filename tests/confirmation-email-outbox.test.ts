@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import { retrySideEffectOperation, runOwedMutationSideEffects, runScheduledSideEffectOperation } from '../src/confirmation';
+import { runOwedMutationSideEffects } from '../src/confirmation';
 import { createReservaContext, type ReservaProviders } from '../src/context';
 import { handleStatus, handlePaymentWebhook } from '../src/handlers';
 import { booking, config } from './fixtures';
@@ -139,26 +139,35 @@ describe('confirmation-path per-recipient email outbox', () => {
     expect(sideEffectOperation(repo, seeded.id, OWNER)).toMatchObject({ status: 'pending', attemptCount: 0 });
   });
 
-  it('keeps a failed split owner row owed instead of marking it succeeded unsent when the provider was swapped for one without sendToRecipient', async () => {
-    const seeded = booking({ id: 'b-email-split-provider-swapped', status: 'confirmed', calendarEventId: 'cal_email_swapped' });
+  it('abandons a split owner row the swapped-in provider cannot send alone, so status polls stop re-running confirmation', async () => {
+    const seeded = booking({ id: 'b-email-split-provider-swapped', status: 'confirmed', paymentSessionRef: 'cs_email_swapped', calendarEventId: 'cal_email_swapped' });
     const repo = fakeRepository([seeded]);
     const createdAt = '2026-06-14T08:00:00.000Z';
+    seedSideEffectOperation(repo, seeded.id, { family: 'calendar_create' }, { status: 'succeeded', attemptCount: 1, attemptedAt: createdAt, resolvedAt: createdAt });
     seedSideEffectOperation(repo, seeded.id, CUSTOMER, { status: 'succeeded', attemptCount: 1, attemptedAt: createdAt, resolvedAt: createdAt });
-    const owner = seedSideEffectOperation(repo, seeded.id, OWNER, {
+    seedSideEffectOperation(repo, seeded.id, OWNER, {
       status: 'failed', attemptCount: 1, attemptedAt: createdAt, resolvedAt: createdAt, error: 'owner temporary failure',
     });
-    let sendCalls = 0;
+    const errors: unknown[][] = [];
+    let confirmedHookCalls = 0;
     const context = createReservaContext({
       config, db: {} as D1Database, repo, clock: () => new Date('2026-06-14T08:10:00.000Z'),
-      providers: providers({ email: { send: async () => { sendCalls += 1; } } }),
+      logger: { error: (...args: unknown[]) => { errors.push(args); }, warn: () => undefined, info: () => undefined },
+      hooks: [{ name: 'ops', events: ['booking.confirmed'], handler: async () => { confirmedHookCalls += 1; } }],
+      providers: providers({ email: { send: async () => undefined } }),
     });
+    const poll = () => handleStatus(new Request('https://example.test/status?session_id=cs_email_swapped'), context);
 
-    await runScheduledSideEffectOperation(context, seeded, owner);
-    expect(sideEffectOperation(repo, seeded.id, OWNER)).toMatchObject({ status: 'failed', attemptCount: 1 });
+    await expect(poll()).resolves.toMatchObject({ status: 200 });
+    // Resolving it 'succeeded' unsent would drop the owner's email silently; abandoning it is
+    // terminal and carries the operator log.
+    expect(sideEffectOperation(repo, seeded.id, OWNER)).toMatchObject({ status: 'abandoned', attemptCount: 2 });
+    expect(errors.some(([message]) => message === 'reserva side effect operation abandoned')).toBe(true);
+    const hookCallsAfterFirstPoll = confirmedHookCalls;
 
-    await expect(retrySideEffectOperation(context, seeded, owner)).resolves.toBe('not_retryable');
-    expect(sideEffectOperation(repo, seeded.id, OWNER)).toMatchObject({ status: 'failed', error: 'Provider not configured' });
-    expect(sendCalls).toBe(0);
+    await poll();
+    await poll();
+    expect(confirmedHookCalls).toBe(hookCallsAfterFirstPoll);
   });
 
   it('a repository failure resolving the customer row does not block the independent owner row', async () => {

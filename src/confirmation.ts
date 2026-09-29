@@ -12,7 +12,7 @@ import {
 import { localDateKey, parseUtcInstant } from './core/time.js';
 import type { ReservaContext } from './context.js';
 import { nowIso } from './context.js';
-import { classifyProviderError } from './provider-failure.js';
+import { classifyProviderError, ProviderFailure } from './provider-failure.js';
 import {
   bookingEventSeeds,
   deliverBookingEventOperation,
@@ -174,14 +174,6 @@ function confirmationEmailRecipient(operation: SideEffectOperationIdentity): Ema
   return operation.name === 'customer' || operation.name === 'owner' ? operation.name : undefined;
 }
 
-// A split row can only be paid through sendToRecipient: send() would re-mail the recipient already
-// served, and resolving it unsent would drop the email. So when the provider has been swapped for
-// one without it, the row stays owed, as attemptForOperation leaves it on the mutation path.
-function confirmationEmailUnsendable(context: ReservaContext, operation: SideEffectOperationIdentity): boolean {
-  const email = context.providers.email;
-  return confirmationEmailRecipient(operation) !== undefined && email !== undefined && !email.sendToRecipient;
-}
-
 // Dispatches to the right provider call for a confirmation-path row: calendar_create, a combined
 // email_confirmation row via send(), or a split row via sendToRecipient for exactly the one
 // recipient its kind encodes, so an owner-recipient failure can never re-trigger the customer's
@@ -192,9 +184,15 @@ async function runConfirmationOperation(context: ReservaContext, booking: Bookin
   }
   const recipient = confirmationEmailRecipient(operation);
   if (recipient) {
-    if (context.providers.email?.sendToRecipient) {
-      await context.providers.email.sendToRecipient(recipient, 'booking.confirmed', booking, context.config, context.routeConfig);
+    const email = context.providers.email;
+    if (email && !email.sendToRecipient) {
+      // A provider swapped for one without sendToRecipient can never pay this row: send() would
+      // re-mail the recipient already served, and resolving it unsent would drop the email. A
+      // permanent failure abandons it with the operator log instead of leaving it owed forever,
+      // which would keep the booking unsettled and re-run confirmation on every status poll.
+      throw new ProviderFailure({ retryable: false, message: `email provider cannot send to the ${recipient} alone (no sendToRecipient)` });
     }
+    if (email?.sendToRecipient) await email.sendToRecipient(recipient, 'booking.confirmed', booking, context.config, context.routeConfig);
     return null;
   }
   if (context.providers.email) await context.providers.email.send('booking.confirmed', booking, context.config, context.routeConfig);
@@ -208,7 +206,6 @@ async function executeOperation(
   token: string,
 ): Promise<void> {
   if (!isActionableSideEffectStatus(operation.status) || operation.family === 'oversell') return;
-  if (confirmationEmailUnsendable(context, operation)) return;
   await renewConfirmationLease(context, booking.id, token);
   const attemptNumber = await context.repo.claimSideEffectOperation(booking.id, operation, token, nowIso(context));
   if (attemptNumber === null) throw new ConfirmationInProgressError();
@@ -742,12 +739,6 @@ async function retryConfirmationSideEffectOperation(
   try {
     const attemptNumber = await context.repo.claimSideEffectOperationForRetry(booking.id, operation, token, nowIso(context));
     if (attemptNumber === null) return 'nothing_to_retry';
-    if (confirmationEmailUnsendable(context, operation)) {
-      await context.repo.resolveSideEffectOperation({
-        bookingId: booking.id, identity: operation, leaseToken: token, status: 'failed', error: 'Provider not configured', resolvedAt: nowIso(context),
-      });
-      return 'not_retryable';
-    }
     try {
       const providerResultId = await runConfirmationOperation(context, booking, operation);
       const resolved = await context.repo.resolveSideEffectOperation({
