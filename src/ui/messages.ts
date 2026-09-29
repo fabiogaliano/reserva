@@ -238,7 +238,7 @@ export const defaultMessages = {
   'admin.holdUntil': 'until {time}',
   // What happened to a booking's money after payment: a badge beside the status, and the matching
   // fact in the row's disclosure. `{amount}` is the running refund total; `{date}` is the day the
-  // dispute was first seen.
+  // dispute opened.
   'admin.refundedBadge': 'Refunded {amount}',
   'admin.disputeOpen': 'Dispute open',
   'admin.disputeWon': 'Dispute won',
