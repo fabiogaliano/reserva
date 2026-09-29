@@ -7,7 +7,6 @@ import {
   isSlotAvailable,
   maxConcurrentOccupancy,
   remainingBookings,
-  remainingCapacity,
 } from '../src/core/occupancy';
 import { booking, config, service } from './fixtures';
 
@@ -55,7 +54,7 @@ describe('core occupancy', () => {
     expect(isSlotAvailable(slotStart, slotEnd, { capacity: 2, intervals, requestedUnits: 1, turnaroundMin: 30 })).toBe(false);
 
     const large = getOccupancyIntervals(occupancyOptions({ bookings: [booking({ quantity: 8 })] }));
-    expect(remainingCapacity(2, large, slotStart, '2026-06-15T10:30:00.000Z')).toBe(0);
+    expect(large[0]?.units).toBe(2);
   });
 
   it('blocks the following grid slot exactly through turnaround', () => {
@@ -75,7 +74,7 @@ describe('core occupancy', () => {
     const twoBookings = getOccupancyIntervals(occupancyOptions({
       bookings: [booking(), booking({ id: 'booking-2' })],
     }));
-    expect(remainingCapacity(result.capacity, twoBookings, slotStart, '2026-06-15T10:30:00.000Z')).toBe(0);
+    expect(isSlotAvailable(slotStart, slotEnd, { capacity: result.capacity, intervals: twoBookings, requestedUnits: 1, turnaroundMin: 30 })).toBe(false);
     const full = availabilityForDay({
       date: '2026-06-15', timezone: config.business.timezone, service, capacity: 0,
       bookings: [], requestedQuantity: 1, limitedThreshold: 2, closedReason: 'vacation',
@@ -171,7 +170,6 @@ describe('core occupancy', () => {
       }],
     }));
     expect(intervals).toHaveLength(1);
-    expect(remainingCapacity(2, intervals, slotStart, '2026-06-15T10:30:00.000Z')).toBe(1);
   });
 
   it('counts an orphaned tagged calendar event without a matching D1 booking', () => {

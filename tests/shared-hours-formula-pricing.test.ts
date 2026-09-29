@@ -4,9 +4,8 @@ import { createReservaContext } from '../src/context';
 import { maxQuantityFor, validateConfig, type ClientConfig, type ResolvedFormulaPricing } from '../src/core/config';
 import { lowestPriceMinor, priceFor, pricingCombinations, PricingError, resolvedPriceTableFor } from '../src/core/pricing';
 import { loadMergedConfig, mergeAndValidateSettings, settingDefinitionsFor } from '../src/core/settings';
-import { catalogPayload } from '../src/handlers/catalog';
-import { handleAdminGet } from '../src/handlers';
-import { resolveMessages } from '../src/ui/messages';
+import { handleAdminGet, handleCatalog } from '../src/handlers';
+import type { CatalogResponse } from '../src/core/api';
 import { fakeRepository, providers } from './fakes';
 
 const PICKUP_OPTIONS = [
@@ -168,8 +167,9 @@ describe('formula pricing', () => {
 });
 
 describe('catalog projection', () => {
-  it('publishes the formula with its materialized fields and no config provenance', () => {
-    const payload = catalogPayload(resolved, 'en', resolveMessages(resolved, 'en'));
+  it('publishes the formula with its materialized fields and no config provenance', async () => {
+    const context = createReservaContext({ config: resolved, db: {} as D1Database, repo: fakeRepository(), clock: () => new Date('2026-06-14T08:00:00.000Z'), providers: providers() });
+    const payload: CatalogResponse = await (await handleCatalog(new Request('https://fleet.example/api/booking/catalog?locale=en'), context)).json();
     const oldCity = payload.services.find((entry) => entry.slug === 'old-city')!;
     expect(oldCity.pricing).toEqual({
       baseMinor: 10000,

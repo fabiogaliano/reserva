@@ -90,7 +90,7 @@ function catalogPricing(service: ResolvedServiceConfig): CatalogPricing {
   };
 }
 
-export function catalogPayload(config: ResolvedClientConfig, locale: string, messages: ReservaMessages): CatalogResponse {
+function catalogPayload(config: ResolvedClientConfig, locale: string, messages: ReservaMessages): CatalogResponse {
   const locales: Locales = { locale, defaultLocale: config.locales.default };
   const services: CatalogService[] = Object.entries(config.services).map(([slug, service]) => {
     const pricing = catalogPricing(service);

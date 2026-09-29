@@ -302,15 +302,6 @@ export function maxConcurrentOccupancy(
   return maxAtBoundaries(parseIntervals(intervals), parseUtcInstant(start).getTime(), parseUtcInstant(end).getTime());
 }
 
-export function remainingCapacity(
-  capacity: number,
-  intervals: readonly OccupancyInterval[],
-  start: string | Date,
-  end: string | Date,
-): number {
-  return Math.max(0, resolveCapacity(capacity) - maxConcurrentOccupancy(intervals, start, end));
-}
-
 export function isSlotAvailable(
   slotStart: string | Date,
   slotEnd: string | Date,
