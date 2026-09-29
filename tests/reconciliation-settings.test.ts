@@ -4,6 +4,7 @@ import { createReservaContext, type ReservaLogger } from '../src/context';
 import type { ResolvedClientConfig } from '../src/core/config';
 import type { EmailBookingEvent } from '../src/core/events';
 import { renderDefaultEmail } from '../src/email';
+import { englishEmailCopy } from '../src/email/copy';
 import { scheduledHandler } from '../src/reconciliation';
 import { booking, config } from './fixtures';
 import { fakeRepository, providers, seedSideEffectOperation, sideEffectOperation, type FakeRepository } from './fakes';
@@ -78,7 +79,8 @@ describe('scheduledHandler with admin setting overrides', () => {
       startsAtLocal: '20 Aug 2026, 10:00',
     });
     // 72h before 2026-08-20T09:00Z is 17 August, 10:00 in Lisbon; the file's 24h would say 19 August.
-    expect(rendered.text).toContain('Free cancellation until 17 August');
+    const [freeUntil] = englishEmailCopy['cancellation.free']!.split('{cancelDeadline}');
+    expect(rendered.text).toContain(`${freeUntil}17 August`);
     expect(rendered.text).not.toContain('19 August');
   });
 

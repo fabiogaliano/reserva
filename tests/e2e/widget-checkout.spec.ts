@@ -1,6 +1,12 @@
 import { test, expect, type Page } from '@playwright/test';
+import { defaultMessages, formatMessage } from '../../src/ui/messages';
+import { defaultWidgetMessages } from '../../examples/smoke-site/src/components/widget-messages';
 
 // The example widget's checkout step: one checkout per submit, and error copy the visitor can act on.
+
+// The widget merges the library catalog under its own, as BookingWidget.astro does; the smoke site
+// overrides neither, so a copy edit in either catalog moves these expectations with it.
+const t = { ...defaultMessages, ...defaultWidgetMessages };
 
 function envelope(code: string, message: string, details?: Record<string, unknown>): string {
   return JSON.stringify({ error: { code, message, ...(details ? { details } : {}) } });
@@ -29,10 +35,10 @@ test('a checkout in flight is never sent twice, whatever re-renders the slot lis
 
   await openWidget(page);
   const submit = submitButton(page);
-  const quantity = page.getByLabel('How many people?');
+  const quantity = page.getByLabel(t['widget.quantity']);
   await submit.click();
   await expect(submit).toBeDisabled();
-  await expect(submit).toHaveText('Redirecting to secure payment…');
+  await expect(submit).toHaveText(t['widget.submitting']);
   // The party size is what is being charged, so it is locked while the request is pending.
   await expect(quantity).toBeDisabled();
 
@@ -56,7 +62,7 @@ test('a checkout in flight is never sent twice, whatever re-renders the slot lis
   await expect(page.getByRole('radiogroup').getByRole('radio').first()).toBeVisible();
 
   await expect(submit).toBeDisabled();
-  await expect(submit).toHaveText('Redirecting to secure payment…');
+  await expect(submit).toHaveText(t['widget.submitting']);
   await submit.click({ force: true });
   // A disabled button blocks clicks and Enter, but not a script's requestSubmit() (or a second
   // submit path), so the handler keeps its own guard.
@@ -65,9 +71,9 @@ test('a checkout in flight is never sent twice, whatever re-renders the slot lis
   expect(checkoutRequests).toBe(1);
 
   release();
-  await expect(errorText(page)).toHaveText('That time is no longer available. Please pick another one.');
+  await expect(errorText(page)).toHaveText(t['widget.errorSlotUnavailable']);
   await expect(submit).toBeEnabled();
-  await expect(submit).toHaveText('Continue to payment');
+  await expect(submit).toHaveText(t['widget.submit']);
   await expect(quantity).toBeEnabled();
 });
 
@@ -79,25 +85,25 @@ test('a page restored from the back/forward cache is bookable again', async ({ p
   await openWidget(page);
   const submit = submitButton(page);
   await submit.click();
-  await expect(submit).toHaveText('Redirecting to secure payment…');
+  await expect(submit).toHaveText(t['widget.submitting']);
 
   // Chromium under automation does not put pages into the back/forward cache, so this dispatches
   // the event a restore fires.
   await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
   await expect(submit).toBeEnabled();
-  await expect(submit).toHaveText('Continue to payment');
-  await expect(page.getByLabel('How many people?')).toBeEnabled();
+  await expect(submit).toHaveText(t['widget.submit']);
+  await expect(page.getByLabel(t['widget.quantity'])).toBeEnabled();
 });
 
 // showError printed `cause.message`: the server's English developer diagnostic, or the browser's
 // "Failed to fetch".
 const checkoutFailures = [
-  { name: 'slot_unavailable', status: 409, body: envelope('slot_unavailable', 'The selected slot is not available'), copy: 'That time is no longer available. Please pick another one.' },
-  { name: 'too_many_holds', status: 429, body: envelope('too_many_holds', 'Too many active holds for this client'), copy: 'There are too many unfinished bookings from your connection. Please wait a few minutes and try again.' },
-  { name: 'calendar_unavailable', status: 503, body: envelope('calendar_unavailable', 'Calendar provider timed out'), copy: 'We could not confirm availability just now. Please try again in a moment.' },
-  { name: 'validation_failed without a known field', status: 400, body: envelope('validation_failed', 'quantity must be an integer'), copy: 'Some of your details were not accepted. Please check the form and try again.' },
-  { name: 'an unmapped code', status: 500, body: envelope('internal_error', 'D1_ERROR: no such table'), copy: 'Checkout failed. Please try again.' },
-  { name: 'a non-envelope answer', status: 502, body: '<html>Bad gateway</html>', copy: 'Checkout failed. Please try again.' },
+  { name: 'slot_unavailable', status: 409, body: envelope('slot_unavailable', 'The selected slot is not available'), copy: t['widget.errorSlotUnavailable'] },
+  { name: 'too_many_holds', status: 429, body: envelope('too_many_holds', 'Too many active holds for this client'), copy: t['widget.errorTooManyHolds'] },
+  { name: 'calendar_unavailable', status: 503, body: envelope('calendar_unavailable', 'Calendar provider timed out'), copy: t['widget.errorCalendar'] },
+  { name: 'validation_failed without a known field', status: 400, body: envelope('validation_failed', 'quantity must be an integer'), copy: t['widget.errorValidation'] },
+  { name: 'an unmapped code', status: 500, body: envelope('internal_error', 'D1_ERROR: no such table'), copy: t['widget.errorCheckout'] },
+  { name: 'a non-envelope answer', status: 502, body: '<html>Bad gateway</html>', copy: t['widget.errorCheckout'] },
 ];
 
 for (const failure of checkoutFailures) {
@@ -113,7 +119,7 @@ test('a checkout that never reaches the server says so, in the page language', a
   await page.route('**/api/booking/checkout', (route) => route.abort('internetdisconnected'));
   await openWidget(page);
   await submitButton(page).click();
-  await expect(errorText(page)).toHaveText('Connection problem. Check your internet connection and try again.');
+  await expect(errorText(page)).toHaveText(t['widget.errorNetwork']);
 });
 
 test('an availability request that never reaches the server shows the connection copy', async ({ page }) => {
@@ -121,8 +127,8 @@ test('an availability request that never reaches the server shows the connection
   await page.route('**/api/booking/availability*', (route) => (fail ? route.abort('internetdisconnected') : route.continue()));
   await openWidget(page);
   fail = true;
-  await page.getByLabel('How many people?').selectOption('2');
-  await expect(errorText(page)).toHaveText('Connection problem. Check your internet connection and try again.');
+  await page.getByLabel(t['widget.quantity']).selectOption('2');
+  await expect(errorText(page)).toHaveText(t['widget.errorNetwork']);
 });
 
 // The form-oriented copy ("check the form") is for a submitted checkout; an availability read the
@@ -134,8 +140,8 @@ test('a rejected availability request shows the availability copy, not the check
     : route.continue()));
   await openWidget(page);
   fail = true;
-  await page.getByLabel('How many people?').selectOption('2');
-  await expect(errorText(page)).toHaveText('Could not load availability. Please try again.');
+  await page.getByLabel(t['widget.quantity']).selectOption('2');
+  await expect(errorText(page)).toHaveText(t['widget.errorAvailability']);
 });
 
 test('slot_unavailable refreshes the slot list', async ({ page }) => {
@@ -144,7 +150,7 @@ test('slot_unavailable refreshes the slot list', async ({ page }) => {
   const refresh = page.waitForRequest((request) => request.url().includes('/api/booking/availability'));
   await submitButton(page).click();
   await refresh;
-  await expect(errorText(page)).toHaveText('That time is no longer available. Please pick another one.');
+  await expect(errorText(page)).toHaveText(t['widget.errorSlotUnavailable']);
 });
 
 test('a validation_failed naming a declared detail points at that field by its label', async ({ page }) => {
@@ -156,8 +162,9 @@ test('a validation_failed naming a declared detail points at that field by its l
   await openWidget(page, '/river-cruise');
   await page.getByLabel('Dietary notes').fill('none');
   await submitButton(page).click();
-  await expect(errorText(page)).toHaveText('Please check “Seat preference”.');
-  const seat = page.getByLabel('Seat preference (optional)');
+  // The label is the service's own declared field label (smoke-site config), not catalog copy.
+  await expect(errorText(page)).toHaveText(formatMessage(t['widget.errorField'], { field: 'Seat preference' }));
+  const seat = page.getByLabel(`Seat preference ${t['widget.optional']}`);
   await expect(seat).toHaveAttribute('aria-invalid', 'true');
   await expect(seat).toBeFocused();
 });
@@ -188,5 +195,9 @@ test('the scarcity hint counts bookings, not seats, and shows whenever the serve
     }),
   }));
   await openWidget(page);
-  await expect(page.locator('.bkw-slot-hint')).toHaveText(['Room for 1 more booking', 'Room for 2 more bookings', 'Room for 999 more bookings']);
+  await expect(page.locator('.bkw-slot-hint')).toHaveText([
+    t['widget.limitedOne'],
+    formatMessage(t['widget.limited'], { n: 2 }),
+    formatMessage(t['widget.limited'], { n: 999 }),
+  ]);
 });

@@ -197,3 +197,22 @@ test('custom pick-up hides and disables the meeting-point group, and the checkou
   const { checkoutBody } = await bookMaze(page, 'custom_pickup');
   expect(checkoutBody).not.toHaveProperty('meetingPointId');
 });
+
+// The group is rendered visible, so only the widget's init-time sync can hide it before any change
+// event. No smoke service lists a meeting-point-less option first, so the catalog is reordered.
+test('a service whose pre-selected first pickup option uses no meeting point starts with the group hidden and disabled', async ({ page }) => {
+  await page.route('**/api/booking/catalog*', async (route) => {
+    const response = await route.fetch();
+    const catalog = await response.json();
+    const maze = catalog.services.find((service: any) => service.slug === 'mazeRiverside');
+    maze.location.pickupOptions.reverse();
+    expect(maze.location.pickupOptions[0].usesMeetingPoint).toBe(false);
+    await route.fulfill({ response, json: catalog });
+  });
+  await page.goto('/maze');
+  await expect(page.locator('input[name="pickup"]').first()).toBeChecked();
+  const group = page.locator('[data-reserva-meeting-points]');
+  await expect(group).toBeAttached();
+  await expect(group).toBeHidden();
+  await expect(group.locator('input[name="meetingPointId"]').first()).toBeDisabled();
+});

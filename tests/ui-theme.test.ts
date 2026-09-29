@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { adminEnhancerJs } from '../src/ui/admin-enhancer';
-import { settingsEnhancerJs } from '../src/ui/settings-enhancer';
 import { pageShell, themeToggle } from '../src/ui/layout';
 import { defaultMessages, type ReservaMessages } from '../src/ui/messages';
+import { darkTokenValues } from '../src/ui/generated/tokens';
 import { readThemePreference, themeCss } from '../src/ui/theme';
 
 const messages = defaultMessages as ReservaMessages;
@@ -36,8 +35,19 @@ describe('themeCss (OS default + forced overrides)', () => {
   it('forces the palette + color-scheme for an explicit choice', () => {
     expect(themeCss).toContain(':where(:root[data-theme="dark"])');
     expect(themeCss).toContain(':where(:root[data-theme="light"]) { color-scheme: light; }');
-    // The dark palette is single-sourced, so the forced-dark selector carries the same accent token.
-    expect(themeCss).toContain('--bk-accent: #7c86e2;');
+    // The dark palette is single-sourced, so the OS-dark and forced-dark blocks carry every dark token.
+    const block = (selector: string): string => {
+      const start = themeCss.indexOf(`${selector} {`);
+      expect(start).toBeGreaterThan(-1);
+      return themeCss.slice(start, themeCss.indexOf('}', start));
+    };
+    const osDark = block(':where(:root:not([data-theme]))');
+    const forcedDark = block(':where(:root[data-theme="dark"])');
+    expect(Object.keys(darkTokenValues)).toContain('--bk-accent');
+    for (const [name, value] of Object.entries(darkTokenValues)) {
+      expect(osDark).toContain(`${name}: ${value};`);
+      expect(forcedDark).toContain(`${name}: ${value};`);
+    }
   });
 
   it('ships the toggle styling, including the [hidden] guard for the pre-enhancement button', () => {
@@ -83,55 +93,6 @@ describe('themeCss (OS default + forced overrides)', () => {
   it('draws field tags without a status dot, in the body colour with a hairline border', () => {
     expect(themeCss).toContain('.bk-badge--field { color: var(--bk-text); border-color: var(--bk-border); }');
     expect(themeCss).toContain('.bk-badge--field::before { content: none; }');
-  });
-});
-
-describe('admin dashboard enhancement', () => {
-  it('keeps one booking row open at a time', () => {
-    expect(adminEnhancerJs).toContain("for (const other of bookingList.querySelectorAll('.bk-booking[open]'))");
-  });
-
-  // The note is only required once the operator has decided to resolve, so it must not be a
-  // textarea sitting open on every incident at once.
-  it('defers the incident resolve note until the first press of Resolve', () => {
-    expect(adminEnhancerJs).toContain("[data-reserva-resolve-note]");
-    expect(adminEnhancerJs).toContain('noteField.hidden = true;');
-  });
-
-  // The cell only shows a bar, so the day card is where the units figure has to reappear once
-  // the enhancer takes over rendering it.
-  it('renders the day peak in units and its load bar in the day card from the island', () => {
-    expect(adminEnhancerJs).toContain('fill(i18n.peak, { peak: meta[2], capacity })');
-    expect(adminEnhancerJs).toContain('meter.dataset.fill = String(meterFill(meta[2], capacity));');
-  });
-
-  // Same classes, title and order as the server's day panel, so a re-selected day looks unchanged.
-  it('rebuilds a day row\'s field tags and money badges from the island, ahead of its status', () => {
-    const tags = adminEnhancerJs.indexOf("for (const tag of row.b || [])");
-    expect(tags).toBeGreaterThan(-1);
-    expect(adminEnhancerJs).toContain("el('span', 'bk-badge' + (tag.m ? ' bk-badge--' + tag.m : ''), tag.t)");
-    expect(adminEnhancerJs).toContain('if (tag.h) badge.title = tag.h;');
-    expect(tags).toBeLessThan(adminEnhancerJs.indexOf('if (row.s) end.append('));
-  });
-});
-
-describe('admin settings enhancement', () => {
-  // Save is the step operators miss: an edit flags its field, and the section's save bar wakes
-  // up, counts the edits and offers Discard until they land; the bar stays in view while the
-  // section scrolls.
-  it('flags unsaved edits on the field and the sticky save bar, and guards navigation', () => {
-    expect(settingsEnhancerJs).toContain("panels.addEventListener('input'");
-    expect(settingsEnhancerJs).toContain("field.querySelector('.bk-sfield-dirty')?.removeAttribute('hidden')");
-    expect(settingsEnhancerJs).toContain("bar.toggleAttribute('data-dirty', count > 0);");
-    expect(settingsEnhancerJs).toContain('if (save) save.disabled = count === 0;');
-    expect(settingsEnhancerJs).toContain('if (discard) discard.hidden = count === 0;');
-    expect(settingsEnhancerJs).toContain("panels.addEventListener('reset'");
-    expect(settingsEnhancerJs).toContain("window.addEventListener('beforeunload'");
-    expect(themeCss).toContain('.bk-savebar {\n  position: sticky;');
-    expect(themeCss).toContain('.bk-savebar[data-dirty] {');
-    // The badge's own display would otherwise beat the hidden attribute.
-    expect(themeCss).toContain('.bk-sfield-dirty[hidden] { display: none; }');
-    expect(themeCss).toContain('.bk-savebar [hidden] { display: none; }');
   });
 });
 

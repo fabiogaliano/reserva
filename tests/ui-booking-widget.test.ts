@@ -19,24 +19,7 @@ describe('BookingWidget.astro carries no server-owned rule of its own', () => {
   });
 });
 
-describe('BookingWidget.astro (no-JS degradation)', () => {
-  it('gives the availability-mode disabled submit button a loading affordance instead of a silent disable', () => {
-    expect(widgetSource).toMatch(/disabled=\{usesAvailability\}[^<]*>\{usesAvailability \? t\['widget\.loadingSlots'\] : t\['widget\.submit'\]\}/);
-  });
-});
-
 describe('BookingWidget.astro', () => {
-  it('toggles the group on pickupType change and at init, disabling (not just hiding) its inputs so they drop out of FormData', () => {
-    expect(widgetSource).toContain('function syncMeetingPoints(form: HTMLFormElement): void {');
-    expect(widgetSource).toContain('wrap.hidden = hide;');
-    expect(widgetSource).toContain('input.disabled = hide;');
-    // Wired into the pickupType radios' change listener, not just fired once.
-    expect(widgetSource).toMatch(/pickup\.addEventListener\('change', \(\) => \{\s*void updatePrice\(form, data\);\s*syncMeetingPoints\(form\);/);
-    // And run once at init, so a service whose first pickup option doesn't use a meeting point
-    // starts correctly hidden instead of only reacting to a later change event.
-    expect(widgetSource).toMatch(/void updatePrice\(form, data\);\s*syncMeetingPoints\(form\);\s*void loadAvailability\(form, data\);/);
-  });
-
   // The deployment's `ui.messages` overrides only reach the widget's library keys through the
   // resolved config.
   it('resolves library copy against the deployment config, not a bare catalog', () => {

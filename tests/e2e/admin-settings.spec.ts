@@ -10,6 +10,8 @@ test('editing a setting flags the field and the section as unsaved until Save', 
   const before = await input.inputValue();
 
   const bar = form.locator('.bk-savebar');
+  // The bar stays in view while a long section scrolls under it.
+  await expect(bar).toHaveCSS('position', 'sticky');
   const save = bar.getByRole('button', { name: 'Save' });
   const discard = bar.getByRole('button', { name: 'Discard' });
   await expect(bar).not.toHaveAttribute('data-dirty');
@@ -29,9 +31,12 @@ test('editing a setting flags the field and the section as unsaved until Save', 
   await expect(save).toBeDisabled();
   await input.fill('24');
 
-  // Reloading without saving shows the server's value again: nothing was persisted.
-  page.on('dialog', (dialog) => dialog.accept());
+  // Leaving with an unsaved edit asks first; reloading past it shows the server's value again:
+  // nothing was persisted.
+  const dialogs: string[] = [];
+  page.on('dialog', (dialog) => { dialogs.push(dialog.type()); void dialog.accept(); });
   await page.goto('/booking/admin?view=settings&section=policy');
+  expect(dialogs).toEqual(['beforeunload']);
   await expect(page.locator('input[name="booking.minNoticeHours"]')).toHaveValue(before);
 
   await page.locator('input[name="booking.minNoticeHours"]').fill('24');

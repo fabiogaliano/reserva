@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { GET as getCss } from '../src/routes/booking/assets';
 import { GET as getJs } from '../src/routes/booking/assets-js';
 import { cssAssetHref, jsAssetHref } from '../src/ui/asset-hrefs';
-import { brandingCss, contrastRatio, darkAccentPalette, lightAccentPalette } from '../src/ui/branding';
+import { accentContrastColor, brandingCss, contrastRatio, darkAccentPalette, lightAccentPalette } from '../src/ui/branding';
 import { darkTokenValues, lightTokenValues } from '../src/ui/generated/tokens';
 import { themeCss } from '../src/ui/theme';
 
@@ -130,19 +130,36 @@ describe('branding accent palettes', () => {
     expect(contrastRatio(palette.text, light('--bk-surface-2'))).toBeGreaterThanOrEqual(4.5);
   });
 
+  // The lift walks toward white in whole-percent steps of the emitted hex; "only as far as needed"
+  // means the chosen step reads on the dark surface and the step before it does not.
   it('lightens only as far as needed, and leaves an accent that already reads untouched', () => {
-    expect(darkAccentPalette('#0f6b3f')).toEqual({ accent: '#448c69', contrast: '#14151a', soft: '#1c2824', text: '#59997a' });
+    const towardWhite = (color: string, step: number): string => `#${[1, 3, 5]
+      .map((offset) => Number.parseInt(color.slice(offset, offset + 2), 16))
+      .map((value) => Math.round(value + (255 - value) * (step / 100)).toString(16).padStart(2, '0'))
+      .join('')}`;
+    const reads = (color: string): boolean => contrastRatio(color, dark('--bk-surface')) >= 4.5
+      && contrastRatio(color, accentContrastColor(color)) >= 4.5;
+    const green = '#0f6b3f';
+    expect(reads(green)).toBe(false);
+    const lifted = darkAccentPalette(green).accent;
+    const step = Array.from({ length: 101 }, (_, index) => towardWhite(green, index)).indexOf(lifted);
+    expect(step).toBeGreaterThan(0);
+    expect(reads(lifted)).toBe(true);
+    expect(reads(towardWhite(green, step - 1))).toBe(false);
+    expect(reads('#f5c518')).toBe(true);
     expect(darkAccentPalette('#f5c518').accent).toBe('#f5c518');
   });
 
   it('emits the dark variant under both dark conditions unless the pages are pinned light', () => {
+    const darkAccent = darkAccentPalette('#0f6b3f').accent;
+    expect(darkAccent).not.toBe('#0f6b3f');
     const auto = brandingCss({ accentColor: '#0f6b3f' });
-    expect(auto).toContain('@media screen and (prefers-color-scheme: dark) {\n  :where(:root:not([data-theme])) .bk-page--confirmation, :where(:root:not([data-theme])) .bk-page--manage {\n    --bk-accent: #448c69;');
-    expect(auto).toContain('@media screen {\n  :where(:root[data-theme="dark"]) .bk-page--confirmation, :where(:root[data-theme="dark"]) .bk-page--manage {\n    --bk-accent: #448c69;');
+    expect(auto).toContain(`@media screen and (prefers-color-scheme: dark) {\n  :where(:root:not([data-theme])) .bk-page--confirmation, :where(:root:not([data-theme])) .bk-page--manage {\n    --bk-accent: ${darkAccent};`);
+    expect(auto).toContain(`@media screen {\n  :where(:root[data-theme="dark"]) .bk-page--confirmation, :where(:root[data-theme="dark"]) .bk-page--manage {\n    --bk-accent: ${darkAccent};`);
     // After the light rule, at the same specificity, so it wins only when its condition holds.
-    expect(auto.indexOf('--bk-accent: #448c69;')).toBeGreaterThan(auto.indexOf('--bk-accent: #0f6b3f;'));
-    expect(brandingCss({ accentColor: '#0f6b3f', colorScheme: 'dark' })).toContain('#448c69');
-    expect(brandingCss({ accentColor: '#0f6b3f', colorScheme: 'light' })).not.toContain('#448c69');
+    expect(auto.indexOf(`--bk-accent: ${darkAccent};`)).toBeGreaterThan(auto.indexOf('--bk-accent: #0f6b3f;'));
+    expect(brandingCss({ accentColor: '#0f6b3f', colorScheme: 'dark' })).toContain(darkAccent);
+    expect(brandingCss({ accentColor: '#0f6b3f', colorScheme: 'light' })).not.toContain(darkAccent);
     expect(brandingCss({ accentColor: '#0f6b3f', colorScheme: 'light' })).not.toContain('prefers-color-scheme');
   });
 });

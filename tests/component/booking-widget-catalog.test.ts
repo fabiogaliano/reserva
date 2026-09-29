@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 // @ts-expect-error -- resolved by the 'component' project's Astro Vite pipeline, not by tsc.
 import BookingWidget from '../../examples/smoke-site/src/components/BookingWidget.astro';
 import { defaultWidgetMessages as en } from '../../examples/smoke-site/src/components/widget-messages';
+import { defaultMessages } from '../../src/ui/messages';
 
 const baseProps = { serviceSlug: 'oldTown', availabilityFrom: '2026-01-01', availabilityTo: '2026-01-02', locale: 'en' };
 
@@ -53,6 +54,19 @@ describe('BookingWidget.astro is catalog- and quote-driven', () => {
     const html = await render({ ...baseProps, catalogEndpoint: '/fr/api/catalog', quoteEndpoint: '/fr/api/quote' });
     expect(html).toContain('data-catalog-endpoint="/fr/api/catalog"');
     expect(html).toContain('data-quote-endpoint="/fr/api/quote"');
+  });
+
+  // Until the script has loaded slots there is nothing to submit; without scripting it never will,
+  // so the disabled button has to say why rather than sit there silently greyed out.
+  it('renders the availability-mode submit button disabled on the loading copy, and a slotless widget ready to submit', async () => {
+    const submit = (html: string): { disabled: boolean; label: string } => {
+      const match = html.match(/<button type="submit" class="bkw-submit"([^>]*)>([^<]*)<\/button>/);
+      if (!match) throw new Error('widget rendered no submit button');
+      return { disabled: /\bdisabled\b/.test(match[1] ?? ''), label: match[2] ?? '' };
+    };
+    expect(submit(await render())).toEqual({ disabled: true, label: defaultMessages['widget.loadingSlots'] });
+    const { availabilityFrom: _from, availabilityTo: _to, ...slotless } = baseProps;
+    expect(submit(await render(slotless))).toEqual({ disabled: false, label: en['widget.submit'] });
   });
 
   it('always renders the price element, since the deployment can always quote', async () => {

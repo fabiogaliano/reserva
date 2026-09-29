@@ -5,13 +5,15 @@ import { createReservaContext } from '../src/context';
 import type { MetadataField, ResolvedClientConfig, ResolvedServiceConfig } from '../src/core/config';
 import { handleAdminGet, handleAdminPost } from '../src/handlers';
 import { formatDayDate } from '../src/ui/format';
-import { resolveMessages } from '../src/ui/messages';
+import { formatMessage, resolveMessages } from '../src/ui/messages';
 import { booking, config, rowsOf } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 import { DEFAULT_CONTENT_SECURITY_POLICY } from '../src/csp';
 
 const clock = () => new Date('2026-06-14T08:00:00.000Z');
 const CSRF_NOW = clock().getTime();
+const en = resolveMessages(config, 'en');
+const ptPT = resolveMessages(config, 'pt-PT');
 const ADMIN_URL = 'https://example.test/api/booking/admin';
 const ADMIN_ORIGIN = 'https://example.test';
 // A real RESERVA_CSRF_SECRET keeps CSRF layer 2 active (src/admin-csrf.ts no-ops without one) —
@@ -137,7 +139,7 @@ describe('GET /admin listing (one window + status query)', () => {
     expect(body).not.toContain(futureExpiredHold.reference);
     expect(body).not.toContain(cancelledFuture.reference);
     expect(body).not.toContain(pastConfirmed.reference);
-    expect(body).toContain('Showing 1–2 of 2');
+    expect(body).toContain(formatMessage(en['admin.pageRange'], { from: 1, to: 2, total: 2 }));
     expect(body).toContain('<a class="bk-chip" href="?tab=upcoming#bk-upcoming" aria-current="true">Active <b>2</b></a>');
     expect(body).toContain('<a class="bk-chip" href="?status=all&amp;tab=upcoming#bk-upcoming">All <b>4</b></a>');
     expect(body).not.toContain('bk-filter-clear');
@@ -147,13 +149,13 @@ describe('GET /admin listing (one window + status query)', () => {
     const all = await (await handleAdminGet(new Request(`${ADMIN_URL}?status=all`), context)).text();
     for (const row of [futureConfirmed, futureUnexpiredHold, futureExpiredHold, cancelledFuture]) expect(all).toContain(row.reference);
     expect(all).not.toContain(pastConfirmed.reference);
-    expect(all).toContain('Showing 1–4 of 4');
+    expect(all).toContain(formatMessage(en['admin.pageRange'], { from: 1, to: 4, total: 4 }));
     expect(all).toContain('class="bk-filter-clear" href="?tab=upcoming#bk-upcoming"');
 
     const confirmedOnly = await (await handleAdminGet(new Request(`${ADMIN_URL}?status=confirmed`), context)).text();
     expect(confirmedOnly).toContain(futureConfirmed.reference);
     expect(confirmedOnly).not.toContain(cancelledFuture.reference);
-    expect(confirmedOnly).toContain('Showing 1–1 of 1');
+    expect(confirmedOnly).toContain(formatMessage(en['admin.pageRange'], { from: 1, to: 1, total: 1 }));
 
     const past = await (await handleAdminGet(new Request(`${ADMIN_URL}?when=past`), context)).text();
     expect(past).toContain(pastConfirmed.reference);
@@ -195,22 +197,22 @@ describe('GET /admin listing (one window + status query)', () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository([...upcomingRows, ...pastRows]), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
     const first = await (await handleAdminGet(new Request(`${ADMIN_URL}?q=LVT-2026-U`), context)).text();
-    expect(first).toContain('Showing 1–50 of 55');
+    expect(first).toContain(formatMessage(en['admin.pageRange'], { from: 1, to: 50, total: 55 }));
     expect(first.indexOf('LVT-2026-U00')).toBeLessThan(first.indexOf('LVT-2026-U01'));
     expect(first).not.toContain('LVT-2026-U50');
     expect(first).toContain('rel="next" href="?q=LVT-2026-U&amp;page=2&amp;tab=upcoming#bk-upcoming"');
     expect(first).not.toContain('rel="prev"');
 
     const second = await (await handleAdminGet(new Request(`${ADMIN_URL}?page=2`), context)).text();
-    expect(second).toContain('Showing 51–55 of 55');
+    expect(second).toContain(formatMessage(en['admin.pageRange'], { from: 51, to: 55, total: 55 }));
     expect(second).toContain('LVT-2026-U54');
     expect(second).not.toContain('LVT-2026-U49');
     expect(second).toContain('rel="prev" href="?tab=upcoming#bk-upcoming"');
     expect(second).not.toContain('rel="next"');
 
     // A stale page number past the end lands on the last real page, search or not.
-    expect(await (await handleAdminGet(new Request(`${ADMIN_URL}?page=9`), context)).text()).toContain('Showing 51–55 of 55');
-    expect(await (await handleAdminGet(new Request(`${ADMIN_URL}?q=LVT-2026-U&page=9`), context)).text()).toContain('Showing 51–55 of 55');
+    expect(await (await handleAdminGet(new Request(`${ADMIN_URL}?page=9`), context)).text()).toContain(formatMessage(en['admin.pageRange'], { from: 51, to: 55, total: 55 }));
+    expect(await (await handleAdminGet(new Request(`${ADMIN_URL}?q=LVT-2026-U&page=9`), context)).text()).toContain(formatMessage(en['admin.pageRange'], { from: 51, to: 55, total: 55 }));
 
     const past = await (await handleAdminGet(new Request(`${ADMIN_URL}?when=past`), context)).text();
     expect(past.indexOf('LVT-2026-P2')).toBeLessThan(past.indexOf('LVT-2026-P0'));
@@ -269,7 +271,7 @@ describe('GET /admin listing (one window + status query)', () => {
     const upcomingSearch = await (await handleAdminGet(new Request(`${ADMIN_URL}?q=LVT-2026-111`), context)).text();
     // The reference also sits in the search box's own value, so look for the row's rendering of it.
     expect(upcomingSearch).not.toContain(`<span class="bk-mono">${pastConfirmed.reference}</span>`);
-    expect(upcomingSearch).toContain('No bookings match the filters.');
+    expect(upcomingSearch).toContain(en['admin.noMatchingBookings']);
     const pastSearch = await (await handleAdminGet(new Request(`${ADMIN_URL}?when=past&q=LVT-2026-111`), context)).text();
     expect(pastSearch).toContain(`<span class="bk-mono">${pastConfirmed.reference}</span>`);
   });
@@ -289,8 +291,8 @@ describe('GET /admin listing (one window + status query)', () => {
     const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?when=past&q=LVT-2026-999`), context)).text();
     expect(body).toContain('LVT-2026-999');
     expect(body).not.toContain('LVT-2026-F000');
-    expect(body).toContain('Showing 1–1 of 1');
-    expect(body).not.toContain('The search only looked at');
+    expect(body).toContain(formatMessage(en['admin.pageRange'], { from: 1, to: 1, total: 1 }));
+    expect(body).not.toContain(en['admin.searchTruncated'].split('{n}')[0]);
   });
 
   it('says so when a search stops at its scan cap, since the count then covers only what it read', async () => {
@@ -308,8 +310,8 @@ describe('GET /admin listing (one window + status query)', () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?q=LVT-2026-C`), context)).text();
     expect(Math.max(...scanned)).toBeLessThan(20_000);
-    expect(body).toContain('Showing 1–50 of 20000');
-    expect(body).toContain('The search only looked at the first 20000 bookings in this period.');
+    expect(body).toContain(formatMessage(en['admin.pageRange'], { from: 1, to: 50, total: 20_000 }));
+    expect(body).toContain(formatMessage(en['admin.searchTruncated'], { n: 20_000 }));
   });
 
   it('separates page destinations from the dashboard’s own tab strip', async () => {
@@ -401,7 +403,7 @@ describe('GET /admin listing (one window + status query)', () => {
     const body = await response.text();
     expect(body).not.toContain(`token=${encodeURIComponent(seeded.operatorToken)}`);
     expect(body).not.toContain(seeded.operatorToken); // not even unencoded, e.g. inside the JSON island
-    expect(body).toContain('Manage link unavailable');
+    expect(body).toContain(en['admin.manageUnavailable']);
   });
 
   // `same-origin`, not `no-referrer`: the admin forms POST back to this same page, and
@@ -785,12 +787,12 @@ describe('declared fields, refunds and disputes in the bookings list and day pan
     const noShow = booking({ id: 'b-facts-no-show', reference: 'LVT-2026-606', status: 'no_show', startsAt: '2026-06-14T06:00:00.000Z', endsAt: '2026-06-14T07:00:00.000Z', operatorToken: 'op-no-show', cancelToken: 'cancel-no-show', metadata });
     const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?status=all`), contextFor([confirmed, cancelled, noShow]))).text();
 
-    const facts = '<dt>Total price</dt><dd>€100.00</dd>'
+    const facts = `<dt>${en['common.price']}</dt><dd>€100.00</dd>`
       + '<dt>Partner</dt><dd>Acme Stays</dd>'
       + '<dt>Dietary notes</dt><dd>Vegan &amp; &lt;nut-free&gt;</dd>'
       + '<dt>Tour language</dt><dd>German</dd>'
       + '<dt>Seat preference</dt><dd>Window seat</dd>'
-      + '<dt>Wheelchair</dt><dd>On</dd>';
+      + `<dt>Wheelchair</dt><dd>${en['admin.on']}</dd>`;
     for (const row of [confirmed, cancelled, noShow]) expect(rowOf(body, row.reference)).toContain(facts);
     // A terminal row has no Manage link, so the disclosure is the only place these values show.
     expect(rowOf(body, cancelled.reference)).not.toContain('bk-booking-open');
@@ -826,7 +828,7 @@ describe('declared fields, refunds and disputes in the bookings list and day pan
     expect(rowOf(body, refunded.reference)).toContain('<dt>Partner</dt><dd>Acme Stays</dd><dt>Refunded</dt><dd>€20.00</dd><dt>Booked</dt>');
     // Dated the way the Booked row is, in the business timezone.
     const opened = formatDayDate('2026-06-10', 'en', clock());
-    expect(rowOf(body, open.reference)).toContain(`<dt>Total price</dt><dd>€100.00</dd><dt>Dispute</dt><dd>Open since ${opened}</dd>`);
+    expect(rowOf(body, open.reference)).toContain(`<dt>${en['common.price']}</dt><dd>€100.00</dd><dt>${en['admin.dispute']}</dt><dd>${formatMessage(en['admin.disputeOpenSince'], { date: opened })}</dd>`);
     expect(rowOf(body, won.reference)).toContain(`<dt>Dispute</dt><dd>Won (opened ${opened})</dd>`);
     expect(rowOf(body, lost.reference)).toContain(`<dt>Partner</dt><dd>Acme Stays</dd><dt>Refunded</dt><dd>€100.00</dd><dt>Dispute</dt><dd>Lost (opened ${opened})</dd>`);
     expect(rowOf(body, untouched.reference)).not.toContain('<dt>Refunded</dt>');
@@ -837,7 +839,7 @@ describe('declared fields, refunds and disputes in the bookings list and day pan
     const earlier = on(20, { id: 'b-gbp', reference: 'LVT-2026-617', currency: 'gbp', amountRefundedMinor: 2000 });
     const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?status=all`), contextFor([earlier]))).text();
     expect(statusSlotOf(rowOf(body, earlier.reference))).toBe('<span class="bk-badge bk-badge--warn">Refunded £20.00</span>');
-    expect(rowOf(body, earlier.reference)).toContain('<dt>Total price</dt><dd>£100.00</dd>');
+    expect(rowOf(body, earlier.reference)).toContain(`<dt>${en['common.price']}</dt><dd>£100.00</dd>`);
     expect(rowOf(body, earlier.reference)).toContain('<dt>Refunded</dt><dd>£20.00</dd>');
   });
 
@@ -1094,16 +1096,16 @@ describe('POST /admin day overrides (spec §11)', () => {
     expect(location.searchParams.get('date')).toBe('2026-06-20');
 
     const page = await (await handleAdminGet(new Request(location), context)).text();
-    expect(page).toContain('<p class="bk-alert bk-alert--danger" role="alert">Nothing was saved: check “Capacity”.</p>');
+    expect(page).toContain(`<p class="bk-alert bk-alert--danger" role="alert">${formatMessage(en['admin.errorInvalidField'], { field: en['admin.capacity'] })}</p>`);
 
     // A crafted field is never echoed unless it is a plain key path.
     const crafted = await (await handleAdminGet(new Request(`${ADMIN_URL}?error=validation_failed&field=%3Cscript%3E`), context)).text();
-    expect(crafted).toContain('Nothing was saved: a value is missing or not valid.');
+    expect(crafted).toContain(en['admin.errorInvalid']);
     expect(crafted).not.toContain('&lt;script&gt;');
 
     const localized = createReservaContext({ config: { ...config, admin: { ...config.admin, locale: 'pt-PT' } }, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const expired = await (await handleAdminGet(new Request(`${ADMIN_URL}?error=csrf_expired`), localized)).text();
-    expect(expired).toContain('Esta página expirou. Tente novamente.');
+    expect(expired).toContain(ptPT['admin.errorExpired']);
   });
 });
 
@@ -1121,8 +1123,8 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     expect(response.headers.get('cache-control')).toBe('no-store');
     const body = await response.text();
     expect(body).toContain('name="booking.minNoticeHours"');
-    expect(body).toContain('Modified');
-    expect(body).toContain('Default: 24');
+    expect(body).toContain(en['admin.modified']);
+    expect(body).toContain(formatMessage(en['admin.default'], { v: 24 }));
     // The overridden field offers a per-field reset action.
     expect(body).toContain('value="settings-reset:booking.minNoticeHours"');
     // Capacity size is a normal setting; only genuinely structural values remain deploy-time.
@@ -1152,7 +1154,7 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
     expect(location.searchParams.get('view')).toBe('settings');
     expect(location.searchParams.get('section')).toBe('capacity');
     const page = await (await handleAdminGet(new Request(location), context)).text();
-    expect(page).toContain('role="alert">Nothing was saved: check “Concurrent bookings”.</p>');
+    expect(page).toContain(`role="alert">${formatMessage(en['admin.errorInvalidField'], { field: en['setting.capacity'] })}</p>`);
   });
 
   // The holdMinutes kind declares max: 1440 (core/settings.ts); the rendered input must carry it
@@ -1305,7 +1307,7 @@ describe('admin settings (?view=settings + settings-save/settings-reset actions)
 
     // The overridden tier is flagged, with its file-config default shown in major units.
     const overridden = await (await handleAdminGet(settingsGetRequest(), context)).text();
-    expect(overridden).toContain('Default: 100.00');
+    expect(overridden).toContain(formatMessage(en['admin.default'], { v: '100.00' }));
     expect(overridden).toContain('value="settings-reset:services.vintage.pricing.0.priceMinor"');
 
     const invalid = await handleAdminPost(adminPostRequest({

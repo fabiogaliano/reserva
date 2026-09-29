@@ -3,6 +3,10 @@ import { config } from './fixtures';
 import { resolveRouteConfig } from '../src/routes-manifest';
 import { confirmationPage } from '../src/ui/pages/confirmation-page';
 import { formatDateTime } from '../src/ui/format';
+import { escapeHtml } from '../src/http';
+import { resolveMessages } from '../src/ui/messages';
+
+const en = resolveMessages(config, 'en');
 
 describe('booking confirmation page', () => {
   it('omits the meeting-point fact and calendar location when the payload has no meetingPoint', () => {
@@ -33,7 +37,7 @@ describe('booking confirmation page', () => {
     expect(html).toContain('LVT-2026-002');
     expect(html).toContain('€210.00');
     expect(html).not.toContain('Praça do Comércio');
-    expect(html).not.toContain('Meeting point');
+    expect(html).not.toContain(en['common.meetingPoint']);
     const decodedHtml = html.replace(/&amp;/g, '&');
     expect(decodedHtml).not.toContain(encodeURIComponent('Praça do Comércio'));
   });
@@ -46,7 +50,7 @@ describe('booking confirmation page', () => {
       null,
     );
 
-    expect(html).toContain('Your booking is confirmed. Full details and a link to manage your booking were emailed to you.');
+    expect(html).toContain(escapeHtml(en['confirmation.detailsEmailed']));
     expect(html).not.toContain('class="bk-ticket"');
     expect(html).not.toContain('bk-ticket-date');
   });
@@ -85,7 +89,7 @@ describe('booking confirmation page', () => {
     expect(html).toContain('LVT-2026-003');
     expect(html).toContain('Dietary notes');
     expect(html).toContain('Vegetarian');
-    expect(html).toContain('<dd>On</dd>');
+    expect(html).toContain(`<dd>${en['admin.on']}</dd>`);
     expect(html).not.toContain(xssPayload);
     expect(html).toContain('&lt;script&gt;');
   });
@@ -105,7 +109,7 @@ describe('booking confirmation page — pending, locale and return visits', () =
     expect(html).toMatch(/<script type="module" src="\/booking\/assets\/reserva\.js\?v=[^"]+"><\/script>/);
     // The no-script fallback stays.
     expect(html).toContain('http-equiv="refresh"');
-    expect(html).toContain('<a class="bk-skip" href="#bk-main">Skip to content</a>');
+    expect(html).toContain(`<a class="bk-skip" href="#bk-main">${en['common.skipContent']}</a>`);
   });
 
   it('stops offering the poller once the attempt budget is spent', () => {
@@ -134,8 +138,8 @@ describe('booking confirmation page — pending, locale and return visits', () =
       status: 'confirmed',
       booking: { reference: 'LVT-2026-009', serviceTitle: 'Vintage Tour', start: '2026-06-15T09:00:00.000+01:00', end: '2026-06-15T10:00:00.000+01:00', locale: 'en' },
     }, 'https://example.test/booking-confirmation?sessionId=cs_old', null);
-    expect(html).toContain('This booking is confirmed.');
-    expect(html).not.toContain('A confirmation email is on its way');
+    expect(html).toContain(escapeHtml(en['confirmation.summaryLead']));
+    expect(html).not.toContain(escapeHtml(en['confirmation.lead']));
   });
 
   it('names the end day on a return visit to a multi-day booking, as the full ticket does', () => {

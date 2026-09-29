@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { resolveRouteConfig } from '../../src/routes-manifest';
+import { resolveMessages } from '../../src/ui/messages';
 import { confirmationPage } from '../../src/ui/pages/confirmation-page';
 import { config } from '../fixtures';
 
@@ -31,9 +32,10 @@ test('the pending page polls the status API in place of the meta refresh and rel
   });
 
   await page.goto(pageUrl);
-  await expect(page.locator('h1')).toContainText('Confirming your payment');
-  await expect(page.locator('[data-reserva-poll-live]')).toHaveText('Still checking with the payment provider…', { timeout: 10_000 });
-  await expect(page.locator('h1')).toContainText('Checkout expired', { timeout: 15_000 });
+  const body = page.locator('body');
+  await expect(body).toHaveAttribute('data-bk-status', 'pending');
+  await expect(page.locator('[data-reserva-poll-live]')).toHaveText(resolveMessages(config, 'en')['confirmation.pollChecking'], { timeout: 10_000 });
+  await expect(body).toHaveAttribute('data-bk-status', 'expired', { timeout: 15_000 });
 
   expect(polls).toBe(3);
   // One load, then the single navigation the poller made itself: the meta refresh never fired.

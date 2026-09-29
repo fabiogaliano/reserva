@@ -92,9 +92,14 @@ test('a one-shot provider failure opens an incident, "Try again" resolves it, a 
   // --- Manual resolution on the manual-target card: requires the note, resolves synchronously
   // (no reconciliation pass needed), records who/when, and survives a reload in history.
   const manualForm = manualCard.locator('form', { has: page.locator('[data-reserva-resolve-note]') });
-  // First press reveals the note instead of submitting; the fill below then has somewhere to go.
+  // The note stays out of the way until the operator decides to resolve: the first press reveals it
+  // instead of submitting, and the fill below then has somewhere to go.
+  const note = manualForm.locator('textarea[name="note"]');
+  await expect(note).toBeHidden();
   await manualForm.locator(resolveButton).click();
-  await manualForm.locator('textarea[name="note"]').fill('Called the customer and confirmed the slot by phone.');
+  await expect(note).toBeVisible();
+  await expect(manualCard).toBeVisible();
+  await note.fill('Called the customer and confirmed the slot by phone.');
   await manualForm.locator(resolveButton).click();
   await expect(resolvedNotice).toBeVisible();
   await expect(page.locator('.bk-incident-card', { hasText: manualTarget.reference })).toHaveCount(0);

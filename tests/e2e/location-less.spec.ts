@@ -1,8 +1,12 @@
 import { test, expect } from '@playwright/test';
+import { defaultMessages } from '../../src/ui/messages';
 import { createBooking } from './helpers';
 
 // riverCruise declares no location module — quantity-tier pricing only. Proves the whole funnel
 // never surfaces a pickup/meeting-point axis for it, and checkout still rejects one anyway.
+
+// The fact labels the renderers use for a location axis (confirmation ticket and admin row).
+const locationFactLabels = [defaultMessages['common.pickup'], defaultMessages['common.pickupAddress'], defaultMessages['common.meetingPoint']];
 
 test('booking a service with no location module carries no pickup/meeting-point fields through checkout, confirmation, or admin', async ({ page, request }) => {
   let checkoutBody: Record<string, unknown> | undefined;
@@ -27,8 +31,11 @@ test('booking a service with no location module carries no pickup/meeting-point 
   expect(checkoutBody).not.toHaveProperty('meetingPointId');
 
   await expect(page.locator('.bk-badge--ok')).toBeVisible();
-  await expect(page.locator('.bk-facts')).not.toContainText('Pickup');
-  await expect(page.locator('.bk-facts')).not.toContainText('Meeting point');
+  // The service label is the positive control: it proves the facts list rendered and is read, so
+  // the location labels' absence cannot pass on an empty or renamed list.
+  const ticketLabels = await page.locator('.bk-facts dt').allTextContents();
+  expect(ticketLabels).toContain(defaultMessages['common.service']);
+  for (const label of locationFactLabels) expect(ticketLabels).not.toContain(label);
 
   // The dev email log carries only the manage links, so the persisted pickup axis is asserted where
   // it actually lives: the token-protected manage response.
@@ -46,8 +53,10 @@ test('booking a service with no location module carries no pickup/meeting-point 
   await expect(row.locator('.bk-booking-sub')).toHaveText('River Cruise');
   await expect(row.locator('.bk-booking-guests')).toHaveAttribute('title', '2 people');
   await row.locator('summary').click();
-  await expect(row.locator('.bk-facts')).not.toContainText('Pickup');
-  await expect(row.locator('.bk-facts')).not.toContainText('Meeting point');
+  await expect(row.locator('.bk-facts dt').first()).toBeVisible();
+  const rowLabels = await row.locator('.bk-facts dt').allTextContents();
+  expect(rowLabels).toContain(defaultMessages['common.reference']);
+  for (const label of locationFactLabels) expect(rowLabels).not.toContain(label);
 });
 
 // Checkout rejects pickup/meetingPointId for a location-less

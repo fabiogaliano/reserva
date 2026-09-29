@@ -3,12 +3,15 @@ import { describe, expect, it } from 'vitest';
 import { mintAdminCsrfToken } from '../src/admin-csrf';
 import { createReservaContext } from '../src/context';
 import { handleAdminGet, handleAdminPost } from '../src/handlers';
+import { ownerFacingIncidentTitle } from '../src/reconciliation-helpers';
+import { formatMessage, resolveMessages } from '../src/ui/messages';
 import { booking, config } from './fixtures';
 import type { SideEffectOperationIdentity } from '../src/repo';
 import { fakeRepository, providers, seedSideEffectOperation, type FakeRepository } from './fakes';
 
 const clock = () => new Date('2026-06-14T08:00:00.000Z');
 const CSRF_NOW = clock().getTime();
+const en = resolveMessages(config, 'en');
 const ADMIN_URL = 'https://example.test/api/booking/admin';
 const ADMIN_ORIGIN = 'https://example.test';
 // Same fixture pattern as tests/handlers-admin.test.ts: a real CSRF secret so layer 2 is actually
@@ -85,7 +88,7 @@ describe('admin incidents', () => {
     const response = await handleAdminGet(new Request(ADMIN_URL), context);
     expect(response.status).toBe(200);
     const html = await response.text();
-    expect(html).toContain('Calendar not updated');
+    expect(html).toContain(ownerFacingIncidentTitle('calendar'));
     expect(html).toContain(seeded.reference);
     expect(html).toContain('data-reserva-admin-tab="attention"');
     expect(html).toContain('<span class="bk-tab-count">1</span>');
@@ -106,7 +109,7 @@ describe('admin incidents', () => {
     const html = await getResponse.text();
     expect(html).not.toMatch(/name="action" value="incident-retry"[^]*?oversell/);
     // The disclosure copy explaining why is present instead of a button for this card.
-    expect(html).toContain('needs manual handling');
+    expect(html).toContain(en['admin.incidentNoRetry']);
 
     const postResponse = await handleAdminPost(
       adminPostRequest({ action: 'incident-retry', source_type: 'oversell', source_key: seeded.id }),
@@ -247,10 +250,10 @@ describe('admin incidents', () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
 
     const html = await (await handleAdminGet(new Request(`${ADMIN_URL}?tab=attention`), context)).text();
-    expect(html).toContain('Payment refused after checkout');
-    expect(html).toContain('Reconciliation has stopped running');
+    expect(html).toContain(ownerFacingIncidentTitle('payment_verification_rejected'));
+    expect(html).toContain(ownerFacingIncidentTitle('reconciliation_stale'));
     expect(html).not.toContain('value="incident-retry"');
-    expect(html.match(/needs manual handling/g)).toHaveLength(2);
+    expect(html.split(en['admin.incidentNoRetry'])).toHaveLength(3);
   });
 
   // The badge is a real COUNT; only the rendered card list is bounded.
@@ -266,10 +269,10 @@ describe('admin incidents', () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const html = await (await handleAdminGet(new Request(ADMIN_URL), context)).text();
     expect(html).toContain('<span class="bk-tab-count">105</span>');
-    expect(html).toContain('105 issues need attention');
+    expect(html).toContain(formatMessage(en['admin.attentionCount'], { n: 105 }));
     expect(html).toContain('<span class="bk-topbar-count" aria-hidden="true">105</span>');
     const attention = await (await handleAdminGet(new Request(`${ADMIN_URL}?tab=attention`), context)).text();
-    expect(attention).toContain('Showing the first 100 of 105 open incidents.');
+    expect(attention).toContain(formatMessage(en['admin.incidentsTruncated'], { shown: 100, total: 105 }));
   });
 
   it('enforces the same Origin/CSRF guards as every other admin POST action', async () => {

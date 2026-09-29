@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { defaultMessages } from '../../src/ui/messages';
 import { createBooking, rescheduleViaManagePage } from './helpers';
 
 const TOUR = 'oldTown';
@@ -13,21 +14,21 @@ test('customer can cancel a booking within the cutoff, a cancellation email land
   await page.goto(manageUrl.pathname + manageUrl.search);
   await expect(page.locator('h1')).toContainText(reference);
 
-  await page.getByText('Cancel booking').click();
+  await page.getByText(defaultMessages['manage.cancelTitle']).click();
 
-  await page.getByRole('button', { name: 'Yes, cancel this booking' }).click();
+  await page.getByRole('button', { name: defaultMessages['manage.cancelConfirm'] }).click();
 
   // The POST answers with the cancelled page itself (the link it came from is revoked by now) —
   // only reachable because manage.ts serves `strict-origin` (not `no-referrer`), so the real
   // Origin on this same-origin POST satisfies Astro's checkOrigin. (See the Referer-trimming test
   // below for the other half.)
-  await expect(page.locator('h1')).toContainText('Booking cancelled');
+  await expect(page.locator('body')).toHaveAttribute('data-bk-status', 'cancelled');
   await expect(page.locator('.bk-masthead .bk-lead')).toContainText(reference);
-  await expect(page.getByRole('link', { name: 'Book again' })).toBeVisible();
+  await expect(page.getByRole('link', { name: defaultMessages['manage.bookAgain'] })).toBeVisible();
 
-  // Revisiting the old link is where "Link not valid" still belongs.
+  // Revisiting the old link is where the invalid-link page still belongs.
   await page.goto(manageUrl.pathname + manageUrl.search);
-  await expect(page.locator('h1')).toContainText('Link not valid');
+  await expect(page.locator('h1')).toHaveText(defaultMessages['manage.invalidTitle']);
 
   const outbox = await (await page.request.get('/dev/outbox.json')).json();
   const cancelEmail = outbox.find((entry: any) => entry.reference === reference && entry.event === 'booking.cancelled_by_customer');
@@ -79,7 +80,7 @@ test('customer can reschedule to another available slot, the manage page reflect
 
   const { newStart } = await rescheduleViaManagePage(page, currentStart);
 
-  await expect(page.getByRole('status').filter({ hasText: 'rescheduled' })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: defaultMessages['manage.rescheduled'] })).toBeVisible();
 
   const after = await (await request.get(`/api/booking/manage?token=${encodeURIComponent(token)}`)).json();
   expect(after.booking.start.slice(0, 16)).toBe(newStart);

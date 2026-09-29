@@ -1,5 +1,7 @@
 import { type Page, expect } from '@playwright/test';
 import { format } from 'date-fns';
+import { defaultMessages } from '../../src/ui/messages';
+import { defaultWidgetMessages } from '../../examples/smoke-site/src/components/widget-messages';
 
 export interface BookingOpts {
   service: string;
@@ -20,7 +22,7 @@ export async function createBooking(page: Page, opts: BookingOpts) {
 
   // 1. Select party size (accessible name, not the widget's internal CSS class — the class is a
   // styling hook the enhancer never renames, but a label survives markup/theming changes too).
-  await page.getByLabel('How many people?').selectOption(String(opts.quantity));
+  await page.getByLabel(defaultWidgetMessages['widget.quantity']).selectOption(String(opts.quantity));
 
   // 2. Fetch availability to find a valid date. Read from the API rather than hardcoding a date:
   // the fixture's schedule and cutoffs are relative to "today", so a fixed date would drift stale.
@@ -65,7 +67,7 @@ export async function createBooking(page: Page, opts: BookingOpts) {
   }
 
   // 6. Book
-  await page.getByRole('button', { name: 'Continue to payment' }).click();
+  await page.getByRole('button', { name: defaultWidgetMessages['widget.submit'] }).click();
 
   // Wait for redirect to confirmation page
   await page.waitForURL(/\/booking-confirmation\?sessionId=/);
@@ -133,7 +135,7 @@ export async function rescheduleViaManagePage(page: Page, currentStart: string):
   // button — slicing the UTC instant only agrees while the deployment's timezone is UTC.
   const timeLabel = target.time;
   await page.getByRole('button', { name: timeLabel }).click();
-  await page.getByRole('button', { name: 'Reschedule booking' }).click();
+  await page.getByRole('button', { name: defaultMessages['manage.rescheduleSubmit'] }).click();
 
   return { newStart: target.start.slice(0, 16) };
 }

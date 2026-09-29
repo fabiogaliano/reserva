@@ -1,5 +1,8 @@
 import { type Locator, type Page, test, expect } from '@playwright/test';
 import { addDays, format } from 'date-fns';
+import type { ResolvedClientConfig } from '../../src/core/config';
+import { booking, config } from '../fixtures';
+import { openFixtureAdminPage } from './fixture-admin';
 
 const TOUR = 'oldTown';
 
@@ -257,4 +260,51 @@ test('the month pager crosses into the next rendered window of the horizon and b
   const previous = page.getByRole('button', { name: 'Previous month' });
   for (let attempt = 0; attempt < 4 && page.url() === windowUrl; attempt += 1) await previous.click();
   await expect(page.locator(`.bk-day[data-date="${format(new Date(), 'yyyy-MM-dd')}"]`)).toBeVisible();
+});
+
+// Picking a day rebuilds its card from the page's JSON island, so a day picked again after another
+// must come back as the server rendered it: the load line and bar, and each row's field tags and
+// money badges ahead of its status. The smoke site declares no badge field and takes no refunds,
+// so the page comes from fixtures (see fixture-admin.ts).
+test('re-selecting a day rebuilds its card as the server rendered it, field tags and money badges included', async ({ page, baseURL }) => {
+  const day = '2026-06-20';
+  const otherDay = '2026-06-21';
+  const vintage = config.services.vintage!;
+  const badgeConfig: ResolvedClientConfig = {
+    ...config,
+    services: { ...config.services, vintage: { ...vintage, metadataFields: [{ key: 'language', label: 'Tour language', type: 'select', adminBadge: true, options: [{ value: 'de', label: 'German' }] }] } },
+  };
+  const at = (id: string, hour: string, extra: Parameters<typeof booking>[0]) => booking({
+    id, reference: `LVT-2026-${id}`, startsAt: `${day}T${hour}:00:00.000Z`, endsAt: `${day}T${hour}:59:00.000Z`,
+    operatorToken: `op-${id}`, cancelToken: `cancel-${id}`, ...extra,
+  });
+  const rows = [
+    at('701', '09', { metadata: { language: 'de' }, amountRefundedMinor: 2500 }),
+    at('702', '11', { disputeStatus: 'open', disputedAt: '2026-06-13T08:00:00.000Z' }),
+  ];
+  await openFixtureAdminPage(page, baseURL, { rows, activeTab: 'availability', editDate: day, config: badgeConfig });
+
+  const detail = page.locator('[data-reserva-day-detail]');
+  // Markup-order-insensitive: tag, sorted attributes and text of every node, so the comparison is
+  // about what the card shows, not how each side serialises it.
+  const shape = () => detail.evaluate((root) => {
+    const walk = (node: Node): string => {
+      if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? '';
+      if (!(node instanceof Element)) return '';
+      const attrs = [...node.attributes].map((attr) => `${attr.name}=${attr.value}`).sort().join(' ');
+      return `<${node.tagName.toLowerCase()} ${attrs}>${[...node.childNodes].map(walk).join('')}</>`;
+    };
+    return walk(root);
+  });
+  await expect(detail.locator('.bk-daylist .bk-badge--field')).toHaveCount(1);
+  await expect(detail.locator('.bk-daylist .bk-badge--warn')).toHaveCount(1);
+  await expect(detail.locator('.bk-daylist .bk-badge--danger')).toHaveCount(1);
+  await expect(detail.locator('.bk-meter[data-fill]')).toHaveCount(1);
+  const serverRendered = await shape();
+
+  await page.locator(`.bk-day[data-date="${otherDay}"]`).click();
+  await expect(detail.locator('.bk-daylist')).toHaveCount(0);
+  await page.locator(`.bk-day[data-date="${day}"]`).click();
+  await expect(detail.locator('.bk-daylist li')).toHaveCount(2);
+  expect(await shape()).toBe(serverRendered);
 });

@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { addDays, format } from 'date-fns';
+import { booking } from '../fixtures';
+import { openFixtureAdminPage } from './fixture-admin';
 import { createBooking } from './helpers';
 
 const TOUR = 'oldTown';
@@ -23,6 +25,22 @@ test('admin dashboard lists a booking by reference, and its operator manage link
   // page's forms post it back as operatorToken and never as a customer token.
   await expect(page.locator('input[type="hidden"][name="operatorToken"]').first()).toBeAttached();
   await expect(page.locator('input[name="token"]')).toHaveCount(0);
+});
+
+// Two open rows would already mean a second real booking in the scarce first days every other spec
+// books into, so the list is served from fixtures (see fixture-admin.ts).
+test('opening a booking row folds the one already open, so the list never turns into a wall of details', async ({ page, baseURL }) => {
+  const rows = ['801', '802'].map((id, index) => booking({
+    id, reference: `LVT-2026-${id}`, startsAt: `2026-06-2${index}T09:00:00.000Z`, endsAt: `2026-06-2${index}T10:00:00.000Z`,
+    operatorToken: `op-${id}`, cancelToken: `cancel-${id}`,
+  }));
+  await openFixtureAdminPage(page, baseURL, { rows, activeTab: 'upcoming', editDate: '2026-06-20' });
+  const [first, second] = rows.map((row) => page.locator('.bk-booking', { hasText: row.reference }));
+  await first!.locator('summary').click();
+  await expect(first!).toHaveAttribute('open', '');
+  await second!.locator('summary').click();
+  await expect(second!).toHaveAttribute('open', '');
+  await expect(first!).not.toHaveAttribute('open');
 });
 
 test('closing a day override removes it from availability, and clearing the override restores it', async ({ page, request }) => {

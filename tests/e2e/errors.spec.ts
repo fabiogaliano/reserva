@@ -1,13 +1,14 @@
 import { test, expect } from '@playwright/test';
+import { defaultMessages } from '../../src/ui/messages';
 
 test('a garbage manage token shows the denied/recovery page, not raw JSON or a crash', async ({ page }) => {
   const response = await page.goto('/booking/manage?token=this-token-has-never-existed');
   expect(response?.status()).toBe(403);
-  await expect(page.locator('h1')).toContainText('Link not valid');
+  await expect(page.locator('h1')).toHaveText(defaultMessages['manage.invalidTitle']);
   // Recoverable, not a dead end — but the way back is the link in the confirmation email plus a way
   // to reach a human, not a token the customer is expected to paste.
-  await expect(page.getByLabel('Booking token')).toHaveCount(0);
-  await expect(page.locator('body')).toContainText('confirmation email');
+  await expect(page.getByLabel(defaultMessages['manage.entryToken'])).toHaveCount(0);
+  await expect(page.locator('body')).toContainText(defaultMessages['manage.invalidUseEmailLink']);
   await expect(page.locator(`a[href^="mailto:"]`)).toBeVisible();
 });
 
@@ -17,7 +18,7 @@ test('an unknown booking-confirmation sessionId shows a recoverable not-found pa
   // normal 200 page with a "start over" action rather than surfacing raw JSON or throwing.
   const response = await page.goto('/booking-confirmation?sessionId=session-that-was-never-created');
   expect(response?.status()).toBe(200);
-  await expect(page.locator('h1')).toContainText('Booking not found');
+  await expect(page.locator('body')).toHaveAttribute('data-bk-status', 'not_found');
 });
 
 // The payment webhook route moved off the vendor's name (stripe -> payment). Pins both sides at
