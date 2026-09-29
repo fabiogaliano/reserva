@@ -189,6 +189,7 @@ const icons = {
   search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
   alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
   copy: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
   arrow: '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
 };
 
@@ -333,7 +334,9 @@ function guestsMarkup(figure: { value: string; label: string }): string {
 // Hidden until the enhancer confirms the clipboard is reachable; a copy button that cannot copy
 // would be the one dead control on the page.
 function copyButton(value: string, label: string, copiedLabel: string): string {
-  return `<button type="button" class="bk-copy" data-reserva-copy="${escapeHtml(value)}" data-copied="${escapeHtml(copiedLabel)}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}" hidden>${icon(icons.copy, 14)}</button>`;
+  // Both icons ship in the markup: the enhancer only toggles a class, and the swap to a checkmark
+  // plus the "Copied" bubble are what tell the operator the click did something.
+  return `<button type="button" class="bk-copy" data-reserva-copy="${escapeHtml(value)}" data-copied="${escapeHtml(copiedLabel)}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}" hidden>${icon(icons.copy, 14, 'bk-copy-icon')}${icon(icons.check, 14, 'bk-copy-check')}</button>`;
 }
 
 // Sits above the incident cards in the "Attention" panel: an off security layer is silent by

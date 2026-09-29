@@ -897,6 +897,9 @@ describe('overview tab of tagged fields', () => {
     const acme = rowOf(body, 'Acme Stays');
     expect(acme).toContain('href="https://example.test/?ref=acme-stays"');
     expect(acme).toContain('data-reserva-copy="https://example.test/?ref=acme-stays"');
+    // The checkmark the button swaps to once copied, and the label its "copied" bubble shows.
+    expect(acme).toMatch(/data-copied="[^"]+"/);
+    expect(acme).toContain('class="bk-copy-check"');
     // Cancelled and held bookings earn nothing, so neither count includes them.
     expect(acme).toContain('<td class="bk-num"><a class="bk-link" href="?q=acme-stays&amp;tab=upcoming">2</a></td>');
     expect(acme).toContain('<td class="bk-num"><a class="bk-link" href="?q=acme-stays&amp;tab=upcoming&amp;when=past">2</a></td>');

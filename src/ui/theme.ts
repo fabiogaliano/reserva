@@ -519,6 +519,25 @@ export const themeCss = `
 }
 .bk-copy:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 1px; }
 .bk-copy--done { color: var(--bk-ok); }
+.bk-copy { position: relative; }
+.bk-copy-check, .bk-copy--done .bk-copy-icon { display: none; }
+.bk-copy--done .bk-copy-check { display: block; }
+.bk-copy--done::after {
+  content: attr(data-copied);
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  background: var(--bk-text);
+  color: var(--bk-surface);
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+}
 @media (prefers-reduced-motion: reduce) { .bk-copy { transition: none; } }
 @media (max-width: 560px) {
   .bk-booking > summary { grid-template-columns: 3.9rem minmax(0, 1fr) 1rem; }
