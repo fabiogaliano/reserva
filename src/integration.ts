@@ -4,7 +4,10 @@ import { resolve } from 'node:path';
 import type { AstroIntegration } from 'astro';
 import { envField } from 'astro/config';
 import type { Plugin } from 'vite';
+import { CSRF_SECRET_ENV_NAME } from './admin-csrf.js';
+import { OPERATOR_SECRET_NAME } from './context.js';
 import { validateConfig, type ClientConfig, type ResolvedClientConfig } from './core/config.js';
+import { TOKEN_ENC_SECRET_NAME } from './repo.js';
 import {
   enabledRouteManifest,
   normalizeRoutePrefix,
@@ -37,9 +40,9 @@ export interface ReservaIntegrationOptions {
 // these enables a layer rather than gating startup. Declares names for typed access and build-time
 // visibility only; it doesn't change how anything reads them.
 const reservaSecretEnvSchema = {
-  RESERVA_OPERATOR_SECRET: envField.string({ context: 'server', access: 'secret', optional: true }),
-  RESERVA_CSRF_SECRET: envField.string({ context: 'server', access: 'secret', optional: true }),
-  RESERVA_TOKEN_ENC_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
+  [OPERATOR_SECRET_NAME]: envField.string({ context: 'server', access: 'secret', optional: true }),
+  [CSRF_SECRET_ENV_NAME]: envField.string({ context: 'server', access: 'secret', optional: true }),
+  [TOKEN_ENC_SECRET_NAME]: envField.string({ context: 'server', access: 'secret', optional: true }),
 };
 
 const virtualRuntimeId = 'virtual:reserva/runtime';

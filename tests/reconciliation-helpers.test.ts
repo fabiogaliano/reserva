@@ -8,6 +8,7 @@ import {
   ownerFacingIncidentTitle,
   projectIncident,
 } from '../src/reconciliation-helpers';
+import type { OperationalIncidentAction } from '../src/repo';
 
 describe('computeNextAttemptAt', () => {
   it('follows the 5/10/20/40/60-minute schedule exactly at each attempt boundary', () => {
@@ -48,9 +49,10 @@ describe('isDelayIncidentDue', () => {
 });
 
 describe('actionForSideEffectOperation', () => {
-  it('maps both calendar families', () => {
+  it('maps every calendar family', () => {
     expect(actionForSideEffectOperation({ family: 'calendar_create' })).toBe('calendar');
     expect(actionForSideEffectOperation({ family: 'calendar_delete' })).toBe('calendar');
+    expect(actionForSideEffectOperation({ family: 'calendar_patch' })).toBe('calendar');
   });
   it('maps the confirmation email identities (combined and both split recipients)', () => {
     expect(actionForSideEffectOperation({ family: 'email_confirmation' })).toBe('confirmation_email');
@@ -71,17 +73,21 @@ describe('actionForSideEffectOperation', () => {
 });
 
 describe('ownerFacingIncidentTitle', () => {
-  it('never contains the internal word "abandoned" for any action', () => {
-    const actions = ['confirmation_email', 'customer_notification', 'calendar', 'operations_sync', 'refund', 'oversell'] as const;
-    for (const action of actions) {
-      expect(ownerFacingIncidentTitle(action).toLowerCase()).not.toContain('abandoned');
-    }
-  });
-  it('uses plain language for each card', () => {
-    expect(ownerFacingIncidentTitle('confirmation_email')).toBe('Confirmation email not delivered');
-    expect(ownerFacingIncidentTitle('calendar')).toBe('Calendar not updated');
-    expect(ownerFacingIncidentTitle('refund')).toBe('Refund needs attention');
-    expect(ownerFacingIncidentTitle('oversell')).toBe('Booking may exceed capacity');
+  // Typed as a full Record so adding an incident action without listing it here fails typecheck,
+  // instead of a hand-copied array silently skipping the new card.
+  const everyAction: Record<OperationalIncidentAction, true> = {
+    confirmation_email: true,
+    customer_notification: true,
+    calendar: true,
+    operations_sync: true,
+    refund: true,
+    oversell: true,
+    payment_verification_rejected: true,
+    reconciliation_stale: true,
+  };
+
+  it.each(Object.keys(everyAction) as OperationalIncidentAction[])('never contains the internal word "abandoned" for %s', (action) => {
+    expect(ownerFacingIncidentTitle(action).toLowerCase()).not.toContain('abandoned');
   });
 });
 

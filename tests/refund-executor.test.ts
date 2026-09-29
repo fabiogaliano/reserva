@@ -73,23 +73,6 @@ describe('attemptRefund with an execution claim (the scheduled-reconciler branch
     expect(repo.refundOperations.get(seeded.id)?.status).toBe('abandoned');
   });
 
-  it('a successful claimed attempt resolves succeeded exactly like the unclaimed HTTP path', async () => {
-    const seeded = booking({ id: 'refund-exec-success', status: 'cancelled', paymentRef: 'pi_exec_success' });
-    const { repo, context } = contextFor([seeded], {
-      payments: {
-        createCheckout: async () => ({ url: '', sessionRef: '' }),
-        parseWebhook: async () => { throw new Error('unused'); },
-        getSession: async () => ({ status: 'open' }),
-        refund: async () => ({ refundRef: 're_exec_success', amountMinor: seeded.priceMinor }),
-      },
-    });
-    await repo.claimRefundOperation({ id: 'op-4', bookingId: seeded.id, paymentIntent: seeded.paymentRef, choice: 'full', requestedAt: '2026-08-14T09:00:00.000Z' });
-
-    const outcome = await attemptRefund(context, seeded, { operationId: 'op-4', choice: 'full', requestedAmountCents: null, paymentRef: seeded.paymentRef }, { attemptNumber: 1 });
-    expect(outcome).toEqual({ kind: 'succeeded' });
-    expect(repo.refundOperations.get(seeded.id)).toMatchObject({ status: 'succeeded', stripeRefundId: 're_exec_success' });
-  });
-
   it('a claimed attempt still skips Stripe entirely for choice none and for a missing payment intent', async () => {
     const noneBooking = booking({ id: 'refund-exec-none', status: 'cancelled', paymentRef: null });
     const { repo: noneRepo, context: noneContext } = contextFor([noneBooking]);

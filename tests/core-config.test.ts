@@ -649,6 +649,8 @@ describe('pickupPresentationFor', () => {
       .toEqual({ requiresAddress: true, usesMeetingPoint: false });
     expect(pickupPresentationFor(service, { pickupType: 'no-longer-declared', pickupAddress: null, meetingPointId: 'square' }))
       .toEqual({ requiresAddress: false, usesMeetingPoint: true });
+    expect(pickupPresentationFor(service, { pickupType: 'no-longer-declared', pickupAddress: null, meetingPointId: null }))
+      .toEqual({ requiresAddress: false, usesMeetingPoint: false });
   });
 });
 

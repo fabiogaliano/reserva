@@ -15,7 +15,7 @@ export interface ProviderFailureInit {
 // Default retryability policy: 408, 425, 429, and every 5xx are transient — worth another attempt.
 // Every other 4xx is a permanent rejection of this exact request. A missing status (a non-HTTP
 // throw) defaults retryable: an ambiguous failure should keep being retried, not silently abandoned.
-export function isRetryableStatus(status: number | undefined): boolean {
+function isRetryableStatus(status: number | undefined): boolean {
   if (status === undefined) return true;
   if (status === 408 || status === 425 || status === 429) return true;
   return status >= 500;

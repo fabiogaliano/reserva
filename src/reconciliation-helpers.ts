@@ -12,7 +12,7 @@ import type {
 // Cron runs every five minutes, but retryable failures set
 // next_attempt_at using 5, 10, 20, 40, then 60 minutes capped at 60 for later attempts. Indexed by
 // (attemptNumber - 1); attempts past the schedule's length reuse the last (60-minute) value.
-export const RETRY_BACKOFF_MINUTES = [5, 10, 20, 40, 60] as const;
+const RETRY_BACKOFF_MINUTES = [5, 10, 20, 40, 60] as const;
 
 // attemptNumber is 1-based (the claim that just ran incremented attempt_count to this value).
 // Returns the ISO instant a 'failed' row next becomes eligible for an ordinary claim.

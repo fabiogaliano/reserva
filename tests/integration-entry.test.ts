@@ -1,56 +1,15 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { reserva } from '../src/integration';
 import config from '../examples/minimal/client-config';
+import { runAstroConfigSetup } from './fixtures';
 
 function setup(options: Record<string, unknown> = { config, runtimeEntrypoint: './examples/minimal/runtime.ts' }) {
-  const routes: Array<Record<string, unknown>> = [];
-  // astro:config:setup calls updateConfig once per concern (vite plugin, env schema); merge every
-  // call into one view rather than keeping only the last, matching Astro's own accumulating behavior.
-  let viteConfig: Record<string, unknown> = {};
-  const integration = reserva(options as never);
-  const hook = integration.hooks['astro:config:setup'];
-  if (!hook) throw new Error('setup hook is missing');
-  hook({
-    config: { root: new URL('../', import.meta.url) } as never,
-    command: 'build',
-    isRestart: false,
-    injectRoute: (route: any) => routes.push(route),
-    updateConfig: (next: any) => {
-      viteConfig = { ...viteConfig, ...(next as Record<string, unknown>) };
-      return {} as never;
-    },
-    logger: { info() {}, warn() {}, error() {} },
-  } as never);
-  return { routes, viteConfig };
+  return runAstroConfigSetup(reserva(options as never));
 }
 
 describe('Astro integration entry', () => {
-  it('validates at setup and injects every non-prerendered route', () => {
-    const { routes } = setup();
-    expect(routes).toHaveLength(19);
-    expect(routes.every((route) => route.prerender === false)).toBe(true);
-    expect(routes.map((route) => route.pattern)).toEqual(expect.arrayContaining([
-      '/api/booking/availability',
-      '/api/booking/checkout',
-      '/api/booking/webhooks/payment',
-      '/api/booking/status',
-      '/api/booking/manage',
-      '/api/booking/cancel',
-      '/api/booking/reschedule',
-      '/api/booking/operator/cancel',
-      '/api/booking/operator/reschedule',
-      '/api/booking/operator/no-show',
-      // The ops reconcile route (plan item 13) replaces the second cron Worker.
-      '/api/booking/ops/reconcile',
-      '/booking/admin',
-      '/booking/manage',
-      '/booking-confirmation',
-    ]));
-    for (const route of routes) expect(existsSync(String(route.entrypoint))).toBe(true);
-  });
-
   // Pins the generated route's entrypoint to the exact one-line handlePaymentWebhook delegation,
   // not just that some file exists at that path.
   it('pins the generated Stripe webhook route to its one-line handlePaymentWebhook delegation', () => {

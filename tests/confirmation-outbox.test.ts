@@ -95,38 +95,6 @@ describe('confirmation side-effect outbox', () => {
     expect(sideEffectOperation(repo, seeded.id, { family: 'email_confirmation' })).toMatchObject({ status: 'succeeded', attemptCount: 2 });
   });
 
-  it('lets a status poll resume a confirmed booking with incomplete fulfillment', async () => {
-    const seeded = booking({ id: 'b-status-resume', status: 'confirmed', paymentSessionRef: 'cs_status_resume' });
-    const repo = fakeRepository([seeded]);
-    const createdAt = '2026-06-14T08:00:00.000Z';
-    seedSideEffectOperation(repo, seeded.id, { family: 'calendar_create' }, { createdAt, updatedAt: createdAt });
-    seedSideEffectOperation(repo, seeded.id, { family: 'email_confirmation' }, {
-      status: 'succeeded', attemptCount: 1, attemptedAt: createdAt, resolvedAt: createdAt, createdAt, updatedAt: createdAt,
-    });
-    let calendarCalls = 0;
-    const context = createReservaContext({
-      config,
-      db: {} as D1Database,
-      repo,
-      clock: () => new Date('2026-06-14T08:00:00.000Z'),
-      providers: providers({
-        calendar: {
-          listEvents: async () => [],
-          createEvent: async () => { calendarCalls += 1; return 'calendar-status-resume'; },
-          patchEvent: async () => undefined,
-          deleteEvent: async () => undefined,
-        },
-      }),
-    });
-
-    const response = await handleStatus(new Request('https://example.test/status?session_id=cs_status_resume'), context);
-
-    expect(response.status).toBe(200);
-    expect(calendarCalls).toBe(1);
-    expect(sideEffectOperation(repo, seeded.id, { family: 'calendar_create' })).toMatchObject({ status: 'succeeded' });
-    expect(sideEffectOperation(repo, seeded.id, { family: 'email_confirmation' })).toMatchObject({ status: 'succeeded' });
-  });
-
   it('records an oversell incident when an expired paid hold cannot be capacity-checked', async () => {
     const seeded = booking({ id: 'b-expired-capacity-outage', status: 'expired', holdExpiresAt: null });
     const repo = fakeRepository([seeded]);

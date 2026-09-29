@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it, vi } from 'vitest';
 import { reserva, virtualConfigId } from '../src/integration';
@@ -8,36 +9,17 @@ import {
   normalizeRoutePrefix,
   resolveRouteConfig,
   routeManifest,
-  validateRouteOptions,
   type ReservaResolvedRouteConfig,
 } from '../src/routes-manifest';
 import clientConfig from '../examples/minimal/client-config';
 import { validateConfig } from '../src/core/config';
-import { booking } from './fixtures';
+import { booking, runAstroConfigSetup } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
 const config = validateConfig(clientConfig);
 
-// Mirrors tests/integration-entry.test.ts's harness: invoke the astro:config:setup hook directly
-// (no real Astro build needed to observe injectRoute calls / the registered vite plugins).
 function setup(options: Record<string, unknown>, command: 'dev' | 'build' | 'preview' = 'build') {
-  const routes: Array<Record<string, unknown>> = [];
-  let viteConfig: Record<string, unknown> = {};
-  const integration = reserva(options as never);
-  const hook = integration.hooks['astro:config:setup'];
-  if (!hook) throw new Error('setup hook is missing');
-  hook({
-    config: { root: new URL('../', import.meta.url) } as never,
-    command,
-    isRestart: false,
-    injectRoute: (route: any) => routes.push(route),
-    updateConfig: (next: any) => {
-      viteConfig = { ...viteConfig, ...(next as Record<string, unknown>) };
-      return {} as never;
-    },
-    logger: { info() {}, warn() {}, error() {} },
-  } as never);
-  return { routes, viteConfig };
+  return runAstroConfigSetup(reserva(options as never), command);
 }
 
 const baseOptions = { config: clientConfig, runtimeEntrypoint: './examples/minimal/runtime.ts' };
@@ -52,46 +34,40 @@ describe('normalizeRoutePrefix', () => {
     ['en/', '/en'],
     ['/en///', '/en'],
     ['/pt-br', '/pt-br'],
+    ['/en/fr', '/en/fr'],
   ])('normalizes %j to %j', (input, expected) => {
     expect(normalizeRoutePrefix(input)).toBe(expected);
   });
 });
 
-describe('validateRouteOptions (Zod, same throw-on-safeParse-failure style as validateConfig)', () => {
-  it('rejects a prefix containing ".." traversal segments', () => {
-    expect(() => validateRouteOptions({ routePrefix: '/../etc' })).toThrow(/\.\./);
-  });
-
-  it.each(['//other-host', '/en?x=1', '/en#f', 'https://evil.example', '/a\\b', '/en//fr'])(
-    'rejects URL or network-path syntax in %j',
-    (routePrefix) => {
-      expect(() => setup({ ...baseOptions, routePrefix })).toThrow();
-    },
-  );
-
+describe('routePrefix validation at astro:config:setup', () => {
   it.each([
-    ['/en', '/en'],
-    ['en', '/en'],
-    ['/en/', '/en'],
-    ['/en/fr', '/en/fr'],
-  ])('accepts and normalizes safe prefix %j', (routePrefix, normalized) => {
-    expect(validateRouteOptions({ routePrefix })).toEqual({ routePrefix });
-    expect(normalizeRoutePrefix(routePrefix)).toBe(normalized);
+    ['/../etc', /routePrefix must not contain \\?"\.\.\\?"/],
+    ['//other-host', /routePrefix must not contain consecutive slashes/],
+    ['/en?x=1', /routePrefix must not contain a query string/],
+    ['/en#f', /routePrefix must not contain a fragment/],
+    ['https://evil.example', /routePrefix must not contain a URL scheme/],
+    ['/a\\b', /routePrefix must not contain backslashes/],
+    ['/en//fr', /routePrefix must not contain consecutive slashes/],
+  ])('rejects traversal or URL syntax in %j with its rule-specific message', (routePrefix, message) => {
+    expect(() => setup({ ...baseOptions, routePrefix })).toThrow(message);
   });
 });
 
 describe('route table generation (astro:config:setup)', () => {
   // Hard requirement: a consumer passing no new options must see the exact same route table as
   // before this feature existed — same patterns, same order.
-  it('no options: default injected route patterns are byte-identical to the current 19', () => {
+  it('no options: default injected route patterns are byte-identical to the manifest, on demand, with real entrypoints', () => {
     const { routes } = setup(baseOptions);
     expect(routes.map((route) => route.pattern)).toEqual(routeManifest.map((entry) => entry.pattern));
-    expect(routes).toHaveLength(19);
+    for (const route of routes) {
+      expect(route.prerender).toBe(false);
+      expect(existsSync(String(route.entrypoint))).toBe(true);
+    }
   });
 
   it('routePrefix mounts every route under the prefix, in the same order', () => {
     const { routes } = setup({ ...baseOptions, routePrefix: '/en' });
-    expect(routes).toHaveLength(19);
     expect(routes.map((route) => route.pattern)).toEqual(routeManifest.map((entry) => `/en${entry.pattern}`));
   });
 
@@ -103,23 +79,13 @@ describe('route table generation (astro:config:setup)', () => {
   // routes.admin/routes.ops live on `config.routes`, not on ReservaIntegrationOptions — the
   // integration reads the same validated config the runtime factory reads for admin-auth
   // selection, instead of two independently-settable options.
-  it('config.routes: { ops: false } omits every operator route and nothing else', () => {
-    const { routes } = setup({ ...baseOptions, config: { ...clientConfig, routes: { ops: false } } });
-    const patterns = routes.map((route) => route.pattern);
-    expect(patterns).toHaveLength(14);
-    for (const opsPattern of ['/api/booking/operator/cancel', '/api/booking/operator/reschedule', '/api/booking/operator/no-show', '/api/booking/ops/reconcile']) {
-      expect(patterns).not.toContain(opsPattern);
-    }
-    // Customer + webhook + admin routes are unaffected.
-    expect(patterns).toContain('/booking/admin');
-    expect(patterns).toContain('/api/booking/checkout');
-  });
-
-  it('config.routes: { admin: false } omits only the admin dashboard route', () => {
-    const { routes } = setup({ ...baseOptions, config: { ...clientConfig, routes: { admin: false } } });
-    const patterns = routes.map((route) => route.pattern);
-    expect(patterns).toHaveLength(18);
-    expect(patterns).not.toContain('/booking/admin');
+  it.each(['ops', 'admin'] as const)('config.routes: { %s: false } omits every route in that group and nothing else', (group) => {
+    const { routes } = setup({ ...baseOptions, config: { ...clientConfig, routes: { [group]: false } } });
+    // Anti-vacuity: an empty group would make the omission trivially true.
+    expect(routeManifest.some((entry) => entry.group === group)).toBe(true);
+    expect(routes.map((route) => route.pattern)).toEqual(
+      routeManifest.filter((entry) => entry.group !== group).map((entry) => entry.pattern),
+    );
   });
 
   it('rejects an invalid routePrefix at setup time, before any route is injected', () => {

@@ -1,7 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it, vi } from 'vitest';
 import config from '../examples/minimal/client-config';
-import { defineCloudflareReservaRuntime, getCache, getEnv, type CloudflareReservaRuntimeOptions, type ReservaEnvShape } from '../src/runtime-context';
+import { defineCloudflareReservaRuntime, getCache, type CloudflareReservaRuntimeOptions, type ReservaEnvShape } from '../src/runtime-context';
 import { RESERVA_MIGRATIONS, RESERVA_SCHEMA_TABLES } from '../src/generated/schema-fingerprint';
 
 // The factory reads the build-time config from `virtual:reserva/config` instead of taking one
@@ -99,27 +99,23 @@ describe('Cloudflare runtime helpers', () => {
     await expect(context.secrets?.('UNDECLARED_SECRET')).resolves.toBeUndefined();
   });
 
-  it('supports direct env locals and worker cache fallback', () => {
-    const env = { RESERVA_DB: {} };
-    expect(getEnv({ env })).toBe(env);
-    expect(getCache({ env })).toBeUndefined();
+  // The caches.default fallback itself is exercised in tests/workers/runtime-workerd.test.ts, where
+  // the Workers Cache API exists; here only the shape guard in front of it is observable.
+  it('does not treat a non-Cache-shaped RESERVA_CACHE binding (e.g. a KV namespace) as the cache', () => {
+    const kvNamespace = { get: async () => null, put: async () => undefined };
+    expect(getCache({ env: { RESERVA_CACHE: kvNamespace } })).not.toBe(kvNamespace);
   });
 
-  it('rejects a missing D1 binding at context-creation time', async () => {
+  // A typo'd binding name can resolve to some other binding (e.g. a string secret) rather than the
+  // D1 database: it must fail here, not with a later "db.prepare is not a function".
+  it.each([
+    ['missing', undefined],
+    ['non-D1-shaped', 'not-a-database'],
+  ])('rejects a %s D1 binding at context-creation time', async (_label, binding) => {
     const definition = runtimeFor(config, { providers: { payments } });
     await expect(definition.createContext({
       request: new Request('https://example.test/api/booking/status'),
-      locals: { env: {} },
-    })).rejects.toThrow('Cloudflare D1 binding RESERVA_DB is not configured');
-  });
-
-  it('rejects a misconfigured (non-D1-shaped) binding before it reaches the repository', async () => {
-    // Simulates a typo'd binding name resolving to some other binding (e.g. a string secret)
-    // rather than the D1 database: it must fail here, not with a later "db.prepare is not a function".
-    const definition = runtimeFor(config, { providers: { payments } });
-    await expect(definition.createContext({
-      request: new Request('https://example.test/api/booking/status'),
-      locals: { env: { RESERVA_DB: 'not-a-database' } },
+      locals: { env: binding === undefined ? {} : { RESERVA_DB: binding } },
     })).rejects.toThrow('Cloudflare D1 binding RESERVA_DB is not configured');
   });
 });

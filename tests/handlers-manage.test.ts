@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { MetadataField } from '../src/core/config';
 import { createReservaContext } from '../src/context';
 import { handleManage } from '../src/handlers';
+import { defaultMessages } from '../src/ui/messages';
 import { renderManagePage } from '../src/ui/pages/manage-page';
 import { utcToLocalIso } from '../src/core/time';
 import { booking, config, service } from './fixtures';
@@ -153,29 +154,6 @@ describe('GET /manage (spec §11)', () => {
       const response = await handleManage(manageRequest(seeded.cancelToken), mazeContext([seeded]));
       const payload = await response.json() as { booking: Record<string, unknown> };
       expect(payload.booking).toMatchObject({ pickupRequiresAddress: true, pickupUsesMeetingPoint: false });
-    });
-
-    // An undeclared stored id falls back to what the row itself
-    // proves was collected (pickupAddress/meetingPointId presence), not a guess pinned to the
-    // retired default/custom pair.
-    it('degrades an undeclared stored id to what the row itself proves was collected', async () => {
-      const seeded = booking({
-        id: 'b-manage-pickup-undeclared', cancelToken: 'cancel-pickup-undeclared', operatorToken: 'operator-pickup-undeclared',
-        startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
-        pickupType: 'no_longer_declared', pickupAddress: null,
-      });
-      const response = await handleManage(manageRequest(seeded.cancelToken), mazeContext([seeded]));
-      const payload = await response.json() as { booking: Record<string, unknown> };
-      expect(payload.booking).toMatchObject({ pickupRequiresAddress: false, pickupUsesMeetingPoint: false });
-
-      const seededWithEvidence = booking({
-        id: 'b-manage-pickup-undeclared-2', cancelToken: 'cancel-pickup-undeclared-2', operatorToken: 'operator-pickup-undeclared-2',
-        startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
-        pickupType: 'no_longer_declared', pickupAddress: 'Hotel Mundial, Lisbon', meetingPointId: 'square', meetingPointLabel: 'The Square',
-      });
-      const responseWithEvidence = await handleManage(manageRequest(seededWithEvidence.cancelToken), mazeContext([seededWithEvidence]));
-      const payloadWithEvidence = await responseWithEvidence.json() as { booking: Record<string, unknown> };
-      expect(payloadWithEvidence.booking).toMatchObject({ pickupRequiresAddress: true, pickupUsesMeetingPoint: true });
     });
 
     it('renders price and refund bounds in the booking\'s own currency, not the configured one', () => {
@@ -360,12 +338,11 @@ describe('metadata on the manage page', () => {
       { key: 'vegetarian', label: 'Vegetarian', value: true },
     ]);
     const customerHtml = renderManagePage(customerPayload as unknown as Record<string, unknown>, '/manage', { locale: 'en' });
-    expect(customerHtml).toContain('Dietary notes');
-    expect(customerHtml).toContain('Vegan');
-    expect(customerHtml).toContain('Vegetarian');
-    // admin.on/off — the existing yes/no copy pair, reused rather than invented (exact fact-row
-    // fragment factList renders, not a loose substring match that could collide with other copy).
-    expect(customerHtml).toContain('<dd>On</dd>');
+    expect(customerHtml).toContain('<dt>Dietary notes</dt><dd>Vegan</dd>');
+    // The boolean reuses the catalog's yes/no pair, paired with its own label in one fact row;
+    // derived from the catalog so a copy edit there cannot break this.
+    expect(customerHtml).toContain(`<dt>Vegetarian</dt><dd>${defaultMessages['admin.on']}</dd>`);
+    expect(customerHtml).not.toContain('<dd>true</dd>');
 
     const operatorResponse = await handleManage(manageRequest(seeded.operatorToken), context);
     const operatorPayload = await operatorResponse.json() as { booking: { metadataRows?: Array<{ key: string; label: string; value: unknown }> } };

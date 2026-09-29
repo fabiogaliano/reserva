@@ -9,23 +9,12 @@ import { reserva } from '../src/integration';
 import { brevoEmail } from '../src/providers/email-brevo/index';
 import { requireEnabledRoutePath, resolveRouteConfig } from '../src/routes-manifest';
 import clientConfig from '../examples/minimal/client-config';
-import { booking, config } from './fixtures';
+import { booking, config, runAstroConfigSetup } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
 function injectedPatterns(routes: Record<string, unknown>): string[] {
-  const injected: Array<Record<string, unknown>> = [];
   const integration = reserva({ config: { ...clientConfig, routes }, runtimeEntrypoint: './examples/minimal/runtime.ts' } as never);
-  const hook = integration.hooks['astro:config:setup'];
-  if (!hook) throw new Error('setup hook is missing');
-  hook({
-    config: { root: new URL('../', import.meta.url) } as never,
-    command: 'build',
-    isRestart: false,
-    injectRoute: (route: any) => injected.push(route),
-    updateConfig: () => ({} as never),
-    logger: { info() {}, warn() {}, error() {} },
-  } as never);
-  return injected.map((route) => String(route.pattern));
+  return runAstroConfigSetup(integration).routes.map((route) => String(route.pattern));
 }
 
 async function adminHtml(manage: boolean): Promise<string> {

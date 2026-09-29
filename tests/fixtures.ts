@@ -1,3 +1,4 @@
+import type { AstroIntegration } from 'astro';
 import type { Booking } from '../src/core/booking';
 import type { PricingRule, ResolvedClientConfig, ResolvedServiceConfig } from '../src/core/config';
 
@@ -96,4 +97,38 @@ export function booking(overrides: Partial<Booking> = {}): Booking {
     updatedAt: '2026-01-01T00:00:00.000Z',
     ...overrides,
   };
+}
+
+export interface AstroConfigSetupResult {
+  routes: Array<Record<string, unknown>>;
+  updateConfigCalls: Array<Record<string, unknown>>;
+  viteConfig: Record<string, unknown>;
+}
+
+// Takes the built integration rather than importing `reserva()` here: this file is shared with the
+// workers project, which cannot load the Node/Astro build-time integration module.
+export function runAstroConfigSetup(
+  integration: AstroIntegration,
+  command: 'dev' | 'build' | 'preview' = 'build',
+): AstroConfigSetupResult {
+  const routes: Array<Record<string, unknown>> = [];
+  const updateConfigCalls: Array<Record<string, unknown>> = [];
+  // Astro accumulates every updateConfig call (vite plugins, env schema), so merge them into one
+  // view rather than keeping only the last.
+  let viteConfig: Record<string, unknown> = {};
+  const hook = integration.hooks['astro:config:setup'];
+  if (!hook) throw new Error('setup hook is missing');
+  hook({
+    config: { root: new URL('../', import.meta.url) },
+    command,
+    isRestart: false,
+    injectRoute: (route: Record<string, unknown>) => routes.push(route),
+    updateConfig: (next: Record<string, unknown>) => {
+      updateConfigCalls.push(next);
+      viteConfig = { ...viteConfig, ...next };
+      return {};
+    },
+    logger: { info() {}, warn() {}, error() {} },
+  } as never);
+  return { routes, updateConfigCalls, viteConfig };
 }

@@ -504,12 +504,20 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       status: 'succeeded', attemptCount: 1, attemptedAt: seeded.updatedAt, resolvedAt: seeded.updatedAt,
       createdAt: seeded.updatedAt, updatedAt: seeded.updatedAt,
     });
+    let calendarCalls = 0;
     const context = createReservaContext({
       config,
       db: {} as D1Database,
       repo,
       clock: () => new Date(now),
-      providers: providers(),
+      providers: providers({
+        calendar: {
+          listEvents: async () => [],
+          createEvent: async () => { calendarCalls += 1; return 'calendar-status-renewal'; },
+          patchEvent: async () => undefined,
+          deleteEvent: async () => undefined,
+        },
+      }),
     });
 
     const response = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_status_confirmed_renewal'), context);
@@ -530,6 +538,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     });
     expect(payload.booking).not.toHaveProperty('metadataRows');
     expect(repo.rows.get(seeded.id)).toMatchObject({ createdAt: seeded.createdAt, updatedAt: now });
+    expect(calendarCalls).toBe(1);
     expect(sideEffectOperation(repo, seeded.id, { family: 'calendar_create' })).toMatchObject({ status: 'succeeded' });
   });
 

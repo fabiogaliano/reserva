@@ -4,7 +4,7 @@ import { createReservaContext } from '../src/context';
 import { runReconciliation } from '../src/reconciliation';
 import { booking, config } from './fixtures';
 import type { SideEffectOperationIdentity } from '../src/repo';
-import { fakeRepository, providers, seedSideEffectOperation, type FakeRepository } from './fakes';
+import { fakeRepository, providers, seedSideEffectOperation, sideEffectOperation, type FakeRepository } from './fakes';
 
 const clock = () => new Date('2026-08-14T10:00:00.000Z');
 
@@ -226,9 +226,9 @@ describe('runReconciliation', () => {
     await runReconciliation(context);
     expect(confirmationEmails).toBe(1);
     expect(mutationEmails).toBe(0);
-    expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_create`)?.status).toBe('failed');
-    expect(repo.sideEffectOperations.get(`${seeded.id}:email_confirmation`)?.status).toBe('succeeded');
-    expect(repo.sideEffectOperations.get(`${seeded.id}:email:booking.cancelled_by_operator`)?.attemptCount).toBe(4);
+    expect(sideEffectOperation(repo, seeded.id, { family: 'calendar_create' })?.status).toBe('failed');
+    expect(sideEffectOperation(repo, seeded.id, { family: 'email_confirmation' })?.status).toBe('succeeded');
+    expect(sideEffectOperation(repo, seeded.id, { family: 'email', event: 'booking.cancelled_by_operator' })?.attemptCount).toBe(4);
   });
 
   it('reprojects an open incident after ordinary HTTP recovery removes the source from execution candidates', async () => {
@@ -238,9 +238,10 @@ describe('runReconciliation', () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers({ alerts: { send: async () => undefined } }) });
     await runReconciliation(context);
 
-    const operation = repo.sideEffectOperations.get(`${seeded.id}:email_confirmation`);
+    const operation = sideEffectOperation(repo, seeded.id, { family: 'email_confirmation' });
     if (!operation) throw new Error('missing seeded operation');
-    repo.sideEffectOperations.set(`${seeded.id}:email_confirmation`, {
+    // Re-seeding by identity overwrites the same row, as an HTTP drain resolving it would.
+    seedSideEffectOperation(repo, seeded.id, operation, {
       ...operation, status: 'succeeded', updatedAt: '2026-08-14T10:01:00.000Z', resolvedAt: '2026-08-14T10:01:00.000Z',
     });
 

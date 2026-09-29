@@ -19,4 +19,16 @@ describe('Cloudflare runtime bindings', () => {
     expect(context.db).toBe((env as unknown as { RESERVA_DB: D1Database }).RESERVA_DB);
     expect(context.repo).toBeDefined();
   });
+
+  it('falls back to the Workers caches.default when no RESERVA_CACHE binding is configured', async () => {
+    const runtime = defineCloudflareReservaRuntime({ providers: { payments } });
+    const context = await runtime.createContext({
+      request: new Request('https://example.test/api/booking/status'),
+    });
+
+    // The repo's DOM lib types `caches` as browser CacheStorage, which has no Workers `default`.
+    const workerCaches = caches as unknown as { default: unknown };
+    expect(context.cache).toBeDefined();
+    expect(context.cache).toBe(workerCaches.default);
+  });
 });

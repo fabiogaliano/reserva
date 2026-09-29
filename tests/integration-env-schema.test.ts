@@ -4,24 +4,10 @@ import { OPERATOR_SECRET_NAME } from '../src/context';
 import { reserva } from '../src/integration';
 import { TOKEN_ENC_SECRET_NAME } from '../src/repo';
 import config from '../examples/minimal/client-config';
+import { runAstroConfigSetup } from './fixtures';
 
 function updateConfigCalls(options: Record<string, unknown>): Array<Record<string, unknown>> {
-  const calls: Array<Record<string, unknown>> = [];
-  const integration = reserva(options as never);
-  const hook = integration.hooks['astro:config:setup'];
-  if (!hook) throw new Error('setup hook is missing');
-  hook({
-    config: { root: new URL('../', import.meta.url) } as never,
-    command: 'build',
-    isRestart: false,
-    injectRoute: () => undefined,
-    updateConfig: (next: any) => {
-      calls.push(next as Record<string, unknown>);
-      return {} as never;
-    },
-    logger: { info() {}, warn() {}, error() {} },
-  } as never);
-  return calls;
+  return runAstroConfigSetup(reserva(options as never)).updateConfigCalls;
 }
 
 function envSchemaFrom(calls: Array<Record<string, unknown>>): Record<string, unknown> | undefined {

@@ -1,23 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyProviderError, isRetryableStatus, ProviderFailure } from '../src/provider-failure';
-
-describe('isRetryableStatus', () => {
-  it('treats 408/425/429 and every 5xx as retryable', () => {
-    for (const status of [408, 425, 429, 500, 502, 503, 504, 599]) {
-      expect(isRetryableStatus(status)).toBe(true);
-    }
-  });
-
-  it('treats every other 4xx as permanent', () => {
-    for (const status of [400, 401, 403, 404, 409, 410, 422]) {
-      expect(isRetryableStatus(status)).toBe(false);
-    }
-  });
-
-  it('defaults retryable when there is no status at all', () => {
-    expect(isRetryableStatus(undefined)).toBe(true);
-  });
-});
+import { classifyProviderError, ProviderFailure } from '../src/provider-failure';
 
 describe('ProviderFailure', () => {
   it('derives retryable from status by default', () => {
@@ -42,9 +24,12 @@ describe('classifyProviderError', () => {
       .toEqual({ status: 401, retryable: false });
   });
 
-  it('reads a numeric `.status` off any plain error-shaped object', () => {
-    expect(classifyProviderError({ status: 503 })).toEqual({ status: 503, retryable: true });
-    expect(classifyProviderError({ status: 404 })).toEqual({ status: 404, retryable: false });
+  // 408/425/429 and every 5xx are transient; every other 4xx is a permanent rejection.
+  it.each([
+    [408, true], [425, true], [429, true], [500, true], [502, true], [503, true], [504, true], [599, true],
+    [400, false], [401, false], [403, false], [404, false], [409, false], [410, false], [422, false],
+  ])('reads a numeric `.status` %i off a plain error-shaped object as retryable=%s', (status, retryable) => {
+    expect(classifyProviderError({ status })).toEqual({ status, retryable });
   });
 
   it('defaults retryable for a non-HTTP error (no `.status` at all)', () => {
