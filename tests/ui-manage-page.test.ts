@@ -88,6 +88,63 @@ describe('manage page deadlines', () => {
   });
 });
 
+describe('manage page booking facts', () => {
+  it('renders price and refund bounds in the booking\'s own currency, not the configured one', () => {
+    // A deployment that moved from 3-decimal KWD to 2-decimal EUR still has cancellable KWD
+    // bookings. Scaling either the displayed price or the partial-refund field by today's
+    // currency would misstate the money by a factor of ten.
+    const html = renderManagePage({
+      booking: {
+        reference: 'LVT-2026-900', serviceSlug: 'vintage', serviceTitle: 'Vintage Tour',
+        start: '2026-06-20T10:00:00.000+01:00', end: '2026-06-20T11:00:00.000+01:00',
+        quantity: 2, status: 'confirmed', priceMinor: 30000, currency: 'kwd',
+      },
+      role: 'operator', canCancel: true, token: 'op-token',
+    }, '/manage', { currency: 'eur', locale: 'en' });
+
+    // 30000 minor KWD is 30.000, not the 300.00 today's EUR factor would print.
+    expect(html).toContain('KWD');
+    expect(html).not.toContain('€');
+    // One thousandth is the smallest KWD unit; the ceiling is the price less that unit.
+    expect(html).toContain('min="0.001"');
+    expect(html).toContain('max="29.999"');
+    expect(html).toContain('step="0.001"');
+  });
+
+  // The payload carries the chosen pickup option's two flags because the page can't know from the
+  // raw id whether an address or meeting point applies.
+  it('gates the address and meeting-point facts on the flags, independently', () => {
+    // Local-offset instants, the shape manageBookingPayload actually emits: the page now builds
+    // Google/ICS calendar links from start/end, which parse them.
+    const base = {
+      reference: 'LVT-2026-800', serviceSlug: 'vintage', serviceTitle: 'Vintage Tour',
+      start: '2026-06-20T10:00:00.000+01:00', end: '2026-06-20T11:00:00.000+01:00', quantity: 2, status: 'confirmed',
+      pickupAddress: 'Hotel Mundial, Lisbon', meetingPoint: { label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' },
+    };
+    const addressOnly = renderManagePage({
+      booking: { ...base, pickupType: 'custom_pickup', pickupRequiresAddress: true, pickupUsesMeetingPoint: false },
+    }, '/manage');
+    expect(addressOnly).toContain('Hotel Mundial, Lisbon');
+    expect(addressOnly).not.toContain('The Square');
+
+    const bothFlags = renderManagePage({
+      booking: { ...base, pickupType: 'custom_dropoff', pickupRequiresAddress: true, pickupUsesMeetingPoint: true },
+    }, '/manage');
+    expect(bothFlags).toContain('Hotel Mundial, Lisbon');
+    expect(bothFlags).toContain('The Square');
+
+    // Ids are opaque now: a payload carrying no flags shows no address at all, for the id
+    // 'custom' exactly as for any other. The meeting point still renders whenever one resolved,
+    // since only an explicit `false` suppresses it.
+    const noFlagsCustom = renderManagePage({ booking: { ...base, pickupType: 'custom' } }, '/manage');
+    expect(noFlagsCustom).not.toContain('Hotel Mundial, Lisbon');
+    expect(noFlagsCustom).toContain('The Square');
+    const noFlagsOtherId = renderManagePage({ booking: { ...base, pickupType: 'default' } }, '/manage');
+    expect(noFlagsOtherId).not.toContain('Hotel Mundial, Lisbon');
+    expect(noFlagsOtherId).toContain('The Square');
+  });
+});
+
 describe('manage page error notice', () => {
   it('maps an ?error= code it does not own to the generic copy, including inherited property names', () => {
     for (const code of ['constructor', 'toString', '__proto__', 'made_up']) {

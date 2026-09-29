@@ -163,15 +163,17 @@ test('a validation_failed naming a declared detail points at that field by its l
 });
 
 // `remaining` counts further bookings of the chosen party size, not seats: "Only 2 left" read as
-// two seats to a party of four.
-test('the scarcity hint counts bookings, not seats', async ({ page }) => {
+// two seats to a party of four. The server alone gates the count against the deployment's
+// threshold, so a count far above any plausible default must still get its hint — a threshold
+// re-applied in the widget would drop it.
+test('the scarcity hint counts bookings, not seats, and shows whenever the server publishes a count', async ({ page }) => {
   const from = new Date().toISOString().slice(0, 10);
   await page.route('**/api/booking/availability*', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({
       timezone: 'UTC',
-      limitedThreshold: 2,
+      limitedThreshold: 1000,
       days: [{
         date: from,
         status: 'limited',
@@ -180,10 +182,11 @@ test('the scarcity hint counts bookings, not seats', async ({ page }) => {
           { start: `${from}T09:00:00.000Z`, date: from, time: '09:00', remaining: 1 },
           { start: `${from}T10:00:00.000Z`, date: from, time: '10:00', remaining: 2 },
           { start: `${from}T11:00:00.000Z`, date: from, time: '11:00', remaining: null },
+          { start: `${from}T12:00:00.000Z`, date: from, time: '12:00', remaining: 999 },
         ],
       }],
     }),
   }));
   await openWidget(page);
-  await expect(page.locator('.bkw-slot-hint')).toHaveText(['Room for 1 more booking', 'Room for 2 more bookings']);
+  await expect(page.locator('.bkw-slot-hint')).toHaveText(['Room for 1 more booking', 'Room for 2 more bookings', 'Room for 999 more bookings']);
 });

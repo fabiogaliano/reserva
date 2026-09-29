@@ -1,9 +1,9 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createReservaContext } from '../src/context';
-import { runReconciliation } from '../src/reconciliation';
+import { runReconciliation, sideEffectIncidentSourceKey } from '../src/reconciliation';
 import { booking, config } from './fixtures';
-import type { SideEffectOperationIdentity } from '../src/repo';
+import type { SideEffectOperationIdentity, SideEffectOperationRecord } from '../src/repo';
 import { fakeRepository, providers, seedSideEffectOperation, sideEffectOperation, type FakeRepository } from './fakes';
 
 const clock = () => new Date('2026-08-14T10:00:00.000Z');
@@ -21,12 +21,20 @@ function seedSideEffect(repo: FakeRepository, bookingId: string, identity: SideE
   failureStartedAt: string | null;
   nextAttemptAt: string | null;
   attemptedAt: string | null;
-}>): void {
-  seedSideEffectOperation(repo, bookingId, identity, {
+}>): SideEffectOperationRecord {
+  return seedSideEffectOperation(repo, bookingId, identity, {
     status: patch.status ?? 'pending', attemptCount: patch.attemptCount ?? 0,
     attemptedAt: patch.attemptedAt ?? null, createdAt: '2026-08-14T09:00:00.000Z', updatedAt: '2026-08-14T09:00:00.000Z',
     failureStartedAt: patch.failureStartedAt ?? null, nextAttemptAt: patch.nextAttemptAt ?? null,
   });
+}
+
+// Addresses the incident through its stored outbox row and the production key helper, so the test
+// can't encode a key shape the reconciliation sweep doesn't produce.
+async function sideEffectIncident(repo: FakeRepository, bookingId: string, identity: SideEffectOperationIdentity) {
+  const operation = sideEffectOperation(repo, bookingId, identity);
+  if (!operation) throw new Error(`no ${identity.family} row for ${bookingId}`);
+  return repo.getIncidentBySource('side_effect', sideEffectIncidentSourceKey(operation));
 }
 
 describe('runReconciliation', () => {
@@ -51,7 +59,7 @@ describe('runReconciliation', () => {
     const first = await runReconciliation(context);
     expect(first.incidentsOpened).toBe(1);
     expect(calendarCalls).toBe(0);
-    const opened = await repo.getIncidentBySource('side_effect', `${seeded.id}:calendar_create`);
+    const opened = await sideEffectIncident(repo, seeded.id, { family: 'calendar_create' });
     expect(opened).toMatchObject({ status: 'open', severity: 'delayed', action: 'calendar' });
 
     // Second pass: ten minutes later, the row is due — the retry gate now lets the drain attempt
@@ -67,7 +75,7 @@ describe('runReconciliation', () => {
     shouldFail = false;
     const second = await runReconciliation(context);
     expect(second.incidentsResolved).toBe(1);
-    const resolved = await repo.getIncidentBySource('side_effect', `${seeded.id}:calendar_create`);
+    const resolved = await sideEffectIncident(repo, seeded.id, { family: 'calendar_create' });
     expect(resolved).toMatchObject({ status: 'resolved', resolutionKind: 'automatic', action: 'calendar' });
   });
 
@@ -84,7 +92,7 @@ describe('runReconciliation', () => {
 
     const summary = await runReconciliation(context);
     expect(summary.incidentsOpened).toBe(0);
-    expect(await repo.getIncidentBySource('side_effect', `${seeded.id}:calendar_create`)).toBeNull();
+    expect(await sideEffectIncident(repo, seeded.id, { family: 'calendar_create' })).toBeNull();
   });
 
   it('opens an action_required incident immediately for an abandoned side-effect row', async () => {
@@ -97,7 +105,7 @@ describe('runReconciliation', () => {
 
     const summary = await runReconciliation(context);
     expect(summary.incidentsOpened).toBe(1);
-    const incident = await repo.getIncidentBySource('side_effect', `${seeded.id}:email_confirmation`);
+    const incident = await sideEffectIncident(repo, seeded.id, { family: 'email_confirmation' });
     expect(incident).toMatchObject({ severity: 'action_required', status: 'open' });
   });
 
@@ -169,12 +177,12 @@ describe('runReconciliation', () => {
   it('does not send an obsolete action alert after the same pass auto-resolves its incident', async () => {
     const seeded = booking({ id: 'recon-no-obsolete-alert', status: 'confirmed' });
     const repo = fakeRepository([seeded]);
-    seedSideEffect(repo, seeded.id, { family: 'calendar_create' }, {
+    const row = seedSideEffect(repo, seeded.id, { family: 'calendar_create' }, {
       status: 'failed', attemptCount: 1, attemptedAt: '2026-08-14T09:00:00.000Z', failureStartedAt: '2026-08-14T09:00:00.000Z',
     });
     await repo.upsertOpenIncident({
       id: 'incident-no-obsolete-alert', bookingId: seeded.id, sourceType: 'side_effect',
-      sourceKey: `${seeded.id}:calendar_create`, action: 'calendar', severity: 'delayed',
+      sourceKey: sideEffectIncidentSourceKey(row), action: 'calendar', severity: 'delayed',
       attemptCount: 1, sourceUpdatedAt: '2026-08-14T09:00:00.000Z', now: '2026-08-14T09:10:00.000Z', escalate: false,
     });
     const sent: unknown[] = [];
@@ -187,7 +195,7 @@ describe('runReconciliation', () => {
     expect(summary.incidentsResolved).toBe(1);
     expect(summary.alertsSent).toBe(0);
     expect(sent).toHaveLength(0);
-    expect(await repo.getIncidentBySource('side_effect', `${seeded.id}:calendar_create`)).toMatchObject({ status: 'resolved', alertedRevision: 0 });
+    expect(await sideEffectIncident(repo, seeded.id, { family: 'calendar_create' })).toMatchObject({ status: 'resolved', alertedRevision: 0 });
   });
 
   it('schedules a backoff retry for a failing alert sink without crashing the sweep', async () => {
@@ -200,7 +208,7 @@ describe('runReconciliation', () => {
 
     const summary = await runReconciliation(context);
     expect(summary.alertsFailed).toBe(1);
-    const incident = await repo.getIncidentBySource('side_effect', `${seeded.id}:email_confirmation`);
+    const incident = await sideEffectIncident(repo, seeded.id, { family: 'email_confirmation' });
     expect(incident?.alertNextAttemptAt).not.toBeNull();
     expect(incident?.alertError).toContain('slack webhook down');
   });
@@ -248,7 +256,7 @@ describe('runReconciliation', () => {
     const summary = await runReconciliation(context);
     expect(summary.sideEffectBookingsProcessed).toBe(0);
     expect(summary.incidentsResolved).toBe(1);
-    expect(await repo.getIncidentBySource('side_effect', `${seeded.id}:email_confirmation`)).toMatchObject({ status: 'resolved', resolutionKind: 'automatic' });
+    expect(await sideEffectIncident(repo, seeded.id, { family: 'email_confirmation' })).toMatchObject({ status: 'resolved', resolutionKind: 'automatic' });
   });
 
   it('leaves alert revisions undelivered when no sink is configured and supports strict cron preflight', async () => {
@@ -258,11 +266,11 @@ describe('runReconciliation', () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
     const summary = await runReconciliation(context);
-    const incident = await repo.getIncidentBySource('side_effect', `${seeded.id}:email_confirmation`);
+    const incident = await sideEffectIncident(repo, seeded.id, { family: 'email_confirmation' });
     expect(summary.alertsFailed).toBe(1);
     expect(incident).toMatchObject({ alertRevision: 1, alertedRevision: 0 });
     await expect(runReconciliation(context, { requireAlertSink: true })).rejects.toThrow('requires an operational alert sink');
-    expect((await repo.getIncidentBySource('side_effect', `${seeded.id}:email_confirmation`))?.alertedRevision).toBe(0);
+    expect((await sideEffectIncident(repo, seeded.id, { family: 'email_confirmation' }))?.alertedRevision).toBe(0);
   });
 
   it('loops bounded sourceLimit batches until the backlog is drained, and reports the batch count', async () => {

@@ -188,6 +188,12 @@ test('custom pick-up hides and disables the meeting-point group, and the checkou
   await expect(group).toBeHidden();
   await expect(points.first()).toBeDisabled();
 
+  // A visitor who changes their mind gets the group back, usable, with its choice intact.
+  await page.locator('input[name="pickup"][value="meeting_point"]').check();
+  await expect(group).toBeVisible();
+  await expect(points.first()).toBeEnabled();
+  await expect(points.first()).toBeChecked();
+
   const { checkoutBody } = await bookMaze(page, 'custom_pickup');
   expect(checkoutBody).not.toHaveProperty('meetingPointId');
 });

@@ -71,6 +71,23 @@ describe('refund totals from the payment webhook', () => {
     expect(repo.refundOperations.get(seeded.id)).toBeUndefined();
   });
 
+  // Guards against a partial refund overwriting an existing, unrelated operation record.
+  it('leaves an existing refund operation row untouched on a partial refund', async () => {
+    const { deliver, row, repo } = webhookHarness(seeded);
+    const preexisting = {
+      id: 'op-preexisting', bookingId: seeded.id, paymentIntent: 'pi_refund_total', choice: 'none' as const, status: 'succeeded' as const,
+      stripeRefundId: null, amountCents: null, requestedAmountCents: null,
+      requestedAt: '2026-06-13T00:00:00.000Z', resolvedAt: '2026-06-13T00:00:00.000Z', error: null,
+      executionClaimToken: null, executionClaimUntil: null, attemptCount: 0, attemptedAt: null,
+      failureStartedAt: null, nextAttemptAt: null,
+    };
+    repo.refundOperations.set(seeded.id, { ...preexisting });
+
+    await deliver(refunded('evt_partial_existing_op', 5000));
+    expect(row()).toMatchObject({ status: 'confirmed', amountRefundedMinor: 5000 });
+    expect(repo.refundOperations.get(seeded.id)).toEqual(preexisting);
+  });
+
   it('records the full total and keeps the cancel transition when the refunds reach the captured amount', async () => {
     const { deliver, row, repo } = webhookHarness(seeded);
 

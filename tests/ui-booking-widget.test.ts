@@ -9,16 +9,6 @@ const widgetPath = resolve(import.meta.dirname, '..', 'examples/smoke-site/src/c
 const widgetSource = readFileSync(widgetPath, 'utf8');
 
 describe('BookingWidget.astro carries no server-owned rule of its own', () => {
-  // The server gates the exact count against the deployment's limitedThreshold and publishes
-  // `remaining: number | null`, so the widget renders the hint on nullness alone and holds no
-  // threshold at all.
-  it('applies no scarcity threshold of its own', () => {
-    expect(widgetSource).toContain('if (slot.remaining !== null)');
-    expect(widgetSource).not.toMatch(/^(?!\s*\/\/).*limitedThreshold/m);
-    expect(widgetSource).not.toMatch(/slot\.remaining\w*\s*<=\s*/);
-    expect(widgetSource).not.toContain('remainingBookings');
-  });
-
   // The widget is the library's own reference consumer, so it reads the exported wire types
   // rather than re-declaring response shapes locally — the exact duplication the first consumer
   // had to do.

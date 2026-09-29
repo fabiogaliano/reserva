@@ -644,45 +644,6 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     expect(refunds).toBe(0);
   });
 
-  // A partial refund (amountRefunded < amountCaptured) never
-  // cancels the booking or touches the refund-operation row; it only records the refunded total.
-  // This pins that guard against silently overwriting an existing (unrelated) operation record too.
-  it('a partial-refund webhook does not rewrite an existing refund operation row or cancel the booking', async () => {
-    const paymentRef = 'pi_partial_refund_guard';
-    const seeded = booking({ id: 'b-partial-refund-guard', status: 'confirmed', paymentRef: paymentRef });
-    const repo = fakeRepository([seeded]);
-    repo.refundOperations.set(seeded.id, {
-      id: 'op-preexisting', bookingId: seeded.id, paymentIntent: paymentRef, choice: 'none', status: 'succeeded',
-      stripeRefundId: null, amountCents: null, requestedAmountCents: null,
-      requestedAt: '2026-06-13T00:00:00.000Z', resolvedAt: '2026-06-13T00:00:00.000Z', error: null,
-      executionClaimToken: null, executionClaimUntil: null, attemptCount: 0, attemptedAt: null,
-      failureStartedAt: null, nextAttemptAt: null,
-    });
-    const preexisting = repo.refundOperations.get(seeded.id);
-    const context = createReservaContext({
-      config,
-      db: {} as D1Database,
-      repo,
-      clock,
-      providers: providers({
-        payments: {
-          createCheckout: async () => ({ url: '', sessionRef: '' }),
-          parseWebhook: async () => ({
-            id: 'evt_partial_refund_guard', type: 'refunded', paymentRef,
-            amountCaptured: seeded.priceMinor, amountRefunded: Math.floor(seeded.priceMinor / 2),
-          }),
-          getSession: async () => ({ status: 'open' }),
-          refund: async () => ({ refundRef: 're_should_not_run', amountMinor: seeded.priceMinor }),
-        },
-      }),
-    });
-
-    const response = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), context);
-    expect(response.status).toBe(200);
-    expect(repo.rows.get(seeded.id)).toMatchObject({ status: 'confirmed', amountRefundedMinor: Math.floor(seeded.priceMinor / 2) });
-    expect(repo.refundOperations.get(seeded.id)).toEqual(preexisting);
-  });
-
   it('a same-choice loser re-reads the operation after the winner records success, ending in one consistent succeeded refund', async () => {
     const seeded = booking({ id: 'b-op-cancel-same-choice-resolve-race', paymentRef: 'pi_same_choice_resolve_race' });
     const repo = fakeRepository([seeded]);
