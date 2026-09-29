@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ResolvedClientConfig, ResolvedServiceConfig } from '../src/core/config';
 import { BrevoResponseError, brevoEmail, BREVO_TRANSACTIONAL_EMAIL_URL } from '../src/providers/email-brevo/index';
 import { emailNone } from '../src/providers/email-none/index';
+import { englishEmailCopy } from '../src/email/copy';
 import { booking, config, service } from './fixtures';
 import { resolveRouteConfig } from '../src/routes-manifest';
 
@@ -173,10 +174,10 @@ describe('email providers', () => {
     const ownerHtml = JSON.parse(request.mock.calls[1]![1]!.body as string) as { htmlContent: string };
     expect(customerHtml.htmlContent).not.toContain('nohash:');
     expect(customerHtml.htmlContent).not.toContain('href=""');
-    expect(customerHtml.htmlContent).not.toContain('Manage my booking');
+    expect(customerHtml.htmlContent).not.toContain(englishEmailCopy['confirmed.customer.button']!);
     expect(ownerHtml.htmlContent).not.toContain('nohash:');
     expect(ownerHtml.htmlContent).not.toContain('href=""');
-    expect(ownerHtml.htmlContent).not.toContain('Open booking actions');
+    expect(ownerHtml.htmlContent).not.toContain(englishEmailCopy['owner.button']!);
     // The rest of the email is unaffected — only the dead link paragraph is gone.
     expect(customerHtml.htmlContent).toContain('Ada Lovelace');
   });

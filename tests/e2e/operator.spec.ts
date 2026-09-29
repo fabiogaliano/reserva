@@ -23,7 +23,7 @@ test('operator can cancel a booking with a full refund, the page reflects the ca
   // operator token lookups carry no revocation check), so the operator lands back on the same
   // manage page rather than a denied one, now showing the cancelled state.
   await expect(page.locator('h1')).toContainText(reference);
-  await expect(page.getByText('This booking has been cancelled.')).toBeVisible();
+  await expect(page.locator('body[data-bk-status="cancelled"]')).toBeAttached();
 
   const manage = await (await request.get(`/api/booking/manage?token=${encodeURIComponent(token)}`)).json();
   expect(manage.booking.status).toBe('cancelled');
@@ -51,7 +51,7 @@ test('operator can cancel with a partial refund typed in major units', async ({ 
   await page.getByRole('spinbutton', { name: 'Partial refund amount' }).fill('5.50');
   await page.getByRole('button', { name: 'Yes, cancel this booking' }).click();
 
-  await expect(page.getByText('This booking has been cancelled.')).toBeVisible();
+  await expect(page.locator('body[data-bk-status="cancelled"]')).toBeAttached();
   const after = await (await request.get(`/api/booking/manage?token=${encodeURIComponent(token)}`)).json();
   expect(after.booking.status).toBe('cancelled');
   // The refund was partial, so the booking's own price is untouched by it.

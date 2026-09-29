@@ -188,7 +188,7 @@ describe('the cancellation row', () => {
   it('says free cancellation is not available when the booking was made inside the cutoff', () => {
     const lateBooking = booking({ startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z', createdAt: '2026-06-15T06:00:00.000Z' });
     const rendered = renderDefaultEmail(context({ booking: lateBooking }));
-    expect(rendered.text).not.toContain('Free cancellation until');
-    expect(rendered.text).toContain('Free cancellation is not available: booked less than 24 hours before the start');
+    expect(rendered.text).not.toContain(englishEmailCopy['cancellation.free']!.split('{')[0]!.trim());
+    expect(rendered.text).toContain(englishEmailCopy['cancellation.closed']!.replace('{cancelCutoffHours}', '24'));
   });
 });

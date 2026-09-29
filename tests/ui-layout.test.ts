@@ -27,5 +27,6 @@ describe('pageShell head customization', () => {
   it('emits neither when unset', () => {
     const plain = pageShell({ lang: 'en', page: 'manage', title: 'Manage', cssHref: '/a.css', body: '' });
     expect(plain).not.toContain('rel="icon"');
+    expect(plain).toContain('<link rel="stylesheet" href="/a.css"></head>');
   });
 });

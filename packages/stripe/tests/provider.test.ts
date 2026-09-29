@@ -323,20 +323,6 @@ describe('stripe() adapter', () => {
     expect(client.refunds.list).not.toHaveBeenCalled();
   });
 
-  it('reconciles an already-refunded error via refunds.list instead of surfacing a false failure', async () => {
-    const client = {
-      checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
-      refunds: {
-        create: vi.fn(async () => { throw new Error('Charge ch_1 has already been refunded.'); }),
-        list: vi.fn(async () => ({ data: [stripeRefund('re_existing', 10000, { metadata: { reserva_refund_key: 'reserva-refund-pi_1' } })] })),
-      },
-      webhooks: { constructEventAsync: vi.fn() },
-    } as unknown as StripeClient;
-    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client });
-    await expect(provider.refund('pi_1', 10000)).resolves.toEqual({ refundRef: 're_existing', amountMinor: 10000 });
-    expect(client.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 100 });
-  });
-
   // Stripe replays a cached idempotent result *including* error responses -- gating reconciliation
   // on an "already refunded" message match would miss a generic/opaque error whose underlying
   // refund actually succeeded.

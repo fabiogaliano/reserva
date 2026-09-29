@@ -10,22 +10,13 @@ const payments = {
 };
 
 describe('Cloudflare runtime bindings', () => {
-  it('loads D1 from cloudflare:workers without legacy Astro locals', async () => {
+  it('resolves D1 and caches.default from cloudflare:workers when no Astro locals or RESERVA_CACHE binding is given', async () => {
     const runtime = defineCloudflareReservaRuntime({ providers: { payments } });
     const context = await runtime.createContext({
       request: new Request('https://example.test/api/booking/status'),
     });
 
     expect(context.db).toBe((env as unknown as { RESERVA_DB: D1Database }).RESERVA_DB);
-    expect(context.repo).toBeDefined();
-  });
-
-  it('falls back to the Workers caches.default when no RESERVA_CACHE binding is configured', async () => {
-    const runtime = defineCloudflareReservaRuntime({ providers: { payments } });
-    const context = await runtime.createContext({
-      request: new Request('https://example.test/api/booking/status'),
-    });
-
     // The repo's DOM lib types `caches` as browser CacheStorage, which has no Workers `default`.
     const workerCaches = caches as unknown as { default: unknown };
     expect(context.cache).toBeDefined();

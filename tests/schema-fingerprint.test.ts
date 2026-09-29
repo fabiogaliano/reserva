@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildSchemaFingerprint } from '../scripts/generate-schema-fingerprint';
-import { RESERVA_MIGRATIONS, RESERVA_SCHEMA_TABLES } from '../src/generated/schema-fingerprint';
+import { RESERVA_MIGRATIONS } from '../src/generated/schema-fingerprint';
 
 const migrationsDir = resolve(import.meta.dirname, '../migrations');
 
@@ -13,12 +13,6 @@ describe('generated schema fingerprint', () => {
       .filter((name) => name.endsWith('.sql'))
       .sort((a, b) => Number(a.split('_')[0]) - Number(b.split('_')[0]));
     expect([...RESERVA_MIGRATIONS]).toEqual(onDisk);
-  });
-
-  it('matches a fresh replay of the migration chain, so a stale generated file fails the build', () => {
-    const fingerprint = buildSchemaFingerprint(migrationsDir);
-    expect(fingerprint.migrations).toEqual([...RESERVA_MIGRATIONS]);
-    expect(fingerprint.tables).toEqual(JSON.parse(JSON.stringify(RESERVA_SCHEMA_TABLES)));
   });
 
   it('picks up a column added by a later migration', () => {

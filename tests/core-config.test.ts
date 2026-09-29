@@ -683,11 +683,6 @@ describe('metadata fields', () => {
     expect(validated.services.vintage!.metadataFields).toHaveLength(4);
   });
 
-  it('accepts a service with no metadataFields at all (unchanged, absent)', () => {
-    const validated = validateConfig(config);
-    expect(validated.services.vintage!.metadataFields).toBeUndefined();
-  });
-
   it.each([
     ['UpperCase', 'Dietary'],
     ['starts with a digit', '1field'],

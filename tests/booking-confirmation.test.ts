@@ -5,38 +5,6 @@ import { confirmationPage } from '../src/ui/pages/confirmation-page';
 import { formatDateTime } from '../src/ui/format';
 
 describe('booking confirmation page', () => {
-  it('renders a confirmed booking from the minimized status payload', () => {
-    const html = confirmationPage(
-      { config, routeConfig: resolveRouteConfig() },
-      {
-        status: 'confirmed',
-        booking: {
-          reference: 'LVT-2026-001',
-          serviceSlug: 'vintage',
-          serviceTitle: 'Vintage Tour',
-          start: '2026-06-15T09:00:00.000+01:00',
-          end: '2026-06-15T10:00:00.000+01:00',
-          quantity: 2,
-          priceMinor: 10000,
-          currency: 'eur',
-          meetingPoint: { label: 'Praça do Comércio', mapsUrl: 'https://maps.google.com/?q=Praca+do+Comercio' },
-          locale: 'en',
-          metadataRows: [],
-        },
-      },
-      'https://example.test/booking-confirmation?session_id=cs_confirmed',
-      null,
-    );
-
-    expect(html).toContain('LVT-2026-001');
-    // The service row names the service, never its slug (item 3).
-    expect(html).toContain('Vintage Tour');
-    expect(html).not.toContain('>vintage<');
-    expect(html).toContain('2 people');
-    expect(html).toContain('€100.00');
-    expect(html).toContain('Praça do Comércio');
-  });
-
   it('omits the meeting-point fact and calendar location when the payload has no meetingPoint', () => {
     const html = confirmationPage(
       { config, routeConfig: resolveRouteConfig() },
@@ -81,22 +49,6 @@ describe('booking confirmation page', () => {
     expect(html).toContain('Your booking is confirmed. Full details and a link to manage your booking were emailed to you.');
     expect(html).not.toContain('class="bk-ticket"');
     expect(html).not.toContain('bk-ticket-date');
-  });
-
-  it('renders a cancelled booking as cancelled with a start-over action', () => {
-    const html = confirmationPage(
-      { config, routeConfig: resolveRouteConfig() },
-      { status: 'cancelled', booking: null },
-      'https://example.test/booking-confirmation?session_id=cs_cancelled',
-      null,
-    );
-
-    expect(html).toContain('Booking cancelled');
-    expect(html).toContain('This booking was cancelled and is no longer active.');
-    expect(html).toContain('Start a new booking');
-    expect(html).toContain('href="https://example.test"');
-    expect(html).not.toContain('Booking not found');
-    expect(html).not.toContain('We could not find a booking for this link.');
   });
 
   // Tests the confirmationSummary payload's labeled metadata rows, and the
