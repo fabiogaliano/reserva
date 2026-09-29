@@ -43,6 +43,23 @@ async function seedConfirmed(id: string): Promise<void> {
   expect(confirmed).toMatchObject({ status: 'confirmed' });
 }
 
+// Capacity is left ample so a null from rescheduleWithCapacity can only mean its CAS lost.
+function rescheduleTo(expectedStartsAt: string, updatedAt: string) {
+  return {
+    expectedStatus: 'confirmed' as const,
+    expectedStartsAt,
+    startsAt: '2026-08-02T09:00:00.000Z',
+    endsAt: '2026-08-02T10:00:00.000Z',
+    rescheduledFrom: expectedStartsAt,
+    updatedAt,
+    now: updatedAt,
+    occupancyUnits: 1,
+    occupancyEndsAt: '2026-08-02T10:00:00.000Z',
+    localDate: '2026-08-02',
+    defaultCapacity: 10,
+  };
+}
+
 describe('pairwise CAS interleavings on real D1', () => {
   it('cancel vs no-show: cancel wins first, the racing no-show loses and cannot leave a no_show row with cancelled_by set', async () => {
     const id = 'cas-cancel-vs-noshow-a';
@@ -109,14 +126,7 @@ describe('pairwise CAS interleavings on real D1', () => {
     });
     expect(winner).toMatchObject({ status: 'cancelled' });
 
-    const loser = await repo.transitionReschedule(id, {
-      expectedStatus: 'confirmed',
-      expectedStartsAt: original.startsAt,
-      startsAt: '2026-08-02T09:00:00.000Z',
-      endsAt: '2026-08-02T10:00:00.000Z',
-      rescheduledFrom: original.startsAt,
-      updatedAt: '2026-07-21T11:00:01.000Z',
-    });
+    const loser = await repo.rescheduleWithCapacity(id, rescheduleTo(original.startsAt, '2026-07-21T11:00:01.000Z'));
     expect(loser).toBeNull();
 
     const final = await repo.getBookingById(id);
@@ -133,14 +143,7 @@ describe('pairwise CAS interleavings on real D1', () => {
     const original = await repo.getBookingById(id);
     if (!original) throw new Error('seed missing');
 
-    const winner = await repo.transitionReschedule(id, {
-      expectedStatus: 'confirmed',
-      expectedStartsAt: original.startsAt,
-      startsAt: '2026-08-02T09:00:00.000Z',
-      endsAt: '2026-08-02T10:00:00.000Z',
-      rescheduledFrom: original.startsAt,
-      updatedAt: '2026-07-21T11:00:00.000Z',
-    });
+    const winner = await repo.rescheduleWithCapacity(id, rescheduleTo(original.startsAt, '2026-07-21T11:00:00.000Z'));
     expect(winner).toMatchObject({ status: 'confirmed', startsAt: '2026-08-02T09:00:00.000Z' });
 
     // The stale cancel still carries the pre-reschedule starts_at, mirroring what an HTTP

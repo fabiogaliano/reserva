@@ -52,6 +52,25 @@ describe('D1 booking repository', () => {
     await expect(repo.getBookingById(created.id)).resolves.toMatchObject({ status: 'expired', holdExpiresAt: null });
   });
 
+  // insertHoldWithCapacity is the checkout path; its per-IP cap is a separate WHERE clause from
+  // insertHold's, plus a post-failure reclassification that must throw rather than report a
+  // capacity loss. Capacity is ample so only the cap can refuse the second hold.
+  it('refuses a second active hold from the same IP through insertHoldWithCapacity once the per-IP cap is reached', async () => {
+    const hold = (id: string, holdIp: string, createdAt: string) => repo.insertHoldWithCapacity({
+      id, reference: `BKT-2026-${id}`, serviceSlug: 'vintage', quantity: 1, pickupType: 'default',
+      startsAt: '2026-08-01T13:00:00.000Z', endsAt: '2026-08-01T14:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
+      holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: `cancel-${id}`, operatorToken: `operator-${id}`,
+      holdIp, maxActiveHoldsForIp: 1,
+      occupancyUnits: 1, occupancyEndsAt: '2026-08-01T14:00:00.000Z', localDate: '2026-08-01', defaultCapacity: 10,
+      createdAt, updatedAt: createdAt,
+    });
+
+    await expect(hold('ip-cap-first', '203.0.113.1', '2026-07-21T10:00:00.000Z')).resolves.toMatchObject({ status: 'hold' });
+    await expect(hold('ip-cap-over', '203.0.113.1', '2026-07-21T10:00:01.000Z')).rejects.toBeInstanceOf(HoldLimitExceededError);
+    await expect(hold('ip-cap-other-ip', '203.0.113.2', '2026-07-21T10:00:02.000Z')).resolves.toMatchObject({ status: 'hold' });
+    await expect(repo.getBookingById('ip-cap-over')).resolves.toBeNull();
+  });
+
   it('serializes confirmation leases and expires holds with compare-and-set semantics', async () => {
     const created = await repo.insertHold({
       id: 'booking-lease',
@@ -67,31 +86,9 @@ describe('D1 booking repository', () => {
       holdExpiresAt: '2026-07-21T10:35:00.000Z',
       cancelToken: 'cancel-token-lease',
       operatorToken: 'operator-token-lease',
-      holdIp: '203.0.113.1',
-      maxActiveHoldsForIp: 1,
       createdAt: '2026-07-21T10:00:00.000Z',
       updatedAt: '2026-07-21T10:00:00.000Z',
     });
-
-    await expect(repo.insertHold({
-      id: 'booking-over-limit',
-      reference: 'BKT-2026-003',
-      serviceSlug: 'vintage',
-      quantity: 1,
-      pickupType: 'default',
-      startsAt: '2026-08-01T13:00:00.000Z',
-      endsAt: '2026-08-01T14:00:00.000Z',
-      locale: 'en',
-      priceMinor: 12000,
-      currency: 'eur',
-      holdExpiresAt: '2026-07-21T10:35:00.000Z',
-      cancelToken: 'cancel-token-over-limit',
-      operatorToken: 'operator-token-over-limit',
-      holdIp: '203.0.113.1',
-      maxActiveHoldsForIp: 1,
-      createdAt: '2026-07-21T10:00:01.000Z',
-      updatedAt: '2026-07-21T10:00:01.000Z',
-    })).rejects.toBeInstanceOf(HoldLimitExceededError);
 
     const claims = await Promise.all([
       repo.acquireConfirmationLease(created.id, 'lease-a', '2026-07-21T10:00:00.000Z', '2026-07-21T10:05:00.000Z'),
@@ -105,6 +102,44 @@ describe('D1 booking repository', () => {
     await repo.transitionToConfirmed(created.id, { expectedStatusIn: ['hold'], updatedAt: '2026-07-21T10:01:00.000Z' });
     await expect(repo.expireHold(created.id, '2026-07-21T10:02:00.000Z')).resolves.toBeNull();
     await expect(repo.getBookingById(created.id)).resolves.toMatchObject({ status: 'confirmed' });
+  });
+
+  // A confirmer that stalls past its lease must not write outcomes once another caller has taken
+  // the lease over; only the SQL token predicates enforce that, so it is proven here on real D1.
+  it('fences an expired lease holder\'s late calendar claim and resolve after another caller takes the lease over', async () => {
+    const created = await repo.insertHold({
+      id: 'booking-lease-fence', reference: 'BKT-2026-FENCE', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
+      startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
+      holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'cancel-token-fence', operatorToken: 'operator-token-fence',
+      createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
+    });
+    const calendar: SideEffectOperationIdentity = { family: 'calendar_create' };
+    await expect(repo.acquireConfirmationLease(created.id, 'lease-a', '2026-07-21T10:00:00.000Z', '2026-07-21T10:05:00.000Z')).resolves.toBe(true);
+    await expect(repo.confirmWithSideEffectOperations(created.id, {
+      expectedStatusIn: ['hold'], leaseToken: 'lease-a', oversold: false, updatedAt: '2026-07-21T10:01:00.000Z',
+    })).resolves.toMatchObject({ status: 'confirmed' });
+    await expect(repo.claimSideEffectOperation(created.id, calendar, 'lease-a', '2026-07-21T10:01:00.000Z')).resolves.toBe(1);
+
+    await expect(repo.acquireConfirmationLease(created.id, 'lease-b', '2026-07-21T10:04:00.000Z', '2026-07-21T10:09:00.000Z')).resolves.toBe(false);
+    await expect(repo.acquireConfirmationLease(created.id, 'lease-b', '2026-07-21T10:06:00.000Z', '2026-07-21T10:11:00.000Z')).resolves.toBe(true);
+    await expect(repo.renewConfirmationLease(created.id, 'lease-a', '2026-07-21T10:06:01.000Z', '2026-07-21T10:11:01.000Z')).resolves.toBe(false);
+    await expect(repo.claimSideEffectOperation(created.id, calendar, 'lease-b', '2026-07-21T10:06:02.000Z')).resolves.toBe(2);
+
+    await expect(repo.claimSideEffectOperation(created.id, calendar, 'lease-a', '2026-07-21T10:06:03.000Z')).resolves.toBeNull();
+    await expect(repo.resolveSideEffectOperation({
+      bookingId: created.id, identity: calendar, leaseToken: 'lease-a', status: 'succeeded',
+      providerResultId: 'event-from-a', resolvedAt: '2026-07-21T10:06:04.000Z',
+    })).resolves.toBe(false);
+    await expect(repo.getBookingById(created.id)).resolves.toMatchObject({ calendarEventId: null });
+
+    await expect(repo.resolveSideEffectOperation({
+      bookingId: created.id, identity: calendar, leaseToken: 'lease-b', status: 'succeeded',
+      providerResultId: 'event-from-b', resolvedAt: '2026-07-21T10:06:05.000Z',
+    })).resolves.toBe(true);
+    await expect(repo.getBookingById(created.id)).resolves.toMatchObject({ calendarEventId: 'event-from-b' });
+    await expect(repo.listSideEffectOperations(created.id)).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ family: 'calendar_create', status: 'succeeded', attemptCount: 2, providerResultId: 'event-from-b' }),
+    ]));
   });
 
   it('rolls back the confirmation status when creating its outbox rows fails inside the same batch', async () => {
@@ -587,7 +622,7 @@ describe('D1 booking repository', () => {
       await expect(repo.getBookingByCancelToken('legacy-active-cancel-token', now)).resolves.toMatchObject({ id: 'booking-legacy-active-1' });
     });
 
-    // tokens_expire_at must move with the booking on reschedule (both repo entry points) —
+    // tokens_expire_at must move with the booking on reschedule —
     // otherwise a booking moved later could have its manage link expire before the rescheduled
     // service, and one moved earlier would keep an over-long window relative to its new end.
     it('rescheduleWithCapacity moves tokens_expire_at to (new endsAt + tokenExpiryDays) on both a later and an earlier reschedule, and leaves it untouched when the caller omits it', async () => {
@@ -637,36 +672,6 @@ describe('D1 booking repository', () => {
       });
       expect(untouched).not.toBeNull();
       await expect(readExpiry()).resolves.toBe(earlierExpiry);
-    });
-
-    it('transitionReschedule also moves tokens_expire_at to the caller-supplied value, and leaves it untouched when omitted', async () => {
-      const created = await repo.insertHold({
-        id: 'booking-reschedule-expiry-2', reference: 'BKT-2026-RESCHEXP2', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
-        startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
-        holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'plain-resched-cancel', operatorToken: 'plain-resched-operator',
-        tokensExpireAt: '2026-08-11T10:00:00.000Z',
-        createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
-      });
-      await repo.transitionToConfirmed(created.id, { expectedStatusIn: ['hold'], updatedAt: '2026-07-21T10:01:00.000Z' });
-      const readExpiry = async () => (await db.prepare('SELECT tokens_expire_at FROM bookings WHERE id = ?').bind(created.id).all<{ tokens_expire_at: string }>()).results[0]?.tokens_expire_at;
-
-      const newExpiry = '2026-08-12T11:00:00.000Z';
-      const moved = await repo.transitionReschedule(created.id, {
-        expectedStatus: 'confirmed', expectedStartsAt: '2026-08-01T09:00:00.000Z',
-        startsAt: '2026-08-01T10:00:00.000Z', endsAt: '2026-08-01T11:00:00.000Z',
-        rescheduledFrom: '2026-08-01T09:00:00.000Z', updatedAt: '2026-07-21T10:02:00.000Z',
-        tokensExpireAt: newExpiry,
-      });
-      expect(moved).not.toBeNull();
-      await expect(readExpiry()).resolves.toBe(newExpiry);
-
-      const untouched = await repo.transitionReschedule(created.id, {
-        expectedStatus: 'confirmed', expectedStartsAt: '2026-08-01T10:00:00.000Z',
-        startsAt: '2026-08-01T11:00:00.000Z', endsAt: '2026-08-01T12:00:00.000Z',
-        rescheduledFrom: '2026-08-01T10:00:00.000Z', updatedAt: '2026-07-21T10:03:00.000Z',
-      });
-      expect(untouched).not.toBeNull();
-      await expect(readExpiry()).resolves.toBe(newExpiry);
     });
 
     // Strengthens the dump-non-usability property beyond the cancel-token-only,
@@ -800,26 +805,30 @@ describe('mutation side-effect outbox on real D1', () => {
     ]);
   });
 
-  it('records outbox rows only for the winning transitionReschedule CAS on real D1', async () => {
-    await seedBooking('mutation-transition-reschedule');
-    await repo.transitionToConfirmed('mutation-transition-reschedule', {
+  it('records outbox rows only for the winning rescheduleWithCapacity CAS on real D1', async () => {
+    await seedBooking('mutation-reschedule');
+    await repo.transitionToConfirmed('mutation-reschedule', {
       expectedStatusIn: ['hold'], updatedAt: '2026-07-21T10:01:00.000Z',
     });
-    const original = await repo.getBookingById('mutation-transition-reschedule');
+    const original = await repo.getBookingById('mutation-reschedule');
     if (!original) throw new Error('seed booking missing');
+    // Capacity is ample, so the loser can only lose its stale expectedStartsAt CAS.
     const common = {
       expectedStatus: 'confirmed' as const, expectedStartsAt: original.startsAt,
-      rescheduledFrom: original.startsAt, updatedAt: '2026-07-21T10:02:00.000Z',
+      rescheduledFrom: original.startsAt, updatedAt: '2026-07-21T10:02:00.000Z', now: '2026-07-21T10:02:00.000Z',
+      occupancyUnits: 1, defaultCapacity: 10,
       mutationSideEffects: [{
         family: 'email', event: 'booking.rescheduled', eventPayloadJson: null, eventIdPrefix: null,
       }] satisfies SideEffectOperationSeed[],
     };
 
-    const winner = await repo.transitionReschedule(original.id, {
+    const winner = await repo.rescheduleWithCapacity(original.id, {
       ...common, startsAt: '2026-08-02T09:00:00.000Z', endsAt: '2026-08-02T10:00:00.000Z',
+      occupancyEndsAt: '2026-08-02T10:00:00.000Z', localDate: '2026-08-02',
     });
-    const loser = await repo.transitionReschedule(original.id, {
+    const loser = await repo.rescheduleWithCapacity(original.id, {
       ...common, startsAt: '2026-08-03T09:00:00.000Z', endsAt: '2026-08-03T10:00:00.000Z',
+      occupancyEndsAt: '2026-08-03T10:00:00.000Z', localDate: '2026-08-03',
     });
 
     expect(winner).toMatchObject({ startsAt: '2026-08-02T09:00:00.000Z' });

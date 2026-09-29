@@ -654,22 +654,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       return true;
     },
     sideEffectOperations,
-    transitionReschedule: async (id, input) => {
-      const current = rows.get(id);
-      if (!current || current.status !== input.expectedStatus || current.startsAt !== input.expectedStartsAt) return null;
-      const updated: Booking = { ...current, startsAt: input.startsAt, endsAt: input.endsAt, rescheduledFrom: input.rescheduledFrom, updatedAt: input.updatedAt };
-      rows.set(id, updated);
-      const version = (rescheduleTransitionVersions.get(id) ?? 0) + 1;
-      rescheduleTransitionVersions.set(id, version);
-      recordMutationSeeds(id, input.mutationSideEffects, input.updatedAt, version);
-      // Mirrors src/repo.ts's COALESCE(?, tokens_expire_at) — the real
-      // repo binds `input.tokensExpireAt ?? null`, so both an omitted field and an explicit null
-      // fall through to COALESCE's "keep the existing value" branch; only a real string moves it.
-      const state = tokenState.get(id);
-      if (state && input.tokensExpireAt != null) state.tokensExpireAt = input.tokensExpireAt;
-      return hydrateBooking(updated);
-    },
-    // Mirrors src/repo.ts's rescheduleWithCapacity: transitionReschedule's CAS plus the same
+    // Mirrors src/repo.ts's rescheduleWithCapacity: the status + starts_at CAS plus the same
     // max-concurrency guard as insertHoldWithCapacity, excluding this booking's own id so a move
     // within a window it already occupies isn't counted against itself. Capacity resolves first,
     // then CAS + decision + write run as one synchronous block, closing the race where two
@@ -683,7 +668,9 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       const updated: Booking = { ...current, startsAt: input.startsAt, endsAt: input.endsAt, rescheduledFrom: input.rescheduledFrom, updatedAt: input.updatedAt };
       rows.set(id, updated);
       occupancyMeta.set(id, { units: input.occupancyUnits, endsAt: input.occupancyEndsAt });
-      // See the identical comment in transitionReschedule above.
+      // Mirrors src/repo.ts's COALESCE(?, tokens_expire_at) — the real
+      // repo binds `input.tokensExpireAt ?? null`, so both an omitted field and an explicit null
+      // fall through to COALESCE's "keep the existing value" branch; only a real string moves it.
       const state = tokenState.get(id);
       if (state && input.tokensExpireAt != null) state.tokensExpireAt = input.tokensExpireAt;
       const version = (rescheduleTransitionVersions.get(id) ?? 0) + 1;
@@ -859,23 +846,6 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     deleteRefundOperation: async (id) => {
       const entry = [...refundOperations.entries()].find(([, operation]) => operation.id === id && operation.status === 'requested');
       if (entry) refundOperations.delete(entry[0]);
-    },
-    upsertRefundOperation: async (input) => {
-      const current = refundOperations.get(input.bookingId);
-      if (current?.status === 'succeeded') {
-        refundOperations.set(input.bookingId, { ...current, resolvedAt: input.resolvedAt });
-        return;
-      }
-      refundOperations.set(input.bookingId, {
-        id: current?.id ?? input.id, bookingId: input.bookingId, paymentIntent: input.paymentIntent,
-        choice: input.choice, status: input.status, stripeRefundId: input.stripeRefundId,
-        amountCents: input.amountCents, requestedAmountCents: input.requestedAmountCents ?? null,
-        requestedAt: current?.requestedAt ?? input.requestedAt,
-        resolvedAt: input.resolvedAt, error: input.error ?? null,
-        executionClaimToken: current?.executionClaimToken ?? null, executionClaimUntil: current?.executionClaimUntil ?? null,
-        attemptCount: current?.attemptCount ?? 0, attemptedAt: current?.attemptedAt ?? null,
-        failureStartedAt: current?.failureStartedAt ?? null, nextAttemptAt: current?.nextAttemptAt ?? null,
-      });
     },
     reconcileStripeRefundOperation: async (input) => {
       const current = refundOperations.get(input.bookingId);

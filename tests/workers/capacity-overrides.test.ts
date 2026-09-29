@@ -120,9 +120,7 @@ describe('plural batched day-override methods against real D1', () => {
     ]);
   });
 
-  // Proves the change AND its per-date admin_change_history rows actually land together
-  // against real D1 — the unit-level fakeD1 test (tests/repo.test.ts) proves the mechanism (one
-  // db.batch() call); this proves the mechanism's real-D1 effect.
+  // Rollback of a failed half is proven in tests/workers/admin-history.test.ts.
   it('upsertDayOverrides writes one admin_change_history row per date, atomically with the day_overrides rows', async () => {
     const dates = ['2026-08-01', '2026-08-02'];
     await repo.upsertDayOverrides(dates, 2, 'batched history', TEST_AUDIT);

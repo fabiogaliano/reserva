@@ -83,7 +83,7 @@ describe('refund_operations concurrent claim uniqueness on real D1', () => {
     expect(stored?.choice).toBe('full');
   });
 
-  it('resolveRefundOperation records the Stripe outcome by operation id, and upsertRefundOperation reconciles a Stripe-initiated refund without clobbering requested_at', async () => {
+  it('resolveRefundOperation records the Stripe outcome by operation id', async () => {
     const id = 'refund-resolve-upsert';
     await seedConfirmed(id);
 
@@ -91,18 +91,8 @@ describe('refund_operations concurrent claim uniqueness on real D1', () => {
     expect(claimed).toBe(true);
 
     await repo.resolveRefundOperation('op-resolve', { status: 'succeeded', stripeRefundId: 're_1', amountCents: 12000, resolvedAt: '2026-07-21T11:00:05.000Z' });
-    let stored = await repo.getRefundOperationByBookingId(id);
+    const stored = await repo.getRefundOperationByBookingId(id);
     expect(stored).toMatchObject({ status: 'succeeded', stripeRefundId: 're_1', amountCents: 12000, requestedAt: '2026-07-21T11:00:00.000Z' });
-
-    // A later charge.refunded webhook (e.g. a dashboard-initiated reconciliation) upserts onto
-    // the same row instead of creating a second one, and must not overwrite requested_at.
-    await repo.upsertRefundOperation({
-      id: 'op-webhook', bookingId: id, paymentIntent: `pi_${id}`, choice: 'full', status: 'succeeded',
-      stripeRefundId: 're_1', amountCents: 12000, requestedAt: '2026-07-21T12:00:00.000Z', resolvedAt: '2026-07-21T12:00:00.000Z',
-    });
-    stored = await repo.getRefundOperationByBookingId(id);
-    expect(stored?.requestedAt).toBe('2026-07-21T11:00:00.000Z');
-    expect(stored?.resolvedAt).toBe('2026-07-21T12:00:00.000Z');
   });
 
   it('deleteRefundOperation cannot destroy a succeeded row', async () => {
@@ -134,23 +124,6 @@ describe('refund_operations concurrent claim uniqueness on real D1', () => {
     await expect(repo.getRefundOperationByBookingId(id)).resolves.toBeNull();
   });
 
-  it('upsertRefundOperation never regresses an already-succeeded row', async () => {
-    const id = 'refund-upsert-non-regressing';
-    await seedConfirmed(id);
-
-    const claimed = await repo.claimRefundOperation({ id: 'op-upsert-non-regress', bookingId: id, paymentIntent: `pi_${id}`, choice: 'full', requestedAt: '2026-07-21T11:00:00.000Z' });
-    expect(claimed).toBe(true);
-    await repo.resolveRefundOperation('op-upsert-non-regress', { status: 'succeeded', stripeRefundId: 're_original', amountCents: 12000, resolvedAt: '2026-07-21T11:00:05.000Z' });
-
-    await repo.upsertRefundOperation({
-      id: 'op-webhook-stale', bookingId: id, paymentIntent: null, choice: 'none', status: 'failed',
-      stripeRefundId: null, amountCents: null, requestedAt: '2026-07-21T12:00:00.000Z', resolvedAt: '2026-07-21T12:00:00.000Z', error: 'stale data',
-    });
-
-    const stored = await repo.getRefundOperationByBookingId(id);
-    expect(stored).toMatchObject({ id: 'op-upsert-non-regress', paymentIntent: `pi_${id}`, choice: 'full', status: 'succeeded', stripeRefundId: 're_original', amountCents: 12000, error: null });
-  });
-
   // resolveRefundOperation must be non-regressing against real D1 — a
   // succeeded row (e.g. already recorded by the charge.refunded webhook) can never be downgraded
   // to 'failed' or have its refund id/amount cleared by a later, stale operator-side attempt.
@@ -168,7 +141,7 @@ describe('refund_operations concurrent claim uniqueness on real D1', () => {
 
     await expect(repo.getRefundOperationByBookingId(id)).resolves.toMatchObject({
       id: 'op-none', choice: 'full', status: 'succeeded', paymentIntent: `pi_${id}`,
-      stripeRefundId: 're_authoritative', amountCents: 12000,
+      stripeRefundId: 're_authoritative', amountCents: 12000, requestedAt: '2026-07-21T11:00:00.000Z',
     });
   });
 

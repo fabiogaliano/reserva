@@ -483,20 +483,7 @@ export interface BookingRepository {
   // other seed rides the transition batch that owes it; this one has none, so the row itself is
   // the record and a plain conflict-free insert is enough.
   recordBookingEventOperations(bookingId: string, seeds: SideEffectOperationSeed[], now: string): Promise<void>;
-  transitionReschedule(id: string, input: {
-    expectedStatus: BookingStatus;
-    expectedStartsAt: string;
-    startsAt: string;
-    endsAt: string;
-    rescheduledFrom: string;
-    updatedAt: string;
-    // Recomputed from the new endsAt so a booking moved later doesn't have its manage link
-    // expire before the rescheduled service happens (and one moved earlier doesn't keep an
-    // over-long window). Optional: omitting it leaves tokens_expire_at untouched via COALESCE.
-    tokensExpireAt?: string | null;
-    mutationSideEffects?: SideEffectOperationSeed[];
-  }): Promise<Booking | null>;
-  // Extends transitionReschedule's CAS with the same capacity guard as insertHoldWithCapacity,
+  // A status + starts_at CAS with the same capacity guard as insertHoldWithCapacity,
   // excluding this booking's own current occupancy so moving into a window it already partly
   // occupies isn't double-counted. Returns null on either a CAS loss or a capacity loss.
   rescheduleWithCapacity(id: string, input: {
@@ -507,6 +494,9 @@ export interface BookingRepository {
     rescheduledFrom: string;
     updatedAt: string;
     now: string;
+    // Recomputed from the new endsAt so a booking moved later doesn't have its manage link
+    // expire before the rescheduled service happens (and one moved earlier doesn't keep an
+    // over-long window). Optional: omitting it leaves tokens_expire_at untouched via COALESCE.
     tokensExpireAt?: string | null;
     // Reschedule rows receive the incremented per-booking transition version in the same batch,
     // so a repeated A→B hop cannot collide with an earlier one.
@@ -579,9 +569,6 @@ export interface BookingRepository {
   // winner, so it can't block a later legitimate cancellation. A succeeded row is retained: it's
   // the durable record that Stripe moved the money.
   deleteRefundOperation(id: string): Promise<void>;
-  // A non-authoritative upsert preserves any terminal outcome, so stale caller data cannot
-  // regress a recorded Stripe refund. Does not overwrite requested_at on an existing row.
-  upsertRefundOperation(input: RefundOperationUpsertInput): Promise<void>;
   // Only a verified charge.refunded webhook may correct an earlier none/succeeded audit row.
   reconcileStripeRefundOperation(input: RefundOperationUpsertInput): Promise<void>;
 
@@ -1179,25 +1166,6 @@ export function createBookingRepository(
     return { casPredicate, casParams, updateStmt };
   };
 
-  const refundOperationUpsertStmt = (input: RefundOperationUpsertInput) => db.prepare(
-    `INSERT INTO refund_operations (id, booking_id, payment_intent, choice, status, stripe_refund_id, amount_cents, requested_amount_cents, requested_at, resolved_at, error)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(booking_id) DO UPDATE SET
-       payment_intent = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.payment_intent ELSE excluded.payment_intent END,
-       choice = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.choice ELSE excluded.choice END,
-       status = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.status ELSE excluded.status END,
-       stripe_refund_id = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.stripe_refund_id ELSE excluded.stripe_refund_id END,
-       amount_cents = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.amount_cents ELSE excluded.amount_cents END,
-       -- Moves with choice on every branch, never independently: the table's CHECK rejects a
-       -- row whose decided amount and choice disagree.
-       requested_amount_cents = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.requested_amount_cents ELSE excluded.requested_amount_cents END,
-       resolved_at = excluded.resolved_at,
-       error = CASE WHEN refund_operations.status = 'succeeded' THEN refund_operations.error ELSE excluded.error END`,
-  ).bind(
-    input.id, input.bookingId, input.paymentIntent, input.choice, input.status,
-    input.stripeRefundId, input.amountCents, input.requestedAmountCents ?? null, input.requestedAt, input.resolvedAt, input.error ?? null,
-  );
-
   const stripeRefundReconciliationStmt = (input: RefundOperationUpsertInput) => db.prepare(
     `INSERT INTO refund_operations (id, booking_id, payment_intent, choice, status, stripe_refund_id, amount_cents, requested_amount_cents, requested_at, resolved_at, error)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1207,6 +1175,8 @@ export function createBookingRepository(
        status = CASE WHEN refund_operations.status = 'succeeded' AND refund_operations.choice = 'full' THEN refund_operations.status ELSE excluded.status END,
        stripe_refund_id = CASE WHEN refund_operations.status = 'succeeded' AND refund_operations.choice = 'full' THEN refund_operations.stripe_refund_id ELSE excluded.stripe_refund_id END,
        amount_cents = CASE WHEN refund_operations.status = 'succeeded' AND refund_operations.choice = 'full' THEN refund_operations.amount_cents ELSE excluded.amount_cents END,
+       -- Moves with choice on every branch, never independently: the table's CHECK rejects a
+       -- row whose decided amount and choice disagree.
        requested_amount_cents = CASE WHEN refund_operations.status = 'succeeded' AND refund_operations.choice = 'full' THEN refund_operations.requested_amount_cents ELSE excluded.requested_amount_cents END,
        resolved_at = excluded.resolved_at,
        error = CASE WHEN refund_operations.status = 'succeeded' AND refund_operations.choice = 'full' THEN refund_operations.error ELSE excluded.error END`,
@@ -1854,34 +1824,7 @@ export function createBookingRepository(
       ).run();
       return result.meta.changes > 0;
     },
-    async transitionReschedule(id, input) {
-      const casPredicate = 'id = ? AND status = ? AND starts_at = ?';
-      const casParams = [id, input.expectedStatus, input.expectedStartsAt];
-      // The version increment and its outbox suffix must share the CAS batch, so a loser cannot
-      // consume a version or leave delivery debt for a move that did not occur.
-      const updateStmt = db.prepare(
-        `UPDATE bookings SET starts_at = ?, ends_at = ?, rescheduled_from = ?, updated_at = ?,
-           tokens_expire_at = COALESCE(?, tokens_expire_at),
-           reschedule_transition_version = reschedule_transition_version + 1
-         WHERE ${casPredicate}`,
-      ).bind(
-        input.startsAt, input.endsAt, input.rescheduledFrom, input.updatedAt, input.tokensExpireAt ?? null,
-        ...casParams,
-      );
-      const seeds = input.mutationSideEffects ?? [];
-      if (seeds.length === 0) {
-        const result = await updateStmt.run();
-        if (result.meta.changes === 0) return null;
-        return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
-      }
-      const results = await db.batch([
-        mutationSideEffectInsert(id, seeds, input.updatedAt, casPredicate, casParams, true),
-        updateStmt,
-      ]);
-      if ((results[1]?.meta.changes ?? 0) === 0) return null;
-      return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
-    },
-    // transitionReschedule's CAS plus the same max-concurrency capacity guard as
+    // The status + starts_at CAS plus the same max-concurrency capacity guard as
     // insertHoldWithCapacity, with `id != ?` excluding this booking's own current row from both
     // the candidate points and the covering-sum subqueries — otherwise a move into a window this
     // booking already occupies would count itself against its own request.
@@ -1929,6 +1872,8 @@ export function createBookingRepository(
         input.occupancyUnits,
         input.localDate, input.localDate, input.defaultCapacity,
       ];
+      // The version increment and its outbox suffix must share the CAS batch, so a loser cannot
+      // consume a version or leave delivery debt for a move that did not occur.
       const updateStmt = db.prepare(
         `UPDATE bookings
          SET starts_at = ?, ends_at = ?, rescheduled_from = ?, occupancy_units = ?, occupancy_ends_at = ?, updated_at = ?,
@@ -2183,9 +2128,6 @@ export function createBookingRepository(
     },
     async deleteRefundOperation(id) {
       await db.prepare("DELETE FROM refund_operations WHERE id = ? AND status = 'requested'").bind(id).run();
-    },
-    async upsertRefundOperation(input) {
-      await refundOperationUpsertStmt(input).run();
     },
     async reconcileStripeRefundOperation(input) {
       await stripeRefundReconciliationStmt(input).run();
