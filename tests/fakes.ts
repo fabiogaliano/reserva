@@ -707,7 +707,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     // Mirrors src/repo.ts listLiveBookings — confirmed or unexpired holds starting in [from, before).
     listLiveBookings: async (from, before, now, limit) => [...rows.values()]
       .filter((item) => item.startsAt >= from && item.startsAt < before
-        && (item.status === 'confirmed' || (item.status === 'hold' && item.holdExpiresAt !== null && item.holdExpiresAt > now)))
+        && (item.status === 'confirmed' || (item.status === 'hold' && item.holdExpiresAt !== null && item.holdExpiresAt >= now)))
       .sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.id.localeCompare(b.id))
       .slice(0, limit)
       .map(hydrateBooking),

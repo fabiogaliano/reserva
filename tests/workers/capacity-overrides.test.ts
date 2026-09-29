@@ -185,15 +185,13 @@ describe('listLiveBookings against real D1', () => {
   const now = '2026-08-01T00:00:00.000Z';
   const before = '2026-09-01T00:00:00.000Z';
 
-  it('includes confirmed and live holds in [from, before), excludes an exactly-expired hold and rows outside the window, ordered by starts_at', async () => {
+  it('includes confirmed and live holds in [from, before), excludes an expired hold and rows outside the window, ordered by starts_at', async () => {
     await seedHold(repo, 'future-confirmed', '2026-08-05T09:00:00.000Z', '2026-08-05T10:00:00.000Z', '2026-12-31T00:00:00.000Z');
     await repo.transitionToConfirmed('future-confirmed', { expectedStatusIn: ['hold'], updatedAt: now });
 
     await seedHold(repo, 'live-hold', '2026-08-03T09:00:00.000Z', '2026-08-03T10:00:00.000Z', '2026-08-01T00:00:01.000Z');
 
-    // hold_expires_at exactly equal to now: the query's `hold_expires_at > ?` is strict, so this
-    // must be excluded, not a boundary-inclusive match.
-    await seedHold(repo, 'expired-hold', '2026-08-04T09:00:00.000Z', '2026-08-04T10:00:00.000Z', now);
+    await seedHold(repo, 'expired-hold', '2026-08-04T09:00:00.000Z', '2026-08-04T10:00:00.000Z', '2026-07-31T23:59:59.999Z');
 
     await seedHold(repo, 'past-confirmed', '2026-07-01T09:00:00.000Z', '2026-07-01T10:00:00.000Z', '2026-12-31T00:00:00.000Z');
     await repo.transitionToConfirmed('past-confirmed', { expectedStatusIn: ['hold'], updatedAt: now });

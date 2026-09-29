@@ -271,4 +271,16 @@ describe('atomic capacity allocation against real D1', () => {
       expect(after?.occupancy_ends_at).toBe(occupancyEndsAt(TARGET_END));
     });
   });
+  describe('hold expiry boundary', () => {
+    it('a hold whose expires_at == now is both counted by capacity and returned by listLiveBookings (admin day view hid it)', async () => {
+      const now = '2026-08-09T10:00:00.000Z';
+      const held = await repo.insertHoldWithCapacity({ ...buildHold('boundary-hold', TARGET_START, TARGET_END, 2, 1), holdExpiresAt: now });
+      expect(held).not.toBeNull();
+
+      await expect(repo.insertHoldWithCapacity(buildHold('boundary-rival', TARGET_START, TARGET_END, 2, 1, now))).resolves.toBeNull();
+      await expect(repo.sweepExpiredHolds(now)).resolves.toBe(0);
+      const live = await repo.listLiveBookings('2026-08-10T00:00:00.000Z', '2026-08-11T00:00:00.000Z', now, 10);
+      expect(live.map((booking) => booking.id)).toEqual(['boundary-hold']);
+    });
+  });
 });

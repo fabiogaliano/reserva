@@ -1992,7 +1992,7 @@ export function createBookingRepository(
     async listLiveBookings(from, before, now, limit) {
       const result = await db.prepare(
         `SELECT ${bookingColumns} FROM bookings
-         WHERE starts_at >= ? AND starts_at < ? AND (status = 'confirmed' OR (status = 'hold' AND hold_expires_at > ?))
+         WHERE starts_at >= ? AND starts_at < ? AND (status = 'confirmed' OR (status = 'hold' AND hold_expires_at >= ?))
          ORDER BY starts_at, id
          LIMIT ?`,
       ).bind(from, before, now, limit).all<BookingRow>();
