@@ -195,10 +195,6 @@ export interface PaymentProvider {
   validateConfig?(config: ResolvedClientConfig): void;
 }
 
-export function isBookingEvent(value: string): value is BookingEvent {
-  return (BOOKING_EVENTS as readonly string[]).includes(value);
-}
-
 export function isWebhookEvent(value: string): value is WebhookEvent {
   return (WEBHOOK_EVENTS as readonly string[]).includes(value);
 }

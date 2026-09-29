@@ -16,10 +16,6 @@ const THREE_DECIMAL_CURRENCIES = new Set([
 // one place that decides what a well-formed code looks like.
 export const CURRENCY_CODE_PATTERN = /^[a-z]{3}$/;
 
-export function isCurrencyCode(value: string): boolean {
-  return CURRENCY_CODE_PATTERN.test(value);
-}
-
 // How many minor units make one major unit of `currency`. Every hard-coded `/ 100` in Reserva goes
 // through here instead, so a zero-decimal deployment (JPY) cannot render a price 100x too small.
 export function minorUnitFactor(currency: string): number {

@@ -59,6 +59,3 @@ export function generateSlots(service: ResolvedServiceConfig, date: string, time
   }
   return [...byStart.values()].sort((left, right) => left.utcStart.localeCompare(right.utcStart));
 }
-
-export const generateSlotStarts = (service: ResolvedServiceConfig, date: string, timezone: string): string[] =>
-  generateSlots(service, date, timezone).map((slot) => slot.start);

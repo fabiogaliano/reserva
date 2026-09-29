@@ -187,20 +187,8 @@ export function addMinutes(value: string | Date, minutes: number): Date {
   return new Date(parseUtcInstant(value).getTime() + minutes * 60_000);
 }
 
-export function addMinutesIso(value: string | Date, minutes: number): string {
-  return addMinutes(value, minutes).toISOString();
-}
-
 export function compareInstants(left: string | Date, right: string | Date): number {
   return parseUtcInstant(left).getTime() - parseUtcInstant(right).getTime();
-}
-
-export function formatLocalDate(value: string | Date, timezone: string): string {
-  return localDateKey(value, timezone);
-}
-
-export function formatLocalTime(value: string | Date, timezone: string): string {
-  return utcToLocalDateTime(value, timezone).slice(11, 16);
 }
 
 export function addDaysToDateKey(date: string, days: number): string {

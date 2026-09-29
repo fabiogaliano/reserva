@@ -321,15 +321,6 @@ export function isSlotAvailable(
   return used + options.requestedUnits <= resolveCapacity(options.capacity);
 }
 
-export function slotRemaining(
-  slotStart: string | Date,
-  slotEnd: string | Date,
-  options: Omit<SlotAvailabilityOptions, 'requestedUnits'>,
-): number {
-  const end = addMinutes(slotEnd, options.turnaroundMin);
-  return remainingCapacity(options.capacity, options.intervals, slotStart, end);
-}
-
 // How many more bookings of this party size fit in the remaining capacity units — 3 units left
 // and a 2-unit party means room for 1 more, not 3. `occupancyFor` always returns a positive
 // integer, so this never divides by zero.
@@ -374,8 +365,8 @@ export function availabilityForDay(options: DayAvailabilityOptions): DayAvailabi
   const parsedIntervals = parseIntervals(intervals);
   const capacity = resolveCapacity(options.capacity);
   const turnaroundMs = options.service.turnaroundMin * 60_000;
-  // One occupancy maximum per slot answers both questions slotRemaining and isSlotAvailable asked
-  // separately over the same window: what is left, and whether this party fits in it.
+  // One occupancy maximum per slot answers both questions over the same window: what is left, and
+  // whether this party fits in it.
   const slots = candidates
     .filter((slot) => isWithinRequestWindow(slot, options, now))
     .flatMap((slot) => {
