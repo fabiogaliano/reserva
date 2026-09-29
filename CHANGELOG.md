@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.13.0
+
+### Minor Changes
+
+- 5b499ee: A new admin tab lists every field with `adminBadge: true` (a partner, a sales channel): each option, even with no bookings yet, with its **Upcoming** count (confirmed bookings still ahead) and **Past** count (confirmed and no-show bookings whose start has passed). Each count opens the bookings list for that value. The tab is named after the field, or "Tags" when several fields are tagged, and doesn't appear when none is.
+  
+  A select field can declare `adminOptionLink`, a URL with `{value}` in it, to show each option's link with a copy button on that tab, such as a partner's referral link.
+- 8db20d1: Every page Reserva renders (confirmation, `/booking/manage`, `/booking/admin`, admin settings) now sends a strict `Content-Security-Policy` header: only same-origin scripts, styles, images, fonts and requests, forms posting back to the site, and no embedding in frames.
+  
+  **Check this before upgrading if your `ui.headHtml`, `ui.faviconUrl` or `ui.branding.logoUrl` loads anything from another origin** (a font host, a CDN): the browser now blocks it. Set `ui.contentSecurityPolicy` to a policy that allows it, or to `false` to send no header and keep your own. See "Content-Security-Policy" in docs/customization.md.
+
 ## 0.12.0
 
 ### Minor Changes
