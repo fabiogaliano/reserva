@@ -211,8 +211,10 @@ describe('GET /admin listing (one window + status query)', () => {
     const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?when=past&q=Ana&status=cancelled&page=2&saved=day&date=2026-06-20&tab=upcoming`), context)).text();
     const state = 'when=past&amp;q=Ana&amp;status=cancelled&amp;page=2';
     expect(body).toContain(`href="?${state}&amp;date=2026-06-20&amp;tab=availability" data-reserva-admin-tab="availability"`);
-    expect(body).toContain(`href="?${state}&amp;tab=availability&amp;date=2026-06-21#bk-override"`);
     expect(body).not.toMatch(/href="[^"]*saved=/);
+    const calendar = await (await handleAdminGet(new Request(`${ADMIN_URL}?when=past&q=Ana&status=cancelled&page=2&saved=day&date=2026-06-20&tab=availability`), context)).text();
+    expect(calendar).toContain(`href="?${state}&amp;tab=availability&amp;date=2026-06-21#bk-override"`);
+    expect(calendar).not.toMatch(/href="[^"]*saved=/);
     // The period switch and status chips are links that mark the active choice; a search hides the
     // per-status counts, since they would describe the window rather than the matches.
     expect(body).toContain('href="?when=past&amp;q=Ana&amp;status=cancelled&amp;date=2026-06-20&amp;tab=upcoming#bk-upcoming" aria-current="true">Past</a>');
@@ -304,12 +306,13 @@ describe('GET /admin listing (one window + status query)', () => {
     const response = await handleAdminGet(adminGetRequest(), context);
     const body = await response.text();
 
-    // Tabs are ?tab= links so they work with scripting off; every panel is rendered and all but
-    // the current one carries [hidden].
+    // Tabs are ?tab= links, and only the current tab's panel is rendered: the others' queries and
+    // markup are paid only when their link is followed.
     expect(body).toContain('href="?tab=upcoming" data-reserva-admin-tab="upcoming" aria-current="page"');
     expect(body).toContain('href="?tab=availability" data-reserva-admin-tab="availability"');
     expect(body).toContain('<section class="bk-panel" id="bk-upcoming">');
-    expect(body).toContain('<section class="bk-panel" id="bk-availability" hidden>');
+    expect(body).not.toContain('id="bk-availability"');
+    expect(body).not.toContain('bk-monthgrid');
     // Top bar entries replace the page; tab links never do.
     expect(body).toContain('<nav class="bk-topbar-nav" aria-label="Admin navigation"><a href="/booking/admin" aria-current="page">');
     expect(body).toContain('href="/booking/admin?view=settings"');
@@ -320,7 +323,7 @@ describe('GET /admin listing (one window + status query)', () => {
 
     const byDate = await (await handleAdminGet(new Request(`${ADMIN_URL}?date=2026-06-20`), context)).text();
     expect(byDate).toContain('<section class="bk-panel" id="bk-availability">');
-    expect(byDate).toContain('<section class="bk-panel" id="bk-upcoming" hidden>');
+    expect(byDate).not.toContain('id="bk-upcoming"');
 
     const bySave = await (await handleAdminGet(new Request(`${ADMIN_URL}?saved=day`), context)).text();
     expect(bySave).toContain('<section class="bk-panel" id="bk-availability">');
@@ -427,7 +430,7 @@ describe('GET /admin listing (one window + status query)', () => {
     });
     const repo = fakeRepository([multiUnit]);
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers() });
-    const response = await handleAdminGet(adminGetRequest(), context);
+    const response = await handleAdminGet(new Request(`${ADMIN_URL}?tab=availability`), context);
     const body = await response.text();
     // One booking, two capacity units, capacity 2 (fixture's capacity.defaultCapacity) — the load
     // must read the unit count against capacity, not "1/2" (a raw booking count). It lives in the
@@ -489,7 +492,7 @@ describe('GET /admin listing (one window + status query)', () => {
   it('counts the calendar over the months it shows, independent of the list filters', async () => {
     const farOut = booking({ id: 'b-admin-far', reference: 'LVT-2026-320', startsAt: '2026-12-01T10:00:00.000Z', endsAt: '2026-12-01T11:00:00.000Z', operatorToken: 'op-far', cancelToken: 'cancel-far' });
     const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository([farOut]), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
-    const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?when=past&status=cancelled&month=2026-12`), context)).text();
+    const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?when=past&status=cancelled&month=2026-12&tab=availability`), context)).text();
     expect(body).toContain('"2026-12-01":[2,2,1,1,0]');
   });
 
@@ -511,9 +514,10 @@ describe('GET /admin listing (one window + status query)', () => {
     expect(later).toContain('data-month="2026-12"');
     expect(later).not.toContain('data-month="2026-06"');
     expect(later).toContain('href="?tab=availability&amp;month=2026-08" data-reserva-month-prev>Earlier months</a>');
-    // The seven-day glance still counts this week while the calendar shows December.
     expect(later).toContain('"2026-12-01":[2,2,1,1,0]');
-    expect(later).toMatch(/bk-glance[\s\S]*1 booking/);
+    // The seven-day glance on Upcoming counts this week whatever months the calendar last showed.
+    const upcoming = await (await handleAdminGet(new Request(`${ADMIN_URL}?month=2026-12`), context)).text();
+    expect(upcoming).toMatch(/bk-glance[\s\S]*1 booking/);
 
     // Editing a day outside the asked-for months moves the calendar to it, so its card has figures.
     const edited = await (await handleAdminGet(new Request(`${ADMIN_URL}?tab=availability&month=2026-06&date=2026-12-01`), context)).text();
@@ -531,7 +535,7 @@ describe('GET /admin listing (one window + status query)', () => {
 
     const roundTrip = await (await handleAdminGet(new Request(`${ADMIN_URL}?tab=upcoming&date=2026-06-20&q=&status=`), context)).text();
     expect(roundTrip).toContain('<section class="bk-panel" id="bk-upcoming">');
-    expect(roundTrip).toContain('<section class="bk-panel" id="bk-availability" hidden>');
+    expect(roundTrip).not.toContain('id="bk-availability"');
   });
 
   // The meeting-point sub-line only renders for a default pickup on a service that actually
@@ -1526,7 +1530,7 @@ describe('admin mutation origin + CSRF guard (src/admin-csrf.ts)', () => {
     const calls: string[] = [];
     repo.deleteDayOverrides = async (dates) => { calls.push(...dates); };
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
-    const getResponse = await handleAdminGet(adminGetRequest(), context);
+    const getResponse = await handleAdminGet(new Request(`${ADMIN_URL}?tab=availability`), context);
     const body = await getResponse.text();
     const match = /name="csrf_token" value="([^"]+)"/.exec(body);
     expect(match).not.toBeNull();
@@ -1645,7 +1649,7 @@ describe('admin CSRF layer 2 without RESERVA_CSRF_SECRET (layer 1 alone still bl
 
   it('the rendered admin form carries an empty csrf_token field rather than throwing', async () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers() });
-    const response = await handleAdminGet(adminGetRequest(), context);
+    const response = await handleAdminGet(new Request(`${ADMIN_URL}?tab=availability`), context);
     expect(response.status).toBe(200);
     const body = await response.text();
     expect(body).toContain('name="csrf_token" value=""');

@@ -47,6 +47,7 @@ import {
   adminTabs,
   adminTaggedFields,
   buildTagOverview,
+  currentTabFor,
   incidentRetryAvailable,
   incidentsSection,
   matchesAdminSearch,
@@ -280,45 +281,6 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
     // The day card always shows a day: the one asked for, or today.
     const dayDate = editDate || fromDate;
     const shown = calendarWindow(fromDate, toDate, validMonthOrEmpty(url.searchParams.get('month')?.trim() ?? ''), editDate);
-    const windowStart = localDayStartUtcIso(shown.from, timezone);
-    const windowEnd = localDayStartUtcIso(addDaysToDateKey(shown.to, 1), timezone);
-    const windowOccupancyFrom = new Date(parseUtcInstant(windowStart).getTime() - lookbackMinutes * 60_000).toISOString();
-    const [list, occupancyBookings, weekOccupancyBookings, detailRows, editDayBookings, overrides, capacityDefaults, holdRows] = await Promise.all([
-      loadBookingList(context, filters, todayStart),
-      // The calendar's own query: the shown months, independent of the list's window, filters and
-      // page, so a day's load never depends on what the list happens to show.
-      context.repo.listOccupancyBookings(windowOccupancyFrom, windowEnd),
-      shown.from <= weekTo ? Promise.resolve([]) : context.repo.listOccupancyBookings(occupancyFrom, localDayStartUtcIso(addDaysToDateKey(weekTo, 1), timezone)),
-      context.repo.listLiveBookings(windowStart, windowEnd, now, ADMIN_DAY_DETAIL_LIMIT + 1),
-      context.repo.listLiveBookings(localDayStartUtcIso(dayDate, timezone), localDayStartUtcIso(addDaysToDateKey(dayDate, 1), timezone), now, ADMIN_SELECTED_DAY_LIMIT),
-      context.repo.listDayOverrides(shown.from, shown.to),
-      context.repo.listCapacityDefaults(),
-      context.repo.listAdminBookings({ from: todayStart, status: 'hold' }, { order: 'asc', limit: ADMIN_HOLD_SCAN_LIMIT, offset: 0 }),
-    ]);
-    // Past the cap, the first date whose rows were cut off and every later one get no client-side
-    // detail; days before it are complete, because rows arrive in start order.
-    const cutoffRow = detailRows[ADMIN_DAY_DETAIL_LIMIT];
-    const detailBefore = cutoffRow ? localDateKey(cutoffRow.startsAt, timezone) : null;
-    const dayBookings = detailBefore === null
-      ? detailRows
-      : detailRows.slice(0, ADMIN_DAY_DETAIL_LIMIT).filter((booking) => localDateKey(booking.startsAt, timezone) < detailBefore);
-    // Rows arrive in start order, so the first match is the earliest. A sweep that has not run yet
-    // can leave a lapsed hold in 'hold', so the strip counts only holds still holding a place.
-    const tomorrow = addDaysToDateKey(fromDate, 1);
-    const liveHolds = holdRows.filter((booking) => booking.holdExpiresAt !== null && booking.holdExpiresAt > now);
-    const glance: AdminGlance = {
-      nextToday: dayBookings.find((booking) => localDateKey(booking.startsAt, timezone) === fromDate && booking.startsAt > now)?.startsAt ?? null,
-      firstTomorrow: dayBookings.find((booking) => localDateKey(booking.startsAt, timezone) === tomorrow)?.startsAt ?? null,
-      holds: liveHolds.length,
-      holdsExpireFirst: liveHolds.map((booking) => booking.holdExpiresAt as string).sort()[0] ?? null,
-    };
-    // Token decryption is per-row AES-GCM, so it happens once, here, for exactly the rows the page
-    // can emit a manage link for.
-    const emitted = [...new Map(
-      [...list.rows, ...dayBookings, ...editDayBookings].map((booking) => [booking.id, booking] as const),
-    ).values()];
-    const hydratedById = new Map((await context.repo.hydrateBookingTokens(emitted)).map((booking) => [booking.id, booking] as const));
-    const withTokens = (rows: Booking[]): Booking[] => rows.map((booking) => hydratedById.get(booking.id) ?? booking);
     const saved = url.searchParams.get('saved') ?? '';
     // An explicit ?tab wins; otherwise the URL's own shape picks the panel, so a day link, a
     // capacity save and an incident action all land the operator where they just acted.
@@ -329,30 +291,106 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
       : editDate || saved === 'day' || saved === 'default' ? 'availability'
       : 'upcoming';
     const taggedFields = adminTaggedFields(context.config);
-    const tagOverview = buildTagOverview(taggedFields, await Promise.all(taggedFields.map((field) => context.repo.countMetadataValues(field.key, now))));
     const messages = resolveMessages(context.config, adminLocaleFor(context.config));
     // incidentsSince is a fixed 30-day lookback from the render clock, not a config option.
     const incidentsSince = new Date(parseUtcInstant(now).getTime() - 30 * 86_400_000).toISOString();
-    const [openIncidents, openIncidentCount, resolvedIncidents, incidentCounts] = await Promise.all([
+    // The banner and the tab strip need the incident picture on every tab; the panel itself only
+    // on Attention.
+    const [openIncidents, openIncidentCount, incidentCounts, security] = await Promise.all([
       context.repo.listOpenIncidents(ADMIN_OPEN_INCIDENT_LIMIT),
       context.repo.countOpenIncidents(),
-      context.repo.listRecentResolvedIncidents(incidentsSince, 20),
       context.repo.countIncidentsSince(incidentsSince),
+      securityPosture(context),
     ]);
-    // A deployment-wide incident (reconciliation) has no booking, so it contributes no lookup. Only
-    // an open incident's card links to its booking, so only those rows pay for token decryption.
-    const incidentBookingIds = [...new Set([...openIncidents, ...resolvedIncidents]
-      .flatMap((incident) => (incident.bookingId === null ? [] : [incident.bookingId])))];
-    const found = (await Promise.all(incidentBookingIds.map((id) => context.repo.getBookingById(id))))
-      .filter((booking): booking is Booking => booking !== null);
-    const openBookingIds = new Set(openIncidents.map((incident) => incident.bookingId));
-    const hydratedIncidentBookings = await context.repo.hydrateBookingTokens(found.filter((booking) => openBookingIds.has(booking.id)));
-    const bookingById = new Map<string, Booking>([...found, ...hydratedIncidentBookings].map((booking) => [booking.id, booking] as const));
-    const incidentsHtml = securityWarningsSection(messages, await securityPosture(context))
-      + incidentsSection(context, messages, openIncidents, openIncidentCount, resolvedIncidents, incidentCounts, bookingById, csrfToken, saved);
+    const securityHtml = securityWarningsSection(messages, security);
+    const hasIncidents = Boolean(securityHtml) || openIncidents.length > 0 || incidentCounts.opened > 0 || incidentCounts.resolved > 0;
+    // Only the panel being shown is loaded and rendered: each one's queries, token decryption and
+    // markup were most of a dashboard load, and the tab links fetch the others.
+    const currentTab = currentTabFor(activeTab, hasIncidents, taggedFields.length > 0);
     const firstOpen = openIncidentCount === 1 ? openIncidents[0] : undefined;
+
+    const emptyList: AdminBookingList = { rows: [], total: 0, page: filters.page, pageSize: 0, searchScanLimit: null, statusCounts: null };
+    let list = emptyList;
+    let load = new Map<string, AdminDayLoad>();
+    let glance: AdminGlance = { nextToday: null, firstTomorrow: null, holds: 0, holdsExpireFirst: null };
+    let overrides: Awaited<ReturnType<ReservaContext['repo']['listDayOverrides']>> = [];
+    let capacityDefaults: Awaited<ReturnType<ReservaContext['repo']['listCapacityDefaults']>> = [];
+    let dayBookings: Booking[] = [];
+    let detailBefore: string | null = null;
+    let editDayBookings: Booking[] = [];
+    let tagCounts: Awaited<ReturnType<ReservaContext['repo']['countMetadataValues']>>[] = [];
+    let incidentsHtml = '';
+    let bannerBooking: Booking | null = null;
+
+    if (currentTab === 'upcoming') {
+      const tomorrow = addDaysToDateKey(fromDate, 1);
+      const tomorrowStart = localDayStartUtcIso(tomorrow, timezone);
+      const [listed, weekOccupancyBookings, [nextToday], [firstTomorrow], holdRows] = await Promise.all([
+        loadBookingList(context, filters, todayStart),
+        context.repo.listOccupancyBookings(occupancyFrom, localDayStartUtcIso(addDaysToDateKey(weekTo, 1), timezone)),
+        context.repo.listLiveBookings(now, tomorrowStart, now, 1),
+        context.repo.listLiveBookings(tomorrowStart, localDayStartUtcIso(addDaysToDateKey(tomorrow, 1), timezone), now, 1),
+        context.repo.listAdminBookings({ from: todayStart, status: 'hold' }, { order: 'asc', limit: ADMIN_HOLD_SCAN_LIMIT, offset: 0 }),
+      ]);
+      // Token decryption is per-row AES-GCM, so only the rows the list emits a manage link for pay it.
+      list = { ...listed, rows: await context.repo.hydrateBookingTokens(listed.rows) };
+      load = calendarLoadByDate(context.config, weekOccupancyBookings, fromDate, weekTo, now);
+      // A sweep that has not run yet can leave a lapsed hold in 'hold', so the strip counts only
+      // holds still holding a place.
+      const liveHolds = holdRows.filter((booking) => booking.holdExpiresAt !== null && booking.holdExpiresAt > now);
+      glance = {
+        nextToday: nextToday && nextToday.startsAt > now ? nextToday.startsAt : null,
+        firstTomorrow: firstTomorrow?.startsAt ?? null,
+        holds: liveHolds.length,
+        holdsExpireFirst: liveHolds.map((booking) => booking.holdExpiresAt as string).sort()[0] ?? null,
+      };
+    } else if (currentTab === 'availability') {
+      const windowStart = localDayStartUtcIso(shown.from, timezone);
+      const windowEnd = localDayStartUtcIso(addDaysToDateKey(shown.to, 1), timezone);
+      const windowOccupancyFrom = new Date(parseUtcInstant(windowStart).getTime() - lookbackMinutes * 60_000).toISOString();
+      const [occupancyBookings, detailRows, editDayRows, dayOverrides, defaults] = await Promise.all([
+        context.repo.listOccupancyBookings(windowOccupancyFrom, windowEnd),
+        context.repo.listLiveBookings(windowStart, windowEnd, now, ADMIN_DAY_DETAIL_LIMIT + 1),
+        context.repo.listLiveBookings(localDayStartUtcIso(dayDate, timezone), localDayStartUtcIso(addDaysToDateKey(dayDate, 1), timezone), now, ADMIN_SELECTED_DAY_LIMIT),
+        context.repo.listDayOverrides(shown.from, shown.to),
+        context.repo.listCapacityDefaults(),
+      ]);
+      // Past the cap, the first date whose rows were cut off and every later one get no client-side
+      // detail; days before it are complete, because rows arrive in start order.
+      const cutoffRow = detailRows[ADMIN_DAY_DETAIL_LIMIT];
+      detailBefore = cutoffRow ? localDateKey(cutoffRow.startsAt, timezone) : null;
+      const cutoff = detailBefore;
+      const detail = cutoff === null
+        ? detailRows
+        : detailRows.slice(0, ADMIN_DAY_DETAIL_LIMIT).filter((booking) => localDateKey(booking.startsAt, timezone) < cutoff);
+      const emitted = [...new Map([...detail, ...editDayRows].map((booking) => [booking.id, booking] as const)).values()];
+      const hydratedById = new Map((await context.repo.hydrateBookingTokens(emitted)).map((booking) => [booking.id, booking] as const));
+      dayBookings = detail.map((booking) => hydratedById.get(booking.id) ?? booking);
+      editDayBookings = editDayRows.map((booking) => hydratedById.get(booking.id) ?? booking);
+      load = calendarLoadByDate(context.config, occupancyBookings, shown.from, shown.to, now);
+      overrides = dayOverrides;
+      capacityDefaults = defaults;
+    } else if (currentTab === 'tags') {
+      tagCounts = await Promise.all(taggedFields.map((field) => context.repo.countMetadataValues(field.key, now)));
+    } else {
+      const resolvedIncidents = await context.repo.listRecentResolvedIncidents(incidentsSince, 20);
+      // A deployment-wide incident (reconciliation) has no booking, so it contributes no lookup. Only
+      // an open incident's card links to its booking, so only those rows pay for token decryption.
+      const incidentBookingIds = [...new Set([...openIncidents, ...resolvedIncidents]
+        .flatMap((incident) => (incident.bookingId === null ? [] : [incident.bookingId])))];
+      const found = (await Promise.all(incidentBookingIds.map((id) => context.repo.getBookingById(id))))
+        .filter((booking): booking is Booking => booking !== null);
+      const openBookingIds = new Set(openIncidents.map((incident) => incident.bookingId));
+      const hydratedIncidentBookings = await context.repo.hydrateBookingTokens(found.filter((booking) => openBookingIds.has(booking.id)));
+      const bookingById = new Map<string, Booking>([...found, ...hydratedIncidentBookings].map((booking) => [booking.id, booking] as const));
+      incidentsHtml = securityHtml
+        + incidentsSection(context, messages, openIncidents, openIncidentCount, resolvedIncidents, incidentCounts, bookingById, csrfToken, saved);
+    }
+    // The banner names the booking behind a lone incident; it is left off the Attention tab itself.
+    if (firstOpen?.bookingId && currentTab !== 'attention') bannerBooking = await context.repo.getBookingById(firstOpen.bookingId);
+
     return html(adminPage(context, {
-      list: { ...list, rows: withTokens(list.rows) },
+      list,
       filters,
       calendar: {
         fromDate,
@@ -362,29 +400,25 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
         nextMonth: shown.nextMonth,
         overrides,
         capacityDefaults,
-        load: new Map([
-          ...(shown.from <= weekTo ? [] : calendarLoadByDate(context.config, weekOccupancyBookings, fromDate, weekTo, now)),
-          ...calendarLoadByDate(context.config, occupancyBookings, shown.from, shown.to, now),
-        ]),
-        dayBookings: withTokens(dayBookings),
+        load,
+        dayBookings,
         detailBefore,
-        editDayBookings: withTokens(editDayBookings),
+        editDayBookings,
       },
       editDate,
       saved,
       error,
       csrfToken,
       incidentsHtml,
+      hasIncidents,
       attention: {
         count: openIncidentCount,
         actionRequired: openIncidents.some((incident) => incident.severity === 'action_required'),
-        first: firstOpen
-          ? { title: ownerFacingIncidentTitle(firstOpen.action), booking: firstOpen.bookingId === null ? null : bookingById.get(firstOpen.bookingId) ?? null }
-          : null,
+        first: firstOpen ? { title: ownerFacingIncidentTitle(firstOpen.action), booking: bannerBooking } : null,
       },
       glance,
-      activeTab,
-      tagOverview,
+      activeTab: currentTab,
+      tagOverview: buildTagOverview(taggedFields, tagCounts),
     }), 200, {
       ...contentSecurityPolicyHeaders(context.config),
       'cache-control': 'no-store',

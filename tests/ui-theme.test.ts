@@ -96,9 +96,7 @@ describe('themeCss (OS default + forced overrides)', () => {
 });
 
 describe('admin dashboard enhancement', () => {
-  it('switches tabs in place and keeps one booking row open at a time', () => {
-    expect(adminEnhancerJs).toContain("a[data-reserva-admin-tab]");
-    expect(adminEnhancerJs).toContain("panel.hidden = panel.id !== wanted");
+  it('keeps one booking row open at a time', () => {
     expect(adminEnhancerJs).toContain("for (const other of bookingList.querySelectorAll('.bk-booking[open]'))");
   });
 
