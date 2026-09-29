@@ -85,4 +85,32 @@ describe('late checkout.session.completed on an already-expired hold (spec §6)'
       { bookingId: seeded.id, reference: seeded.reference, startsAt: seeded.startsAt },
     ]);
   });
+
+  it('raises no oversell warning when the payment confirms a hold that is still live', async () => {
+    const seeded = booking({ id: 'b-live-hold', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', paymentSessionRef: 'cs_live' });
+    const warnings: string[] = [];
+    const context = createReservaContext({
+      config,
+      db: {} as D1Database,
+      repo: fakeRepository([seeded]),
+      clock: () => new Date('2026-06-14T08:00:00.000Z'),
+      logger: { warn: (message) => { warnings.push(message); } },
+      providers: providers({
+        payments: {
+          createCheckout: async () => ({ url: '', sessionRef: '' }),
+          parseWebhook: async () => ({
+            id: 'evt_live', type: 'checkout_completed', bookingId: seeded.id, sessionRef: 'cs_live',
+            paid: true, amountCaptured: seeded.priceMinor, currency: config.business.currency,
+          }),
+          getSession: async () => ({ status: 'open' }),
+          refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
+        },
+      }),
+    });
+
+    const response = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), context);
+
+    expect(response.status).toBe(200);
+    expect(warnings.filter((message) => message.includes('possible one-slot oversell'))).toEqual([]);
+  });
 });

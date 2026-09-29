@@ -81,8 +81,8 @@ async function readBoundedBytes(request: Request, limitBytes: number): Promise<U
   return merged;
 }
 
-export async function requestJson(request: Request, limitBytes = JSON_BODY_LIMIT_BYTES): Promise<Record<string, unknown>> {
-  const bytes = await readBoundedBytes(request, limitBytes);
+export async function requestJson(request: Request): Promise<Record<string, unknown>> {
+  const bytes = await readBoundedBytes(request, JSON_BODY_LIMIT_BYTES);
   let value: unknown;
   try {
     value = JSON.parse(new TextDecoder().decode(bytes));
@@ -98,8 +98,8 @@ export async function requestJson(request: Request, limitBytes = JSON_BODY_LIMIT
 // FormData has no bytes-based constructor, so this rebuilds a Request from the already-bounded
 // bytes (identical headers, so multipart/urlencoded parsing still sees the right content-type)
 // and lets the platform's own parser run on it.
-export async function requestFormData(request: Request, limitBytes = FORM_BODY_LIMIT_BYTES): Promise<FormData> {
-  const bytes = await readBoundedBytes(request, limitBytes);
+export async function requestFormData(request: Request): Promise<FormData> {
+  const bytes = await readBoundedBytes(request, FORM_BODY_LIMIT_BYTES);
   return new Request(request.url, { method: request.method, headers: request.headers, body: bytes }).formData();
 }
 

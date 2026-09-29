@@ -266,7 +266,7 @@ function defaultCancelUrl(config: ResolvedClientConfig): string {
 }
 
 
-export function sessionStatusFromStripe(session: StripeCheckoutSession): SessionStatus {
+function sessionStatusFromStripe(session: StripeCheckoutSession): SessionStatus {
   const metadata = metadataOf(session);
   const amountTotal = amountOf(session, 'amount_total');
   const currency = currencyOf(session);
@@ -309,7 +309,7 @@ const DISPUTE_OUTCOME_BY_STRIPE_STATUS: Record<string, DisputeOutcome> = {
   prevented: 'lost',
 };
 
-export function stripeEventToParsed(event: StripeEvent): PaymentEventParsed {
+function stripeEventToParsed(event: StripeEvent): PaymentEventParsed {
   const object = event.data.object as unknown;
   const parsed: PaymentEventParsed = {
     id: event.id,

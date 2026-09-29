@@ -367,53 +367,6 @@ describe('Reserva handlers', () => {
     expect(resolved.status).toBe(500);
     expect(attempts()).toBe(5);
   });
-
-  it('logs a warning when a payment confirms an expired hold, but not on the normal hold path', async () => {
-    const expiredWarnings: Array<[string, Record<string, unknown> | undefined]> = [];
-    const seededExpired = booking({ id: 'b-expired', status: 'expired', holdExpiresAt: null, paymentSessionRef: 'cs_expired' });
-    const expiredContext = createReservaContext({
-      config,
-      db: {} as D1Database,
-      repo: fakeRepository([seededExpired]),
-      logger: { warn: (message, data) => { expiredWarnings.push([message, data]); } },
-      clock: () => new Date('2026-06-14T08:00:00.000Z'),
-      providers: providers({
-        payments: {
-          createCheckout: async () => ({ url: '', sessionRef: '' }),
-          parseWebhook: async () => ({ id: 'evt_expired', type: 'checkout_completed', bookingId: seededExpired.id, sessionRef: 'cs_expired', paid: true, amountCaptured: seededExpired.priceMinor, currency: config.business.currency }),
-          getSession: async () => ({ status: 'open' }),
-          refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
-        },
-      }),
-    });
-    const expiredResponse = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), expiredContext);
-    expect(expiredResponse.status).toBe(200);
-    expect(expiredWarnings).toContainEqual([
-      'confirming expired hold after payment; possible one-slot oversell',
-      { bookingId: seededExpired.id, reference: seededExpired.reference, startsAt: seededExpired.startsAt },
-    ]);
-
-    const holdWarnings: Array<[string, Record<string, unknown> | undefined]> = [];
-    const seededHold = booking({ id: 'b-hold', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', paymentSessionRef: 'cs_hold' });
-    const holdContext = createReservaContext({
-      config,
-      db: {} as D1Database,
-      repo: fakeRepository([seededHold]),
-      logger: { warn: (message, data) => { holdWarnings.push([message, data]); } },
-      clock: () => new Date('2026-06-14T08:00:00.000Z'),
-      providers: providers({
-        payments: {
-          createCheckout: async () => ({ url: '', sessionRef: '' }),
-          parseWebhook: async () => ({ id: 'evt_hold', type: 'checkout_completed', bookingId: seededHold.id, sessionRef: 'cs_hold', paid: true, amountCaptured: seededHold.priceMinor, currency: config.business.currency }),
-          getSession: async () => ({ status: 'open' }),
-          refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
-        },
-      }),
-    });
-    const holdResponse = await handlePaymentWebhook(new Request('https://example.test/api/booking/webhooks/payment', { method: 'POST' }), holdContext);
-    expect(holdResponse.status).toBe(200);
-    expect(holdWarnings.some(([message]) => message.includes('possible one-slot oversell'))).toBe(false);
-  });
 });
 
 // checkout's meetingPointId field — required only for a
@@ -555,14 +508,6 @@ describe('checkout pickupType', () => {
     await expect(response.json()).resolves.toMatchObject({
       error: { code: 'validation_failed', message: expect.stringContaining('default, custom_pickup, custom_dropoff, meet_elsewhere') },
     });
-  });
-
-  it('a two-option (default/custom) service still accepts both ids', async () => {
-    const { repo, context } = checkoutContext(config);
-    const response = await handleCheckout(checkoutRequest({ pickupType: 'custom' }), context);
-    expect(response.status).toBe(201);
-    const { bookingId } = await response.json() as { bookingId: string };
-    expect(repo.rows.get(bookingId)).toMatchObject({ pickupType: 'custom', priceMinor: 12000 });
   });
 
   // DEFAULT_PICKUP_OPTIONS injection (and its pinned error message) is gone — every

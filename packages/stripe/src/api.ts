@@ -8,7 +8,7 @@
 export const STRIPE_API_VERSION = '2026-07-29.dahlia';
 const STRIPE_API_BASE = 'https://api.stripe.com';
 // stripe-node's defaults on Workers: two retries, 0.5 s initial backoff capped at 5 s, 80 s timeout.
-const DEFAULT_MAX_NETWORK_RETRIES = 2;
+const MAX_NETWORK_RETRIES = 2;
 const INITIAL_RETRY_DELAY_MS = 500;
 const MAX_RETRY_DELAY_MS = 5000;
 const REQUEST_TIMEOUT_MS = 80_000;
@@ -210,8 +210,8 @@ export function encodeStripeForm(data: object): string {
 
 // stripe-node's _shouldRetry: connection failures, a 409 conflict and 5xx are transient unless
 // Stripe says otherwise in `stripe-should-retry`.
-function shouldRetry(response: Response | null, retries: number, maxRetries: number): boolean {
-  if (retries >= maxRetries) return false;
+function shouldRetry(response: Response | null, retries: number): boolean {
+  if (retries >= MAX_NETWORK_RETRIES) return false;
   if (!response) return true;
   const hint = response.headers.get('stripe-should-retry');
   if (hint === 'false') return false;
@@ -232,9 +232,7 @@ function headersObject(headers: Headers): Record<string, string> {
 
 export interface StripeFetchClientOptions {
   fetch?: typeof fetch;
-  maxNetworkRetries?: number;
   sleep?: (ms: number) => Promise<void>;
-  now?: () => number;
 }
 
 export interface StripeApiClient {
@@ -243,7 +241,6 @@ export interface StripeApiClient {
 
 export function createStripeApiClient(secretKey: string, options: StripeFetchClientOptions = {}): StripeApiClient {
   const fetchImpl = options.fetch ?? ((input, init) => fetch(input, init));
-  const maxRetries = options.maxNetworkRetries ?? DEFAULT_MAX_NETWORK_RETRIES;
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   return {
     async request<T>(method: 'GET' | 'POST', path: string, params: object = {}, requestOptions: StripeRequestOptions = {}): Promise<T> {
@@ -259,7 +256,7 @@ export function createStripeApiClient(secretKey: string, options: StripeFetchCli
       // Like stripe-node: a retried POST without a caller key still needs one, or a retry after a
       // lost response could perform the action twice.
       const idempotencyKey = requestOptions.idempotencyKey
-        ?? (method === 'POST' && maxRetries > 0 ? `reserva-retry-${crypto.randomUUID()}` : undefined);
+        ?? (method === 'POST' ? `reserva-retry-${crypto.randomUUID()}` : undefined);
       if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
       const body = method === 'POST' ? encoded : undefined;
 
@@ -270,7 +267,7 @@ export function createStripeApiClient(secretKey: string, options: StripeFetchCli
             method, headers, ...(body !== undefined ? { body } : {}), signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
           });
         } catch (error) {
-          if (shouldRetry(null, retries, maxRetries)) {
+          if (shouldRetry(null, retries)) {
             await sleep(retryDelayMs(retries + 1));
             continue;
           }
@@ -279,7 +276,7 @@ export function createStripeApiClient(secretKey: string, options: StripeFetchCli
             detail: error,
           });
         }
-        if (response.status >= 400 && shouldRetry(response, retries, maxRetries)) {
+        if (response.status >= 400 && shouldRetry(response, retries)) {
           await sleep(retryDelayMs(retries + 1));
           continue;
         }
@@ -386,7 +383,7 @@ export function createStripeFetchClient(secretKey: string, options: StripeFetchC
     },
     webhooks: {
       async constructEventAsync(payload: string, signature: string, secret: string, tolerance?: number): Promise<StripeEvent> {
-        await verifyStripeSignature(payload, signature, secret, tolerance || STRIPE_WEBHOOK_TOLERANCE_SECONDS, options.now?.() ?? Date.now());
+        await verifyStripeSignature(payload, signature, secret, tolerance || STRIPE_WEBHOOK_TOLERANCE_SECONDS);
         return parseStripeEvent(payload);
       },
     },

@@ -19,6 +19,8 @@ const repo = createBookingRepository(db);
 const signingClient = new Stripe('sk_test_signing_helper');
 
 beforeEach(async () => {
+  await db.prepare('DELETE FROM operational_incidents').run();
+  await db.prepare('DELETE FROM refund_operations').run();
   await db.prepare('DELETE FROM side_effect_operations').run();
   await db.prepare('DELETE FROM bookings').run();
   resetWebhookWorkerOutboxes();
@@ -190,6 +192,57 @@ describe('signed Stripe webhook through the assembled worker + real D1', () => {
     for (const key of ['calendar_create', 'email_confirmation', 'hook:ops:booking.confirmed']) {
       expect(operation(operations, key)).toMatchObject({ status: 'succeeded', attemptCount: 1 });
     }
+  });
+
+  it('refuses a paid completion for a session other than the one the booking was sent to with 409 payment_session_mismatch, leaving the hold unconfirmed', async () => {
+    const id = 'wh-session-mismatch';
+    await seedHeldBooking(id);
+    await repo.updateBooking(id, { paymentSessionRef: 'cs_issued_session', updatedAt: new Date().toISOString() });
+    const fixture: CheckoutCompletedFixture = {
+      eventId: 'evt_session_mismatch', sessionId: 'cs_foreign_session', paymentIntent: 'pi_session_mismatch', bookingId: id,
+    };
+    const payload = checkoutSessionCompletedPayload(fixture);
+    const response = await dispatch(webhookRequest(payload, await signPayload(payload)));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'payment_session_mismatch' } });
+    expect(await repo.getBookingById(id)).toMatchObject({ status: 'hold', paymentSessionRef: 'cs_issued_session', paymentRef: null });
+    expect(await repo.getIncidentBySource('payment_verification', `${id}:session_mismatch`)).toMatchObject({ status: 'open' });
+    expect(await repo.listSideEffectOperations(id)).toEqual([]);
+    expect(emailOutbox).toEqual([]);
+  });
+
+  it('a full charge.refunded for a no_show booking records the refunded total but leaves it no_show, with no operator-cancellation effects', async () => {
+    const id = 'wh-refund-no-show';
+    await seedHeldBooking(id);
+    const now = new Date().toISOString();
+    await repo.transitionToConfirmed(id, { expectedStatusIn: ['hold'], paymentRef: 'pi_refund_no_show', updatedAt: now });
+    await repo.transitionToNoShow(id, { expectedStatusIn: ['confirmed'], updatedAt: now });
+
+    const payload = JSON.stringify({
+      id: 'evt_refund_no_show',
+      type: 'charge.refunded',
+      data: {
+        object: {
+          id: 'ch_refund_no_show',
+          paid: true,
+          amount_captured: 2500,
+          amount_refunded: 2500,
+          payment_intent: 'pi_refund_no_show',
+          metadata: { bookingId: id },
+        },
+      },
+    });
+    const response = await dispatch(webhookRequest(payload, await signPayload(payload)));
+
+    expect(response.status).toBe(200);
+    expect(await repo.getBookingById(id)).toMatchObject({
+      status: 'no_show', cancelledAt: null, cancelledBy: null, amountRefundedMinor: 2500,
+    });
+    expect(await repo.listSideEffectOperations(id)).toEqual([]);
+    expect(calendarEvents.size).toBe(0);
+    expect(emailOutbox).toEqual([]);
+    expect(hookOutbox).toEqual([]);
   });
 
   it('a stale checkout.session.completed for an already-cancelled booking leaves it cancelled (current documented behavior)', async () => {

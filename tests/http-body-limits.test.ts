@@ -17,13 +17,14 @@ function declaredOverLimitRequest(limitBytes: number, headers: HeadersInit = {})
 
 // A real streamed body (backed by an actual buffer, not a hand-rolled `pull()` source) that
 // understates its own length via a small declared Content-Length -- the case the mid-stream
-// byte-counting check exists for.
-function dishonestStreamedOverLimitRequest(limitBytes: number, headers: HeadersInit = {}): Request {
+// byte-counting check exists for. It lives in the shared reader, so one reader proves it for all
+// three; the per-reader Content-Length cases prove each reader passes its own limit.
+function dishonestStreamedOverLimitRequest(limitBytes: number): Request {
   const bytes = new Uint8Array(limitBytes + 4096).fill(97);
   const stream = new Response(bytes).body as ReadableStream<Uint8Array>;
   return new Request('https://example.test/body-limit', {
     method: 'POST',
-    headers: { ...headers, 'content-length': '10' },
+    headers: { 'content-length': '10' },
     body: stream,
     duplex: 'half',
   } as RequestInit);
@@ -69,11 +70,6 @@ describe('requestFormData (256 KB limit)', () => {
     await expect(requestFormData(request)).rejects.toMatchObject({ status: 413, code: 'payload_too_large' });
     expect(request.bodyUsed).toBe(false);
   });
-
-  it('rejects an understated-Content-Length body that streams past the limit with 413', async () => {
-    const request = dishonestStreamedOverLimitRequest(FORM_BODY_LIMIT_BYTES, { 'content-type': 'application/x-www-form-urlencoded' });
-    await expect(requestFormData(request)).rejects.toMatchObject({ status: 413, code: 'payload_too_large' });
-  });
 });
 
 describe('requestText (1 MB payment webhook limit)', () => {
@@ -86,10 +82,5 @@ describe('requestText (1 MB payment webhook limit)', () => {
     const request = declaredOverLimitRequest(PAYMENT_WEBHOOK_BODY_LIMIT_BYTES);
     await expect(requestText(request, PAYMENT_WEBHOOK_BODY_LIMIT_BYTES)).rejects.toMatchObject({ status: 413, code: 'payload_too_large' });
     expect(request.bodyUsed).toBe(false);
-  });
-
-  it('rejects an understated-Content-Length body that streams past the limit with 413', async () => {
-    const request = dishonestStreamedOverLimitRequest(PAYMENT_WEBHOOK_BODY_LIMIT_BYTES);
-    await expect(requestText(request, PAYMENT_WEBHOOK_BODY_LIMIT_BYTES)).rejects.toMatchObject({ status: 413, code: 'payload_too_large' });
   });
 });

@@ -1,18 +1,24 @@
 // The signature contract is verified against the Standard Webhooks spec's own library, an
 // independent implementation, so a drift in signing string, headers, or key decoding fails here.
 import { Webhook, WebhookVerificationError } from 'standardwebhooks';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WEBHOOK_USER_AGENT, WebhookResponseError, deliverWebhook } from '../src/webhooks';
 
 const secret = 'whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw';
 const now = new Date('2026-09-01T12:00:00.000Z');
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+// Each call replaces the global fetch, so capture right before the delivery it should observe.
 function capture(response = new Response(null, { status: 204 })) {
   const calls: Array<{ url: string; init: RequestInit }> = [];
   const fetchImpl = vi.fn(async (url: unknown, init: unknown) => {
     calls.push({ url: String(url), init: init as RequestInit });
     return response;
-  }) as unknown as typeof fetch;
+  });
+  vi.stubGlobal('fetch', fetchImpl);
   return { calls, fetchImpl };
 }
 
@@ -38,12 +44,12 @@ function verifyAt(instant: Date, body: string, headers: Record<string, string>):
 
 describe('outbound webhook delivery', () => {
   it('sends a Standard Webhooks-verifiable request the spec library accepts', async () => {
-    const { calls, fetchImpl } = capture();
+    const { calls } = capture();
     const body = JSON.stringify({ apiVersion: 1, id: 'booking-1/webhook:ops:booking.confirmed', event: 'booking.confirmed' });
 
     await deliverWebhook({
       name: 'ops', url: 'https://example.test/hooks', secret,
-      id: 'booking-1/webhook:ops:booking.confirmed', body, now, fetchImpl,
+      id: 'booking-1/webhook:ops:booking.confirmed', body, now,
     });
 
     const call = calls[0];
@@ -60,9 +66,9 @@ describe('outbound webhook delivery', () => {
   });
 
   it('produces a signature the spec library rejects when the body is tampered with in transit', async () => {
-    const { calls, fetchImpl } = capture();
+    const { calls } = capture();
     const body = JSON.stringify({ apiVersion: 1, id: 'booking-2/webhook:ops:booking.no_show' });
-    await deliverWebhook({ name: 'ops', url: 'https://example.test/hooks', secret, id: 'booking-2/webhook:ops:booking.no_show', body, now, fetchImpl });
+    await deliverWebhook({ name: 'ops', url: 'https://example.test/hooks', secret, id: 'booking-2/webhook:ops:booking.no_show', body, now });
     const headers = headersOf(calls[0]?.init ?? {});
 
     expect(() => verifyAt(now, body.replace('booking-2', 'booking-3'), headers)).toThrow(WebhookVerificationError);
@@ -74,10 +80,10 @@ describe('outbound webhook delivery', () => {
     const stale = capture();
     await deliverWebhook({
       name: 'ops', url: 'https://example.test/hooks', secret, id: 'booking-4/webhook:ops:booking.confirmed', body,
-      now: new Date(now.getTime() - 10 * 60_000), fetchImpl: stale.fetchImpl,
+      now: new Date(now.getTime() - 10 * 60_000),
     });
     const fresh = capture();
-    await deliverWebhook({ name: 'ops', url: 'https://example.test/hooks', secret, id: 'booking-4/webhook:ops:booking.confirmed', body, now, fetchImpl: fresh.fetchImpl });
+    await deliverWebhook({ name: 'ops', url: 'https://example.test/hooks', secret, id: 'booking-4/webhook:ops:booking.confirmed', body, now });
 
     const staleHeaders = headersOf(stale.calls[0]?.init ?? {});
     const freshHeaders = headersOf(fresh.calls[0]?.init ?? {});
@@ -91,9 +97,9 @@ describe('outbound webhook delivery', () => {
   it('signs an unprefixed base64 secret identically to the whsec_ form', async () => {
     const body = JSON.stringify({ apiVersion: 1, id: 'booking-5/webhook:ops:booking.confirmed' });
     const prefixed = capture();
+    await deliverWebhook({ name: 'ops', url: 'https://example.test/hooks', secret, id: 'booking-5/webhook:ops:booking.confirmed', body, now });
     const bare = capture();
-    await deliverWebhook({ name: 'ops', url: 'https://example.test/hooks', secret, id: 'booking-5/webhook:ops:booking.confirmed', body, now, fetchImpl: prefixed.fetchImpl });
-    await deliverWebhook({ name: 'ops', url: 'https://example.test/hooks', secret: secret.slice('whsec_'.length), id: 'booking-5/webhook:ops:booking.confirmed', body, now, fetchImpl: bare.fetchImpl });
+    await deliverWebhook({ name: 'ops', url: 'https://example.test/hooks', secret: secret.slice('whsec_'.length), id: 'booking-5/webhook:ops:booking.confirmed', body, now });
 
     expect(headersOf(bare.calls[0]?.init ?? {})['webhook-signature'])
       .toBe(headersOf(prefixed.calls[0]?.init ?? {})['webhook-signature']);
@@ -103,24 +109,24 @@ describe('outbound webhook delivery', () => {
     const { fetchImpl } = capture();
     await expect(deliverWebhook({
       name: 'ops', url: 'https://example.test/hooks', secret: 'whsec_not base64!!', id: 'booking-6/webhook:ops:booking.confirmed',
-      body: '{}', now, fetchImpl,
+      body: '{}', now,
     })).rejects.toMatchObject({ retryable: false, message: expect.stringContaining('Standard Webhooks key') });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('classifies a non-2xx response by status with a bounded body', async () => {
-    const { fetchImpl } = capture(new Response('x'.repeat(500), { status: 503 }));
+    capture(new Response('x'.repeat(500), { status: 503 }));
     const failure = await deliverWebhook({
-      name: 'ops', url: 'https://example.test/hooks', secret, id: 'booking-7/webhook:ops:booking.confirmed', body: '{}', now, fetchImpl,
+      name: 'ops', url: 'https://example.test/hooks', secret, id: 'booking-7/webhook:ops:booking.confirmed', body: '{}', now,
     }).catch((error: unknown) => error);
 
     expect(failure).toBeInstanceOf(WebhookResponseError);
     expect(failure).toMatchObject({ status: 503, retryable: true });
     expect((failure as Error).message.length).toBeLessThan(300);
 
-    const permanent = capture(new Response('nope', { status: 404 }));
+    capture(new Response('nope', { status: 404 }));
     await expect(deliverWebhook({
-      name: 'ops', url: 'https://example.test/hooks', secret, id: 'booking-8/webhook:ops:booking.confirmed', body: '{}', now, fetchImpl: permanent.fetchImpl,
+      name: 'ops', url: 'https://example.test/hooks', secret, id: 'booking-8/webhook:ops:booking.confirmed', body: '{}', now,
     })).rejects.toMatchObject({ status: 404, retryable: false });
   });
 });

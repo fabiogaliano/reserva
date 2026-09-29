@@ -1,7 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it, vi } from 'vitest';
 import { stripe, type StripeClient } from '../src/index';
-import { sessionStatusFromStripe, stripeEventToParsed, STRIPE_DELAYED_PAYMENT_METHOD_TYPES } from '../src/provider';
+import { STRIPE_DELAYED_PAYMENT_METHOD_TYPES } from '../src/provider';
 import {
   StripeCardError, StripeIdempotencyError, StripeInvalidRequestError,
   type StripeCheckoutSession, type StripeCheckoutSessionCreateParams, type StripeEvent, type StripeRefund,
@@ -717,6 +717,21 @@ describe('stripe() validateConfig', () => {
   });
 });
 
+// Mapping is driven through the published adapter: a client whose verification step hands back the
+// given event (or whose retrieve returns the given session) isolates the mapping itself.
+async function parseStripeEvent(event: unknown) {
+  const { client } = makeClient();
+  vi.mocked(client.webhooks.constructEventAsync).mockResolvedValueOnce(event as StripeEvent);
+  const request = new Request('https://example.test/webhook', { method: 'POST', headers: { 'stripe-signature': 't=1,v1=x' }, body: '{}' });
+  return stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client }).parseWebhook(request);
+}
+
+async function sessionStatusOf(session: unknown) {
+  const { client, sessions } = makeClient();
+  sessions.retrieve.mockResolvedValueOnce(session as never);
+  return stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client }).getSession('cs_1');
+}
+
 describe('Stripe mapping helpers', () => {
   it('curates the delayed-method exclusion list without the wallets Stripe rejects there', () => {
     expect(STRIPE_DELAYED_PAYMENT_METHOD_TYPES).toContain('multibanco');
@@ -726,29 +741,28 @@ describe('Stripe mapping helpers', () => {
     }
   });
 
-  it('maps full-refund charge amounts, leaving the refund id unread', () => {
+  it('maps full-refund charge amounts, leaving the refund id unread', async () => {
     // Stripe stopped expanding `charge.refunds` (API 2022-11-15), so the cancel-on-full-refund
     // path keys off the amounts and carries no refundRef.
-    expect(stripeEventToParsed({ id: 'evt_refund', type: 'charge.refunded', data: { object: {
+    const parsed = await parseStripeEvent({ id: 'evt_refund', type: 'charge.refunded', data: { object: {
       metadata: { bookingId: 'booking-1' }, payment_intent: { id: 'pi_1' }, amount_captured: 10000, amount_refunded: 10000,
-    } } } as unknown as StripeEvent)).toMatchObject({ bookingId: 'booking-1', paymentRef: 'pi_1', amountCaptured: 10000, amountRefunded: 10000 });
-    expect(stripeEventToParsed({ id: 'evt_refund', type: 'charge.refunded', data: { object: {
-      metadata: { bookingId: 'booking-1' }, payment_intent: { id: 'pi_1' }, amount_captured: 10000, amount_refunded: 10000,
-    } } } as unknown as StripeEvent).refundRef).toBeUndefined();
+    } } });
+    expect(parsed).toMatchObject({ bookingId: 'booking-1', paymentRef: 'pi_1', amountCaptured: 10000, amountRefunded: 10000 });
+    expect(parsed.refundRef).toBeUndefined();
   });
 
-  it('maps a partial refund to the charge’s cumulative refunded amount', () => {
-    expect(stripeEventToParsed({ id: 'evt_partial', type: 'charge.refunded', data: { object: {
+  it('maps a partial refund to the charge’s cumulative refunded amount', async () => {
+    expect(await parseStripeEvent({ id: 'evt_partial', type: 'charge.refunded', data: { object: {
       payment_intent: 'pi_1', amount_captured: 10000, amount_refunded: 2500,
-    } } } as unknown as StripeEvent)).toMatchObject({ type: 'refunded', paymentRef: 'pi_1', amountCaptured: 10000, amountRefunded: 2500 });
+    } } })).toMatchObject({ type: 'refunded', paymentRef: 'pi_1', amountCaptured: 10000, amountRefunded: 2500 });
   });
 
   describe('charge.dispute.closed', () => {
     // A Dispute object, not a Charge: the booking id lives on the payment intent, so the payment
     // reference is what finds the booking.
-    const closed = (status: string) => stripeEventToParsed({ id: `evt_closed_${status}`, type: 'charge.dispute.closed', data: { object: {
+    const closed = (status: string) => parseStripeEvent({ id: `evt_closed_${status}`, type: 'charge.dispute.closed', data: { object: {
       id: 'du_1', object: 'dispute', charge: 'ch_1', payment_intent: 'pi_1', amount: 10000, metadata: {}, status,
-    } } } as unknown as StripeEvent);
+    } } });
 
     it.each([
       ['won', 'won'],
@@ -757,54 +771,54 @@ describe('Stripe mapping helpers', () => {
       ['lost', 'lost'],
       // Resolved by refunding the cardholder through a prevention programme.
       ['prevented', 'lost'],
-    ] as const)('maps status %s to outcome %s', (status, outcome) => {
-      expect(closed(status)).toMatchObject({ type: 'dispute_closed', paymentRef: 'pi_1', disputeOutcome: outcome });
+    ] as const)('maps status %s to outcome %s', async (status, outcome) => {
+      expect(await closed(status)).toMatchObject({ type: 'dispute_closed', paymentRef: 'pi_1', disputeOutcome: outcome });
     });
 
     it.each(['needs_response', 'under_review', 'warning_needs_response', 'warning_under_review', 'some_future_status'])(
       'leaves the outcome out for status %s, which is not a closed outcome',
-      (status) => {
-        const parsed = closed(status);
+      async (status) => {
+        const parsed = await closed(status);
         expect(parsed).toMatchObject({ type: 'dispute_closed', paymentRef: 'pi_1' });
         expect(parsed).not.toHaveProperty('disputeOutcome');
       },
     );
 
-    it('never sets an outcome on the event that opens a dispute', () => {
-      expect(stripeEventToParsed({ id: 'evt_created', type: 'charge.dispute.created', data: { object: {
+    it('never sets an outcome on the event that opens a dispute', async () => {
+      expect(await parseStripeEvent({ id: 'evt_created', type: 'charge.dispute.created', data: { object: {
         id: 'du_1', object: 'dispute', payment_intent: 'pi_1', status: 'lost', metadata: {},
-      } } } as unknown as StripeEvent)).not.toHaveProperty('disputeOutcome');
+      } } })).not.toHaveProperty('disputeOutcome');
     });
 
-    it('carries the dispute’s own creation time on both dispute events, and none on a refund', () => {
+    it('carries the dispute’s own creation time on both dispute events, and none on a refund', async () => {
       const created = 1781083800; // 2026-06-10T09:30:00Z
       const dispute = { id: 'du_1', object: 'dispute', payment_intent: 'pi_1', metadata: {}, created };
       for (const type of ['charge.dispute.created', 'charge.dispute.closed']) {
-        expect(stripeEventToParsed({ id: `evt_${type}`, type, data: { object: { ...dispute, status: 'won' } } } as unknown as StripeEvent))
+        expect(await parseStripeEvent({ id: `evt_${type}`, type, data: { object: { ...dispute, status: 'won' } } }))
           .toMatchObject({ disputeCreatedAt: '2026-06-10T09:30:00.000Z' });
       }
-      expect(stripeEventToParsed({ id: 'evt_refunded', type: 'charge.refunded', data: { object: {
+      expect(await parseStripeEvent({ id: 'evt_refunded', type: 'charge.refunded', data: { object: {
         id: 'ch_1', object: 'charge', payment_intent: 'pi_1', amount_captured: 10000, amount_refunded: 2500, metadata: {}, created,
-      } } } as unknown as StripeEvent)).not.toHaveProperty('disputeCreatedAt');
+      } } })).not.toHaveProperty('disputeCreatedAt');
     });
   });
 
-  it('reads the optional headcount as a positive integer, and a blank or unusable one as null', () => {
+  it('reads the optional headcount as a positive integer, and a blank or unusable one as null', async () => {
     const withGuestCount = (value: string | null) => ({
       id: 'cs_1', status: 'complete', payment_status: 'paid', payment_intent: 'pi_1', metadata: null,
       custom_fields: [{ key: 'guest_count', type: 'numeric', optional: true, numeric: { value } }],
-    }) as unknown as StripeCheckoutSession;
-    expect(sessionStatusFromStripe(withGuestCount('3')).guestCount).toBe(3);
-    expect(sessionStatusFromStripe(withGuestCount(' 12 ')).guestCount).toBe(12);
+    });
+    expect((await sessionStatusOf(withGuestCount('3'))).guestCount).toBe(3);
+    expect((await sessionStatusOf(withGuestCount(' 12 '))).guestCount).toBe(12);
     for (const unusable of [null, '', '0', '2.5', '-1', 'abc']) {
-      expect(sessionStatusFromStripe(withGuestCount(unusable)).guestCount).toBeNull();
+      expect((await sessionStatusOf(withGuestCount(unusable))).guestCount).toBeNull();
     }
-    expect(stripeEventToParsed({ id: 'evt_1', type: 'checkout.session.completed', data: { object: withGuestCount('4') } } as unknown as StripeEvent).guestCount).toBe(4);
+    expect((await parseStripeEvent({ id: 'evt_1', type: 'checkout.session.completed', data: { object: withGuestCount('4') } })).guestCount).toBe(4);
     // A service that never asked has no field, so the key stays absent rather than null.
-    expect(sessionStatusFromStripe({ id: 'cs_1', status: 'complete', metadata: null } as StripeCheckoutSession)).not.toHaveProperty('guestCount');
+    expect(await sessionStatusOf({ id: 'cs_1', status: 'complete', metadata: null })).not.toHaveProperty('guestCount');
   });
 
-  it('maps a session to the public status shape', () => {
-    expect(sessionStatusFromStripe({ id: 'cs_1', status: 'open', payment_status: 'unpaid', amount_total: 10000, currency: 'eur', payment_intent: null, metadata: null } as StripeCheckoutSession)).toEqual({ id: 'cs_1', status: 'open', paymentStatus: 'unpaid', amountTotal: 10000, currency: 'eur', paymentRef: null });
+  it('maps a session to the public status shape', async () => {
+    expect(await sessionStatusOf({ id: 'cs_1', status: 'open', payment_status: 'unpaid', amount_total: 10000, currency: 'eur', payment_intent: null, metadata: null })).toEqual({ id: 'cs_1', status: 'open', paymentStatus: 'unpaid', amountTotal: 10000, currency: 'eur', paymentRef: null });
   });
 });

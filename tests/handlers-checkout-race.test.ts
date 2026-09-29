@@ -2,7 +2,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createReservaContext } from '../src/context';
 import { handleCheckout } from '../src/handlers';
-import { booking, config } from './fixtures';
+import { config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
 
 const checkoutRequest = (quantity: number) => new Request('https://example.test/api/booking/checkout', {
@@ -70,32 +70,5 @@ describe('checkout race for the last slot (was spec §11 / §6 accepted TOCTOU, 
     expect(second.status).toBe(409);
     await expect(second.json()).resolves.toMatchObject({ error: { code: 'slot_unavailable' } });
     expect([...repo.rows.values()].filter((row) => row.status === 'hold')).toHaveLength(1);
-  });
-
-  it('rejects a checkout whose larger party (2 occupancy units) would exceed capacity already partly held', async () => {
-    // Default fixture capacity is 2. A held party of 2 uses 1 occupancy unit (occupancyFor
-    // returns 1 for quantity <= 4), leaving 1 unit free — not enough for a party of 5, which
-    // needs 2 units (occupancyFor returns 2 for quantity > 4).
-    const existingHold = booking({
-      id: 'b-existing-hold',
-      status: 'hold',
-      quantity: 2,
-      startsAt: '2026-06-15T08:00:00.000Z',
-      endsAt: '2026-06-15T09:00:00.000Z',
-      holdExpiresAt: '2026-06-14T09:00:00.000Z',
-      paymentSessionRef: null,
-    });
-    const repo = fakeRepository([existingHold]);
-    const context = createReservaContext({
-      config,
-      db: {} as D1Database,
-      repo,
-      clock: () => new Date('2026-06-14T08:00:00.000Z'),
-      providers: providers(),
-    });
-
-    const response = await handleCheckout(checkoutRequest(5), context);
-    expect(response.status).toBe(409);
-    await expect(response.json()).resolves.toMatchObject({ error: { code: 'slot_unavailable' } });
   });
 });

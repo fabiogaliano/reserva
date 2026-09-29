@@ -48,7 +48,7 @@ function signingKeyBytes(name: string, secret: string): Uint8Array {
 
 // `webhook-signature` value for one attempt: base64 HMAC-SHA256 over "<id>.<timestamp>.<body>",
 // space-separated `<scheme>,<signature>` pairs (a single pair here — we never key-rotate mid-send).
-export async function signWebhookPayload(input: {
+async function signWebhookPayload(input: {
   name: string;
   secret: string;
   id: string;
@@ -77,7 +77,6 @@ export interface WebhookDelivery {
   // than re-projecting the booking, which is what keeps a retry's payload identical to attempt one.
   body: string;
   now: Date;
-  fetchImpl?: typeof fetch;
 }
 
 export async function deliverWebhook(delivery: WebhookDelivery): Promise<void> {
@@ -85,8 +84,7 @@ export async function deliverWebhook(delivery: WebhookDelivery): Promise<void> {
   // retry hours later must not replay the original occurrence's timestamp.
   const timestamp = Math.floor(delivery.now.getTime() / 1000).toString();
   const signature = await signWebhookPayload({ ...delivery, timestamp });
-  const request = delivery.fetchImpl ?? globalThis.fetch.bind(globalThis);
-  const response = await request(delivery.url, {
+  const response = await fetch(delivery.url, {
     method: 'POST',
     headers: {
       accept: 'application/json',
