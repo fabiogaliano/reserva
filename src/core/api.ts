@@ -70,6 +70,11 @@ export interface ApiErrorEnvelope {
 // unrecognized token gets exactly the answer no token would.
 export const MANAGE_TOKEN_HEADER = 'x-reserva-manage-token';
 
+// Every day in a range costs slot generation and an occupancy pass, so one request's CPU grows with
+// its span; on a Worker a horizon-long range (hundreds of days) blew far past the per-request CPU
+// limit. Two months still covers any calendar page, and the client chunks longer spans for you.
+export const MAX_AVAILABILITY_RANGE_DAYS = 62;
+
 // `remaining` counts further bookings of the requested quantity that fit; `null` above
 // `limitedThreshold` (exact capacity stays private). Full slots are omitted, so never 0.
 export interface AvailabilitySlot {

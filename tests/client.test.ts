@@ -81,6 +81,28 @@ describe('createReservaClient request shapes', () => {
     expect(fake.last().init.cache).toBe('no-store');
   });
 
+  it('splits a range longer than the per-request cap into consecutive requests and merges the days in order', async () => {
+    const requested: Array<{ from: string; to: string }> = [];
+    const fetchFn = (async (input: unknown) => {
+      const params = new URL(String(input), 'https://example.test').searchParams;
+      const from = params.get('from')!;
+      const to = params.get('to')!;
+      requested.push({ from, to });
+      return new Response(JSON.stringify({ timezone: 'Europe/Lisbon', limitedThreshold: 2, days: [{ date: from }, { date: to }] }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+
+    const merged = await createReservaClient({ fetch: fetchFn }).availability({ serviceSlug: 'vintage', from: '2026-06-15', to: '2026-11-11' });
+    expect(requested).toEqual([
+      { from: '2026-06-15', to: '2026-08-15' },
+      { from: '2026-08-16', to: '2026-10-16' },
+      { from: '2026-10-17', to: '2026-11-11' },
+    ]);
+    expect(merged.timezone).toBe('Europe/Lisbon');
+    expect(merged.days.map((day) => day.date)).toEqual(['2026-06-15', '2026-08-15', '2026-08-16', '2026-10-16', '2026-10-17', '2026-11-11']);
+  });
+
   it('only sends quantity when the caller asked for a party size', async () => {
     const fake = recorder();
     await createReservaClient({ fetch: fake.fetchFn }).availability({ serviceSlug: 'vintage', quantity: 4, from: '2026-06-15', to: '2026-06-30' });

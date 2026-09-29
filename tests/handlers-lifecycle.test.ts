@@ -307,6 +307,23 @@ describe('Reserva handlers', () => {
     expect(occupancyReads).toBe(0);
   });
 
+  // Each day costs slot generation and an occupancy pass, so an unbounded span is an unbounded
+  // amount of CPU for one request, however generous the horizon.
+  it('answers up to 62 days per request and rejects a longer range inside the horizon, naming the field', async () => {
+    const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), providers: providers() });
+    const ask = (to: string) => handleAvailability(new Request(`https://example.test/api/booking/availability?serviceSlug=vintage&quantity=2&from=2026-06-15&to=${to}`), context);
+
+    const full = await ask('2026-08-15');
+    expect(full.status).toBe(200);
+    expect(((await full.json()) as { days: unknown[] }).days).toHaveLength(62);
+
+    const tooLong = await ask('2026-08-16');
+    expect(tooLong.status).toBe(400);
+    await expect(tooLong.json()).resolves.toMatchObject({
+      error: { code: 'validation_failed', message: expect.stringContaining('62 days per request'), details: { field: 'to' } },
+    });
+  });
+
   it('rejects operator actions without constant-time shared-secret auth', async () => {
     const seeded = booking({ id: 'b1', status: 'confirmed', startsAt: '2026-06-15T09:00:00.000Z' });
     const repo = fakeRepository([seeded]);

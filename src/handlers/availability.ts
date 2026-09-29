@@ -1,4 +1,4 @@
-import { MANAGE_TOKEN_HEADER, type AvailabilityDay, type AvailabilityResponse } from '../core/api.js';
+import { MANAGE_TOKEN_HEADER, MAX_AVAILABILITY_RANGE_DAYS, type AvailabilityDay, type AvailabilityResponse } from '../core/api.js';
 import { maxQuantityFor, resolveService } from '../core/config.js';
 import { availabilityForDay, capacityForDate, defaultCapacityForDate, getOccupancyIntervals, type CalEvent, type DayAvailability } from '../core/occupancy.js';
 import { priceFor, pricingPickupKeys } from '../core/pricing.js';
@@ -9,14 +9,21 @@ import { nowIso } from '../context.js';
 import { HttpError, json, parseDate, requireInteger, requireString } from '../http.js';
 import { run, sweepExpiredHoldsThrottled, warnDeprecatedField } from './shared.js';
 
-// Bounded by the deployment's own maxHorizonDays, not a fixed cap, so a consumer never needs to
-// chunk-and-merge requests. Checked BEFORE enumerating (zero-padded keys compare lexicographically)
-// so an adversarial multi-century range fails fast instead of allocating one key per day.
+// Checked BEFORE enumerating (zero-padded keys compare lexicographically) so an adversarial
+// multi-century range fails fast instead of allocating one key per day.
 function validDateRange(from: string, to: string, maxHorizonDays: number): string[] {
   parseDate(from, 'from');
   parseDate(to, 'to');
   if (to > addDaysToDateKey(from, maxHorizonDays)) {
     throw new HttpError(400, 'validation_failed', `Date range cannot exceed the booking horizon of ${maxHorizonDays} days (config.booking.maxHorizonDays); request a narrower range`);
+  }
+  if (to > addDaysToDateKey(from, MAX_AVAILABILITY_RANGE_DAYS - 1)) {
+    throw new HttpError(
+      400,
+      'validation_failed',
+      `Date range cannot exceed ${MAX_AVAILABILITY_RANGE_DAYS} days per request; split it into consecutive ranges (the Reserva client does this for you)`,
+      { field: 'to' },
+    );
   }
   return enumerateDateKeys(from, to);
 }

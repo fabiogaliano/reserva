@@ -102,7 +102,11 @@ export async function rescheduleViaManagePage(page: Page, currentStart: string):
   const to = await form.getAttribute('data-to');
   if (!service || !quantity || !from || !to) throw new Error('Reschedule form is missing its availability data attributes');
 
-  const res = await page.request.get(`/api/booking/availability?serviceSlug=${service}&quantity=${quantity}&from=${from}&to=${to}`);
+  // The first month only: it is the month the enhancer loads first, so a date picked from it is
+  // one the calendar already has slots for (and a whole horizon is over the per-request cap).
+  const [fromYear, fromMonth] = from.split('-').map(Number) as [number, number];
+  const monthEnd = new Date(Date.UTC(fromYear, fromMonth, 0)).toISOString().slice(0, 10);
+  const res = await page.request.get(`/api/booking/availability?serviceSlug=${service}&quantity=${quantity}&from=${from}&to=${monthEnd < to ? monthEnd : to}`);
   const availability = await res.json();
   let target: { date: string; start: string; time: string } | undefined;
   for (const day of availability.days) {

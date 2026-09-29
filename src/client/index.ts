@@ -6,6 +6,7 @@
 import {
   isApiErrorCode,
   MANAGE_TOKEN_HEADER,
+  MAX_AVAILABILITY_RANGE_DAYS,
   type ApiErrorCode,
   type ApiErrorDetails,
   type ApiErrorEnvelope,
@@ -25,7 +26,7 @@ import {
 } from '../core/api.js';
 import { resolvedRoutePaths, type ReservaRoutePaths } from '../core/route-paths.js';
 
-export { API_ERROR_CODES, isApiErrorCode, MANAGE_TOKEN_HEADER } from '../core/api.js';
+export { API_ERROR_CODES, isApiErrorCode, MANAGE_TOKEN_HEADER, MAX_AVAILABILITY_RANGE_DAYS } from '../core/api.js';
 export * from './availability.js';
 
 // Only the routes a browser client may legitimately call: the payment webhook, the asset routes and
@@ -139,6 +140,32 @@ function queryString(params: Record<string, string | number | undefined>): strin
   return rendered ? `?${rendered}` : '';
 }
 
+const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
+
+function addDays(date: string, days: number): string {
+  const probe = new Date(`${date}T00:00:00Z`);
+  probe.setUTCDate(probe.getUTCDate() + days);
+  return probe.toISOString().slice(0, 10);
+}
+
+// Consecutive ranges of at most MAX_AVAILABILITY_RANGE_DAYS, so a caller asking for a whole horizon
+// still gets one merged answer. Anything that isn't a plain date pair is sent as-is for the server
+// to reject with its own validation error.
+function availabilityChunks(from: string, to: string): Array<{ from: string; to: string }> {
+  if (!DATE_KEY.test(from) || !DATE_KEY.test(to) || Number.isNaN(Date.parse(`${from}T00:00:00Z`)) || Number.isNaN(Date.parse(`${to}T00:00:00Z`))) {
+    return [{ from, to }];
+  }
+  const chunks: Array<{ from: string; to: string }> = [];
+  let cursor = from;
+  do {
+    const end = addDays(cursor, MAX_AVAILABILITY_RANGE_DAYS - 1);
+    const chunkTo = end < to ? end : to;
+    chunks.push({ from: cursor, to: chunkTo });
+    cursor = addDays(chunkTo, 1);
+  } while (cursor <= to);
+  return chunks;
+}
+
 export function createReservaClient(options: ReservaClientOptions = {}): ReservaClient {
   if (options.paths && options.base !== undefined) {
     throw new Error('createReservaClient: pass either `paths` or `base`, not both');
@@ -193,19 +220,24 @@ export function createReservaClient(options: ReservaClientOptions = {}): Reserva
     catalog(query = {}, init) {
       return call<CatalogResponse>(pathFor('catalog') + queryString({ locale: query.locale }), { method: 'GET', ...(init ? { init } : {}) });
     },
-    availability(query, init) {
-      const url = pathFor('availability') + queryString({
-        serviceSlug: query.serviceSlug,
-        ...(query.quantity === undefined ? {} : { quantity: query.quantity }),
-        from: query.from,
-        to: query.to,
-      });
-      return call<AvailabilityResponse>(url, {
-        method: 'GET',
-        noStore: true,
-        ...(query.manageToken ? { headers: { [MANAGE_TOKEN_HEADER]: query.manageToken } } : {}),
-        ...(init ? { init } : {}),
-      });
+    async availability(query, init) {
+      const responses = await Promise.all(availabilityChunks(query.from, query.to).map((range) => call<AvailabilityResponse>(
+        pathFor('availability') + queryString({
+          serviceSlug: query.serviceSlug,
+          ...(query.quantity === undefined ? {} : { quantity: query.quantity }),
+          from: range.from,
+          to: range.to,
+        }),
+        {
+          method: 'GET',
+          noStore: true,
+          ...(query.manageToken ? { headers: { [MANAGE_TOKEN_HEADER]: query.manageToken } } : {}),
+          ...(init ? { init } : {}),
+        },
+      )));
+      // availabilityChunks always yields at least one range.
+      const first = responses[0]!;
+      return responses.length === 1 ? first : { ...first, days: responses.flatMap((response) => response.days) };
     },
     quote(body, init) {
       return call<QuoteResponse>(pathFor('quote'), { method: 'POST', body, ...(init ? { init } : {}) });

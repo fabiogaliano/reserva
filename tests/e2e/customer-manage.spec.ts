@@ -104,6 +104,27 @@ test('the reschedule calendar asks availability with the manage token in a heade
   await page.locator('.bk-cal-wrap').waitFor();
 });
 
+// A horizon can be hundreds of days; the calendar asks for the months it shows, never the whole span.
+test('the reschedule calendar fetches availability one calendar month at a time, and the next month when paging', async ({ page }) => {
+  const { outboxEntry } = await createBooking(page, { service: TOUR, quantity: 2 });
+  const manageUrl = new URL(outboxEntry.customerManageUrl);
+  const ranges: Array<{ from: string; to: string }> = [];
+  page.on('request', (req) => {
+    if (!req.url().includes('/api/booking/availability')) return;
+    const params = new URL(req.url()).searchParams;
+    ranges.push({ from: params.get('from') ?? '', to: params.get('to') ?? '' });
+  });
+  await page.goto(manageUrl.pathname + manageUrl.search);
+  await page.locator('.bk-cal-wrap').waitFor();
+  await expect.poll(() => ranges.length).toBeGreaterThanOrEqual(2);
+  for (const range of ranges) expect(range.from.slice(0, 7)).toBe(range.to.slice(0, 7));
+  const monthsBefore = new Set(ranges.map((range) => range.from.slice(0, 7)));
+
+  await page.locator('.bk-cal-wrap calendar-date [slot="next"]').click();
+  await page.locator('.bk-cal-wrap calendar-date [slot="next"]').click();
+  await expect.poll(() => new Set(ranges.map((range) => range.from.slice(0, 7))).size).toBeGreaterThan(monthsBefore.size);
+});
+
 // Regression: manage-enhancer's dateKey() must use UTC getters (same cally/Date.UTC mismatch as
 // BookingWidget's dateKey, see funnel.spec.ts) or the reschedule calendar marks every open day
 // disallowed in any timezone behind UTC — needs a pinned negative-offset timezone to catch.
@@ -126,7 +147,10 @@ test.describe('reschedule calendar in a timezone behind UTC (regression: manage-
     const to = await form.getAttribute('data-to');
     if (!service || !quantity || !from || !to) throw new Error('Reschedule form is missing its availability data attributes');
 
-    const availability = await (await request.get(`/api/booking/availability?serviceSlug=${service}&quantity=${quantity}&from=${from}&to=${to}`)).json();
+    // One month, like the enhancer's own first request: a whole horizon is over the per-request cap.
+    const [fromYear, fromMonth] = from.split('-').map(Number) as [number, number];
+    const monthEnd = new Date(Date.UTC(fromYear, fromMonth, 0)).toISOString().slice(0, 10);
+    const availability = await (await request.get(`/api/booking/availability?serviceSlug=${service}&quantity=${quantity}&from=${from}&to=${monthEnd < to ? monthEnd : to}`)).json();
     const openDay = availability.days.find((d: any) => d.slots.length > 0);
     if (!openDay) throw new Error('No available day found to probe isDateDisallowed against');
 
