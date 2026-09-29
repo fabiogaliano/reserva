@@ -368,18 +368,20 @@ export function handleOperatorNoShow(request: Request, context: ReservaContext):
     const body = await requestJson(request);
     const booking = await operatorBooking(context, request, body);
     if (booking.status === 'no_show') return json<ManageActionResponse>({ ok: true });
+    let next: Booking;
     try {
-      const next = markNoShow(booking, nowIso(context));
-      const updated = await context.repo.transitionToNoShow(next.id, {
-        expectedStatusIn: ['confirmed'], updatedAt: next.updatedAt,
-        mutationSideEffects: mutationSideEffectSeeds(context, 'booking.no_show', next, next.updatedAt),
-      });
-      // CAS loss is always a conflict here, not an idempotent 200.
-      if (!updated) throw new Error('Booking cannot be marked no-show');
-      await dispatchMutation(context, 'booking.no_show', updated);
-      return json<ManageActionResponse>({ ok: true });
+      next = markNoShow(booking, nowIso(context));
     } catch (error) {
+      // markNoShow is pure domain validation, so its message is safe to hand the caller.
       throw new HttpError(409, 'invalid_transition', error instanceof Error ? error.message : 'Booking cannot be marked no-show');
     }
+    const updated = await context.repo.transitionToNoShow(next.id, {
+      expectedStatusIn: ['confirmed'], updatedAt: next.updatedAt,
+      mutationSideEffects: mutationSideEffectSeeds(context, 'booking.no_show', next, next.updatedAt),
+    });
+    // CAS loss is always a conflict here, not an idempotent 200.
+    if (!updated) throw new HttpError(409, 'invalid_transition', 'Booking cannot be marked no-show');
+    await dispatchMutation(context, 'booking.no_show', updated);
+    return json<ManageActionResponse>({ ok: true });
   }).then(withSensitiveHeaders);
 }

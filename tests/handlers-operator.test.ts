@@ -826,6 +826,23 @@ describe('POST /operator/no-show (spec §11)', () => {
     expect(repo.rows.get(seeded.id)?.status).toBe('no_show');
     expect(emails).toEqual(['booking.no_show']);
   });
+
+  it('does not report a committed no-show whose outbox drain fails as a 409 invalid_transition leaking the D1 error', async () => {
+    const seeded = booking({ id: 'b-op-noshow-drain-fails', status: 'confirmed', startsAt: '2026-06-14T07:00:00.000Z', endsAt: '2026-06-14T07:30:00.000Z' });
+    const repo = fakeRepository([seeded]);
+    // The load path drains too; only the drain after the committed transition may fail.
+    const list = repo.listSideEffectOperations.bind(repo);
+    repo.listSideEffectOperations = async (bookingId) => {
+      if (repo.rows.get(bookingId)?.status === 'no_show') throw new Error('D1_ERROR: database is locked');
+      return list(bookingId);
+    };
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
+
+    const response = await handleOperatorNoShow(operatorRequest('no-show', { operatorToken: seeded.operatorToken }), context);
+    expect(repo.rows.get(seeded.id)?.status).toBe('no_show');
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({ error: { code: 'internal_error', message: 'An unexpected error occurred' } });
+  });
 });
 
 // A partial refund is one durable decision like any other — it just carries the amount the
