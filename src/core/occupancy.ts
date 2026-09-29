@@ -84,6 +84,11 @@ export interface DayAvailabilityOptions {
   limitedThreshold: number;
   closedReason?: string | null;
   excludeBookingId?: string;
+  // A multi-day caller derives both once for the whole range instead of once per day: the day's
+  // generated slots, and the occupancy intervals getOccupancyIntervals would build from the same
+  // bookings, calendar events, services, `now` and excluded booking.
+  slots?: readonly GeneratedSlot[];
+  intervals?: readonly OccupancyInterval[];
 }
 
 export interface AvailableSlot {
@@ -240,31 +245,51 @@ export function capacityForDate(
   return override?.reason ? { capacity, closedReason: override.reason } : { capacity };
 }
 
-function maxAtBoundaries(intervals: readonly OccupancyInterval[], start: string, end: string): number {
-  const windowStart = parseUtcInstant(start).getTime();
-  const windowEnd = parseUtcInstant(end).getTime();
-  if (windowEnd <= windowStart) return 0;
-  const validIntervals: Array<{ interval: OccupancyInterval; start: number; end: number }> = [];
-  const points = new Set<number>([windowStart, windowEnd]);
+interface ParsedInterval {
+  start: number;
+  end: number;
+  units: number;
+}
+
+// Parsing an ISO instant is a regex and a Date per string; done inside the per-slot loop it was
+// most of an availability request's CPU. A day's intervals are parsed once, then every slot
+// compares numbers. Unusable intervals are dropped here exactly as the per-window check skipped them.
+const parsedIntervalCache = new WeakMap<readonly OccupancyInterval[], ParsedInterval[]>();
+
+function parseIntervals(intervals: readonly OccupancyInterval[]): ParsedInterval[] {
+  const cached = parsedIntervalCache.get(intervals);
+  if (cached) return cached;
+  const parsed: ParsedInterval[] = [];
   for (const interval of intervals) {
     try {
-      const intervalStart = parseUtcInstant(interval.start).getTime();
-      const intervalEnd = parseUtcInstant(interval.end).getTime();
-      if (intervalEnd <= intervalStart || !Number.isFinite(interval.units) || interval.units <= 0) continue;
-      if (intervalEnd <= windowStart || intervalStart >= windowEnd) continue;
-      validIntervals.push({ interval, start: intervalStart, end: intervalEnd });
-      points.add(Math.max(windowStart, intervalStart));
-      points.add(Math.min(windowEnd, intervalEnd));
+      const start = parseUtcInstant(interval.start).getTime();
+      const end = parseUtcInstant(interval.end).getTime();
+      if (end <= start || !Number.isFinite(interval.units) || interval.units <= 0) continue;
+      parsed.push({ start, end, units: interval.units });
     } catch {
       continue;
     }
+  }
+  parsedIntervalCache.set(intervals, parsed);
+  return parsed;
+}
+
+function maxAtBoundaries(intervals: readonly ParsedInterval[], windowStart: number, windowEnd: number): number {
+  if (windowEnd <= windowStart) return 0;
+  const overlapping: ParsedInterval[] = [];
+  const points = new Set<number>([windowStart, windowEnd]);
+  for (const interval of intervals) {
+    if (interval.end <= windowStart || interval.start >= windowEnd) continue;
+    overlapping.push(interval);
+    points.add(Math.max(windowStart, interval.start));
+    points.add(Math.min(windowEnd, interval.end));
   }
   const sorted = [...points].sort((a, b) => a - b);
   let maximum = 0;
   for (const point of sorted.slice(0, -1)) {
     let used = 0;
-    for (const candidate of validIntervals) {
-      if (candidate.start <= point && candidate.end > point) used += candidate.interval.units;
+    for (const candidate of overlapping) {
+      if (candidate.start <= point && candidate.end > point) used += candidate.units;
     }
     maximum = Math.max(maximum, used);
   }
@@ -276,7 +301,7 @@ export function maxConcurrentOccupancy(
   start: string | Date,
   end: string | Date,
 ): number {
-  return maxAtBoundaries(intervals, parseUtcInstant(start).toISOString(), parseUtcInstant(end).toISOString());
+  return maxAtBoundaries(parseIntervals(intervals), parseUtcInstant(start).getTime(), parseUtcInstant(end).getTime());
 }
 
 export function remainingCapacity(
@@ -315,7 +340,9 @@ export function remainingBookings(remainingUnits: number, service: Pick<Resolved
 }
 
 function isWithinRequestWindow(slot: GeneratedSlot, options: DayAvailabilityOptions, now: Date): boolean {
-  const start = parseUtcInstant(slot.utcStart);
+  // Generated slots carry canonical toISOString output, which Date parses exactly without the
+  // validating regex parseUtcInstant applies to untrusted input.
+  const start = new Date(slot.utcStart);
   const min = options.minNoticeHours === undefined ? now : new Date(now.getTime() + options.minNoticeHours * 3_600_000);
   if (start.getTime() < min.getTime()) return false;
   if (options.maxHorizonDays !== undefined) {
@@ -335,8 +362,8 @@ export function availabilityForDay(options: DayAvailabilityOptions): DayAvailabi
     };
   }
   const now = parseUtcInstant(options.now ?? new Date());
-  const candidates = generateDaySlots(options);
-  const intervals = getOccupancyIntervals({
+  const candidates = options.slots ?? generateDaySlots(options);
+  const intervals = options.intervals ?? getOccupancyIntervals({
     bookings: options.bookings,
     ...(options.calendarEvents ? { calendarEvents: options.calendarEvents } : {}),
     service: options.service,
@@ -347,27 +374,23 @@ export function availabilityForDay(options: DayAvailabilityOptions): DayAvailabi
     ...(options.excludeBookingId ? { excludeBookingId: options.excludeBookingId } : {}),
   });
   const requestedUnits = occupancyFor(options.service, options.requestedQuantity);
+  const parsedIntervals = parseIntervals(intervals);
+  const capacity = resolveCapacity(options.capacity);
+  const turnaroundMs = options.service.turnaroundMin * 60_000;
+  // One occupancy maximum per slot answers both questions slotRemaining and isSlotAvailable asked
+  // separately over the same window: what is left, and whether this party fits in it.
   const slots = candidates
     .filter((slot) => isWithinRequestWindow(slot, options, now))
-    .map((slot) => ({
-      slot,
-      remaining: slotRemaining(slot.utcStart, slot.utcEnd, {
-        capacity: options.capacity,
-        intervals,
-        turnaroundMin: options.service.turnaroundMin,
-      }),
-    }))
-    .filter(({ slot, remaining }) => isSlotAvailable(slot.utcStart, slot.utcEnd, {
-      capacity: options.capacity,
-      intervals,
-      requestedUnits,
-      turnaroundMin: options.service.turnaroundMin,
-    }) && remaining > 0)
-    .map(({ slot, remaining }) => ({
-      start: slot.start,
-      remaining,
-      remainingBookings: remainingBookings(remaining, options.service, options.requestedQuantity),
-    }));
+    .flatMap((slot) => {
+      const used = maxAtBoundaries(parsedIntervals, new Date(slot.utcStart).getTime(), new Date(slot.utcEnd).getTime() + turnaroundMs);
+      const remaining = Math.max(0, capacity - used);
+      if (used + requestedUnits > capacity || remaining <= 0) return [];
+      return [{
+        start: slot.start,
+        remaining,
+        remainingBookings: remainingBookings(remaining, options.service, options.requestedQuantity),
+      }];
+    });
   const status = slots.length === 0 ? 'full' : slots.length <= options.limitedThreshold ? 'limited' : 'available';
   return { date: options.date, status, slots };
 }

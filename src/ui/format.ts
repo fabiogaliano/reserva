@@ -1,12 +1,13 @@
 import { minorUnitDigits, toMajorUnits } from '../core/currency.js';
 import { formatLocaleFor } from '../core/locale.js';
 import { localDateKey, parseUtcInstant } from '../core/time.js';
+import { dateTimeFormat, numberFormat } from '../core/intl.js';
 
 // Booking summaries carry local ISO strings with an explicit offset, so parsing them yields the
 // correct instant and Intl re-projects it into the business timezone for display.
 export function formatDateTime(isoWithOffset: string, locale: string, timezone: string): string {
   try {
-    return new Intl.DateTimeFormat(formatLocaleFor(locale), {
+    return dateTimeFormat(formatLocaleFor(locale), {
       timeZone: timezone,
       weekday: 'short',
       day: 'numeric',
@@ -32,7 +33,7 @@ export function formatDateTimeRange(startIso: string, endIso: string, locale: st
     // overnight trip reads as ending before it starts.
     const sameDay = localDateKey(parseUtcInstant(startIso), timezone) === localDateKey(endInstant, timezone);
     if (!sameDay) return `${start} – ${formatDateTime(endIso, locale, timezone)}`;
-    const endTime = new Intl.DateTimeFormat(formatLocaleFor(locale), {
+    const endTime = dateTimeFormat(formatLocaleFor(locale), {
       timeZone: timezone,
       hour: '2-digit',
       minute: '2-digit',
@@ -52,7 +53,7 @@ export function formatDayDate(dateKey: string, locale: string, now: Date = new D
     // "Sat, 3 Jan" is ambiguous every December: a day in another year always names it, so an
     // operator reading a list across New Year can't mistake next January for this one.
     const showYear = date.getUTCFullYear() !== now.getUTCFullYear();
-    return new Intl.DateTimeFormat(formatLocaleFor(locale), {
+    return dateTimeFormat(formatLocaleFor(locale), {
       timeZone: 'UTC',
       weekday: 'short',
       day: 'numeric',
@@ -69,7 +70,7 @@ export function formatDateParts(isoWithOffset: string, locale: string, timezone:
   try {
     const date = parseUtcInstant(isoWithOffset);
     const part = (options: Intl.DateTimeFormatOptions): string =>
-      new Intl.DateTimeFormat(formatLocaleFor(locale), { timeZone: timezone, ...options }).format(date);
+      dateTimeFormat(formatLocaleFor(locale), { timeZone: timezone, ...options }).format(date);
     return {
       day: part({ day: 'numeric' }),
       month: part({ month: 'short' }),
@@ -83,7 +84,7 @@ export function formatDateParts(isoWithOffset: string, locale: string, timezone:
 export function formatPrice(amountMinor: number, locale: string, currency: string): string {
   const major = toMajorUnits(amountMinor, currency);
   try {
-    return new Intl.NumberFormat(formatLocaleFor(locale), { style: 'currency', currency: currency.toUpperCase() }).format(major);
+    return numberFormat(formatLocaleFor(locale), { style: 'currency', currency: currency.toUpperCase() }).format(major);
   } catch {
     return `${major.toFixed(minorUnitDigits(currency))} ${currency.toUpperCase()}`;
   }

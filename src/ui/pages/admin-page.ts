@@ -13,6 +13,7 @@ import { cssAssetHref, jsAssetHref } from '../asset-hrefs.js';
 import { formatDayDate, formatPrice } from '../format.js';
 import { digitsOf, emailLink, factList, pageShell, phoneLinks, statusToneOf, themeToggle } from '../layout.js';
 import { formatMessage, resolveMessages } from '../messages.js';
+import { dateTimeFormat, relativeTimeFormat } from '../../core/intl.js';
 
 type Messages = ReturnType<typeof resolveMessages>;
 
@@ -276,7 +277,7 @@ export function manageLinkHref(routeConfig: ReservaResolvedRouteConfig, token: s
 // urgent. The unit grows with the distance so a week-old incident doesn't read in minutes.
 function relativeTime(iso: string, now: Date, locale: string): string {
   const seconds = (parseUtcInstant(iso).getTime() - now.getTime()) / 1000;
-  const format = new Intl.RelativeTimeFormat(formatLocaleFor(locale), { numeric: 'auto' });
+  const format = relativeTimeFormat(formatLocaleFor(locale), { numeric: 'auto' });
   const distance = Math.abs(seconds);
   if (distance < 3600) return format.format(Math.round(seconds / 60), 'minute');
   if (distance < 86_400) return format.format(Math.round(seconds / 3600), 'hour');
@@ -287,19 +288,19 @@ function relativeTime(iso: string, now: Date, locale: string): string {
 function relativeDayLabel(date: string, today: string, locale: string): string {
   const offset = Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000);
   if (Math.abs(offset) > 1) return '';
-  const label = new Intl.RelativeTimeFormat(formatLocaleFor(locale), { numeric: 'auto' }).format(offset, 'day');
+  const label = relativeTimeFormat(formatLocaleFor(locale), { numeric: 'auto' }).format(offset, 'day');
   return label.charAt(0).toLocaleUpperCase(formatLocaleFor(locale)) + label.slice(1);
 }
 
 function formatLongDate(date: string, locale: string): string {
-  return new Intl.DateTimeFormat(formatLocaleFor(locale), { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' })
+  return dateTimeFormat(formatLocaleFor(locale), { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' })
     .format(new Date(`${date}T00:00:00Z`));
 }
 
 // Shared by the bookings list and the day card: the time as the operator reads a departure board,
 // with no leading zero and the day period set smaller so the digits line up down the column.
 function timeFormatting(locale: string, timezone: string): { text: (iso: string) => string; html: (iso: string) => string } {
-  const formatter = new Intl.DateTimeFormat(formatLocaleFor(locale), { hour: 'numeric', minute: '2-digit', timeZone: timezone });
+  const formatter = dateTimeFormat(formatLocaleFor(locale), { hour: 'numeric', minute: '2-digit', timeZone: timezone });
   return {
     text: (iso) => formatter.format(parseUtcInstant(iso)),
     html: (iso) => formatter.formatToParts(parseUtcInstant(iso))
@@ -418,7 +419,7 @@ export function incidentsSection(
     const attempts = incident.attemptCount > 0
       ? ` · ${formatMessage(incident.attemptCount === 1 ? messages['admin.incidentAttemptsOne'] : messages['admin.incidentAttempts'], { n: incident.attemptCount })}`
       : '';
-    const exactly = new Intl.DateTimeFormat(formatLocaleFor(locale), { dateStyle: 'full', timeStyle: 'short', timeZone: timezone }).format(parseUtcInstant(incident.firstDetectedAt));
+    const exactly = dateTimeFormat(formatLocaleFor(locale), { dateStyle: 'full', timeStyle: 'short', timeZone: timezone }).format(parseUtcInstant(incident.firstDetectedAt));
     const todo = catalog[`admin.incidentTodo.${incident.action}`];
     const canRetry = incidentRetryAvailable(incident);
     const isMultiRecipientish = incident.action === 'confirmation_email' || incident.action === 'customer_notification' || incident.action === 'operations_sync';
@@ -754,7 +755,7 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
   // today; the days already gone stay as plain numbers, since nothing about them can change.
   const dowLabels = Array.from({ length: 7 }, (_, index) =>
     // 2024-01-01 is a Monday; formatting it +index yields locale weekday names, Monday-first.
-    new Intl.DateTimeFormat(locale, { weekday: 'narrow', timeZone: 'UTC' }).format(new Date(Date.UTC(2024, 0, 1 + index))));
+    dateTimeFormat(locale, { weekday: 'narrow', timeZone: 'UTC' }).format(new Date(Date.UTC(2024, 0, 1 + index))));
   const weekStart = addDaysToDateKey(fromDate, -((new Date(`${fromDate}T00:00:00Z`).getUTCDay() + 6) % 7));
   const byMonth = new Map<string, string[]>();
   for (const date of enumerateDateKeys(weekStart, toDate)) {
@@ -766,7 +767,7 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
   const dayDate = editDate || fromDate;
   const monthGrids = [...byMonth.values()].map((dates, monthIndex) => {
     const first = new Date(`${dates[0]}T00:00:00Z`);
-    const monthTitle = new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(first);
+    const monthTitle = dateTimeFormat(locale, { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(first);
     const header = dowLabels.map((label) => `<span class="bk-dow">${escapeHtml(label)}</span>`).join('');
     const blanks = '<span class="bk-day bk-day--empty"></span>'.repeat((first.getUTCDay() + 6) % 7);
     let flagged = 0;
@@ -1126,7 +1127,7 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
     const key = adminFieldMessageKeys[field];
     return key ? messages[key] : undefined;
   };
-  const todayLong = new Intl.DateTimeFormat(formatLocaleFor(locale), { weekday: 'long', day: 'numeric', month: 'long', timeZone: timezone }).format(now);
+  const todayLong = dateTimeFormat(formatLocaleFor(locale), { weekday: 'long', day: 'numeric', month: 'long', timeZone: timezone }).format(now);
   const adminHeader = `<header class="bk-admin-header"><div><h1>${escapeHtml(messages['admin.title'])}</h1><p class="bk-admin-date">${escapeHtml(todayLong)}</p></div></header>`
     + adminErrorAlert(messages, input.error, errorFieldLabel);
 

@@ -566,12 +566,50 @@ export interface SettingsLoadWarning {
 // Load-path counterpart of mergeAndValidateSettings, run on every request: a stored row saved
 // under looser rules may now fail validation. Offending rows are dropped and reported via
 // `onWarn`, falling back to the pristine file config if a failure can't be attributed to one key.
+interface MergedConfigEntry {
+  config: ResolvedClientConfig;
+  warnings: SettingsLoadWarning[];
+}
+
+const MERGED_CONFIGS_PER_BASE = 8;
+const mergedConfigs = new WeakMap<ResolvedClientConfig, Map<string, MergedConfigEntry>>();
+
+// Every request overlays the same stored rows on the same file config, and re-validating the merge
+// with Zod each time cost a request's CPU for an unchanged answer. The result is kept per file
+// config and exact row set (a save changes the rows, so it misses), and its warnings are replayed
+// so each request still reports what it dropped.
 export function loadMergedConfig(
   config: ResolvedClientConfig,
   rows: Record<string, string>,
   onWarn?: (warning: SettingsLoadWarning) => void,
 ): ResolvedClientConfig {
   if (Object.keys(rows).length === 0) return config;
+  const key = JSON.stringify(Object.entries(rows).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)));
+  let byRows = mergedConfigs.get(config);
+  const hit = byRows?.get(key);
+  if (hit) {
+    for (const warning of hit.warnings) onWarn?.(warning);
+    return hit.config;
+  }
+  const warnings: SettingsLoadWarning[] = [];
+  const merged = mergeStoredRows(config, rows, (warning) => {
+    warnings.push(warning);
+    onWarn?.(warning);
+  });
+  if (!byRows) {
+    byRows = new Map();
+    mergedConfigs.set(config, byRows);
+  }
+  if (byRows.size >= MERGED_CONFIGS_PER_BASE) byRows.clear();
+  byRows.set(key, { config: merged, warnings });
+  return merged;
+}
+
+function mergeStoredRows(
+  config: ResolvedClientConfig,
+  rows: Record<string, string>,
+  onWarn: (warning: SettingsLoadWarning) => void,
+): ResolvedClientConfig {
   // A row nobody defines any more (a pricing shape that changed under it, a service that was
   // removed) is dead weight: it is named once here rather than silently carried forever.
   const known = new Set(settingDefinitionsFor(config).map((definition) => definition.key));

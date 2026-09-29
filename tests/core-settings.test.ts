@@ -326,3 +326,26 @@ describe('service pricing (per tier amount)', () => {
     expect(warnings).toEqual([{ key: TIER3, reason: expect.any(String) }]);
   });
 });
+
+// Every request merges the same stored rows over the same file config; the merge is validated once
+// and reused, but each request must still hear about the rows it drops.
+describe('merged config reuse', () => {
+  it('returns the same merged config for the same rows and still reports dropped rows every time', () => {
+    const rows = { 'booking.minNoticeHours': '3', 'booking.holdMinutes': '5' };
+    const first: SettingsLoadWarning[] = [];
+    const second: SettingsLoadWarning[] = [];
+    const a = loadMergedConfig(config, rows, (warning) => first.push(warning));
+    const b = loadMergedConfig(config, { 'booking.holdMinutes': '5', 'booking.minNoticeHours': '3' }, (warning) => second.push(warning));
+    expect(b).toBe(a);
+    expect(a.booking.minNoticeHours).toBe(3);
+    expect(first.map((warning) => warning.key)).toContain('booking.holdMinutes');
+    expect(second).toEqual(first);
+  });
+
+  it('re-merges when a stored row changes', () => {
+    const before = loadMergedConfig(config, { 'booking.minNoticeHours': '3' });
+    const after = loadMergedConfig(config, { 'booking.minNoticeHours': '4' });
+    expect(after).not.toBe(before);
+    expect(after.booking.minNoticeHours).toBe(4);
+  });
+});

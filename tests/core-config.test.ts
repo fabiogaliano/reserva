@@ -915,3 +915,13 @@ describe('schedule lastEnd', () => {
     } as never)).toThrow(/services\.vintage\.schedule\.0: lastEnd 12:00/);
   });
 });
+
+// The runtime validates once and every request's context passes the result back in; that must not
+// cost a second parse, while any other object, even an equal one, is still checked.
+describe('validated config reuse', () => {
+  it('returns its own output unchanged and still rejects an invalid lookalike', () => {
+    const validated = validateConfig(config);
+    expect(validateConfig(validated)).toBe(validated);
+    expect(() => validateConfig({ ...validated, business: { ...validated.business, timezone: 'Mars/Olympus' } })).toThrow();
+  });
+});

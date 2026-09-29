@@ -1,4 +1,4 @@
-import { TZDate } from '@date-fns/tz';
+import { TZDate, tzOffset } from '@date-fns/tz';
 
 export interface LocalDateTimeParts {
   year: number;
@@ -43,12 +43,68 @@ function parseLocalDateTime(value: string): LocalDateTimeParts {
   return { year, month, day, hour, minute };
 }
 
+const HOUR_MS = 3_600_000;
+const OFFSET_CACHE_LIMIT = 50_000;
+const hourOffsets = new Map<string, number>();
+
+// Every conversion below reduces to "the zone's UTC offset at this instant", and asking Intl for it
+// costs microseconds a call: availability for a few months asks it tens of thousands of times,
+// enough on its own to exceed a Worker's CPU budget. An offset holds for whole UTC hours outside the
+// rare hour a transition falls in, so it is cached per hour, and only when both ends of the hour
+// agree (no zone changes offset twice within an hour). Undefined sends the caller to TZDate: a
+// transition hour, a pre-standard-time offset with seconds, or an invalid zone.
+function cachedOffsetMinutes(ms: number, timezone: string): number | undefined {
+  const hourStart = Math.floor(ms / HOUR_MS) * HOUR_MS;
+  const key = `${timezone}|${hourStart}`;
+  const cached = hourOffsets.get(key);
+  if (cached !== undefined) return cached;
+  const atStart = tzOffset(timezone, new Date(hourStart));
+  if (!Number.isInteger(atStart) || tzOffset(timezone, new Date(hourStart + HOUR_MS - 1)) !== atStart) return undefined;
+  if (hourOffsets.size >= OFFSET_CACHE_LIMIT) hourOffsets.clear();
+  hourOffsets.set(key, atStart);
+  return atStart;
+}
+
+const dayOffsets = new Map<string, number | null>();
+
+// The exact search below probes offsets up to 48 hours either side of a wall time and verifies each
+// candidate instant, all inside [day start - 48h, day end + 48h] read as UTC. When every hour of
+// that window has one offset, that offset is the only candidate and it verifies, so every wall time
+// on the date converts by subtraction; null marks a date near a transition, left to the search.
+function constantOffsetAroundDate(year: number, month: number, day: number, timezone: string): number | null {
+  const key = `${timezone}|${year}-${month}-${day}`;
+  const cached = dayOffsets.get(key);
+  if (cached !== undefined) return cached;
+  const dayStart = Date.UTC(year, month - 1, day);
+  let offset: number | null | undefined;
+  for (let hour = dayStart - 48 * HOUR_MS; hour <= dayStart + 72 * HOUR_MS; hour += HOUR_MS) {
+    const atHour = cachedOffsetMinutes(hour, timezone);
+    if (atHour === undefined || (offset !== undefined && atHour !== offset)) {
+      offset = null;
+      break;
+    }
+    offset = atHour;
+  }
+  const result = offset ?? null;
+  if (dayOffsets.size >= OFFSET_CACHE_LIMIT) dayOffsets.clear();
+  dayOffsets.set(key, result);
+  return result;
+}
+
+function localWallClock(ms: number, offsetMinutes: number): Date {
+  return new Date(ms + offsetMinutes * 60_000);
+}
+
 export function localDateTimeToUtc(value: string, timezone: string): Date {
   const parts = parseLocalDateTime(value);
   const wallTimeAsUtc = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute);
+  const constant = constantOffsetAroundDate(parts.year, parts.month, parts.day, timezone);
+  if (constant !== null) return new Date(wallTimeAsUtc - constant * 60_000);
   const offsets = new Set<number>();
   for (let hours = -48; hours <= 48; hours += 12) {
-    const offset = new TZDate(wallTimeAsUtc + hours * 60 * 60_000, timezone).getTimezoneOffset();
+    const probe = wallTimeAsUtc + hours * 60 * 60_000;
+    const cached = cachedOffsetMinutes(probe, timezone);
+    const offset = cached === undefined ? new TZDate(probe, timezone).getTimezoneOffset() : -cached;
     if (Number.isFinite(offset)) offsets.add(offset);
   }
   const matchingInstants = [...offsets]
@@ -81,6 +137,11 @@ export function localDateAndTimeToUtc(date: string, time: string, timezone: stri
 
 export function utcToLocalDateTime(value: string | Date, timezone: string): string {
   const date = value instanceof Date ? value : parseUtcInstant(value);
+  const offset = cachedOffsetMinutes(date.getTime(), timezone);
+  if (offset !== undefined) {
+    const local = localWallClock(date.getTime(), offset);
+    return `${String(local.getUTCFullYear()).padStart(4, '0')}-${String(local.getUTCMonth() + 1).padStart(2, '0')}-${String(local.getUTCDate()).padStart(2, '0')}T${String(local.getUTCHours()).padStart(2, '0')}:${String(local.getUTCMinutes()).padStart(2, '0')}`;
+  }
   const zoned = new TZDate(date.getTime(), timezone);
   const year = String(zoned.getFullYear()).padStart(4, '0');
   const month = String(zoned.getMonth() + 1).padStart(2, '0');
@@ -92,7 +153,12 @@ export function utcToLocalDateTime(value: string | Date, timezone: string): stri
 
 export function utcToLocalIso(value: string | Date, timezone: string): string {
   const date = value instanceof Date ? value : parseUtcInstant(value);
-  return new TZDate(date.getTime(), timezone).toISOString();
+  const offset = cachedOffsetMinutes(date.getTime(), timezone);
+  if (offset === undefined) return new TZDate(date.getTime(), timezone).toISOString();
+  // TZDate's format: the wall clock without "Z", then ±HH:MM ("+00:00" for UTC itself).
+  const hours = String(Math.floor(Math.abs(offset) / 60)).padStart(2, '0');
+  const minutes = String(Math.abs(offset) % 60).padStart(2, '0');
+  return `${localWallClock(date.getTime(), offset).toISOString().slice(0, -1)}${offset < 0 ? '-' : '+'}${hours}:${minutes}`;
 }
 
 export function localDateKey(value: string | Date, timezone: string): string {
@@ -100,9 +166,11 @@ export function localDateKey(value: string | Date, timezone: string): string {
   return local.slice(0, 10);
 }
 
-export function localDateToWeekday(date: string, timezone: string): number {
+// A calendar date's weekday is the same in every zone, so no zone lookup is needed; the parameter
+// stays for callers that pass one.
+export function localDateToWeekday(date: string, _timezone: string): number {
   const parts = parseDate(date);
-  return new TZDate(parts.year, parts.month - 1, parts.day, 12, 0, 0, 0, timezone).getDay();
+  return new Date(Date.UTC(parts.year, parts.month - 1, parts.day)).getUTCDay();
 }
 
 export function parseUtcInstant(value: string | Date): Date {

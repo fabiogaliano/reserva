@@ -1,6 +1,6 @@
 import { MANAGE_TOKEN_HEADER, type AvailabilityDay, type AvailabilityResponse } from '../core/api.js';
 import { maxQuantityFor, resolveService } from '../core/config.js';
-import { availabilityForDay, capacityForDate, defaultCapacityForDate, type CalEvent, type DayAvailability } from '../core/occupancy.js';
+import { availabilityForDay, capacityForDate, defaultCapacityForDate, getOccupancyIntervals, type CalEvent, type DayAvailability } from '../core/occupancy.js';
 import { priceFor, pricingPickupKeys } from '../core/pricing.js';
 import { generateSlots } from '../core/slots.js';
 import { addDaysToDateKey, enumerateDateKeys, localDateKey, localDateTimeToUtcIso, parseUtcInstant } from '../core/time.js';
@@ -233,6 +233,15 @@ async function availabilityPayload(context: ReservaContext, now: string, input: 
   const overridesByDate = new Map(overrides.map((override) => [override.date, override]));
   const capacityDefaults = await context.repo.listCapacityDefaults();
   const limitedThreshold = context.config.booking.limitedThreshold;
+  // Identical for every day of the range, so built once rather than per day.
+  const intervals = getOccupancyIntervals({
+    bookings,
+    calendarEvents: calendar.events,
+    service,
+    services: context.config.services,
+    now: parseUtcInstant(now),
+    ...(excludeBookingId ? { excludeBookingId } : {}),
+  });
   const days = dates.map((date) => {
     const capacityInfo = capacityForDate(date, defaultCapacityForDate(date, context.config.capacity.default, capacityDefaults), overridesByDate);
     const generated = generateSlots(service, date, context.config.business.timezone);
@@ -254,6 +263,8 @@ async function availabilityPayload(context: ReservaContext, now: string, input: 
       bookings,
       calendarEvents: calendar.events,
       services: context.config.services,
+      slots: generated,
+      intervals,
       requestedQuantity: quantity,
       now,
       minNoticeHours: context.config.booking.minNoticeHours,

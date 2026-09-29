@@ -9,6 +9,7 @@ import { formatLocaleFor } from '../core/locale.js';
 import { calendarUid, icsText } from '../ui/format.js';
 import { resolveMessages } from '../ui/messages.js';
 import { emailString, eventCopyKey } from './copy.js';
+import { dateTimeFormat, numberFormat } from '../core/intl.js';
 
 // ---------------------------------------------------------------------------
 // The public, provider-neutral seam (@reservajs/astro/email, src/email/index.ts).
@@ -91,16 +92,16 @@ function buildModel(context: EmailTemplateContext): EmailModel {
   const startsAt = new Date(booking.startsAt);
   // No `hourCycle`: the locale decides 12- or 24-hour, so the email reads the same way as the
   // pages instead of forcing 24-hour on a reader whose locale never uses it.
-  const time = new Intl.DateTimeFormat(formatLocale, { hour: '2-digit', minute: '2-digit', timeZone }).format(startsAt);
-  const when = `${new Intl.DateTimeFormat(formatLocale, { weekday: 'short', day: 'numeric', month: 'short', timeZone }).format(startsAt)}, ${time}`;
-  const dateLong = new Intl.DateTimeFormat(formatLocale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone }).format(startsAt);
+  const time = dateTimeFormat(formatLocale, { hour: '2-digit', minute: '2-digit', timeZone }).format(startsAt);
+  const when = `${dateTimeFormat(formatLocale, { weekday: 'short', day: 'numeric', month: 'short', timeZone }).format(startsAt)}, ${time}`;
+  const dateLong = dateTimeFormat(formatLocale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone }).format(startsAt);
   const guestsWord = copy(booking.quantity === 1 ? 'word.guest' : 'word.guests');
   const customerName = booking.customerName ?? '';
 
   // The booking's own currency, captured at checkout — never today's configured one, which a
   // deployment may have changed since the money moved.
-  const price = new Intl.NumberFormat(formatLocale, { style: 'currency', currency: booking.currency.toUpperCase() }).format(toMajorUnits(booking.priceMinor, booking.currency));
-  const cancelDeadline = new Intl.DateTimeFormat(formatLocale, { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', timeZone }).format(cancellationDeadline(booking, config.booking.cancelCutoffHours));
+  const price = numberFormat(formatLocale, { style: 'currency', currency: booking.currency.toUpperCase() }).format(toMajorUnits(booking.priceMinor, booking.currency));
+  const cancelDeadline = dateTimeFormat(formatLocale, { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', timeZone }).format(cancellationDeadline(booking, config.booking.cancelCutoffHours));
 
   const rawValues: Record<string, string> = {
     serviceTitle, when, customerName, reference: booking.reference, price, cancelDeadline,

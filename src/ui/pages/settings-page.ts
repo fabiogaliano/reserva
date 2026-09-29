@@ -17,6 +17,7 @@ import { cssAssetHref, jsAssetHref } from '../asset-hrefs.js';
 import { factList, pageShell, themeToggle } from '../layout.js';
 import { formatMessage, resolveMessages } from '../messages.js';
 import { adminErrorAlert, adminTopbar, type AdminErrorNotice } from './admin-page.js';
+import { dateTimeFormat, numberFormat } from '../../core/intl.js';
 
 // The admin settings page (?view=settings). A two-column form: each group's title on the left,
 // its always-editable fields on the right, so the control is the value and there is no reveal
@@ -60,14 +61,14 @@ export function settingsPage(
   };
   // 2024-01-07 is a Sunday, so day index 0..6 (config convention: 0 = Sunday) maps onto it directly.
   const weekdayName = (day: number): string =>
-    new Intl.DateTimeFormat(locale, { weekday: 'short', timeZone: 'UTC' }).format(new Date(Date.UTC(2024, 0, 7 + day)));
+    dateTimeFormat(locale, { weekday: 'short', timeZone: 'UTC' }).format(new Date(Date.UTC(2024, 0, 7 + day)));
   // Monday-first, the way a week is read here; the config's own indices stay 0 = Sunday.
   const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
   const dayNames = (days: readonly number[]): string =>
     days.length === 7 ? messages['settingGroup.everyDay'] : [...days].sort((a, b) => a - b).map(weekdayName).join(', ');
   const monthDayName = (monthDay: string): string => {
     const [month = 1, day = 1] = monthDay.split('-').map(Number);
-    return new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(Date.UTC(2024, month - 1, day)));
+    return dateTimeFormat(locale, { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(Date.UTC(2024, month - 1, day)));
   };
   const ruleFor = ({ serviceSlug, ruleIndex, rule }: ScheduleRuleGroup) =>
     (serviceSlug === undefined ? context.config.hours?.[ruleIndex] : context.config.services[serviceSlug]?.schedule[ruleIndex]) ?? rule;
@@ -121,7 +122,7 @@ export function settingsPage(
   // The currency sits on whichever side the locale writes it ("€ 25" vs "25 €"), so a price input
   // reads the way the same price is printed everywhere else.
   const currencyUnit = (currency: string): { text: string; before: boolean } => {
-    const parts = new Intl.NumberFormat(formatLocaleFor(locale), { style: 'currency', currency: currency.toUpperCase() }).formatToParts(1);
+    const parts = numberFormat(formatLocaleFor(locale), { style: 'currency', currency: currency.toUpperCase() }).formatToParts(1);
     const symbolAt = parts.findIndex((part) => part.type === 'currency');
     return { text: parts[symbolAt]?.value ?? currency.toUpperCase(), before: symbolAt < parts.findIndex((part) => part.type === 'integer') };
   };

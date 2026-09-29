@@ -7,6 +7,7 @@ import {
   unknownBookingEventsMessage,
   type WebhookEvent,
 } from './events.js';
+import { dateTimeFormat } from './intl.js';
 
 // A plain string: the pickup axis is whatever ids a service declares in
 // `ServiceConfig.location.pickupOptions`, which no static union can enumerate.
@@ -600,7 +601,7 @@ function addIssue(ctx: { addIssue: (issue: { code: 'custom'; path: (string | num
 
 function isValidTimezone(timezone: string): boolean {
   try {
-    new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format();
+    dateTimeFormat('en-US', { timeZone: timezone }).format();
     return true;
   } catch {
     return false;
@@ -871,7 +872,13 @@ function validateSchedule(service: ResolvedServiceConfig, serviceSlug: string, a
   }
 }
 
+// The runtime validates the file config once per isolate, then every request builds a context
+// from that same object; re-parsing it with Zod on each request was measurable CPU for no new
+// answer. Only this function's own outputs are remembered, so any other object is still checked.
+const validatedConfigs = new WeakSet<object>();
+
 export function validateConfig(input: unknown): ResolvedClientConfig {
+  if (typeof input === 'object' && input !== null && validatedConfigs.has(input)) return input as ResolvedClientConfig;
   const parsed = clientConfigSchema.safeParse(input);
   if (!parsed.success) {
     throw parsed.error;
@@ -941,6 +948,7 @@ export function validateConfig(input: unknown): ResolvedClientConfig {
   for (const service of Object.values(config.services)) {
     if (Array.isArray(service.pricing)) service.pricing.sort((a, b) => a.maxQuantity - b.maxQuantity);
   }
+  validatedConfigs.add(config);
   return config;
 }
 

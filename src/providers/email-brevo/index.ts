@@ -6,6 +6,7 @@ import { formatLocaleFor } from '../../email/render.js';
 import { ProviderFailure } from '../../provider-failure.js';
 import { isManageableToken } from '../../repo.js';
 import type { ReservaResolvedRouteConfig } from '../../routes-manifest.js';
+import { dateTimeFormat } from '../../core/intl.js';
 
 export const BREVO_TRANSACTIONAL_EMAIL_URL = 'https://api.brevo.com/v3/smtp/email';
 export type BrevoRecipient = EmailRecipientRole;
@@ -61,7 +62,7 @@ export function emailLocaleFor(booking: Booking, config: ResolvedClientConfig): 
 }
 
 function localStart(booking: Booking, config: ResolvedClientConfig): string {
-  return new Intl.DateTimeFormat(formatLocaleFor(emailLocaleFor(booking, config)), { dateStyle: 'medium', timeStyle: 'short', timeZone: config.business.timezone }).format(new Date(booking.startsAt));
+  return dateTimeFormat(formatLocaleFor(emailLocaleFor(booking, config)), { dateStyle: 'medium', timeStyle: 'short', timeZone: config.business.timezone }).format(new Date(booking.startsAt));
 }
 
 // The one place a Brevo-specific field name (htmlContent/textContent) exists, regardless of
