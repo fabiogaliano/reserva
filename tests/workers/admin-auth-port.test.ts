@@ -148,8 +148,10 @@ describe('admin auth port: custom adminAuth drives the whole admin surface (no a
   });
 
   it('admin POST (day override) mints and accepts a CSRF token bound to the header-token identity, and mutates', async () => {
-    const getContext = await buildContext(adminGetRequest(authorizedHeaders()));
-    const getResponse = await handleAdminGet(adminGetRequest(authorizedHeaders()), getContext);
+    // The day-override form lives on the availability tab, the only panel that page renders.
+    const calendarRequest = () => new Request(`${ADMIN_URL}?tab=availability`, { headers: authorizedHeaders() });
+    const getContext = await buildContext(calendarRequest());
+    const getResponse = await handleAdminGet(calendarRequest(), getContext);
     const body = await getResponse.text();
     const csrfMatch = /name="csrf_token" value="([^"]+)"/.exec(body);
     if (!csrfMatch) throw new Error('admin page did not render a csrf_token field');
