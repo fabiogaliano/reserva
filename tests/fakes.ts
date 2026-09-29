@@ -509,6 +509,19 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     },
     // Mirrors src/repo.ts's MAX / COALESCE updates, so a test can deliver refund and dispute
     // events out of order and see the same end state D1 would keep.
+    countMetadataValues: async (key, now) => {
+      const counts = new Map<string, { value: string; upcoming: number; past: number }>();
+      for (const row of rows.values()) {
+        const raw = row.metadata?.[key];
+        if (raw === undefined || raw === null) continue;
+        const value = String(raw);
+        const entry = counts.get(value) ?? { value, upcoming: 0, past: 0 };
+        if (row.status === 'confirmed' && row.startsAt > now) entry.upcoming += 1;
+        if ((row.status === 'confirmed' || row.status === 'no_show') && row.startsAt <= now) entry.past += 1;
+        counts.set(value, entry);
+      }
+      return [...counts.values()];
+    },
     recordRefundedAmount: async (id, amountMinor) => {
       const current = rows.get(id);
       if (current) rows.set(id, { ...current, amountRefundedMinor: Math.max(current.amountRefundedMinor, amountMinor) });

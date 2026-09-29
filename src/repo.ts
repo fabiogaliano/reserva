@@ -332,6 +332,12 @@ export interface AdminBookingWindow {
   statuses?: readonly BookingStatus[];
 }
 
+export interface MetadataValueCount {
+  value: string;
+  upcoming: number;
+  past: number;
+}
+
 export interface BookingRepository {
   sweepExpiredHolds(now: string): Promise<number>;
   expireHold(id: string, now: string): Promise<Booking | null>;
@@ -459,6 +465,10 @@ export interface BookingRepository {
   // The provider reports refunds as a cumulative total with no refund id, so the stored value only
   // ever grows: a delayed, smaller total from an earlier refund is a no-op.
   recordRefundedAmount(id: string, amountMinor: number): Promise<void>;
+  // Bookings per stored value of one metadata key, for the admin's overview of a tagged field.
+  // `upcoming` counts confirmed bookings still ahead of `now`; `past` counts the confirmed and
+  // no-show bookings whose start has passed, the ones a commission can be paid on.
+  countMetadataValues(key: string, now: string): Promise<MetadataValueCount[]>;
   // Opens a dispute unless one is already recorded, keeping the first date and any outcome that a
   // close delivered ahead of this event already stored. With `fromProvider`, `at` is the provider's
   // own creation time for the dispute, the same on every event about it, so a later time means a
@@ -1691,6 +1701,17 @@ export function createBookingRepository(
          VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, 0, NULL, NULL, NULL, ?, ?)
          ON CONFLICT DO NOTHING`,
       ).bind(bookingId, ...sideEffectIdentityParams(seed), seed.eventPayloadJson, now, now)));
+    },
+    async countMetadataValues(key, now) {
+      const result = await db.prepare(
+        `SELECT CAST(json_extract(metadata, ?1) AS TEXT) AS value,
+           SUM(status = 'confirmed' AND starts_at > ?2) AS upcoming,
+           SUM(status IN ('confirmed', 'no_show') AND starts_at <= ?2) AS past
+         FROM bookings
+         WHERE metadata IS NOT NULL AND json_extract(metadata, ?1) IS NOT NULL
+         GROUP BY value`,
+      ).bind(`$.${key}`, now).all<{ value: string; upcoming: number | null; past: number | null }>();
+      return (result.results ?? []).map((row) => ({ value: row.value, upcoming: row.upcoming ?? 0, past: row.past ?? 0 }));
     },
     async recordRefundedAmount(id, amountMinor) {
       await db.prepare('UPDATE bookings SET amount_refunded_minor = MAX(amount_refunded_minor, ?) WHERE id = ?')

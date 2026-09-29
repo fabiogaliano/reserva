@@ -848,6 +848,21 @@ describe('metadata fields', () => {
       }]);
     });
 
+    it('accepts an adminOptionLink with {value} on a tagged select', () => {
+      const validated = validateConfig(withFields([{ ...partnerField, adminOptionLink: 'https://example.test/?ref={value}' }]));
+      expect(validated.services.vintage!.metadataFields![0]).toMatchObject({ adminOptionLink: 'https://example.test/?ref={value}' });
+    });
+
+    it('rejects an adminOptionLink without adminBadge, or without {value}, naming the key path', () => {
+      const path = ['services', 'vintage', 'metadataFields', 0, 'adminOptionLink'];
+      expect(issuesOf(withFields([{ ...partnerField, adminBadge: false, adminOptionLink: 'https://example.test/?ref={value}' }]))).toEqual([{
+        path, message: 'metadata field partner declares adminOptionLink without adminBadge; the link is shown on the overview of admin-tagged fields',
+      }]);
+      expect(issuesOf(withFields([{ ...partnerField, adminOptionLink: 'https://example.test/' }]))).toEqual([{
+        path, message: 'metadata field partner declares adminOptionLink without {value}; every option would get the same link',
+      }]);
+    });
+
     it('accepts adminBadge: false on any type, since it asks for no tag', () => {
       expect(() => validateConfig(withFields([{ ...dietaryField, adminBadge: false }]))).not.toThrow();
     });

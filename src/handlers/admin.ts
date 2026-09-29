@@ -45,6 +45,8 @@ import {
   adminPage,
   adminStatusFilters,
   adminTabs,
+  adminTaggedFields,
+  buildTagOverview,
   incidentRetryAvailable,
   incidentsSection,
   matchesAdminSearch,
@@ -283,6 +285,8 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
       : saved.startsWith('incident-') ? 'attention'
       : editDate || saved === 'day' || saved === 'default' ? 'availability'
       : 'upcoming';
+    const taggedFields = adminTaggedFields(context.config);
+    const tagOverview = buildTagOverview(taggedFields, await Promise.all(taggedFields.map((field) => context.repo.countMetadataValues(field.key, now))));
     const messages = resolveMessages(context.config, adminLocaleFor(context.config));
     // incidentsSince is a fixed 30-day lookback from the render clock, not a config option.
     const incidentsSince = new Date(parseUtcInstant(now).getTime() - 30 * 86_400_000).toISOString();
@@ -331,6 +335,7 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
       },
       glance,
       activeTab,
+      tagOverview,
     }), 200, {
       ...contentSecurityPolicyHeaders(context.config),
       'cache-control': 'no-store',

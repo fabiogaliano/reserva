@@ -84,9 +84,64 @@ export interface AdminErrorNotice {
   field: string;
 }
 
-export type AdminTab = 'upcoming' | 'availability' | 'attention';
+export type AdminTab = 'upcoming' | 'availability' | 'tags' | 'attention';
 
-export const adminTabs: readonly AdminTab[] = ['upcoming', 'availability', 'attention'];
+export const adminTabs: readonly AdminTab[] = ['upcoming', 'availability', 'tags', 'attention'];
+
+export interface TagOverviewRow {
+  value: string;
+  label: string;
+  link: string | null;
+  upcoming: number;
+  past: number;
+}
+
+export interface TagOverviewField {
+  key: string;
+  label: string;
+  rows: TagOverviewRow[];
+}
+
+// Every select field an operator asked to see as a tag, once per key however many services declare
+// it, with its options labelled in the admin locale.
+export function adminTaggedFields(config: ReservaContext['config']): Array<{ key: string; label: string; link: string | undefined; options: Map<string, string> }> {
+  const locale = adminLocaleFor(config);
+  const fields = new Map<string, { key: string; label: string; link: string | undefined; options: Map<string, string> }>();
+  for (const service of Object.values(config.services)) {
+    for (const field of service.metadataFields ?? []) {
+      if (!field.adminBadge || field.type !== 'select') continue;
+      const entry = fields.get(field.key)
+        ?? { key: field.key, label: resolveLocalizedText(field.label, locale, config.locales.default), link: field.adminOptionLink, options: new Map<string, string>() };
+      for (const option of field.options ?? []) {
+        if (!entry.options.has(option.value)) entry.options.set(option.value, resolveLocalizedText(option.label, locale, config.locales.default));
+      }
+      fields.set(field.key, entry);
+    }
+  }
+  return [...fields.values()];
+}
+
+// Configured options first, in config order and even with no bookings yet; then any value still on
+// bookings after its option was removed, under its raw value, so a payout round never loses one.
+export function buildTagOverview(
+  fields: ReturnType<typeof adminTaggedFields>,
+  counts: ReadonlyArray<ReadonlyArray<{ value: string; upcoming: number; past: number }>>,
+): TagOverviewField[] {
+  return fields.map((field, index) => {
+    const byValue = new Map((counts[index] ?? []).map((count) => [count.value, count] as const));
+    const rows: TagOverviewRow[] = [...field.options].map(([value, label]) => ({
+      value,
+      label,
+      link: field.link ? field.link.replaceAll('{value}', encodeURIComponent(value)) : null,
+      upcoming: byValue.get(value)?.upcoming ?? 0,
+      past: byValue.get(value)?.past ?? 0,
+    }));
+    for (const count of counts[index] ?? []) {
+      if (!field.options.has(count.value)) rows.push({ value: count.value, label: count.value, link: null, upcoming: count.upcoming, past: count.past });
+    }
+    return { key: field.key, label: field.label, rows };
+  });
+}
 
 // The statuses the list filter offers, in the order an operator reaches for them.
 export const adminStatusFilters: readonly BookingStatus[] = ['confirmed', 'hold', 'expired', 'cancelled', 'no_show'];
@@ -434,6 +489,7 @@ export interface AdminPageInput {
   attention: AdminAttention;
   glance: AdminGlance;
   activeTab: AdminTab;
+  tagOverview: TagOverviewField[];
 }
 
 // Every link the dashboard generates is rebuilt from this state, never copied from the request
@@ -679,7 +735,7 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
     ? messages['admin.glanceNothing']
     : glance.firstTomorrow ? formatMessage(messages['admin.glanceFirst'], { time: time.text(glance.firstTomorrow) }) : '';
   const holdsHref = `?${new URLSearchParams({ status: 'hold', tab: 'upcoming' })}#bk-upcoming`;
-  const glanceStrip = `<div class="bk-glance" data-reserva-tab-only="upcoming"${currentTabFor(activeTab, incidentsHtml) === 'upcoming' ? '' : ' hidden'}>`
+  const glanceStrip = `<div class="bk-glance" data-reserva-tab-only="upcoming"${currentTabFor(activeTab, incidentsHtml, input.tagOverview.length > 0) === 'upcoming' ? '' : ' hidden'}>`
     + glanceCard(dayHref(fromDate), messages['admin.glanceToday'], bookingCountText(todayBookings), todaySub)
     + glanceCard(dayHref(tomorrow), messages['admin.glanceTomorrow'], bookingCountText(tomorrowBookings), tomorrowSub)
     + glanceCard(`?${new URLSearchParams({ tab: 'upcoming' })}#bk-upcoming`, messages['admin.glanceWeek'], bookingCountText(weekBookings),
@@ -1003,14 +1059,40 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
   // The enhancer's in-place tab switch replaceState()s to these hrefs, so they must carry every
   // piece of list state or a switch would silently reset the list.
   const tabParams = (tab: AdminTab): string => `?${adminStateParams(filters, { date: editDate, tab })}`;
+  const tagOverview = input.tagOverview;
+  // One tagged field names its own tab ("Partner"); several share a generic one.
   const tabLabels: Record<AdminTab, string> = {
     upcoming: messages['admin.tabUpcoming'],
     availability: messages['admin.tabAvailability'],
+    tags: tagOverview.length === 1 ? tagOverview[0]!.label : messages['admin.tabTags'],
     attention: messages['admin.tabAttention'],
   };
   const hasIncidents = Boolean(incidentsHtml);
-  const visibleTabs: AdminTab[] = hasIncidents ? ['upcoming', 'availability', 'attention'] : ['upcoming', 'availability'];
-  const currentTab = currentTabFor(activeTab, incidentsHtml);
+  const visibleTabs: AdminTab[] = [
+    'upcoming', 'availability',
+    ...(tagOverview.length > 0 ? ['tags' as const] : []),
+    ...(hasIncidents ? ['attention' as const] : []),
+  ];
+  // Each count opens the bookings list searched by the stored value, which the search matches.
+  const tagCountLink = (value: string, count: number, when: 'upcoming' | 'past'): string => {
+    if (count === 0) return '0';
+    const params = new URLSearchParams({ q: value, tab: 'upcoming' });
+    if (when === 'past') params.set('when', 'past');
+    return `<a class="bk-link" href="?${escapeHtml(params.toString())}">${count}</a>`;
+  };
+  const tagsPanel = tagOverview.map((field) => {
+    const rows = field.rows.map((row) => `<tr><th scope="row">${escapeHtml(row.label)}</th>`
+      + `<td>${row.link ? `<span class="bk-taglink"><a class="bk-link" href="${escapeHtml(row.link)}" rel="noopener" target="_blank">${escapeHtml(row.link)}</a>${copyButton(row.link, messages['admin.tagCopyLink'], messages['admin.copied'])}</span>` : ''}</td>`
+      + `<td class="bk-num">${tagCountLink(row.value, row.upcoming, 'upcoming')}</td>`
+      + `<td class="bk-num">${tagCountLink(row.value, row.past, 'past')}</td></tr>`).join('');
+    const hasLinks = field.rows.some((row) => row.link);
+    return `<section class="bk-tagsection"><h2>${escapeHtml(field.label)}</h2>`
+      + `<table class="bk-tagtable"><thead><tr><th scope="col">${escapeHtml(field.label)}</th><th scope="col">${hasLinks ? escapeHtml(messages['admin.tagLink']) : ''}</th>`
+      + `<th scope="col" class="bk-num">${escapeHtml(messages['admin.tagUpcoming'])}</th><th scope="col" class="bk-num">${escapeHtml(messages['admin.tagPast'])}</th></tr></thead>`
+      + `<tbody>${rows}</tbody></table>`
+      + `<p class="bk-hint">${escapeHtml(messages['admin.tagCountsHint'])}</p></section>`;
+  }).join('');
+  const currentTab = currentTabFor(activeTab, incidentsHtml, tagOverview.length > 0);
   const tabLink = (tab: AdminTab): string => {
     const count = tab === 'attention' && attention.count > 0
       ? ` <span class="bk-tab-count">${attention.count}</span>`
@@ -1060,13 +1142,17 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
     body: `${adminHeader}${glanceStrip}${banner}${tabs}<div class="bk-panels">`
       + panel('upcoming', 'bk-upcoming', upcomingPanel)
       + panel('availability', 'bk-availability', availabilityPanel)
+      + (tagOverview.length > 0 ? panel('tags', 'bk-tags', tagsPanel) : '')
       + (hasIncidents ? panel('attention', 'bk-attention', incidentsHtml) : '')
       + `</div>`,
   });
 }
 
-// `activeTab` is already narrowed by the caller, but an attention tab that no longer exists (the
-// last incident cleared between the click and the render) must not leave every panel hidden.
-function currentTabFor(activeTab: AdminTab, incidentsHtml: string): AdminTab {
-  return activeTab === 'attention' && !incidentsHtml ? 'upcoming' : activeTab;
+// `activeTab` is already narrowed by the caller, but a tab that no longer exists (the last incident
+// cleared between the click and the render, a tagged field removed from config) must not leave
+// every panel hidden.
+function currentTabFor(activeTab: AdminTab, incidentsHtml: string, hasTags: boolean): AdminTab {
+  if (activeTab === 'attention' && !incidentsHtml) return 'upcoming';
+  if (activeTab === 'tags' && !hasTags) return 'upcoming';
+  return activeTab;
 }

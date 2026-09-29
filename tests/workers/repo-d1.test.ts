@@ -361,6 +361,31 @@ describe('D1 booking repository', () => {
       createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
     });
 
+    it('counts bookings per stored metadata value: confirmed ahead as upcoming, confirmed or no-show behind as past', async () => {
+      const place = async (id: string, value: string, status: string, startsAt: string) => {
+        const created = await repo.insertHold({
+          id, reference: `BKT-2026-${id}`, serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
+          startsAt, endsAt: startsAt.replace('T09:', 'T10:'), locale: 'en', priceMinor: 12000, currency: 'eur', metadata: { channel: value },
+          holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: `${id}-cancel`, operatorToken: `${id}-operator`,
+          createdAt: '2026-07-21T10:00:00.000Z', updatedAt: '2026-07-21T10:00:00.000Z',
+        });
+        await db.prepare('UPDATE bookings SET status = ? WHERE id = ?').bind(status, created.id).run();
+      };
+      const now = '2026-08-01T00:00:00.000Z';
+      await place('ch-up', 'hotel', 'confirmed', '2026-08-05T09:00:00.000Z');
+      await place('ch-past', 'hotel', 'confirmed', '2026-07-05T09:00:00.000Z');
+      await place('ch-noshow', 'hotel', 'no_show', '2026-07-06T09:00:00.000Z');
+      await place('ch-cancelled', 'hotel', 'cancelled', '2026-08-06T09:00:00.000Z');
+      await place('ch-hold', 'kiosk', 'hold', '2026-08-07T09:00:00.000Z');
+
+      const counts = await repo.countMetadataValues('channel', now);
+      expect([...counts].sort((a, b) => a.value.localeCompare(b.value))).toEqual([
+        { value: 'hotel', upcoming: 1, past: 2 },
+        { value: 'kiosk', upcoming: 0, past: 0 },
+      ]);
+      await expect(repo.countMetadataValues('nobody_uses_this', now)).resolves.toEqual([]);
+    });
+
     it('starts a booking with nothing refunded and no dispute', async () => {
       await expect(insertMoneyBooking('money-new')).resolves.toMatchObject({ amountRefundedMinor: 0, disputedAt: null, disputeStatus: null });
     });

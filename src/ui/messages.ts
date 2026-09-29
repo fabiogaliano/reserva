@@ -134,6 +134,14 @@ export const defaultMessages = {
   'admin.tabUpcoming': 'Bookings',
   'admin.tabAvailability': 'Availability',
   'admin.tabAttention': 'Attention',
+  // The overview of fields shown as tags (a partner, a channel): its tab when several fields share
+  // it, the link column, the two count columns and what the counts include.
+  'admin.tabTags': 'Tags',
+  'admin.tagLink': 'Link',
+  'admin.tagCopyLink': 'Copy link',
+  'admin.tagUpcoming': 'Upcoming',
+  'admin.tagPast': 'Past',
+  'admin.tagCountsHint': 'Upcoming counts confirmed bookings still ahead. Past counts confirmed and no-show bookings whose start has passed. Open a count to see its bookings.',
   'admin.attentionCountOne': '1 issue needs attention',
   'admin.attentionCount': '{n} issues need attention',
   // The banner's one-incident form names the booking it is about: "ECT-2026-003, Mon 28 Sep at 1:00 PM".

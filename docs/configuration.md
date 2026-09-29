@@ -189,6 +189,16 @@ Two display settings, independent of each other:
   read as one. Allowed on `type: 'select'` only: `adminBadge: true` on any other type fails
   validation, because a tag has to come from a closed set of labels.
 
+  Tagged fields also get their own admin tab, named after the field (or "Tags" when several
+  fields are tagged). It lists every option, including ones with no bookings yet, with two
+  counts: **Upcoming**, confirmed bookings still ahead, and **Past**, confirmed and no-show
+  bookings whose start has passed. Each count opens the bookings list for that value. A value
+  still stored on bookings after its option was removed keeps a row under its raw value.
+- `adminOptionLink?: string` — a URL shown beside each option on that tab, with a copy button,
+  where `{value}` is replaced by the option's URL-encoded value. For a partner field, that's the
+  partner's referral link: `'https://example.com/?ref={value}'`. Needs `adminBadge: true` and
+  must contain `{value}`.
+
 ## Moving and disabling routes
 
 - `routePrefix?: string` (a `reserva()` option) — prepended to every injected route pattern

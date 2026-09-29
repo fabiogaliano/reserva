@@ -9,7 +9,7 @@ export const adminEnhancerJs = `(() => {
   const tabStrip = document.querySelector('nav.bk-tabs');
   const panelBox = document.querySelector('.bk-panels');
   if (tabStrip && panelBox) {
-    const panelIds = { upcoming: 'bk-upcoming', availability: 'bk-availability', attention: 'bk-attention' };
+    const panelIds = { upcoming: 'bk-upcoming', availability: 'bk-availability', tags: 'bk-tags', attention: 'bk-attention' };
     const switchTo = (link) => {
       const tab = link.dataset.reservaAdminTab;
       const wanted = panelIds[tab];

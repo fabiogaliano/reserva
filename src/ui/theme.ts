@@ -1033,6 +1033,16 @@ a.bk-day { padding-bottom: 0.35rem; box-sizing: border-box; }
 .bk-pricegrid td { padding: 0.4rem 0.75rem 0.4rem 0; border-top: 1px solid color-mix(in srgb, var(--bk-border) 60%, transparent); vertical-align: top; }
 .bk-pricegrid tbody th { padding-top: 0.95rem; color: var(--bk-text); font-size: 0.875rem; }
 .bk-sfield--cell .bk-input[type=number] { width: 6.5rem; }
+/* Admin overview of a tagged field: one row per option, its link, and two booking counts. */
+.bk-tagsection + .bk-tagsection { margin-top: 2rem; }
+.bk-tagsection h2 { font-size: 1rem; margin: 0 0 0.75rem; }
+.bk-tagtable { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+.bk-tagtable th { padding: 0 0.75rem 0.5rem 0; text-align: left; font-size: 0.78rem; font-weight: 500; color: var(--bk-text-muted); white-space: nowrap; }
+.bk-tagtable td, .bk-tagtable tbody th { padding: 0.6rem 0.75rem 0.6rem 0; border-top: 1px solid color-mix(in srgb, var(--bk-border) 60%, transparent); vertical-align: middle; }
+.bk-tagtable tbody th { color: var(--bk-text); font-size: 0.875rem; font-weight: 600; }
+.bk-tagtable .bk-num { text-align: right; font-variant-numeric: tabular-nums; width: 1%; }
+.bk-taglink { display: inline-flex; align-items: center; gap: 0.35rem; max-width: 100%; }
+.bk-taglink a { overflow-wrap: anywhere; }
 .bk-sfield--cell .bk-modified { display: flex; }
 .bk-modified { display: inline-flex; align-items: baseline; gap: 0.5rem; font-size: 0.8rem; color: var(--bk-text-muted); margin-top: 0.3rem; }
 @media (max-width: 40rem) {

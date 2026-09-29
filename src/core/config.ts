@@ -167,6 +167,9 @@ const metadataFieldSchema = z.object({
   // Independent of `visibility`: what an operator wants at a glance has nothing to do with who else
   // may see the field. Only a `select` can opt in (see `validateService`).
   adminBadge: z.boolean().optional(),
+  // A URL listed beside each option on the admin's overview of this field, with `{value}` replaced
+  // by the option's value: a partner's referral link, for instance. Needs `adminBadge`.
+  adminOptionLink: z.string().min(1).optional(),
 });
 
 // A location module may declare only `meetingPoints`: the transform implies a single
@@ -713,6 +716,11 @@ function validateService(service: ResolvedServiceConfig, serviceSlug: string, ad
     // free text or a bare number.
     if (field.adminBadge && field.type !== 'select') {
       add(['services', serviceSlug, 'metadataFields', index, 'adminBadge'], `metadata field ${field.key} declares type '${field.type}'; adminBadge is only allowed on type 'select'`);
+    }
+    if (field.adminOptionLink !== undefined && !field.adminBadge) {
+      add(['services', serviceSlug, 'metadataFields', index, 'adminOptionLink'], `metadata field ${field.key} declares adminOptionLink without adminBadge; the link is shown on the overview of admin-tagged fields`);
+    } else if (field.adminOptionLink !== undefined && !field.adminOptionLink.includes('{value}')) {
+      add(['services', serviceSlug, 'metadataFields', index, 'adminOptionLink'], `metadata field ${field.key} declares adminOptionLink without {value}; every option would get the same link`);
     }
     if (field.type === 'select') {
       if (!field.options || field.options.length === 0) {

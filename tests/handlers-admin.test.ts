@@ -859,6 +859,72 @@ describe('declared fields, refunds and disputes in the bookings list and day pan
   });
 });
 
+// An operator paying partners needs every partner listed with its link and the bookings it earned,
+// including partners with none yet and values whose option was since removed.
+describe('overview tab of tagged fields', () => {
+  const partnerField: MetadataField = {
+    key: 'partner', label: { en: 'Partner', 'pt-PT': 'Parceiro' }, type: 'select', visibility: 'operator', adminBadge: true,
+    adminOptionLink: 'https://example.test/?ref={value}',
+    options: [{ value: 'acme-stays', label: 'Acme Stays' }, { value: 'casa & co', label: 'Casa & Co' }],
+  };
+  const withFields = (metadataFields: MetadataField[]): ResolvedClientConfig => ({
+    ...config,
+    admin: { ...config.admin, locale: 'pt-PT' },
+    services: { ...config.services, vintage: { ...config.services.vintage!, metadataFields } },
+  });
+  const render = async (fields: MetadataField[], rows: ReturnType<typeof booking>[], query = '?tab=tags') => {
+    const context = createReservaContext({ config: withFields(fields), db: {} as D1Database, repo: fakeRepository(rows), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+    return (await handleAdminGet(new Request(`${ADMIN_URL}${query}`), context)).text();
+  };
+  const on = (id: string, day: string, extra: Partial<ReturnType<typeof booking>>) => booking({
+    id, reference: `LVT-${id}`, startsAt: `${day}T09:00:00.000Z`, endsAt: `${day}T10:00:00.000Z`, operatorToken: `op-${id}`, cancelToken: `cancel-${id}`, ...extra,
+  });
+  const rowOf = (body: string, label: string): string =>
+    body.split('<tr>').find((chunk) => chunk.startsWith(`<th scope="row">${label}</th>`))?.split('</tr>')[0] ?? '';
+
+  it('lists every option with its link and upcoming and past counts, plus values no longer offered', async () => {
+    const body = await render([partnerField], [
+      on('up-1', '2026-07-01', { metadata: { partner: 'acme-stays' } }),
+      on('up-2', '2026-07-02', { metadata: { partner: 'acme-stays' } }),
+      on('past-1', '2026-05-01', { metadata: { partner: 'acme-stays' } }),
+      on('noshow', '2026-05-02', { status: 'no_show', metadata: { partner: 'acme-stays' } }),
+      on('cancelled', '2026-07-03', { status: 'cancelled', metadata: { partner: 'acme-stays' } }),
+      on('hold', '2026-07-04', { status: 'hold', metadata: { partner: 'acme-stays' } }),
+      on('retired', '2026-05-03', { metadata: { partner: 'old-partner' } }),
+      on('none', '2026-07-05', { metadata: { dietary_notes: 'Vegan' } }),
+    ]);
+    expect(body).toContain('data-reserva-admin-tab="tags" aria-current="page">Parceiro</a>');
+    const acme = rowOf(body, 'Acme Stays');
+    expect(acme).toContain('href="https://example.test/?ref=acme-stays"');
+    expect(acme).toContain('data-reserva-copy="https://example.test/?ref=acme-stays"');
+    // Cancelled and held bookings earn nothing, so neither count includes them.
+    expect(acme).toContain('<td class="bk-num"><a class="bk-link" href="?q=acme-stays&amp;tab=upcoming">2</a></td>');
+    expect(acme).toContain('<td class="bk-num"><a class="bk-link" href="?q=acme-stays&amp;tab=upcoming&amp;when=past">2</a></td>');
+    // A partner with no bookings yet is still listed, its value escaped into the link.
+    const casa = rowOf(body, 'Casa &amp; Co');
+    expect(casa).toContain('href="https://example.test/?ref=casa%20%26%20co"');
+    expect(casa).toContain('<td class="bk-num">0</td><td class="bk-num">0</td>');
+    const retired = rowOf(body, 'old-partner');
+    expect(retired).toContain('<td></td>');
+    expect(retired).toContain('when=past">1</a>');
+  });
+
+  it('names a shared tab when several fields are tagged, and leaves the link column empty without a link', async () => {
+    const language: MetadataField = { key: 'language', label: 'Tour language', type: 'select', adminBadge: true, options: [{ value: 'de', label: 'German' }] };
+    const body = await render([partnerField, language], []);
+    expect(body).toContain('data-reserva-admin-tab="tags" aria-current="page">Etiquetas</a>');
+    expect(body).toContain('<h2>Parceiro</h2>');
+    expect(body).toContain('<h2>Tour language</h2><table class="bk-tagtable"><thead><tr><th scope="col">Tour language</th><th scope="col"></th>');
+  });
+
+  it('shows no tab without a tagged field, and a stale ?tab=tags falls back to the bookings list', async () => {
+    const body = await render([{ ...partnerField, adminBadge: false, adminOptionLink: undefined }], []);
+    expect(body).not.toContain('data-reserva-admin-tab="tags"');
+    expect(body).not.toContain('id="bk-tags"');
+    expect(body).toContain('data-reserva-admin-tab="upcoming" aria-current="page"');
+  });
+});
+
 describe('POST /admin day overrides (spec §11)', () => {
   it('action=set calls upsertDayOverrides once with a trimmed reason and redirects (303) back with a saved confirmation', async () => {
     const repo = fakeRepository();
