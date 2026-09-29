@@ -146,34 +146,81 @@ export const manageEnhancerJs = `(() => {
     }
   };
 
-  const query = new URLSearchParams({ serviceSlug: ds.service || '', quantity: ds.quantity || '', from: ds.from || '', to: ds.to || '' });
   // The form's own token lets availability leave this booking out of the count, so the customer
   // can move within (or next to) the slot they already hold. A header, not a query param, so the
   // token stays out of request logs.
   const tokenInput = form.querySelector('input[name="token"], input[name="operatorToken"]');
   const headers = tokenInput && tokenInput.value ? { '${MANAGE_TOKEN_HEADER}': tokenInput.value } : {};
-  fetch(ds.endpoint + '?' + query, { cache: 'no-store', headers })
-    .then((response) => response.json().then((payload) => ({ ok: response.ok, payload })))
-    .then(({ ok, payload }) => {
-      if (!ok || !payload.days) throw new Error();
-      const days = new Map(payload.days.map((day) => [day.date, day]));
+  const minKey = ds.from || '';
+  const maxKey = ds.to || '';
+  const days = new Map();
+  // One request per calendar month, fetched as the operator pages: a horizon can be hundreds of
+  // days, and asking for all of it at once cost the server seconds of CPU for months nobody opens.
+  const months = new Map();
+  const monthOf = (key) => key.slice(0, 7);
+  const nextMonth = (month) => {
+    const year = Number(month.slice(0, 4));
+    const index = Number(month.slice(5, 7));
+    return index === 12 ? (year + 1) + '-01' : year + '-' + String(index + 1).padStart(2, '0');
+  };
+  const lastDayOf = (month) => month + '-' + String(new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate()).padStart(2, '0');
+  const loadMonth = (month) => {
+    const cached = months.get(month);
+    if (cached) return cached;
+    const first = month + '-01';
+    const last = lastDayOf(month);
+    const from = first < minKey ? minKey : first;
+    const to = last > maxKey ? maxKey : last;
+    if (from > to) return Promise.resolve([]);
+    const query = new URLSearchParams({ serviceSlug: ds.service || '', quantity: ds.quantity || '', from, to });
+    const request = fetch(ds.endpoint + '?' + query, { cache: 'no-store', headers })
+      .then((response) => response.json().then((payload) => ({ ok: response.ok, payload })))
+      .then(({ ok, payload }) => {
+        if (!ok || !payload.days) throw new Error();
+        for (const day of payload.days) days.set(day.date, day);
+        return payload.days;
+      });
+    months.set(month, request);
+    // Forgotten on failure, so paging back to that month tries again.
+    request.catch(() => { if (months.get(month) === request) months.delete(month); });
+    return request;
+  };
+  // A fresh function each time: that is what makes cally re-evaluate which days are disabled once
+  // another month has arrived.
+  const refresh = () => {
+    calendar.isDateDisallowed = (date) => {
+      const day = days.get(dateKey(date));
+      return !day || day.slots.length === 0;
+    };
+  };
+  // The shown month and the next, so paging forward one month never waits on the network.
+  const loadAround = (month) => Promise.allSettled([loadMonth(month), loadMonth(nextMonth(month))]).then(refresh);
+  const firstOpenFrom = (month) => loadMonth(month).then((list) => {
+    const open = list.find((day) => day.slots.length > 0);
+    if (open) return open;
+    const following = nextMonth(month);
+    return following + '-01' <= maxKey ? firstOpenFrom(following) : null;
+  });
+  if (!minKey || !maxKey) return;
+  firstOpenFrom(monthOf(minKey))
+    .then((firstOpen) => {
       nativeField.hidden = true;
       input.type = 'hidden';
       input.required = false;
       submit.disabled = true;
       nativeField.before(wrap);
-      calendar.isDateDisallowed = (date) => {
-        const day = days.get(dateKey(date));
-        return !day || day.slots.length === 0;
-      };
-      const firstOpen = payload.days.find((day) => day.slots.length > 0);
+      refresh();
       if (firstOpen) {
         calendar.focusedDate = firstOpen.date;
         status.textContent = i18n.pickDate || '';
       } else {
         status.textContent = i18n.noSlots || '';
       }
+      loadAround(monthOf(firstOpen ? firstOpen.date : minKey));
       calendar.addEventListener('change', () => renderSlots(days.get(calendar.value)));
+      calendar.addEventListener('focusday', (event) => {
+        if (event.detail instanceof Date) loadAround(monthOf(dateKey(event.detail)));
+      });
     })
     .catch(() => {
       // Leave the native input in place: worst case the page behaves exactly as before.

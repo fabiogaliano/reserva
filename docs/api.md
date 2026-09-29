@@ -14,8 +14,12 @@ table inside the published tarball.
   (`YYYY-MM-DD`) and `time` (`HH:MM`) are the same instant in the business timezone, already
   projected so a consumer never re-derives it. `remaining: number | null` is published only at or
   below `config.booking.limitedThreshold` and `null` above it (exact capacity is
-  deployment-private). `quantity` is optional and defaults to 1. The range may span up to
-  `maxHorizonDays`; a consumer never chunks requests. A reschedule picker sends the booking's
+  deployment-private). `quantity` is optional and defaults to 1. One request covers at most 62
+  days (`MAX_AVAILABILITY_RANGE_DAYS`) and never reaches past `maxHorizonDays`; a longer range is
+  a 400 `validation_failed` with `details: { field: 'to' }`. The limit keeps one
+  request's CPU bounded, since every day costs slot generation and an occupancy pass. The client's
+  `availability()` splits a longer range into consecutive requests and merges the days, so only a
+  raw HTTP consumer has to chunk. A reschedule picker sends the booking's
   manage token in the `x-reserva-manage-token` header (`MANAGE_TOKEN_HEADER`, or `manageToken` on
   the client) so the booking's own slot isn't counted against it. That answer is never cached; an
   unknown or revoked token gets the normal answer.

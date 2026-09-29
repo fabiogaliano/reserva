@@ -1,10 +1,10 @@
-// Proves a full 365-day availability request completes inside a Worker, against real D1 — the
-// old fixed 62-day limit forced callers to chunk-and-merge their requests.
+// Proves a full 365-day horizon can be read inside a Worker against real D1, in the consecutive
+// 62-day requests the per-request cap allows (what the client's availability() does for a caller).
 import { env } from 'cloudflare:workers';
 import virtualConfig from 'virtual:reserva/config';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { ReservaContext } from '../../src/context';
-import type { AvailabilityResponse } from '../../src/core/api';
+import { MAX_AVAILABILITY_RANGE_DAYS, type AvailabilityDay, type AvailabilityResponse } from '../../src/core/api';
 import { handleAvailability } from '../../src/handlers';
 import { defineCloudflareReservaRuntime } from '../../src/runtime-context';
 import { providers } from '../fakes';
@@ -75,28 +75,36 @@ beforeAll(async () => {
 });
 
 describe('full-horizon availability', () => {
-  it('answers a whole-horizon request in one call, with a day entry for every date', async () => {
+  it('answers the whole horizon in consecutive capped requests, with a day entry for every date', async () => {
     const from = dateKey(0);
     const to = dateKey(HORIZON_DAYS);
-    const url = `https://example.test/api/booking/availability?service=vintage&quantity=2&from=${from}&to=${to}`;
-    const context = await buildContext(new Request(url));
-
+    const days: AvailabilityDay[] = [];
     const startedAt = Date.now();
-    const response = await handleAvailability(new Request(url), context);
+    for (let offset = 0; offset <= HORIZON_DAYS; offset += MAX_AVAILABILITY_RANGE_DAYS) {
+      const chunkTo = dateKey(Math.min(offset + MAX_AVAILABILITY_RANGE_DAYS - 1, HORIZON_DAYS));
+      const url = `https://example.test/api/booking/availability?service=vintage&quantity=2&from=${dateKey(offset)}&to=${chunkTo}`;
+      const response = await handleAvailability(new Request(url), await buildContext(new Request(url)));
+      expect(response.status).toBe(200);
+      days.push(...(await response.json() as AvailabilityResponse).days);
+    }
     const elapsedMs = Date.now() - startedAt;
 
-    expect(response.status).toBe(200);
-    const payload = await response.json() as AvailabilityResponse;
-    expect(payload.days).toHaveLength(HORIZON_DAYS + 1);
-    expect(payload.days[0]?.date).toBe(from);
-    expect(payload.days.at(-1)?.date).toBe(to);
+    expect(days).toHaveLength(HORIZON_DAYS + 1);
+    expect(days[0]?.date).toBe(from);
+    expect(days.at(-1)?.date).toBe(to);
     // Bookable slots still come back for a date deep in the horizon — the window isn't silently
     // truncated to keep the response cheap.
-    expect(payload.days.some((day) => day.slots.length > 0)).toBe(true);
+    expect(days.some((day) => day.slots.length > 0)).toBe(true);
 
-    // A soft ceiling, not a benchmark — guards against a future quadratic regression. Measured at
-    // ~0.5s wall clock here (366 days x 7 slots/day against 50 confirmed bookings).
+    // A soft ceiling, not a benchmark — guards against a future quadratic regression.
     expect(elapsedMs).toBeLessThan(10_000);
+  });
+
+  it('rejects one request spanning more than the per-request cap, even inside the horizon', async () => {
+    const url = `https://example.test/api/booking/availability?service=vintage&quantity=2&from=${dateKey(0)}&to=${dateKey(MAX_AVAILABILITY_RANGE_DAYS)}`;
+    const response = await handleAvailability(new Request(url), await buildContext(new Request(url)));
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed', details: { field: 'to' } } });
   });
 
   it('still rejects a request past the horizon, naming the config key', async () => {
