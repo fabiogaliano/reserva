@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.14.0
+
+### Minor Changes
+
+- 4d5e7ea: Availability requests are now capped at 62 days each (`MAX_AVAILABILITY_RANGE_DAYS`, exported from the client). A longer range returns 400 `validation_failed` with `details: { field: 'to' }`. Before this, the only bound was `config.booking.maxHorizonDays`, so a 500-day horizon meant one request spent seconds of CPU and a Cloudflare Worker hit its CPU limit. `createReservaClient().availability()` splits longer ranges into consecutive requests and merges the days, so client users need no changes; a raw HTTP consumer that requested more than 62 days at once must now split the range.
+  
+  The manage page's reschedule calendar now fetches one calendar month at a time: the month shown plus the next, then further months as you page, cached so paging back doesn't refetch. Before, it fetched the whole booking horizon on load.
+
+### Patch Changes
+
+- 9693ccc: Availability, the admin dashboard and every request now use a fraction of the CPU they did, so they fit a Cloudflare Worker's per-request budget (10 ms on the Free plan). Timezone conversions reuse the zone's offset per hour instead of asking `Intl` on every call, date and price formatters are created once and reused, availability builds a day's slots and the range's occupancy once instead of repeatedly, and the config is validated once per isolate instead of on every request. Results are unchanged, including across DST transitions.
+- 5b2d1a1: Confirmation emails for a booking made inside the cancellation cutoff no longer promise a free-cancellation date that had already passed; the Cancellation row now says free cancellation is not available (new copy key `cancellation.closed`, overridable per locale).
+
 ## 0.13.1
 
 ### Patch Changes

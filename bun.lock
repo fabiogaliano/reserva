@@ -30,9 +30,9 @@
     },
     "packages/stripe": {
       "name": "@reservajs/stripe",
-      "version": "0.7.1",
+      "version": "0.8.0",
       "peerDependencies": {
-        "@reservajs/astro": "^0.13.0",
+        "@reservajs/astro": "^0.14.0",
       },
     },
   },
@@ -845,7 +845,7 @@
 
     "@cloudflare/vitest-pool-workers/wrangler": ["wrangler@4.114.0", "", { "dependencies": { "@cloudflare/kv-asset-handler": "0.5.0", "@cloudflare/unenv-preset": "2.16.1", "blake3-wasm": "2.1.5", "esbuild": "0.28.1", "miniflare": "4.20260722.0", "path-to-regexp": "6.3.0", "unenv": "2.0.0-rc.24", "workerd": "1.20260722.1" }, "optionalDependencies": { "fsevents": "2.3.3" }, "peerDependencies": { "@cloudflare/workers-types": "^5.20260722.1" }, "optionalPeers": ["@cloudflare/workers-types"], "bin": { "wrangler": "bin/wrangler.js", "wrangler2": "bin/wrangler.js", "cf-wrangler": "bin/cf-wrangler.js" } }, "sha512-M65P25t5UHA1TIJfgZXDcj+YzVobgKdRguM2QPz0xnxLFuOcuE3ErgllDht0iaho7MS4o0g/Bb4YK2+GT+bibg=="],
 
-    "@reservajs/stripe/@reservajs/astro": ["@reservajs/astro@file:", { "dependencies": { "@date-fns/tz": "^1.5.0", "cally": "^0.9.2", "date-fns": "^4.4.0", "smol-toml": "^1.8.0" }, "devDependencies": { "@astrojs/cloudflare": "^14.3.1", "@changesets/cli": "^3.0.3", "@cloudflare/vitest-pool-workers": "^0.18.8", "@cloudflare/workers-types": "^5.20260916.1", "@playwright/test": "^1.63.0", "@types/node": "^26.6.1", "astro": "^7.3.2", "standardwebhooks": "^1.1.1", "typescript": "^7.0.2", "vitest": "^4.1.11", "wrangler": "^4.132.0" }, "peerDependencies": { "@astrojs/cloudflare": ">=14.0.0 <15.0.0", "astro": ">=7.0.0 <8.0.0" }, "bin": { "reserva-migrate": "dist/reserva-migrate.js" } }],
+    "@reservajs/stripe/@reservajs/astro": ["@reservajs/astro@file:", { "dependencies": { "@date-fns/tz": "^1.5.0", "cally": "^0.9.2", "date-fns": "^4.4.0", "smol-toml": "^1.8.0" }, "devDependencies": { "@astrojs/cloudflare": "^14.3.1", "@changesets/cli": "^3.0.3", "@cloudflare/vitest-pool-workers": "^0.18.8", "@cloudflare/workers-types": "^5.20260916.1", "@playwright/test": "^1.63.0", "@types/node": "^26.6.1", "astro": "^7.3.2", "standardwebhooks": "^1.1.1", "stripe": "^22.5.0", "typescript": "^7.0.2", "vitest": "^4.1.11", "wrangler": "^4.132.0" }, "peerDependencies": { "@astrojs/cloudflare": ">=14.0.0 <15.0.0", "astro": ">=7.0.0 <8.0.0" }, "bin": { "reserva-migrate": "dist/reserva-migrate.js" } }],
 
     "@vitest/mocker/magic-string": ["magic-string@0.30.21", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.5" } }, "sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ=="],
 
