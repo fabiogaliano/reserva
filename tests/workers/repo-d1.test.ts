@@ -258,6 +258,42 @@ describe('D1 booking repository', () => {
     await db.prepare('DROP TRIGGER fail_email_split_outbox').run();
   });
 
+  it('legacy repair adds no combined confirmation email row beside split rows after a swap to a send-only provider (re-mailed the customer)', async () => {
+    const created = await repo.insertHold({
+      id: 'booking-email-repair-no-combined',
+      reference: 'BKT-2026-EMAILREPAIR',
+      serviceSlug: 'vintage',
+      quantity: 2,
+      pickupType: 'default',
+      startsAt: '2026-08-01T09:00:00.000Z',
+      endsAt: '2026-08-01T10:00:00.000Z',
+      locale: 'en',
+      priceMinor: 12000,
+      currency: 'eur',
+      holdExpiresAt: '2026-07-21T10:35:00.000Z',
+      cancelToken: 'cancel-token-email-repair',
+      operatorToken: 'operator-token-email-repair',
+      createdAt: '2026-07-21T10:00:00.000Z',
+      updatedAt: '2026-07-21T10:00:00.000Z',
+    });
+    await repo.acquireConfirmationLease(created.id, 'lease-email-repair', '2026-07-21T10:00:00.000Z', '2026-07-21T10:05:00.000Z');
+    await repo.confirmWithSideEffectOperations(created.id, {
+      expectedStatusIn: ['hold'],
+      leaseToken: 'lease-email-repair',
+      oversold: false,
+      updatedAt: '2026-07-21T10:01:00.000Z',
+      emailRecipients: ['customer', 'owner'],
+    });
+
+    // A later pass under a provider without sendToRecipient asks for the combined shape.
+    await repo.ensureConfirmationSideEffectOperations(created.id, 'lease-email-repair', '2026-07-21T10:02:00.000Z');
+
+    const emailRows = await db.prepare(
+      `SELECT family, name FROM side_effect_operations WHERE booking_id = ? AND family IN ('email', 'email_confirmation') ORDER BY family, name`,
+    ).bind(created.id).all();
+    expect(emailRows.results).toEqual([{ family: 'email', name: 'customer' }, { family: 'email', name: 'owner' }]);
+  });
+
   // migrations/0014_meeting_points.sql's two nullable columns, against real D1.
   describe('meeting point columns (migration 0014)', () => {
     it('round-trips meeting_point_id/meeting_point_label through insertHoldWithCapacity when set', async () => {

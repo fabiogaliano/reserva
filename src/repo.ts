@@ -1622,16 +1622,16 @@ export function createBookingRepository(
       ).bind(id, now, now, now, id, leaseToken);
       // Always 'pending'; ON CONFLICT DO NOTHING leaves an already-succeeded legacy row alone.
       //
-      // Same split-vs-combined choice as confirmWithSideEffectOperations, for legacy repair. A
-      // split row is only inserted when no legacy combined email_confirmation row already exists
-      // (the NOT EXISTS guard below) — otherwise an upgrade to a split-capable provider could
-      // resend a message the combined attempt already delivered.
+      // Same split-vs-combined choice as confirmWithSideEffectOperations, for legacy repair, and
+      // each shape is only inserted when the other is absent (the NOT EXISTS guards below): a
+      // provider swap in either direction must never resend a message the other shape's rows
+      // already own — a combined send() beside split rows would re-mail the customer.
       const emailIdentities: SideEffectOperationIdentity[] = emailRecipients && emailRecipients.length > 0
         ? emailRecipients.map((recipient) => ({ family: 'email', name: recipient, event: 'booking.confirmed' }))
         : [{ family: 'email_confirmation' }];
       const emailGuard = emailRecipients && emailRecipients.length > 0
         ? `AND NOT EXISTS (SELECT 1 FROM side_effect_operations WHERE booking_id = ? AND family = 'email_confirmation')`
-        : '';
+        : `AND NOT EXISTS (SELECT 1 FROM side_effect_operations WHERE booking_id = ? AND family = 'email' AND event = 'booking.confirmed')`;
       const emailOperations = emailIdentities.map((identity) => db.prepare(
         `INSERT INTO side_effect_operations (
            booking_id, family, name, event, discriminator, event_payload_json,
@@ -1641,7 +1641,7 @@ export function createBookingRepository(
          FROM bookings
          WHERE id = ? AND status = 'confirmed' AND confirmation_lease_token = ? ${emailGuard}
          ON CONFLICT DO NOTHING`,
-      ).bind(id, ...sideEffectIdentityParams(identity), now, now, id, leaseToken, ...(emailGuard ? [id] : [])));
+      ).bind(id, ...sideEffectIdentityParams(identity), now, now, id, leaseToken, id));
       // A legacy confirmed booking's subscriber rows, created lazily when a hook/webhook was
       // registered after confirmation. Always inserted 'pending' (unlike the calendar row above,
       // which reads its outcome off calendar_event_id), and no-ops once the row exists.

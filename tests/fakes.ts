@@ -487,14 +487,16 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
         resolvedAt: calendarSucceeded ? now : null,
       });
       // Same split-vs-combined choice as confirmWithSideEffectOperations, applied here for
-      // legacy repair: a split row is only inserted when no legacy combined email_confirmation
-      // row already exists — mirrors src/repo.ts's NOT EXISTS guard.
-      const emailIdentities: SideEffectOperationIdentity[] = emailRecipients && emailRecipients.length > 0
+      // legacy repair: each shape is only inserted when the other is absent — mirrors
+      // src/repo.ts's NOT EXISTS guards.
+      const split = emailRecipients !== undefined && emailRecipients.length > 0;
+      const emailIdentities: SideEffectOperationIdentity[] = split
         ? emailRecipients.map((recipient) => ({ family: 'email', name: recipient, event: 'booking.confirmed' }))
         : [{ family: 'email_confirmation' }];
-      const combinedRowExists = sideEffectOperations.has(sideEffectKey(id, { family: 'email_confirmation' }));
-      const skipSplit = emailRecipients && emailRecipients.length > 0 && combinedRowExists;
-      if (!skipSplit) {
+      const otherShapeExists = split
+        ? sideEffectOperations.has(sideEffectKey(id, { family: 'email_confirmation' }))
+        : [...sideEffectOperations.values()].some((operation) => operation.bookingId === id && operation.family === 'email' && operation.event === 'booking.confirmed');
+      if (!otherShapeExists) {
         for (const identity of emailIdentities) {
           // Migration 0018 materialized every already-sent confirmation email as a
           // succeeded row before dropping email_synced, so a booking with no row here has
