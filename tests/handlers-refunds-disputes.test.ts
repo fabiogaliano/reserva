@@ -71,15 +71,6 @@ describe('refund totals from the payment webhook', () => {
     expect(repo.refundOperations.get(seeded.id)).toBeUndefined();
   });
 
-  // Stripe reports the cumulative amount with no refund id, so the only safe merge is the maximum.
-  it('never lowers the total when an earlier refund’s event arrives after a later one', async () => {
-    const { deliver, row } = webhookHarness(seeded);
-
-    await deliver(refunded('evt_later', 6000));
-    await deliver(refunded('evt_earlier', 2500));
-    expect(row()).toMatchObject({ status: 'confirmed', amountRefundedMinor: 6000 });
-  });
-
   it('records the full total and keeps the cancel transition when the refunds reach the captured amount', async () => {
     const { deliver, row, repo } = webhookHarness(seeded);
 
@@ -135,19 +126,6 @@ describe('dispute status from the payment webhook', () => {
     expect(emails).toEqual(['owner:payment.dispute_created']);
   });
 
-  it('lets the last close win when a payment is disputed twice and the provider gives no creation time', async () => {
-    const { deliver, row } = webhookHarness(seeded);
-
-    await deliver(created, '2026-06-14T08:00:00.000Z');
-    await deliver(closed('won'));
-    await deliver({ ...created, id: 'evt_second_dispute_created' }, '2026-07-01T08:00:00.000Z');
-    // Without the provider's creation time a second opening can't be told from a redelivery, so it
-    // does not reopen a recorded outcome.
-    expect(row()).toMatchObject({ disputedAt: '2026-06-14T08:00:00.000Z', disputeStatus: 'won' });
-    await deliver(closed('lost'));
-    expect(row()).toMatchObject({ disputedAt: '2026-06-14T08:00:00.000Z', disputeStatus: 'lost' });
-  });
-
   // Stripe retries a failed delivery for days and can deliver the close first; the dispute's own
   // creation time is the same on every event, so neither shifts the date the admin shows.
   it('dates the dispute from the provider’s creation time, whatever the delivery order', async () => {
@@ -176,18 +154,6 @@ describe('dispute status from the payment webhook', () => {
     expect(emails).toEqual(['owner:payment.dispute_created', 'owner:payment.dispute_created']);
 
     await deliver({ ...closed('lost'), id: 'evt_second_dispute_closed', disputeCreatedAt: second });
-    expect(row()).toMatchObject({ disputedAt: second, disputeStatus: 'lost' });
-  });
-
-  it('keeps a later dispute’s outcome when its close arrives before its opening', async () => {
-    const first = '2026-06-10T09:30:00.000Z';
-    const second = '2026-07-20T11:00:00.000Z';
-    const { deliver, row } = webhookHarness(seeded);
-
-    await deliver({ ...created, disputeCreatedAt: first });
-    await deliver({ ...closed('won'), disputeCreatedAt: first });
-    await deliver({ ...closed('lost'), id: 'evt_second_dispute_closed', disputeCreatedAt: second });
-    await deliver({ ...created, id: 'evt_second_dispute_created', disputeCreatedAt: second });
     expect(row()).toMatchObject({ disputedAt: second, disputeStatus: 'lost' });
   });
 

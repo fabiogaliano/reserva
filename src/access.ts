@@ -8,22 +8,13 @@ export interface AdminIdentity {
 
 export const ACCESS_ASSERTION_HEADER = 'Cf-Access-Jwt-Assertion';
 const JWKS_PATH = '/cdn-cgi/access/certs';
-const DEFAULT_JWKS_TTL_MS = 5 * 60_000;
+const JWKS_TTL_MS = 5 * 60_000;
 
 export type AccessClaims = Record<string, unknown> & { iss: string; aud: string | string[] };
 
 export interface AccessAdminConfig { accessTeamDomain: string; accessAud: string }
-type Clock = () => number | Date;
-export interface AccessVerifierOptions {
-  fetch?: typeof fetch;
-  crypto?: Pick<Crypto, 'subtle'>;
-  now?: Clock;
-  jwksTtlMs?: number;
-}
 
-export class AccessVerificationError extends Error {
-  readonly status = 403;
-  readonly code = 'access_unauthorized';
+class AccessVerificationError extends Error {
   constructor(message: string) { super(message); this.name = 'AccessVerificationError'; }
 }
 
@@ -38,7 +29,6 @@ function decode(value: string): Uint8Array {
   return Uint8Array.from(text, (character) => character.charCodeAt(0));
 }
 function json<T>(part: string): T { try { return JSON.parse(new TextDecoder().decode(decode(part))) as T; } catch { throw new AccessVerificationError('malformed access assertion'); } }
-function configOf(config: AccessAdminConfig | { admin: AccessAdminConfig }): AccessAdminConfig { return 'admin' in config ? config.admin : config; }
 function jwksUrl(domain: string): string { return `${domain.replace(/\/+$/, '')}${JWKS_PATH}`; }
 function audienceMatches(aud: unknown, expected: string): boolean { return aud === expected || (Array.isArray(aud) && aud.includes(expected)); }
 function assertionParts(assertion: string): { header: { alg?: unknown; kid?: unknown }; claims: AccessClaims; input: Uint8Array; signature: Uint8Array } {
@@ -50,8 +40,8 @@ function assertionParts(assertion: string): { header: { alg?: unknown; kid?: unk
   if (!claims || typeof claims.iss !== 'string' || !('aud' in claims)) throw new AccessVerificationError('access assertion is missing required claims');
   return { header, claims: claims as AccessClaims, input: new TextEncoder().encode(`${headerPart}.${claimsPart}`), signature: decode(signaturePart) };
 }
-async function fetchJwks(domain: string, options: AccessVerifierOptions): Promise<AccessJwks> {
-  const response = await (options.fetch ?? globalThis.fetch)(jwksUrl(domain), { headers: { accept: 'application/json' } });
+async function fetchJwks(domain: string): Promise<AccessJwks> {
+  const response = await fetch(jwksUrl(domain), { headers: { accept: 'application/json' } });
   if (!response.ok) throw new Error(`Access JWKS request failed with status ${response.status}`);
   const body = await response.json() as { keys?: unknown };
   if (!Array.isArray(body.keys)) throw new Error('invalid Access JWKS response');
@@ -59,16 +49,15 @@ async function fetchJwks(domain: string, options: AccessVerifierOptions): Promis
   if (keys.length === 0) throw new Error('invalid Access JWKS response');
   return { keys };
 }
-async function getJwks(domain: string, options: AccessVerifierOptions, refresh = false): Promise<AccessJwks> {
-  const clockValue = options.now?.() ?? Date.now();
-  const now = clockValue instanceof Date ? clockValue.getTime() : clockValue;
+async function getJwks(domain: string, refresh = false): Promise<AccessJwks> {
+  const now = Date.now();
   const cached = cache.get(domain);
   if (!refresh && cached && cached.expiresAt > now) return cached.value;
-  const value = fetchJwks(domain, options);
-  cache.set(domain, { expiresAt: now + (options.jwksTtlMs ?? DEFAULT_JWKS_TTL_MS), value });
+  const value = fetchJwks(domain);
+  cache.set(domain, { expiresAt: now + JWKS_TTL_MS, value });
   try { return await value; } catch (error) { if (cache.get(domain)?.value === value) cache.delete(domain); throw error; }
 }
-async function verify(parts: ReturnType<typeof assertionParts>, jwk: AccessJwk, crypto: Pick<Crypto, 'subtle'>): Promise<boolean> {
+async function verify(parts: ReturnType<typeof assertionParts>, jwk: AccessJwk): Promise<boolean> {
   if (jwk.kty !== 'RSA' || (jwk.alg && jwk.alg !== 'RS256') || (jwk.use && jwk.use !== 'sig')) return false;
   try {
     const key = await crypto.subtle.importKey('jwk', jwk, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
@@ -81,27 +70,22 @@ async function verify(parts: ReturnType<typeof assertionParts>, jwk: AccessJwk, 
   } catch { return false; }
 }
 
-export function clearAccessJwksCache(): void { cache.clear(); }
-export async function verifyAccessJwt(request: Request, config: AccessAdminConfig | { admin: AccessAdminConfig }, options: AccessVerifierOptions = {}): Promise<AccessClaims> {
-  const admin = configOf(config);
+async function verifyAccessJwt(request: Request, admin: AccessAdminConfig): Promise<AccessClaims> {
   const assertion = request.headers.get(ACCESS_ASSERTION_HEADER);
   if (!assertion) throw new AccessVerificationError('missing access assertion');
   const parts = assertionParts(assertion);
   if (parts.header.alg !== 'RS256' || typeof parts.header.kid !== 'string') throw new AccessVerificationError('unsupported access assertion');
   if (parts.claims.iss !== admin.accessTeamDomain) throw new AccessVerificationError('access assertion issuer mismatch');
   if (!audienceMatches(parts.claims.aud, admin.accessAud)) throw new AccessVerificationError('access assertion audience mismatch');
-  const clockValue = options.now?.() ?? Date.now();
-  const now = clockValue instanceof Date ? clockValue.getTime() : clockValue;
-  const nowSeconds = Math.floor(now / 1000);
+  const nowSeconds = Math.floor(Date.now() / 1000);
   if (typeof parts.claims.exp !== 'number') throw new AccessVerificationError('access assertion is missing a valid expiry');
   if (nowSeconds >= parts.claims.exp) throw new AccessVerificationError('access assertion has expired');
   if (parts.claims.nbf !== undefined && typeof parts.claims.nbf !== 'number') throw new AccessVerificationError('access assertion has an invalid not-before claim');
   if (typeof parts.claims.nbf === 'number' && nowSeconds < parts.claims.nbf) throw new AccessVerificationError('access assertion is not yet valid');
-  const crypto = options.crypto ?? globalThis.crypto;
-  let jwks = await getJwks(admin.accessTeamDomain, options);
+  let jwks = await getJwks(admin.accessTeamDomain);
   let jwk = jwks.keys.find((key) => key.kid === parts.header.kid);
-  if (!jwk) { jwks = await getJwks(admin.accessTeamDomain, options, true); jwk = jwks.keys.find((key) => key.kid === parts.header.kid); }
-  if (!jwk || !(await verify(parts, jwk, crypto))) throw new AccessVerificationError('access assertion signature mismatch');
+  if (!jwk) { jwks = await getJwks(admin.accessTeamDomain, true); jwk = jwks.keys.find((key) => key.kid === parts.header.kid); }
+  if (!jwk || !(await verify(parts, jwk))) throw new AccessVerificationError('access assertion signature mismatch');
   return parts.claims;
 }
 // Structural subset of ReservaLogger, declared here so this module keeps no runtime-context import.

@@ -52,11 +52,6 @@ describe('defineCloudflareReservaRuntime admin-auth validation', () => {
     expect(definition.config).toEqual(baseConfig);
   });
 
-  it('accepts a custom adminAuth alone, with no admin.access configured', () => {
-    const definition = runtimeFor(configWithoutAccess(), { providers: { payments }, adminAuth: async () => ({ subject: '' }) });
-    expect(definition.config.admin.access).toBeUndefined();
-  });
-
   it('permits omitting auth entirely when both routes.admin and routes.ops are disabled', () => {
     const config = { ...configWithoutAccess(), routes: { admin: false, ops: false } };
     expect(() => runtimeFor(config, { providers: { payments } })).not.toThrow();

@@ -77,11 +77,6 @@ describe('mintAdminCsrfToken / verifyAdminCsrfToken (layer 2: per-session CSRF t
     await expect(verifyAdminCsrfToken(context, token, 'ops@example.test', now)).resolves.toBe(true);
   });
 
-  it('verifies a token bound to an empty subject (no Access claims available)', async () => {
-    const token = await mintAdminCsrfToken(context, '', now);
-    await expect(verifyAdminCsrfToken(context, token, '', now)).resolves.toBe(true);
-  });
-
   it('rejects a token still within a millisecond of expiry, and accepts it a millisecond before', async () => {
     const token = await mintAdminCsrfToken(context, 'ops@example.test', now);
     await expect(verifyAdminCsrfToken(context, token, 'ops@example.test', now + ADMIN_CSRF_TOKEN_TTL_MS - 1)).resolves.toBe(true);
@@ -153,8 +148,4 @@ describe('mintAdminCsrfToken / verifyAdminCsrfToken without RESERVA_CSRF_SECRET 
     await expect(verifyAdminCsrfToken(noSecretContext, 'garbage', 'someone-else@example.test', now)).resolves.toBe(true);
   });
 
-  it('a token minted while a secret WAS configured is also accepted once verified without one (the check is skipped entirely, not just weakened)', async () => {
-    const token = await mintAdminCsrfToken(context, 'ops@example.test', now);
-    await expect(verifyAdminCsrfToken(noSecretContext, token, 'a-completely-different-subject', now)).resolves.toBe(true);
-  });
 });

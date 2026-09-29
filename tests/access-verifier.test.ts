@@ -1,15 +1,16 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import {
-  clearAccessJwksCache,
-  AccessVerificationError,
-  verifyAccessJwt,
-} from '../src/access';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cloudflareAccessAdminAuth } from '../src/access';
 
-const teamDomain = 'https://team.cloudflareaccess.com';
-const admin = { accessTeamDomain: teamDomain, accessAud: 'admin-audience' };
+const aud = 'admin-audience';
 const now = Date.parse('2026-07-21T12:00:00.000Z');
 
+// The JWKS cache is module-level and keyed by team domain, so each test gets its own domain
+// instead of a cache-reset hook.
+let domainCounter = 0;
+
 async function fixture() {
+  domainCounter += 1;
+  const teamDomain = `https://team-${domainCounter}.cloudflareaccess.com`;
   const keyPair = await crypto.subtle.generateKey(
     { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
     true,
@@ -18,25 +19,28 @@ async function fixture() {
   const jwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
   const key = { ...jwk, kid: 'access-key', alg: 'RS256', use: 'sig' };
   const fetchCalls: string[] = [];
-  const fetcher: typeof fetch = async (input) => {
+  vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
     fetchCalls.push(String(input));
     return new Response(JSON.stringify({ keys: [key] }), {
       headers: { 'content-type': 'application/json' },
     });
+  });
+
+  const encode = (bytes: Uint8Array) => {
+    let binary = '';
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   };
+  const encodeJson = (value: unknown) => encode(new TextEncoder().encode(JSON.stringify(value)));
 
   async function token(claims: Record<string, unknown> = {}) {
-    const encode = (value: unknown) => {
-      const bytes = new TextEncoder().encode(JSON.stringify(value));
-      let binary = '';
-      for (const byte of bytes) binary += String.fromCharCode(byte);
-      return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    };
-    const header = encode({ alg: 'RS256', typ: 'JWT', kid: 'access-key' });
-    const payload = encode({
+    const header = encodeJson({ alg: 'RS256', typ: 'JWT', kid: 'access-key' });
+    const payload = encodeJson({
       iss: teamDomain,
-      aud: ['another-audience', admin.accessAud],
+      aud: ['another-audience', aud],
       exp: Math.floor(now / 1000) + 60,
+      sub: 'access-user-id',
+      email: 'ops@example.test',
       ...claims,
     });
     const input = `${header}.${payload}`;
@@ -45,14 +49,10 @@ async function fixture() {
       keyPair.privateKey,
       new TextEncoder().encode(input),
     );
-    const bytes = new Uint8Array(signature);
-    let binary = '';
-    for (const byte of bytes) binary += String.fromCharCode(byte);
-    const encodedSignature = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    return `${input}.${encodedSignature}`;
+    return `${input}.${encode(new Uint8Array(signature))}`;
   }
 
-  return { fetchCalls, fetcher, token };
+  return { auth: cloudflareAccessAdminAuth(teamDomain, aud), fetchCalls, token };
 }
 
 function requestWithToken(assertion?: string): Request {
@@ -62,41 +62,59 @@ function requestWithToken(assertion?: string): Request {
   });
 }
 
-describe('Cloudflare Access JWT verification', () => {
-  beforeEach(() => clearAccessJwksCache());
-
-  it('verifies an RS256 assertion and accepts an audience array', async () => {
-    const { fetcher, token } = await fixture();
-    const claims = await verifyAccessJwt(requestWithToken(await token()), admin, {
-      fetch: fetcher,
-      now: () => now,
-    });
-
-    expect(claims.iss).toBe(teamDomain);
-    expect(claims.aud).toEqual(['another-audience', admin.accessAud]);
+describe('cloudflareAccessAdminAuth', () => {
+  // Only Date is faked: WebCrypto and fetch resolve on real microtasks.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(now);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
-  it('caches the team JWKS until the injected TTL expires', async () => {
-    const { fetchCalls, fetcher, token } = await fixture();
-    let currentTime = now;
-    const options = { fetch: fetcher, now: () => currentTime, jwksTtlMs: 1_000 };
+  it('verifies an RS256 assertion with an audience array and prefers the email claim as subject', async () => {
+    const { auth, token } = await fixture();
+    await expect(auth(requestWithToken(await token()))).resolves.toEqual({
+      subject: 'ops@example.test',
+      email: 'ops@example.test',
+    });
+  });
 
-    await verifyAccessJwt(requestWithToken(await token()), admin, options);
-    await verifyAccessJwt(requestWithToken(await token()), admin, options);
+  it('falls back to sub as the subject when the assertion carries no email', async () => {
+    const { auth, token } = await fixture();
+    await expect(auth(requestWithToken(await token({ email: undefined })))).resolves.toEqual({
+      subject: 'access-user-id',
+    });
+  });
+
+  it('rejects and warns on an assertion with neither email nor sub, so admins never share one CSRF subject', async () => {
+    const { auth, token } = await fixture();
+    const warn = vi.fn();
+    await expect(auth(requestWithToken(await token({ email: undefined, sub: undefined })), { logger: { warn } }))
+      .resolves.toBeNull();
+    expect(warn).toHaveBeenCalledWith('access assertion carries no email or sub claim', expect.any(Object));
+  });
+
+  it('caches the team JWKS for five minutes', async () => {
+    const { auth, fetchCalls, token } = await fixture();
+
+    await expect(auth(requestWithToken(await token()))).resolves.not.toBeNull();
+    await expect(auth(requestWithToken(await token()))).resolves.not.toBeNull();
     expect(fetchCalls).toHaveLength(1);
 
-    currentTime += 1_001;
-    await verifyAccessJwt(requestWithToken(await token()), admin, options);
+    vi.setSystemTime(now + 5 * 60_000 + 1);
+    await expect(auth(requestWithToken(await token({ exp: Math.floor(now / 1000) + 3600 })))).resolves.not.toBeNull();
     expect(fetchCalls).toHaveLength(2);
   });
 
-  it('rejects a missing assertion with a 403 error', async () => {
-    await expect(verifyAccessJwt(requestWithToken(), admin)).rejects.toMatchObject({
-      name: 'AccessVerificationError',
-      status: 403,
-    });
+  it('rejects a request with no assertion', async () => {
+    const { auth } = await fixture();
+    await expect(auth(requestWithToken())).resolves.toBeNull();
   });
 
+  // Every row differs from the accepted baseline token in one claim only, so the null is caused by
+  // that claim.
   it.each([
     ['wrong issuer', { iss: 'https://other.cloudflareaccess.com' }],
     ['wrong audience', { aud: 'not-the-admin-app' }],
@@ -104,23 +122,17 @@ describe('Cloudflare Access JWT verification', () => {
     ['missing expiry', { exp: undefined }],
     ['invalid not-before claim', { nbf: 'later' }],
   ])('rejects an assertion with %s', async (_label, claims) => {
-    const { fetcher, token } = await fixture();
-    await expect(verifyAccessJwt(requestWithToken(await token(claims)), admin, {
-      fetch: fetcher,
-      now: () => now,
-    })).rejects.toBeInstanceOf(AccessVerificationError);
+    const { auth, token } = await fixture();
+    await expect(auth(requestWithToken(await token(claims)))).resolves.toBeNull();
   });
 
   it('rejects a tampered signature', async () => {
-    const { fetcher, token } = await fixture();
+    const { auth, token } = await fixture();
     const assertion = await token();
     const [header, payload, signature] = assertion.split('.');
     const changedFirstByte = signature![0] === 'A' ? 'B' : 'A';
     const tampered = `${header}.${payload}.${changedFirstByte}${signature!.slice(1)}`;
 
-    await expect(verifyAccessJwt(requestWithToken(tampered), admin, {
-      fetch: fetcher,
-      now: () => now,
-    })).rejects.toThrow('signature mismatch');
+    await expect(auth(requestWithToken(tampered))).resolves.toBeNull();
   });
 });
