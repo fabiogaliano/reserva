@@ -182,20 +182,23 @@ export function handlePaymentWebhook(request: Request, context: ReservaContext):
       const booking = await bookingForPaymentEvent(context, event);
       context.logger.warn?.('payment dispute created', { eventId: event.id, bookingId: booking?.id ?? event.bookingId });
       if (booking) {
-        await context.repo.markDisputed(booking.id, nowIso(context));
-        // Hooks receive the booking as it now stands, dispute recorded.
-        await dispatchDisputeEvent(context, await context.repo.getBookingById(booking.id) ?? booking, event.id);
+        await context.repo.markDisputed(booking.id, event.disputeCreatedAt ?? nowIso(context));
+        await dispatchDisputeEvent(context, booking, event.id);
       }
     } else if (event.type === 'dispute_closed') {
       // Recorded only: the booking was never changed by the dispute, so its close changes nothing
       // either, and the operator already heard about it from the provider.
       const booking = await bookingForPaymentEvent(context, event);
-      if (booking && event.disputeOutcome) {
-        await context.repo.closeDispute(booking.id, event.disputeOutcome, nowIso(context));
-      } else if (booking) {
+      const openedAt = event.disputeCreatedAt ?? nowIso(context);
+      if (!booking) {
+        // Without this the booking keeps showing an open dispute with nothing to explain why.
+        context.logger.warn?.('payment dispute closed for no known booking', { eventId: event.id, paymentRef: event.paymentRef ?? null });
+      } else if (event.disputeOutcome) {
+        await context.repo.closeDispute(booking.id, event.disputeOutcome, openedAt);
+      } else {
         // The close still proves a dispute existed, so it is recorded as open rather than dropped.
         context.logger.warn?.('payment dispute closed without a known outcome', { eventId: event.id, bookingId: booking.id });
-        await context.repo.markDisputed(booking.id, nowIso(context));
+        await context.repo.markDisputed(booking.id, openedAt);
       }
     }
     return json({ received: true });

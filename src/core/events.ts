@@ -82,6 +82,9 @@ export interface PaymentEventParsed extends PaymentCustomerDetails {
   // Only on 'dispute_closed'. Absent when the provider closed the dispute with a status the
   // adapter cannot read as either outcome; Reserva then leaves the dispute open.
   disputeOutcome?: DisputeOutcome;
+  // Only on dispute events: when the provider opened the dispute (ISO 8601). Recorded instead of
+  // the delivery time, so a retried or out-of-order delivery cannot move the date.
+  disputeCreatedAt?: string;
   currency?: string;
   paymentStatus?: 'paid' | 'unpaid' | 'no_payment_required' | string;
   // The provider's own id for the refund a 'refunded' event describes, so the webhook branch can

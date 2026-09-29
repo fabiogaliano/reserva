@@ -772,6 +772,14 @@ describe('declared fields, refunds and disputes in the bookings list and day pan
     expect(rowOf(body, untouched.reference)).not.toContain('<dt>Dispute</dt>');
   });
 
+  it('states money in the booking’s own currency, not the one config names today', async () => {
+    const earlier = on(20, { id: 'b-gbp', reference: 'LVT-2026-617', currency: 'gbp', amountRefundedMinor: 2000 });
+    const body = await (await handleAdminGet(new Request(`${ADMIN_URL}?status=all`), contextFor([earlier]))).text();
+    expect(statusSlotOf(rowOf(body, earlier.reference))).toBe('<span class="bk-badge bk-badge--warn">Refunded £20.00</span>');
+    expect(rowOf(body, earlier.reference)).toContain('<dt>Total price</dt><dd>£100.00</dd>');
+    expect(rowOf(body, earlier.reference)).toContain('<dt>Refunded</dt><dd>£20.00</dd>');
+  });
+
   it('words the money badges and facts in the admin locale', async () => {
     const disputedAt = '2026-06-10T12:00:00.000Z';
     const rows = [

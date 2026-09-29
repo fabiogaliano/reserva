@@ -155,6 +155,25 @@ describe('dispute status from the payment webhook', () => {
     expect(row()).toMatchObject({ disputedAt: '2026-06-14T08:00:00.000Z', disputeStatus: 'lost' });
   });
 
+  // Stripe retries a failed delivery for days and can deliver the close first; the dispute's own
+  // creation time is the same on every event, so neither shifts the date the admin shows.
+  it('dates the dispute from the provider’s creation time, whatever the delivery order', async () => {
+    const openedAt = '2026-06-10T09:30:00.000Z';
+    const { deliver, row } = webhookHarness(seeded);
+
+    await deliver({ ...closed('lost'), disputeCreatedAt: openedAt }, '2026-08-01T10:00:00.000Z');
+    await deliver({ ...created, disputeCreatedAt: openedAt }, '2026-08-03T10:00:00.000Z');
+    expect(row()).toMatchObject({ disputedAt: openedAt, disputeStatus: 'lost' });
+  });
+
+  it('warns and changes nothing when a close names a payment no booking owns', async () => {
+    const { deliver, row, warnings } = webhookHarness(seeded);
+
+    await deliver({ ...closed('won'), paymentRef: 'pi_someone_else' });
+    expect(row()).toEqual(seeded);
+    expect(warnings).toContain('payment dispute closed for no known booking');
+  });
+
   it('records a close without a known outcome as an open dispute, and warns', async () => {
     const { deliver, row, warnings } = webhookHarness(seeded);
 

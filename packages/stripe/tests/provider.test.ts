@@ -782,6 +782,18 @@ describe('Stripe mapping helpers', () => {
         id: 'du_1', object: 'dispute', payment_intent: 'pi_1', status: 'lost', metadata: {},
       } } } as unknown as Stripe.Event)).not.toHaveProperty('disputeOutcome');
     });
+
+    it('carries the dispute’s own creation time on both dispute events, and none on a refund', () => {
+      const created = 1781083800; // 2026-06-10T09:30:00Z
+      const dispute = { id: 'du_1', object: 'dispute', payment_intent: 'pi_1', metadata: {}, created };
+      for (const type of ['charge.dispute.created', 'charge.dispute.closed']) {
+        expect(stripeEventToParsed({ id: `evt_${type}`, type, data: { object: { ...dispute, status: 'won' } } } as unknown as Stripe.Event))
+          .toMatchObject({ disputeCreatedAt: '2026-06-10T09:30:00.000Z' });
+      }
+      expect(stripeEventToParsed({ id: 'evt_refunded', type: 'charge.refunded', data: { object: {
+        id: 'ch_1', object: 'charge', payment_intent: 'pi_1', amount_captured: 10000, amount_refunded: 2500, metadata: {}, created,
+      } } } as unknown as Stripe.Event)).not.toHaveProperty('disputeCreatedAt');
+    });
   });
 
   it('reads the optional headcount as a positive integer, and a blank or unusable one as null', () => {

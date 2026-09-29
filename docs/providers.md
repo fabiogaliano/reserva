@@ -69,6 +69,8 @@ Its `amountRefunded` is the payment's cumulative refunded amount, not the amount
 made: Reserva keeps the largest total it has seen, so deliveries may arrive in any order. A
 `dispute_closed` event carries `disputeOutcome` — `'won'` when the money stayed, `'lost'` when it
 went back. Leave it out when the processor's status is neither, and Reserva keeps the dispute open.
+Both dispute events may carry `disputeCreatedAt`, when the processor opened the dispute (ISO 8601);
+Reserva dates the dispute from it, falling back to the delivery time when it is absent.
 
 ### Optional members
 

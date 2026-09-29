@@ -516,7 +516,8 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
     const tone = statusToneOf(booking.status);
     return `<span class="bk-badge${tone ? ` bk-badge--${tone}` : ''}">${escapeHtml(text)}</span>`;
   };
-  const formatAmount = (amountMinor: number): string => formatPrice(amountMinor, locale, context.config.business.currency);
+  // In the booking's own currency, so a later change to business.currency never re-denominates money already taken.
+  const formatAmount = (booking: Booking, amountMinor: number): string => formatPrice(amountMinor, locale, booking.currency);
   // A won dispute kept the money, so only open and lost ones carry the danger tone.
   const disputeBadges: Record<DisputeStatus, AdminRowBadge> = {
     open: { t: messages['admin.disputeOpen'], m: 'danger' },
@@ -536,7 +537,7 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
       .filter((row) => tagged.has(row.key))
       .map((row) => ({ t: String(row.value), m: 'field', h: row.label }));
     if (booking.amountRefundedMinor > 0) {
-      badges.push({ t: formatMessage(messages['admin.refundedBadge'], { amount: formatAmount(booking.amountRefundedMinor) }), m: 'warn' });
+      badges.push({ t: formatMessage(messages['admin.refundedBadge'], { amount: formatAmount(booking, booking.amountRefundedMinor) }), m: 'warn' });
     }
     if (booking.disputeStatus) badges.push(disputeBadges[booking.disputeStatus]);
     return badges;
@@ -579,7 +580,7 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
     // mail client that isn't the default one.
     if (booking.customerEmail) facts.push([messages['common.email'], `${emailLink(booking.customerEmail)}${copyButton(booking.customerEmail, messages['admin.copyEmail'], messages['admin.copied'])}`]);
     if (booking.customerPhone) facts.push([messages['common.phone'], phoneLinks(booking.customerPhone, messages)]);
-    facts.push([messages['common.price'], escapeHtml(formatAmount(booking.priceMinor))]);
+    facts.push([messages['common.price'], escapeHtml(formatAmount(booking, booking.priceMinor))]);
     // Every declared field, whoever else may see it: a terminal row has no Manage link, so this
     // is the only place its values can be read. Boolean copy matches the manage page's.
     const metadataRows = adminMetadataRows(context.config, booking);
@@ -587,7 +588,7 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
       const value = typeof row.value === 'boolean' ? (row.value ? messages['admin.on'] : messages['admin.off']) : String(row.value);
       facts.push([row.label, escapeHtml(value)]);
     }
-    if (booking.amountRefundedMinor > 0) facts.push([messages['admin.refunded'], escapeHtml(formatAmount(booking.amountRefundedMinor))]);
+    if (booking.amountRefundedMinor > 0) facts.push([messages['admin.refunded'], escapeHtml(formatAmount(booking, booking.amountRefundedMinor))]);
     if (booking.disputeStatus) {
       const opened = booking.disputedAt ? formatDayDate(localDateKey(booking.disputedAt, timezone), locale, now) : null;
       const outcome = opened

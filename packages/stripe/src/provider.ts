@@ -330,6 +330,10 @@ export function stripeEventToParsed(event: Stripe.Event): PaymentEventParsed {
     // 2022-11-15), and the refund id is only needed by `refund.created` subscribers. The
     // cancel-on-full-refund path keys off the amounts, not the id.
     if (charge.paid !== undefined) parsed.paid = charge.paid;
+    if (event.type !== 'charge.refunded') {
+      const created = (object as Stripe.Dispute).created;
+      if (typeof created === 'number') parsed.disputeCreatedAt = new Date(created * 1000).toISOString();
+    }
     if (event.type === 'charge.dispute.closed') {
       const outcome = DISPUTE_OUTCOME_BY_STRIPE_STATUS[(object as Stripe.Dispute).status];
       if (outcome) parsed.disputeOutcome = outcome;
