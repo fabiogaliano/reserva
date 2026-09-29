@@ -12,6 +12,10 @@ import { rmSync } from 'node:fs';
 
 const persistDir = process.env.RESERVA_E2E_PERSIST;
 if (!persistDir) throw new Error('e2e-dev-server.ts requires RESERVA_E2E_PERSIST to be set');
+// Set by playwright.config.ts, which owns the default, so the port Playwright polls and the one
+// Astro binds can never drift apart.
+const port = process.env.RESERVA_E2E_PORT;
+if (!port) throw new Error('e2e-dev-server.ts requires RESERVA_E2E_PORT to be set');
 
 // Fresh per run: wrangler and @cloudflare/vite-plugin both nest the actual sqlite state under
 // <dir>/v3, so removing the whole isolated dir guarantees migrations replay against an empty
@@ -28,7 +32,7 @@ if (migrateResult.status !== 0) {
 }
 
 const astroBin = fileURLToPath(new URL('../../node_modules/.bin/astro', import.meta.url));
-const astro = spawn(astroBin, ['dev', '--port', '4399'], {
+const astro = spawn(astroBin, ['dev', '--port', port], {
   stdio: 'inherit',
   env: { ...process.env, ASTRO_DEV_BACKGROUND: '1' },
 });

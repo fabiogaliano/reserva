@@ -5,13 +5,14 @@ const TOUR = 'oldTown';
 // Astro's checkOrigin middleware rejects cross-site POSTs unless Origin matches — the browser sets
 // this automatically for real form POSTs, but the API request context used for these dev-only
 // test seams doesn't, so it needs setting explicitly.
-const DEV_POST_HEADERS = { origin: 'http://localhost:4399' };
+const devPostHeaders = (baseURL: string | undefined) => ({ origin: new URL(baseURL ?? '').origin });
 
 // The admin "Attention required" cards and their CSRF-protected actions, exercised through a real
 // browser (not just server-rendered HTML — see tests/handlers-admin-incidents.test.ts). `astro dev`
 // has no Cron Trigger, so `POST /dev/reconcile.json` stands in, calling the same runReconciliation
 // a real scheduled() handler would through the same context-construction path.
-test('a one-shot provider failure opens an incident, "Try again" resolves it, a separate incident requires a note to resolve manually and survives reload, an oversell card has no Retry button, and exactly one alert is delivered per revision', async ({ page, request }) => {
+test('a one-shot provider failure opens an incident, "Try again" resolves it, a separate incident requires a note to resolve manually and survives reload, an oversell card has no Retry button, and exactly one alert is delivered per revision', async ({ page, request, baseURL }) => {
+  const DEV_POST_HEADERS = devPostHeaders(baseURL);
   // --- Seed: two bookings with a forced permanent calendar_create failure (armNextCalendarFailure),
   // plus one normal booking to seed an oversell incident directly (a real oversell race is
   // unrelated to what this test proves).

@@ -6,6 +6,14 @@ import { defineConfig, devices } from '@playwright/test';
 const readinessFrom = new Date().toISOString().slice(0, 10);
 const readinessTo = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
 
+// Overridable so a second checkout (or an agent worktree) can run the suite beside this one; the
+// dev server keeps strictPort, so a taken port fails the run instead of testing another server.
+const port = Number(process.env.RESERVA_E2E_PORT ?? 4399);
+if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
+  throw new Error(`RESERVA_E2E_PORT must be a TCP port, got ${JSON.stringify(process.env.RESERVA_E2E_PORT)}`);
+}
+const origin = `http://localhost:${port}`;
+
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: false,
@@ -14,7 +22,7 @@ export default defineConfig({
   workers: 1, // specs share one database and one in-memory outbox; parallel workers would interleave bookings
   reporter: 'html',
   use: {
-    baseURL: 'http://localhost:4399',
+    baseURL: origin,
     trace: 'on-first-retry',
   },
   projects: [
@@ -29,8 +37,8 @@ export default defineConfig({
     // globalSetup, because a separate process left the dev server's D1 binding unable to see the data.
     command: 'bun e2e-dev-server.ts',
     cwd: 'examples/smoke-site',
-    env: { RESERVA_E2E_PERSIST: '.wrangler-e2e' },
-    url: `http://localhost:4399/api/booking/availability?serviceSlug=oldTown&quantity=2&from=${readinessFrom}&to=${readinessTo}`,
+    env: { RESERVA_E2E_PERSIST: '.wrangler-e2e', RESERVA_E2E_PORT: String(port) },
+    url: `${origin}/api/booking/availability?serviceSlug=oldTown&quantity=2&from=${readinessFrom}&to=${readinessTo}`,
     reuseExistingServer: false,
     timeout: 120_000,
     // Without this, Playwright's default teardown is an immediate SIGKILL to the process group,

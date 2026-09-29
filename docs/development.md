@@ -77,6 +77,7 @@ bun run test:e2e         # Playwright, against examples/smoke-site
 `test:pack` packs both tarballs and builds two throwaway consumers against them;
 `test:quickstart` executes the README's own quickstart blocks, so a quickstart that stops
 working fails the build rather than the next reader.
+`test:e2e` serves the smoke site on port 4399; set `RESERVA_E2E_PORT` to run beside another checkout (a taken port fails the run rather than reusing that server).
 
 The contract tables in [`../README.md`](../README.md) and [`../AGENTS.md`](../AGENTS.md) are
 generated from the package's exported constants: run `bun run docs:contract` after changing

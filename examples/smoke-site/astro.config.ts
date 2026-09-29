@@ -10,7 +10,7 @@ const isolatedPersistPath = process.env.RESERVA_E2E_PERSIST ?? process.env.RESER
 
 export default defineConfig({
   output: 'server',
-  // Playwright polls a fixed port for readiness, so an e2e server that silently moved to the next
+  // Playwright polls one port (RESERVA_E2E_PORT) for readiness, so an e2e server that silently moved to the next
   // free port would leave the suite testing whichever other run already holds it — its database,
   // its bookings, and its shutdown mid-run. Fail to start instead.
   ...(process.env.RESERVA_E2E_PERSIST ? { vite: { server: { strictPort: true } } } : {}),

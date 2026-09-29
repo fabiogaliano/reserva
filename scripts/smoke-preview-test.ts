@@ -9,7 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 const smokeSiteRoot = fileURLToPath(new URL('../examples/smoke-site/', import.meta.url));
-// Own persist dir and a port distinct from Playwright's fixed 4399, so the two probes never collide.
+// Own persist dir and a port distinct from Playwright's default 4399, so the two probes never collide.
 const PERSIST_DIR = '.wrangler-preview-test';
 const HOST = '127.0.0.1';
 const PORT = 4398;
