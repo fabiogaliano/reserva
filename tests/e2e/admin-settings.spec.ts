@@ -46,3 +46,20 @@ test('editing a setting flags the field and the section as unsaved until Save', 
   await page.locator('#bk-s-policy button[value="settings-reset:booking.minNoticeHours"]').click();
   await expect(page.locator('input[name="booking.minNoticeHours"]')).toHaveValue(before);
 });
+
+// Recent changes is a navigating link, not an in-page tab, so switching sections in place from it
+// must still move aria-current off it — otherwise two links claim to be the current section.
+test('switching sections in place from Recent changes leaves exactly one current link', async ({ page }) => {
+  await page.goto('/booking/admin?view=settings&section=history');
+  const nav = page.locator('.bk-snav');
+  await expect(nav.locator('a[aria-current="page"]')).toHaveAttribute('href', /section=history/);
+
+  await nav.locator('a[data-reserva-tab="policy"]').click();
+  await expect(page.locator('#bk-s-policy')).toBeVisible();
+  // The side list and the narrow-screen tab bar each carry one current section link.
+  const currentSection = page.locator('a[href*="section="][aria-current="page"]');
+  await expect(currentSection).toHaveCount(2);
+  for (const current of await currentSection.all()) {
+    await expect(current).toHaveAttribute('data-reserva-tab', 'policy');
+  }
+});

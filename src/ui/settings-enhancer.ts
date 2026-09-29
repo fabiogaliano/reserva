@@ -17,6 +17,9 @@ export const settingsEnhancerJs = `(() => {
         if (other.dataset.reservaTab === link.dataset.reservaTab) other.setAttribute('aria-current', 'page');
         else other.removeAttribute('aria-current');
       }
+      // Recent changes navigates rather than toggling (its panel is loaded on request), so it is not
+      // in sectionLinks, but it may still be the page's current section.
+      for (const other of document.querySelectorAll('a[href*="section="]:not([data-reserva-tab])')) other.removeAttribute('aria-current');
       for (const panel of panels.children) panel.hidden = panel.id !== 'bk-s-' + link.dataset.reservaTab;
       history.replaceState(null, '', link.href);
     });
