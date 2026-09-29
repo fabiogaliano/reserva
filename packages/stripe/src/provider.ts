@@ -1,4 +1,3 @@
-import Stripe from 'stripe';
 import {
   pickupOptionFor,
   priceFor,
@@ -15,28 +14,43 @@ import {
   type SessionStatus,
 } from '@reservajs/astro/core';
 import type { ReservaResolvedRouteConfig } from '@reservajs/astro';
+import {
+  createStripeFetchClient,
+  STRIPE_WEBHOOK_TOLERANCE_SECONDS,
+  type StripeCheckoutCustomFieldParams,
+  type StripeCheckoutSession,
+  type StripeCheckoutSessionCreateParams,
+  type StripeDispute,
+  type StripeEvent,
+  type StripeList,
+  type StripePaymentIntent,
+  type StripeRefund,
+  type StripeRefundCreateParams,
+  type StripeRefundListParams,
+} from './api.js';
 
+// The slice of the Stripe API the provider calls, shaped like stripe-node's resources so an SDK
+// instance (or a test double) can still be injected through `client`.
 export interface StripeClient {
   checkout: { sessions: {
-    create(params: Stripe.Checkout.SessionCreateParams, options?: { idempotencyKey?: string }): Promise<Stripe.Checkout.Session>;
-    retrieve(sessionId: string): Promise<Stripe.Checkout.Session>;
+    create(params: StripeCheckoutSessionCreateParams, options?: { idempotencyKey?: string }): Promise<StripeCheckoutSession>;
+    retrieve(sessionId: string): Promise<StripeCheckoutSession>;
   } };
   refunds: {
-    create(params: Stripe.RefundCreateParams, options?: { idempotencyKey?: string }): Promise<Stripe.Refund>;
+    create(params: StripeRefundCreateParams, options?: { idempotencyKey?: string }): Promise<StripeRefund>;
     // Optional: only needed for the already-fully-refunded reconciliation path in refund() below.
-    list?(params: Stripe.RefundListParams): Promise<Stripe.ApiList<Stripe.Refund>>;
+    list?(params: StripeRefundListParams): Promise<StripeList<StripeRefund>>;
   };
   // Optional: only the best-effort cancelPayment() path uses it, so an injected test double may omit it.
   paymentIntents?: {
-    cancel(paymentIntentId: string): Promise<Stripe.PaymentIntent>;
+    cancel(paymentIntentId: string): Promise<StripePaymentIntent>;
   };
   webhooks: { constructEventAsync(
     payload: string,
     signature: string,
     secret: string,
     tolerance?: number,
-    cryptoProvider?: Stripe.CryptoProvider,
-  ): Promise<Stripe.Event> };
+  ): Promise<StripeEvent> };
 }
 
 type BookingCallback<T> = (booking: Booking, config: ResolvedClientConfig) => T;
@@ -175,7 +189,7 @@ function guestCountOf(value: string | null | undefined): number | null {
   return count >= 1 && count <= MAX_GUEST_COUNT ? count : null;
 }
 
-function customerDetailsOf(session: Stripe.Checkout.Session): {
+function customerDetailsOf(session: StripeCheckoutSession): {
   customerName?: string | null;
   customerEmail?: string | null;
   customerPhone?: string | null;
@@ -214,12 +228,20 @@ function nowMs(now: () => Date | number): number {
 // just replay the rejection — a 409 conflict counts too, since this provider always resends
 // identical params, meaning another request already used that key. Everything else is ambiguous
 // and worth one retry.
+// Matched on the error's `type` (its class name) rather than instanceof, so errors thrown by an
+// injected stripe-node client classify the same as this package's own.
+const DEFINITIVE_STRIPE_ERROR_TYPES = new Set([
+  'StripeCardError', 'StripeInvalidRequestError', 'StripeAuthenticationError', 'StripePermissionError', 'StripeIdempotencyError',
+]);
+
+function stripeErrorType(error: unknown): string | undefined {
+  const type = error && typeof error === 'object' ? (error as { type?: unknown }).type : undefined;
+  return typeof type === 'string' ? type : undefined;
+}
+
 function isDefinitiveStripeError(error: unknown): boolean {
-  return error instanceof Stripe.errors.StripeCardError
-    || error instanceof Stripe.errors.StripeInvalidRequestError
-    || error instanceof Stripe.errors.StripeAuthenticationError
-    || error instanceof Stripe.errors.StripePermissionError
-    || error instanceof Stripe.errors.StripeIdempotencyError;
+  const type = stripeErrorType(error);
+  return type !== undefined && DEFINITIVE_STRIPE_ERROR_TYPES.has(type);
 }
 
 // `charge_already_refunded` happens when the idempotency key that would have replayed the
@@ -227,7 +249,8 @@ function isDefinitiveStripeError(error: unknown): boolean {
 // already-refunded charge — the money moved on the earlier attempt, so this is worth
 // reconciling (exact amount + this request's marker) before rethrowing as definitive.
 function isChargeAlreadyRefundedError(error: unknown): boolean {
-  return error instanceof Stripe.errors.StripeInvalidRequestError && error.code === 'charge_already_refunded';
+  return stripeErrorType(error) === 'StripeInvalidRequestError'
+    && (error as { code?: unknown }).code === 'charge_already_refunded';
 }
 
 // Carries the booking's locale: the confirmation page's pending, failed and expired states have no
@@ -243,7 +266,7 @@ function defaultCancelUrl(config: ResolvedClientConfig): string {
 }
 
 
-export function sessionStatusFromStripe(session: Stripe.Checkout.Session): SessionStatus {
+export function sessionStatusFromStripe(session: StripeCheckoutSession): SessionStatus {
   const metadata = metadataOf(session);
   const amountTotal = amountOf(session, 'amount_total');
   const currency = currencyOf(session);
@@ -286,7 +309,7 @@ const DISPUTE_OUTCOME_BY_STRIPE_STATUS: Record<string, DisputeOutcome> = {
   prevented: 'lost',
 };
 
-export function stripeEventToParsed(event: Stripe.Event): PaymentEventParsed {
+export function stripeEventToParsed(event: StripeEvent): PaymentEventParsed {
   const object = event.data.object as unknown;
   const parsed: PaymentEventParsed = {
     id: event.id,
@@ -299,7 +322,7 @@ export function stripeEventToParsed(event: Stripe.Event): PaymentEventParsed {
     || event.type === 'checkout.session.async_payment_succeeded'
     || event.type === 'checkout.session.async_payment_failed'
   ) {
-    const session = object as Stripe.Checkout.Session;
+    const session = object as StripeCheckoutSession;
     const bookingId = bookingIdOf(session);
     const paymentIntent = objectId(session.payment_intent);
     const amountCaptured = amountOf(session, 'amount_total');
@@ -331,11 +354,11 @@ export function stripeEventToParsed(event: Stripe.Event): PaymentEventParsed {
     // cancel-on-full-refund path keys off the amounts, not the id.
     if (charge.paid !== undefined) parsed.paid = charge.paid;
     if (event.type !== 'charge.refunded') {
-      const created = (object as Stripe.Dispute).created;
+      const created = (object as StripeDispute).created;
       if (typeof created === 'number') parsed.disputeCreatedAt = new Date(created * 1000).toISOString();
     }
     if (event.type === 'charge.dispute.closed') {
-      const outcome = DISPUTE_OUTCOME_BY_STRIPE_STATUS[(object as Stripe.Dispute).status];
+      const outcome = DISPUTE_OUTCOME_BY_STRIPE_STATUS[(object as StripeDispute).status];
       if (outcome) parsed.disputeOutcome = outcome;
     }
   }
@@ -354,7 +377,7 @@ export class StripeProvider implements PaymentProvider {
   constructor(options: StripeOptions) {
     if (!options.secretKey) throw new Error('Stripe secret key is required');
     if (!options.webhookSecret) throw new Error('Stripe webhook secret is required');
-    this.stripe = options.client ?? new Stripe(options.secretKey) as unknown as StripeClient;
+    this.stripe = options.client ?? createStripeFetchClient(options.secretKey);
     this.webhookSecret = options.webhookSecret;
     this.now = options.now ?? (() => Date.now());
     this.options = options;
@@ -375,7 +398,7 @@ export class StripeProvider implements PaymentProvider {
     const pickupLabel = resolveOption(this.options.pickupFieldLabel, booking, config, defaultPickupFieldLabel);
     const guestCountLabel = resolveOption(this.options.guestCountFieldLabel, booking, config, defaultGuestCountFieldLabel);
     const expiresInMinutes = Math.max(30, config.booking.holdMinutes - 5);
-    const params: Stripe.Checkout.SessionCreateParams = {
+    const params: StripeCheckoutSessionCreateParams = {
       mode: 'payment',
       line_items: [{ quantity: 1, price_data: {
         currency: config.business.currency,
@@ -383,7 +406,7 @@ export class StripeProvider implements PaymentProvider {
         product_data: { name, ...(description ? { description } : {}) },
       } }],
       expires_at: Math.floor(nowMs(this.now) / 1000) + expiresInMinutes * 60,
-      locale: stripeLocaleFor(booking.locale) as Stripe.Checkout.SessionCreateParams.Locale,
+      locale: stripeLocaleFor(booking.locale),
       // No `payment_method_types`: sending it overrides the dashboard and hides Apple Pay, Google
       // Pay and Link. The exclusion list is the cheap guard against a dashboard that enables a
       // delayed method by mistake; the webhook's refusal path is the real backstop.
@@ -398,7 +421,7 @@ export class StripeProvider implements PaymentProvider {
     // Keyed off the service's declared option instead of a fixed 'custom' id, so any option
     // marked requiresAddress collects the field. A stored pickupType the service no longer
     // declares resolves to undefined, safely skipping the field rather than guessing.
-    const customFields: Stripe.Checkout.SessionCreateParams.CustomField[] = [];
+    const customFields: StripeCheckoutCustomFieldParams[] = [];
     if (pickupOptionFor(service, booking.pickupType)?.requiresAddress) customFields.push({
       key: 'pickup_address', label: { type: 'custom', custom: pickupLabel }, type: 'text',
     });
@@ -449,9 +472,9 @@ export class StripeProvider implements PaymentProvider {
   // byte-identical params (otherwise it 409s) — reusing the same `params` object reference
   // guarantees that. A retry is skipped for errors that were actually rejected, not ambiguous.
   private async createSession(
-    params: Stripe.Checkout.SessionCreateParams,
+    params: StripeCheckoutSessionCreateParams,
     idempotencyKey: string,
-  ): Promise<Stripe.Checkout.Session> {
+  ): Promise<StripeCheckoutSession> {
     try {
       return await this.stripe.checkout.sessions.create(params, { idempotencyKey });
     } catch (error) {
@@ -469,7 +492,7 @@ export class StripeProvider implements PaymentProvider {
     const payload = await requestText(request, PAYMENT_WEBHOOK_BODY_LIMIT_BYTES);
     try {
       const event = await this.stripe.webhooks.constructEventAsync(
-        payload, signature, this.webhookSecret, 300, Stripe.createSubtleCryptoProvider(),
+        payload, signature, this.webhookSecret, STRIPE_WEBHOOK_TOLERANCE_SECONDS,
       );
       return stripeEventToParsed(event);
     } catch {
@@ -517,7 +540,7 @@ export class StripeProvider implements PaymentProvider {
     // Folding the amount in would let a retry carrying a different one mint a second real refund
     // instead of replaying the first.
     const idempotencyKey = `reserva-refund-${paymentRef}`;
-    let created: Stripe.Refund;
+    let created: StripeRefund;
     try {
       // `amount` is always explicit, never left to Stripe's refund-the-rest default: a partial
       // refund needs it, and stating it for a full one makes the call say exactly what the

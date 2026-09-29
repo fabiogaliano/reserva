@@ -32,8 +32,5 @@
   },
   "peerDependencies": {
     "@reservajs/astro": "^0.13.0"
-  },
-  "dependencies": {
-    "stripe": "^22.5.0"
   }
 }
