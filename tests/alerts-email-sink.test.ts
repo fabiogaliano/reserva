@@ -3,6 +3,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { emailAlertSink } from '../src/alerts/email-sink';
+import type { ReservaLogger } from '../src/context';
 import type { ResolvedClientConfig } from '../src/core/config';
 import type { EmailMessage, EmailProvider, OperationalAlert, OperationalAlertSink } from '../src/core/events';
 import { defineReservaRuntime } from '../src/runtime-context';
@@ -101,13 +102,14 @@ describe('defineReservaRuntime alert-sink wiring', () => {
     refund: async () => ({ refundRef: 're_test', amountMinor: 0 }),
   };
 
-  function contextFor(providerOverrides: { email?: EmailProvider; alerts?: OperationalAlertSink }) {
+  function contextFor(providerOverrides: { email?: EmailProvider; alerts?: OperationalAlertSink }, logger?: ReservaLogger) {
     const runtime = defineReservaRuntime({
       createContext: () => ({
         config: baseConfig,
         db: {} as D1Database,
         repo: {} as never,
         providers: { payments, ...providerOverrides },
+        ...(logger ? { logger } : {}),
       }),
     });
     return runtime.createContext({ request: new Request('https://example.test/') });
@@ -136,10 +138,11 @@ describe('defineReservaRuntime alert-sink wiring', () => {
   });
 
   it('falls back to the logger when the email transport cannot send a standalone message', async () => {
-    const context = await contextFor({ email: { send: async () => undefined } });
+    const errors: unknown[][] = [];
+    const context = await contextFor({ email: { send: async () => undefined } }, { error: (...args: unknown[]) => { errors.push(args); } });
 
     // The cron must still run: a deployment without email gets its alerts in the Worker logs.
-    expect(context.providers.alerts).toBeDefined();
-    await expect(context.providers.alerts!.send(alert)).resolves.toBeUndefined();
+    await context.providers.alerts!.send(alert);
+    expect(errors).toEqual([['reserva operational alert', alert]]);
   });
 });

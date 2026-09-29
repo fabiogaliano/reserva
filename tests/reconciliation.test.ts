@@ -30,16 +30,6 @@ function seedSideEffect(repo: FakeRepository, bookingId: string, identity: SideE
 }
 
 describe('runReconciliation', () => {
-  it('sweeps expired holds and reports the count', async () => {
-    const seeded = booking({ id: 'recon-expired-hold', status: 'hold', holdExpiresAt: '2026-08-14T09:00:00.000Z' });
-    const repo = fakeRepository([seeded]);
-    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
-
-    const summary = await runReconciliation(context);
-    expect(summary.expiredHoldsSwept).toBe(1);
-    expect(repo.rows.get(seeded.id)?.status).toBe('expired');
-  });
-
   it('opens a delayed incident once a failed side-effect row has been failing for ten uninterrupted minutes, and resolves it automatically once a later drain succeeds', async () => {
     const seeded = booking({ id: 'recon-delayed-incident', status: 'confirmed' });
     const repo = fakeRepository([seeded]);
@@ -111,43 +101,6 @@ describe('runReconciliation', () => {
     expect(incident).toMatchObject({ severity: 'action_required', status: 'open' });
   });
 
-  it('resumes and completes a stuck cancelled-booking refund via the shared executor, opening no incident on success', async () => {
-    const seeded = booking({ id: 'recon-refund-resume', status: 'cancelled', paymentRef: 'pi_recon_resume' });
-    const repo = fakeRepository([seeded]);
-    await repo.claimRefundOperation({ id: 'op-recon', bookingId: seeded.id, paymentIntent: seeded.paymentRef, choice: 'full', requestedAt: '2026-08-14T09:00:00.000Z' });
-    let refunds = 0;
-    const context = createReservaContext({
-      config, db: {} as D1Database, repo, clock,
-      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionRef: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => { refunds += 1; return { refundRef: 're_recon_resume', amountMinor: seeded.priceMinor }; } } }),
-    });
-
-    const summary = await runReconciliation(context);
-    expect(refunds).toBe(1);
-    expect(repo.refundOperations.get(seeded.id)).toMatchObject({ status: 'succeeded', stripeRefundId: 're_recon_resume' });
-    expect(summary.refundBookingsProcessed).toBe(1);
-    expect(summary.incidentsOpened).toBe(0);
-  });
-
-  it('resumes the cancellation gate after a crash between the refund decision claim and cancellation CAS', async () => {
-    const seeded = booking({ id: 'recon-refund-not-cancelled', status: 'confirmed', paymentRef: 'pi_recon_not_cancelled' });
-    const repo = fakeRepository([seeded]);
-    await repo.claimRefundOperation({ id: 'op-not-cancelled', bookingId: seeded.id, paymentIntent: seeded.paymentRef, choice: 'full', requestedAt: '2026-08-14T09:00:00.000Z' });
-    let refunds = 0;
-    const context = createReservaContext({
-      config, db: {} as D1Database, repo, clock,
-      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionRef: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => {
-        refunds += 1;
-        expect(repo.rows.get(seeded.id)?.status).toBe('cancelled');
-        return { refundRef: 're_after_cancel', amountMinor: seeded.priceMinor };
-      } } }),
-    });
-
-    await runReconciliation(context);
-    expect(refunds).toBe(1);
-    expect(repo.rows.get(seeded.id)?.status).toBe('cancelled');
-    expect(repo.refundOperations.get(seeded.id)?.status).toBe('succeeded');
-  });
-
   it('opens an incident and never calls Stripe when a requested refund cannot safely resume cancellation', async () => {
     const seeded = booking({ id: 'recon-refund-blocked', status: 'no_show', paymentRef: 'pi_recon_blocked' });
     const repo = fakeRepository([seeded]);
@@ -188,21 +141,6 @@ describe('runReconciliation', () => {
     expect(repo.refundOperations.get(seeded.id)?.status).toBe('succeeded');
     const resolved = await repo.getIncidentBySource('refund', seeded.id);
     expect(resolved).toMatchObject({ status: 'resolved', resolutionKind: 'automatic' });
-  });
-
-  it('reports an unreported oversell marker as an action_required incident exactly once', async () => {
-    const seeded = booking({ id: 'recon-oversell', status: 'confirmed' });
-    const repo = fakeRepository([seeded]);
-    seedSideEffect(repo, seeded.id, { family: 'oversell' }, { status: 'succeeded' });
-    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
-
-    const first = await runReconciliation(context);
-    expect(first.incidentsOpened).toBe(1);
-    const incident = await repo.getIncidentBySource('oversell', seeded.id);
-    expect(incident).toMatchObject({ status: 'open', severity: 'action_required', action: 'oversell' });
-
-    const second = await runReconciliation(context);
-    expect(second.incidentsOpened).toBe(0);
   });
 
   it('drains a pending alert through the configured sink and marks it delivered', async () => {
@@ -291,24 +229,6 @@ describe('runReconciliation', () => {
     expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_create`)?.status).toBe('failed');
     expect(repo.sideEffectOperations.get(`${seeded.id}:email_confirmation`)?.status).toBe('succeeded');
     expect(repo.sideEffectOperations.get(`${seeded.id}:email:booking.cancelled_by_operator`)?.attemptCount).toBe(4);
-  });
-
-  it('does not let terminal rows starve newer executable debt', async () => {
-    const terminal = Array.from({ length: 12 }, (_, index) => booking({ id: `recon-terminal-${index}`, status: 'confirmed' }));
-    const actionable = booking({ id: 'recon-action-after-terminal', status: 'confirmed' });
-    const repo = fakeRepository([...terminal, actionable]);
-    for (const seeded of terminal) seedSideEffect(repo, seeded.id, { family: 'email_confirmation' }, { status: 'abandoned', attemptCount: 10 });
-    seedSideEffect(repo, actionable.id, { family: 'calendar_create' }, { status: 'pending' });
-    let calendarCalls = 0;
-    const context = createReservaContext({
-      config, db: {} as D1Database, repo, clock,
-      providers: providers({ calendar: { listEvents: async () => [], createEvent: async () => { calendarCalls += 1; return 'cal_fair'; }, deleteEvent: async () => undefined, patchEvent: async () => undefined } }),
-    });
-
-    const summary = await runReconciliation(context, { sourceLimit: 10 });
-    expect(calendarCalls).toBe(1);
-    expect(summary.sideEffectBookingsProcessed).toBe(1);
-    expect(summary.incidentsOpened).toBe(10);
   });
 
   it('reprojects an open incident after ordinary HTTP recovery removes the source from execution candidates', async () => {

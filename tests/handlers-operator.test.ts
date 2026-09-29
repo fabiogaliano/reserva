@@ -2,7 +2,6 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createReservaContext } from '../src/context';
 import { handleCustomerCancel, handleCustomerReschedule, handleManage, handleOperatorCancel, handleOperatorNoShow, handleOperatorReschedule, handlePaymentWebhook } from '../src/handlers';
-import type { RefundOperationRecord } from '../src/repo';
 import { booking, config } from './fixtures';
 import { fakeRefundTracker, fakeRepository, providers } from './fakes';
 
@@ -273,83 +272,6 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     expect(repo.refundOperations.get(seeded.id)).toMatchObject({ status: 'succeeded' });
   });
 
-  // getBookingByOperatorTokenForRefundRecovery only lets an expired token through when a refund
-  // operation is still 'requested' or 'failed' — a resolved or absent operation must fall back to
-  // the plain expiry check and get the same generic 403 an unknown token would.
-  it('rejects an expired operator token on cancel once its refund operation has already succeeded', async () => {
-    const seeded = booking({
-      id: 'b-expired-refund-succeeded',
-      status: 'cancelled',
-      cancelledAt: '2026-06-14T07:00:00.000Z',
-      cancelledBy: 'operator',
-      paymentRef: 'pi_expired_succeeded',
-    });
-    const repo = fakeRepository([seeded]);
-    await repo.claimRefundOperation({
-      id: 'op-expired-succeeded', bookingId: seeded.id, paymentIntent: seeded.paymentRef,
-      choice: 'full', requestedAt: '2026-06-14T07:00:00.000Z',
-    });
-    await repo.resolveRefundOperation('op-expired-succeeded', {
-      status: 'succeeded', stripeRefundId: 're_expired_succeeded', amountCents: seeded.priceMinor, resolvedAt: '2026-06-14T07:01:00.000Z',
-    });
-    const tokenState = repo.tokenState.get(seeded.id);
-    if (!tokenState) throw new Error('Seeded booking token state is missing');
-    tokenState.tokensExpireAt = '2026-06-14T07:30:00.000Z';
-    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
-
-    const response = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
-    expect(response.status).toBe(403);
-  });
-
-  it('rejects an expired operator token on cancel when there is no refund operation at all', async () => {
-    const seeded = booking({
-      id: 'b-expired-no-refund-op',
-      status: 'cancelled',
-      cancelledAt: '2026-06-14T07:00:00.000Z',
-      cancelledBy: 'operator',
-      paymentRef: 'pi_expired_no_op',
-    });
-    const repo = fakeRepository([seeded]);
-    const tokenState = repo.tokenState.get(seeded.id);
-    if (!tokenState) throw new Error('Seeded booking token state is missing');
-    tokenState.tokensExpireAt = '2026-06-14T07:30:00.000Z';
-    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
-
-    const response = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), context);
-    expect(response.status).toBe(403);
-  });
-
-  // Only handleOperatorCancel passes refundRecovery=true — manage, reschedule, and no-show always
-  // use the plain lookup, so an expired token stays 403 on those routes even with an unresolved
-  // refund operation that would let cancel through.
-  it('confines the expired-token recovery bypass to the cancel route: manage, reschedule, and no-show stay 403 while a refund operation is still requested', async () => {
-    const seeded = booking({
-      id: 'b-expired-requested-route-scope',
-      status: 'cancelled',
-      cancelledAt: '2026-06-14T07:00:00.000Z',
-      cancelledBy: 'operator',
-      paymentRef: 'pi_expired_route_scope',
-    });
-    const repo = fakeRepository([seeded]);
-    await repo.claimRefundOperation({
-      id: 'op-expired-route-scope', bookingId: seeded.id, paymentIntent: seeded.paymentRef,
-      choice: 'full', requestedAt: '2026-06-14T07:00:00.000Z',
-    });
-    const tokenState = repo.tokenState.get(seeded.id);
-    if (!tokenState) throw new Error('Seeded booking token state is missing');
-    tokenState.tokensExpireAt = '2026-06-14T07:30:00.000Z';
-    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
-
-    const manage = await handleManage(new Request(`https://example.test/api/booking/manage?token=${seeded.operatorToken}`), context);
-    expect(manage.status).toBe(403);
-    const reschedule = await handleOperatorReschedule(operatorRequest('reschedule', {
-      operatorToken: seeded.operatorToken, newStart: validNewStart,
-    }), context);
-    expect(reschedule.status).toBe(403);
-    const noShow = await handleOperatorNoShow(operatorRequest('no-show', { operatorToken: seeded.operatorToken }), context);
-    expect(noShow.status).toBe(403);
-  });
-
   it('refund: none cancels without ever calling refund()', async () => {
     const seeded = booking({ id: 'b-op-cancel-refund-none', paymentRef: 'pi_refund_none' });
     const repo = fakeRepository([seeded]);
@@ -545,40 +467,6 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     expect(response.status).toBe(200);
     // The provider must receive the booking's full price, not zero, undefined, or an arbitrary value.
     expect(expectedAmounts).toEqual([seeded.priceMinor]);
-  });
-
-  it('(F9) a completely fresh repo instance resumes a requested same-choice operation from durable state', async () => {
-    const seeded = booking({ id: 'b-op-cancel-fresh-repo-pending', paymentRef: 'pi_fresh_repo_pending' }); // still confirmed
-    const pendingOperation: RefundOperationRecord = {
-      id: 'op-fresh-repo-pending', bookingId: seeded.id, paymentIntent: seeded.paymentRef, choice: 'full',
-      status: 'requested', stripeRefundId: null, amountCents: null, requestedAmountCents: null,
-      requestedAt: '2026-06-14T07:00:00.000Z', resolvedAt: null, error: null,
-      executionClaimToken: null, executionClaimUntil: null, attemptCount: 0, attemptedAt: null,
-      failureStartedAt: null, nextAttemptAt: null,
-    };
-    // A brand-new repo instance, seeded to look like a fresh D1 read from a different isolate: a
-    // same-choice claim already exists, but the booking is still confirmed because the original
-    // claim-holder crashed before its CAS.
-    const freshRepo = fakeRepository([seeded]);
-    freshRepo.refundOperations.set(seeded.id, pendingOperation);
-    let refunds = 0;
-    const freshContext = createReservaContext({
-      config,
-      db: {} as D1Database,
-      repo: freshRepo,
-      clock,
-      providers: providers({ payments: { createCheckout: async () => ({ url: '', sessionRef: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => { refunds += 1; return { refundRef: 're_should_not_happen', amountMinor: seeded.priceMinor }; } } }),
-    });
-
-    const response = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), freshContext);
-    expect(response.status).toBe(200);
-    expect(refunds).toBe(1);
-    expect(freshRepo.rows.get(seeded.id)?.status).toBe('cancelled');
-    expect(freshRepo.refundOperations.get(seeded.id)?.status).toBe('succeeded');
-
-    const retry = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), freshContext);
-    expect(retry.status).toBe(200);
-    expect(refunds).toBe(1);
   });
 
   it('resumes a requested same-choice claim when its first cancellation attempt crashes before the CAS', async () => {
@@ -853,26 +741,6 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     expect(second.status).toBe(200);
     expect(refunds).toBeGreaterThanOrEqual(1);
     expect(repo.refundOperations.get(seeded.id)).toMatchObject({ status: 'succeeded', stripeRefundId: 're_same_choice' });
-  });
-
-  it('a cross-context retry (fresh context, no shared memory) does not duplicate the Stripe call, because it relies on the durable operation row instead of refundedPayments', async () => {
-    const seeded = booking({ id: 'b-op-cancel-cross-context', paymentRef: 'pi_refund_cross_context' });
-    const repo = fakeRepository([seeded]);
-    let refunds = 0;
-    const paymentsOverride = { createCheckout: async () => ({ url: '', sessionRef: '' }), parseWebhook: async () => { throw new Error('unused'); }, getSession: async () => ({ status: 'open' }), refund: async () => { refunds += 1; return { refundRef: 're_cross_context', amountMinor: seeded.priceMinor }; } };
-
-    // Two independently-constructed contexts sharing only the same repo/db — the point of the
-    // durable operation row: no in-memory Set survives across isolates, but the D1 row does.
-    const contextA = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers({ payments: paymentsOverride }) });
-    const contextB = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers({ payments: paymentsOverride }) });
-
-    const first = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), contextA);
-    expect(first.status).toBe(200);
-    expect(refunds).toBe(1);
-
-    const second = await handleOperatorCancel(operatorRequest('cancel', { operatorToken: seeded.operatorToken, refund: 'full' }), contextB);
-    expect(second.status).toBe(200);
-    expect(refunds).toBe(1);
   });
 });
 

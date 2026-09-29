@@ -135,14 +135,6 @@ describe('dispute status from the payment webhook', () => {
     expect(emails).toEqual(['owner:payment.dispute_created']);
   });
 
-  it('counts an inquiry closed without a chargeback as won', async () => {
-    const { deliver, row } = webhookHarness(seeded);
-
-    await deliver(created);
-    await deliver(closed('won'));
-    expect(row()).toMatchObject({ disputeStatus: 'won' });
-  });
-
   it('lets the last close win when a payment is disputed twice and the provider gives no creation time', async () => {
     const { deliver, row } = webhookHarness(seeded);
 

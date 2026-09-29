@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { CSRF_SECRET_ENV_NAME } from '../src/admin-csrf';
+import { OPERATOR_SECRET_NAME } from '../src/context';
 import { reserva } from '../src/integration';
+import { TOKEN_ENC_SECRET_NAME } from '../src/repo';
 import config from '../examples/minimal/client-config';
 
 function updateConfigCalls(options: Record<string, unknown>): Array<Record<string, unknown>> {
@@ -36,11 +39,8 @@ describe('reserva() astro:env schema contribution', () => {
   it("declares reserva's own secrets as optional server secret string fields by default", () => {
     const schema = envSchemaFrom(updateConfigCalls(baseOptions));
     expect(schema).toBeDefined();
-    const expectedNames = [
-      'RESERVA_OPERATOR_SECRET',
-      'RESERVA_CSRF_SECRET',
-      'RESERVA_TOKEN_ENC_KEY',
-    ];
+    // The names the runtime actually reads, so renaming one without the schema fails here.
+    const expectedNames = [OPERATOR_SECRET_NAME, CSRF_SECRET_ENV_NAME, TOKEN_ENC_SECRET_NAME];
     expect(Object.keys(schema!).sort()).toEqual([...expectedNames].sort());
     for (const name of expectedNames) {
       expect(schema![name]).toMatchObject({ context: 'server', access: 'secret', optional: true });

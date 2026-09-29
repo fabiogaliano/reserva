@@ -1,6 +1,5 @@
-// Unit coverage for accessAllowed's fail-closed gate. handlers-admin.test.ts covers the
-// absent/null/throws -> null cases end to end; this file adds the identity-passthrough behavior
-// neither of those exercise directly.
+// The fail-closed cases (adminAuth absent, resolving null, or throwing) are proven end to end by
+// handlers-admin.test.ts's access-control test; this file covers what adminAuth receives and returns.
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { accessAllowed } from '../src/admin-access';
@@ -21,21 +20,6 @@ function contextWith(adminAuth: NonNullable<Parameters<typeof createReservaConte
 }
 
 describe('accessAllowed (src/admin-access.ts)', () => {
-  it('returns null when adminAuth is absent', async () => {
-    const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), providers: providers() });
-    await expect(accessAllowed(REQUEST, context)).resolves.toBeNull();
-  });
-
-  it('returns null when adminAuth resolves to null', async () => {
-    const context = contextWith(async () => null);
-    await expect(accessAllowed(REQUEST, context)).resolves.toBeNull();
-  });
-
-  it('returns null when adminAuth throws (fail-closed, not a 500)', async () => {
-    const context = contextWith(() => { throw new Error('adminAuth exploded'); });
-    await expect(accessAllowed(REQUEST, context)).resolves.toBeNull();
-  });
-
   it('passes through the resolved AdminIdentity unchanged', async () => {
     const context = contextWith(async () => ({ subject: 'ops@example.test', email: 'ops@example.test' }));
     await expect(accessAllowed(REQUEST, context)).resolves.toEqual({ subject: 'ops@example.test', email: 'ops@example.test' });

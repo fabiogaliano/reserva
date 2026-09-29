@@ -61,41 +61,6 @@ describe('confirmation-path per-recipient email outbox', () => {
     expect(sideEffectOperation(repo, seeded.id, OWNER)).toMatchObject({ status: 'succeeded', attemptCount: 2 });
   });
 
-  // The derived emailSynced flag this used to observe is gone; the per-recipient rows ARE
-  // the record now, so the invariant is asserted where it lives — after the first recipient
-  // resolves, the confirmation as a whole is still not delivered.
-  it('counts the confirmation email as delivered only once BOTH split rows have succeeded, not after the first', async () => {
-    const seeded = booking({ id: 'b-email-split-both-succeed', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', paymentSessionRef: 'cs_email_both_succeed' });
-    const repo = fakeRepository([seeded]);
-    const originalResolve = repo.resolveSideEffectOperation;
-    const allEmailsDeliveredAfterResolve: Record<string, boolean> = {};
-    repo.resolveSideEffectOperation = async (input) => {
-      const result = await originalResolve(input);
-      if (input.identity.family === 'email' && input.identity.name) {
-        const emailRows = (await repo.listSideEffectOperations(input.bookingId))
-          .filter((row) => row.family === 'email' && row.event === 'booking.confirmed');
-        allEmailsDeliveredAfterResolve[input.identity.name] = emailRows.every((row) => row.status === 'succeeded');
-      }
-      return result;
-    };
-    const context = createReservaContext({
-      config, db: {} as D1Database, repo,
-      clock: () => new Date('2026-06-14T08:00:00.000Z'),
-      providers: paidWebhookProviders(seeded.id, 'cs_email_both_succeed', {
-        email: {
-          recipientsForEvent: () => ['customer', 'owner'],
-          sendToRecipient: async () => undefined,
-          send: async () => undefined,
-        },
-      }),
-    });
-
-    await expect(handlePaymentWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context)).resolves.toMatchObject({ status: 200 });
-
-    expect(allEmailsDeliveredAfterResolve.customer).toBe(false);
-    expect(allEmailsDeliveredAfterResolve.owner).toBe(true);
-  });
-
   it('a plain-send provider keeps the single combined email_confirmation row and existing behavior', async () => {
     const seeded = booking({ id: 'b-email-combined-unchanged', status: 'hold', holdExpiresAt: '2026-06-14T09:00:00.000Z', paymentSessionRef: 'cs_email_combined' });
     const repo = fakeRepository([seeded]);

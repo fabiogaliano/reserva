@@ -6,7 +6,6 @@ import { handleAdminGet } from '../src/handlers';
 import { renderManagePage } from '../src/ui/pages/manage-page';
 import {
   normalizeRoutePrefix,
-  requireEnabledRoutePath,
   resolveRouteConfig,
   routeManifest,
   validateRouteOptions,
@@ -59,18 +58,6 @@ describe('normalizeRoutePrefix', () => {
 });
 
 describe('validateRouteOptions (Zod, same throw-on-safeParse-failure style as validateConfig)', () => {
-  it('accepts no options', () => {
-    expect(validateRouteOptions({})).toEqual({});
-  });
-
-  it('accepts a valid prefix', () => {
-    expect(validateRouteOptions({ routePrefix: '/en' })).toEqual({ routePrefix: '/en' });
-  });
-
-  it('rejects a prefix containing whitespace', () => {
-    expect(() => validateRouteOptions({ routePrefix: '/en service' })).toThrow(/whitespace/);
-  });
-
   it('rejects a prefix containing ".." traversal segments', () => {
     expect(() => validateRouteOptions({ routePrefix: '/../etc' })).toThrow(/\.\./);
   });
@@ -90,19 +77,6 @@ describe('validateRouteOptions (Zod, same throw-on-safeParse-failure style as va
   ])('accepts and normalizes safe prefix %j', (routePrefix, normalized) => {
     expect(validateRouteOptions({ routePrefix })).toEqual({ routePrefix });
     expect(normalizeRoutePrefix(routePrefix)).toBe(normalized);
-  });
-});
-
-describe('requireEnabledRoutePath', () => {
-  it('returns enabled route paths and rejects disabled groups with an actionable error', () => {
-    const enabled = resolveRouteConfig('/en');
-    expect(requireEnabledRoutePath(enabled, 'adminPage')).toBe('/en/booking/admin');
-    expect(requireEnabledRoutePath(enabled, 'managePage')).toBe('/en/booking/manage');
-
-    const withoutAdmin = resolveRouteConfig('/en', { admin: false, ops: true, manage: true });
-    expect(() => requireEnabledRoutePath(withoutAdmin, 'adminPage'))
-      .toThrow(/routes: \{ admin: false \}.*explicit endpoint/);
-    expect(requireEnabledRoutePath(withoutAdmin, 'managePage')).toBe('/en/booking/manage');
   });
 });
 

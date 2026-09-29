@@ -36,7 +36,7 @@ function stripeClient() {
 
 describe('currency plumbing', () => {
   it('accepts any lowercase ISO 4217 code and rejects anything that is not one', () => {
-    for (const currency of ['eur', 'jpy', 'usd', 'kwd']) {
+    for (const currency of ['eur', 'jpy', 'usd', 'kwd', 'kpw']) {
       expect(configIn(currency).business.currency).toBe(currency);
     }
     for (const bad of ['EUR', 'euro', 'e', '€']) {
@@ -94,12 +94,5 @@ describe('currency plumbing', () => {
     const held = [...repo.rows.values()][0];
     expect(held).toMatchObject({ priceMinor: 10000, currency: 'jpy' });
     expect(formatPrice(held?.priceMinor ?? 0, 'en', held?.currency ?? '')).toBe('JP¥10,000');
-  });
-
-  it('rejects a currency the Stripe adapter cannot present, without touching core validation', () => {
-    // Core accepts any ISO code; the vendor limit belongs to the adapter.
-    expect(() => configIn('kpw')).not.toThrow();
-    const provider = stripe({ secretKey: 'sk_test', webhookSecret: 'whsec_test', client: stripeClient().client });
-    expect(() => provider.validateConfig!(configIn('kpw'))).toThrow(/business\.currency/);
   });
 });

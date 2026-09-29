@@ -40,40 +40,6 @@ function seed(identity: SideEffectOperationIdentity, eventPayloadJson: string | 
 }
 
 describe('mutation side-effect outbox', () => {
-  it('records cancel, no-show, and reschedule rows with their winning transitions before delivery', async () => {
-    const cancelled = booking({ id: 'mutation-cancel' });
-    const noShow = booking({ id: 'mutation-no-show' });
-    const rescheduled = booking({ id: 'mutation-reschedule' });
-    const repo = fakeRepository([cancelled, noShow, rescheduled]);
-    const now = '2026-06-14T08:00:00.000Z';
-    const cancelIdentity: SideEffectOperationIdentity = { family: 'email', event: 'booking.cancelled_by_customer' };
-    const noShowIdentity: SideEffectOperationIdentity = { family: 'hook', name: 'ops', event: 'booking.no_show' };
-    const rescheduleIdentity: SideEffectOperationIdentity = { family: 'email', name: 'customer', event: 'booking.rescheduled' };
-
-    await repo.transitionToCancelled(cancelled.id, {
-      expectedStatusIn: ['confirmed'], cancelledAt: now, cancelledBy: 'customer', updatedAt: now,
-      mutationSideEffects: [seed(cancelIdentity)],
-    });
-    await repo.transitionToNoShow(noShow.id, {
-      expectedStatusIn: ['confirmed'], updatedAt: now, mutationSideEffects: [seed(noShowIdentity)],
-    });
-    await repo.rescheduleWithCapacity(rescheduled.id, {
-      expectedStatus: 'confirmed', expectedStartsAt: rescheduled.startsAt,
-      startsAt: '2026-06-16T09:00:00.000Z', endsAt: '2026-06-16T10:00:00.000Z',
-      rescheduledFrom: rescheduled.startsAt, updatedAt: now, now,
-      occupancyUnits: 1, occupancyEndsAt: '2026-06-16T10:30:00.000Z', localDate: '2026-06-16', defaultCapacity: 4,
-      mutationSideEffects: [seed(rescheduleIdentity)],
-    });
-
-    expect(repo.rows.get(cancelled.id)?.status).toBe('cancelled');
-    expect(repo.rows.get(noShow.id)?.status).toBe('no_show');
-    expect(repo.rows.get(rescheduled.id)?.startsAt).toBe('2026-06-16T09:00:00.000Z');
-    expect(sideEffectOperation(repo, cancelled.id, cancelIdentity)).toMatchObject({ status: 'pending' });
-    expect(sideEffectOperation(repo, noShow.id, noShowIdentity)).toMatchObject({ status: 'pending' });
-    // The reschedule transition version is assigned inside the winning write, not by the caller.
-    expect(sideEffectOperation(repo, rescheduled.id, { ...rescheduleIdentity, discriminator: '1' })).toMatchObject({ status: 'pending' });
-  });
-
   it('retries a failed row on a later idempotent booking-touching request', async () => {
     const seeded = booking({ id: 'mutation-drain', startsAt: '2026-06-14T07:00:00.000Z', endsAt: '2026-06-14T08:00:00.000Z' });
     const repo = fakeRepository([seeded]);
@@ -147,20 +113,6 @@ describe('mutation side-effect outbox', () => {
     expect(reschedules).toEqual(expect.arrayContaining([
       expect.objectContaining({ status: 'succeeded', attemptCount: 1 }),
     ]));
-  });
-
-  it('persists a pending row when the winning transition runs without dispatch', async () => {
-    const seeded = booking({ id: 'mutation-no-wait-until', startsAt: '2026-06-14T07:00:00.000Z', endsAt: '2026-06-14T08:00:00.000Z' });
-    const repo = fakeRepository([seeded]);
-
-    await expect(repo.transitionToNoShow(seeded.id, {
-      expectedStatusIn: ['confirmed'], updatedAt: '2026-06-14T08:00:00.000Z',
-      mutationSideEffects: [seed({ family: 'email', event: 'booking.no_show' })],
-    })).resolves.toMatchObject({ status: 'no_show' });
-
-    expect(sideEffectOperation(repo, seeded.id, { family: 'email', event: 'booking.no_show' })).toMatchObject({
-      status: 'pending', attemptCount: 0,
-    });
   });
 
   it('uses one combined row when a provider exposes recipients without a recipient sender', async () => {

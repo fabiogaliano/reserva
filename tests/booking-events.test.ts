@@ -7,7 +7,7 @@ import { Webhook } from 'standardwebhooks';
 import { describe, expect, it, vi } from 'vitest';
 import { runOwedMutationSideEffects } from '../src/confirmation';
 import { createReservaContext, type ReservaProviders } from '../src/context';
-import type { BookingEventEnvelope, BookingEventHook } from '../src/core/events';
+import { WEBHOOK_EVENTS, type BookingEventEnvelope, type BookingEventHook } from '../src/core/events';
 import { validateConfig, type ResolvedClientConfig } from '../src/core/config';
 import { defineCloudflareReservaRuntime } from '../src/runtime-context';
 import { handleCustomerReschedule, handleStatus, handlePaymentWebhook } from '../src/handlers';
@@ -167,7 +167,7 @@ describe('subscriber registration validation', () => {
     expect(() => defineCloudflareReservaRuntime({
       ...runtimeOptions,
       hooks: [{ name: 'typo', events: ['booking.canceled'] as never, handler: async () => undefined }],
-    })).toThrow(/Unknown booking event "booking\.canceled"\. Valid events: booking\.confirmed, booking\.cancelled_by_customer, booking\.cancelled_by_operator, booking\.rescheduled, booking\.no_show, booking\.reminder, payment\.dispute_created, settings\.changed\./);
+    })).toThrow(`Unknown booking event "booking.canceled". Valid events: ${WEBHOOK_EVENTS.join(', ')}.`);
   });
 
   it('rejects an invalid or duplicated hook name at startup', () => {

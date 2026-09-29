@@ -176,7 +176,9 @@ describe('GET /api/booking/ops/health', () => {
     );
     const plain = await handleOpsHealth(healthRequest({ 'x-admin-token': ADMIN_TOKEN_VALUE }), context);
     const [filteredBody, plainBody] = await Promise.all([filtered.text(), plain.text()]);
-    expect(JSON.parse(filteredBody).outbox).toEqual(JSON.parse(plainBody).outbox);
+    // The age is wall-clock relative and can tick a second between the two reads.
+    const outboxOf = (body: string) => ({ ...JSON.parse(body).outbox, oldestPendingAgeSeconds: undefined });
+    expect(outboxOf(filteredBody)).toEqual(outboxOf(plainBody));
     expect(filteredBody).not.toContain(BOOKING_ID);
     expect(filteredBody).not.toContain('LVT-OPS');
   });

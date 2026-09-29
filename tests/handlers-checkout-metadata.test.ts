@@ -58,9 +58,15 @@ describe('checkout metadata validation', () => {
   });
 
   it('accepts a checkout with no metadata at all when every declared field is optional', async () => {
-    const { context } = contextFor(metadataConfig);
-    const response = await handleCheckout(checkoutRequest({ metadata: { dietary_notes: 'None' } }), context);
+    const allOptionalConfig = {
+      ...config,
+      services: { ...config.services, vintage: { ...service, metadataFields: [seatField, vegetarianField, partySizeField, notesField] } },
+    };
+    const { context, repo } = contextFor(allOptionalConfig);
+    const response = await handleCheckout(checkoutRequest({}), context);
     expect(response.status).toBe(201);
+    const { bookingId } = await response.json() as { bookingId: string };
+    expect(repo.rows.get(bookingId)?.metadata).toBeNull();
   });
 
   it('rejects a missing required field, naming the key and declared type', async () => {

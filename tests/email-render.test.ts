@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { ResolvedClientConfig } from '../src/core/config';
 // Imported the same way an external transport author reaches it: the package's own
 // @reservajs/astro/email subpath (src/email/index.ts) resolves to this path.
-import { renderDefaultEmail, type EmailRenderer, type EmailTemplateContext } from '../src/email';
+import { renderDefaultEmail, type EmailTemplateContext } from '../src/email';
+import { englishEmailCopy, portuguesePortugalEmailCopy } from '../src/email/copy';
 import { booking, config, service } from './fixtures';
 
 // Renderer-level tests exercising the public seam directly, distinct from
@@ -36,56 +37,29 @@ describe('renderDefaultEmail (@reservajs/astro/email)', () => {
     expect(rendered.html).toContain('src="https://example.test/logo.png"');
   });
 
-  it('renders the neutral default branding when none is configured', () => {
-    const rendered = renderDefaultEmail(context());
-    expect(rendered.html).toContain('background-color:#1a1a1a');
-    expect(rendered.html).not.toContain('<img');
-  });
-
   it('overrides refund.timing in English via config.emails.messages', () => {
     const overriddenConfig: ResolvedClientConfig = {
       ...config,
       emails: { messages: { en: { 'refund.timing': 'Refunds arrive within 5 business days.' } } },
     };
+    const defaultTiming = englishEmailCopy['refund.timing']!;
+    expect(renderDefaultEmail(context({ event: 'booking.cancelled_by_customer' })).html).toContain(defaultTiming);
     const rendered = renderDefaultEmail(context({ event: 'booking.cancelled_by_customer', config: overriddenConfig }));
     expect(rendered.html).toContain('Refunds arrive within 5 business days.');
-    expect(rendered.html).not.toContain('Refunds are returned to your original payment method.');
+    expect(rendered.html).not.toContain(defaultTiming);
   });
 
   it('overrides refund.timing in European Portuguese via config.emails.messages', () => {
+    const portugueseConfig: ResolvedClientConfig = { ...config, locales: { supported: ['en', 'pt-PT'], default: 'en' } };
     const overriddenConfig: ResolvedClientConfig = {
-      ...config,
-      locales: { supported: ['en', 'pt-PT'], default: 'en' },
+      ...portugueseConfig,
       emails: { messages: { 'pt-PT': { 'refund.timing': 'O reembolso chega em 5 dias úteis.' } } },
     };
+    const defaultTiming = portuguesePortugalEmailCopy['refund.timing']!;
+    expect(renderDefaultEmail(context({ event: 'booking.cancelled_by_operator', locale: 'pt-PT', config: portugueseConfig })).html).toContain(defaultTiming);
     const rendered = renderDefaultEmail(context({ event: 'booking.cancelled_by_operator', locale: 'pt-PT', config: overriddenConfig }));
     expect(rendered.html).toContain('O reembolso chega em 5 dias úteis.');
-    expect(rendered.html).not.toContain('Os reembolsos são devolvidos ao seu método de pagamento original.');
-  });
-
-  it('a full custom renderer replaces the output entirely, never calling renderDefaultEmail', () => {
-    const customRenderer: EmailRenderer = (renderContext) => ({
-      subject: `Custom: ${renderContext.event}`,
-      html: '<p>fully custom</p>',
-      text: 'fully custom',
-    });
-    const rendered = customRenderer(context());
-    expect(rendered).toEqual({ subject: 'Custom: booking.confirmed', html: '<p>fully custom</p>', text: 'fully custom' });
-  });
-
-  it('a custom renderer can override one event and delegate every other event to renderDefaultEmail', () => {
-    const customRenderer: EmailRenderer = (renderContext) => {
-      if (renderContext.event === 'booking.no_show') {
-        return { subject: 'We missed you', html: '<p>custom no-show copy</p>' };
-      }
-      return renderDefaultEmail(renderContext);
-    };
-
-    const overridden = customRenderer(context({ event: 'booking.no_show' }));
-    expect(overridden).toEqual({ subject: 'We missed you', html: '<p>custom no-show copy</p>' });
-
-    const delegated = customRenderer(context({ event: 'booking.confirmed' }));
-    expect(delegated).toEqual(renderDefaultEmail(context({ event: 'booking.confirmed' })));
+    expect(rendered.html).not.toContain(defaultTiming);
   });
 });
 
@@ -211,10 +185,6 @@ describe('operator-only metadata', () => {
 });
 
 describe('the cancellation row', () => {
-  it('shows the free-cancellation deadline while it is still ahead', () => {
-    expect(renderDefaultEmail(context()).text).toContain('Free cancellation until');
-  });
-
   it('says free cancellation is not available when the booking was made inside the cutoff', () => {
     const lateBooking = booking({ startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z', createdAt: '2026-06-15T06:00:00.000Z' });
     const rendered = renderDefaultEmail(context({ booking: lateBooking }));

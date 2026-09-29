@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { reserva, virtualRuntimeId } from '../src/integration';
+import { reserva } from '../src/integration';
 import config from '../examples/minimal/client-config';
 
 function setup(options: Record<string, unknown> = { config, runtimeEntrypoint: './examples/minimal/runtime.ts' }) {
@@ -60,17 +60,6 @@ describe('Astro integration entry', () => {
     const source = readFileSync(String(webhookRoute.entrypoint), 'utf8');
     expect(source).toContain("import { handlePaymentWebhook } from '../../../../handlers/index.js';");
     expect(source).toContain('return handlePaymentWebhook(request, await createRouteContext({ request, locals }));');
-  });
-
-  it('resolves the virtual module to the explicit user runtime without serializing config', () => {
-    const { viteConfig } = setup();
-    const plugins = viteConfig?.vite && typeof viteConfig.vite === 'object' ? (viteConfig.vite as { plugins?: unknown[] }).plugins : undefined;
-    const plugin = plugins?.[0] as { resolveId: (id: string) => string | undefined; load: (id: string) => string | undefined };
-    const resolved = plugin.resolveId(virtualRuntimeId);
-    expect(resolved).toBe('\0virtual:reserva/runtime');
-    const source = plugin.load(resolved as string);
-    expect(source).toContain('examples/minimal/runtime.ts');
-    expect(source).not.toContain('ECT');
   });
 
   it('rejects an invalid config during setup', () => {

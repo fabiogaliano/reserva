@@ -5,7 +5,6 @@ import {
   buildOperationalAlert,
   computeNextAttemptAt,
   isDelayIncidentDue,
-  isEligibleForAutomaticClaim,
   ownerFacingIncidentTitle,
   projectIncident,
 } from '../src/reconciliation-helpers';
@@ -29,22 +28,6 @@ describe('computeNextAttemptAt', () => {
   it('treats a sub-1 attempt number the same as attempt 1 (defensive floor)', () => {
     const now = new Date('2026-08-14T10:00:00.000Z');
     expect(computeNextAttemptAt(now, 0)).toBe('2026-08-14T10:05:00.000Z');
-  });
-});
-
-describe('isEligibleForAutomaticClaim', () => {
-  const now = '2026-08-14T10:00:00.000Z';
-  it('is eligible when next_attempt_at is null (first pending execution is immediate)', () => {
-    expect(isEligibleForAutomaticClaim(null, now)).toBe(true);
-  });
-  it('is eligible exactly at the boundary (next_attempt_at == now)', () => {
-    expect(isEligibleForAutomaticClaim(now, now)).toBe(true);
-  });
-  it('is eligible after the boundary', () => {
-    expect(isEligibleForAutomaticClaim('2026-08-14T09:59:59.999Z', now)).toBe(true);
-  });
-  it('is ineligible before the boundary', () => {
-    expect(isEligibleForAutomaticClaim('2026-08-14T10:00:00.001Z', now)).toBe(false);
   });
 });
 

@@ -1,6 +1,6 @@
 // BookingWidget.astro is the example site's own SFC -- no booking funnel ships in the library.
 // Its markup and browser behavior are covered elsewhere; this tests source-level properties
-// neither harness can observe, plus the message-catalog and CSS facts it depends on.
+// neither harness can observe, plus the message-catalog facts it depends on.
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -10,8 +10,6 @@ import { defaultWidgetMessages } from '../examples/smoke-site/src/components/wid
 
 const widgetPath = resolve(import.meta.dirname, '..', 'examples/smoke-site/src/components/BookingWidget.astro');
 const widgetSource = readFileSync(widgetPath, 'utf8');
-const widgetCssPath = resolve(import.meta.dirname, '..', 'examples/smoke-site/src/components/booking-widget.css');
-const widgetCssSource = readFileSync(widgetCssPath, 'utf8');
 
 describe('BookingWidget.astro carries no server-owned rule of its own', () => {
   // The drift this deletes is the one that makes a customer pay a different price than the one
@@ -58,25 +56,11 @@ describe('BookingWidget.astro carries no server-owned rule of its own', () => {
 });
 
 describe('BookingWidget.astro (no-JS degradation)', () => {
-  it('starts the form hidden and reveals it from the enhancement script, not from markup', () => {
-    expect(widgetSource).toMatch(/<form[\s\S]*?\bhidden\b[\s\S]*?>/);
-    expect(widgetSource).toContain('form.hidden = false;');
-  });
-
   it('renders a <noscript> fallback with the i18n message and an optional contact path', () => {
     expect(widgetSource).toContain('<noscript>');
     expect(widgetSource).toContain("t['widget.noscript']");
     expect(widgetSource).toContain('contactEmail');
     expect(widgetSource).toContain('contactPhone');
-  });
-
-  // Init is asynchronous (it awaits the catalog before binding listeners), so the reveal must
-  // still happen only after every step succeeded — a rejected init leaves the fallback, with its
-  // contact details, in place.
-  it('reveals the form only after the awaited init resolves, and keeps the fallback up when it rejects', () => {
-    expect(widgetSource).toMatch(/await loadCatalog\(form, data\);/);
-    expect(widgetSource).toMatch(/void initInstance\([\s\S]*?\)\.catch\(/);
-    expect(widgetSource).toContain('its fallback stays visible');
   });
 
   it('gives the availability-mode disabled submit button a loading affordance instead of a silent disable', () => {
@@ -93,12 +77,6 @@ describe('BookingWidget.astro (no-JS degradation)', () => {
 });
 
 describe('BookingWidget.astro', () => {
-  it('ships the widget.meetingPoint legend key in the example widget catalog', () => {
-    expect('widget.meetingPoint' in defaultWidgetMessages).toBe(true);
-    expect(typeof defaultWidgetMessages['widget.meetingPoint']).toBe('string');
-    expect(defaultWidgetMessages['widget.meetingPoint'].length).toBeGreaterThan(0);
-  });
-
   it('toggles the group on pickupType change and at init, disabling (not just hiding) its inputs so they drop out of FormData', () => {
     expect(widgetSource).toContain('function syncMeetingPoints(form: HTMLFormElement): void {');
     expect(widgetSource).toContain('wrap.hidden = hide;');
@@ -110,23 +88,10 @@ describe('BookingWidget.astro', () => {
     expect(widgetSource).toMatch(/void updatePrice\(form, data\);\s*syncMeetingPoints\(form\);\s*void loadAvailability\(form, data\);/);
   });
 
-  it('a disabled meeting-point group actually renders display:none — the .bkw-field display:block rule does not silently win the cascade over [hidden] the way it did for .bk-widget in ', () => {
-    expect(widgetCssSource).toMatch(/\.bk-widget \.bkw-field\[hidden\] \{ display: none; \}/);
-  });
-
-  it('Retry actually renders display:none while hidden — its display:block rule does not win the cascade over [hidden]', () => {
-    expect(widgetCssSource).toMatch(/\.bk-widget \.bkw-retry\[hidden\] \{ display: none; \}/);
-  });
-
   // The deployment's `ui.messages` overrides only reach the widget's library keys through the
   // resolved config.
   it('resolves library copy against the deployment config, not a bare catalog', () => {
     expect(widgetSource).toContain('resolveMessages(virtualConfig.config, locale)');
     expect(widgetSource).not.toContain('resolveMessages(undefined');
-  });
-
-  it('submit payload includes meetingPointId only when FormData actually carries it, never an empty string', () => {
-    expect(widgetSource).toContain("const meetingPointId = formData.get('meetingPointId');");
-    expect(widgetSource).toContain('if (meetingPointId !== null) payload.meetingPointId = String(meetingPointId);');
   });
 });

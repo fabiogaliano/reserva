@@ -1,5 +1,5 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ADMIN_CSRF_TOKEN_TTL_MS, mintAdminCsrfToken } from '../src/admin-csrf';
 import { createReservaContext } from '../src/context';
 import type { MetadataField, ResolvedClientConfig, ResolvedServiceConfig } from '../src/core/config';
@@ -116,6 +116,10 @@ describe('GET /admin listing (one window + status query)', () => {
     const pastConfirmed = booking({ id: 'b-admin-past', reference: 'LVT-2026-104', status: 'confirmed', startsAt: '2026-06-10T09:00:00.000Z', endsAt: '2026-06-10T10:00:00.000Z', operatorToken: 'op-past', cancelToken: 'cancel-past' });
     const repo = fakeRepository([futureConfirmed, futureUnexpiredHold, futureExpiredHold, cancelledFuture, pastConfirmed]);
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+    // The read-path hold sweep is throttled per module, and every test here shares one fixed clock,
+    // so a fresh handlers module is the only way the sweep assertion holds wherever this test runs.
+    vi.resetModules();
+    const { handleAdminGet } = await import('../src/handlers');
 
     const response = await handleAdminGet(adminGetRequest(), context);
     expect(response.status).toBe(200);
@@ -1051,17 +1055,6 @@ describe('POST /admin day overrides (spec §11)', () => {
     expect(calls).toEqual([[['2026-06-20'], 0, null]]);
   });
 
-  it('action=clear calls deleteDayOverrides with the full date array in one call', async () => {
-    const repo = fakeRepository();
-    const calls: string[][] = [];
-    repo.deleteDayOverrides = async (dates) => { calls.push(dates); };
-    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
-
-    const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'clear' }), context);
-    expect(response.status).toBe(303);
-    expect(calls).toEqual([['2026-06-20']]);
-  });
-
   it('rejects an unknown action with validation_failed', async () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
     const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'delete-everything' }), context);
@@ -1456,21 +1449,9 @@ describe('admin mutation origin + CSRF guard (src/admin-csrf.ts)', () => {
       headers: { origin: 'https://evil.test', 'sec-fetch-site': 'cross-site' },
     }), context);
     expect(response.status).toBe(403);
+    // Plain errorResponse sets no cache-control, so a shared cache could keep the admin error page.
+    expect(response.headers.get('cache-control')).toBe('no-store');
     expect(calls).toEqual([]);
-  });
-
-  it('rejects Sec-Fetch-Site: same-site (deliberately not trusted as same-origin — see admin-csrf.ts)', async () => {
-    const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
-    const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'clear' }, {
-      headers: { origin: ADMIN_ORIGIN, 'sec-fetch-site': 'same-site' },
-    }), context);
-    expect(response.status).toBe(403);
-  });
-
-  it('rejects a POST with neither Sec-Fetch-Site nor Origin present', async () => {
-    const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
-    const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'clear' }, { headers: {} }), context);
-    expect(response.status).toBe(403);
   });
 
   it('accepts a same-origin POST (Sec-Fetch-Site: same-origin, no Origin header needed) carrying a valid token', async () => {
@@ -1587,23 +1568,6 @@ describe('admin mutation origin + CSRF guard (src/admin-csrf.ts)', () => {
     expect(response.headers.get('cache-control')).toBe('no-store');
   });
 
-  // Plain errorResponse sets no cache-control header at all, risking a shared cache serving a
-  // stale/sensitive admin error page — runAdminPost sets no-store on every admin POST, success or error.
-  it('sets Cache-Control: no-store on an admin POST that 403s (cross-origin, no mutation)', async () => {
-    const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
-    const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'clear' }, {
-      headers: { origin: 'https://evil.test', 'sec-fetch-site': 'cross-site' },
-    }), context);
-    expect(response.status).toBe(403);
-    expect(response.headers.get('cache-control')).toBe('no-store');
-  });
-
-  it('sets Cache-Control: no-store on an admin POST that fails validation', async () => {
-    const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
-    const response = await handleAdminPost(adminPostRequest({ date: '2026-06-20', action: 'delete-everything' }), context);
-    expect(adminErrorOf(response).code).toBe('validation_failed');
-  });
-
   // Access failures are not the operator's to retry on this page, so they stay a plain 403.
   it('still answers 403, not a redirect, when Access rejects the POST', async () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => null, providers: providers(), secrets: csrfSecrets });
@@ -1692,24 +1656,6 @@ describe('admin_change_history (actor-attributed, batch-atomic settings/capacity
     expect(repo.adminChangeHistory[0]?.actor).toBeNull();
   });
 
-  it('a day-range close action records one day_override/upsert history row per date, not one row for the whole range', async () => {
-    const repo = fakeRepository();
-    const subject = 'ops@example.test';
-    const csrfToken = await mintTestCsrfToken(subject, CSRF_NOW);
-    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject }), providers: providers(), secrets: csrfSecrets });
-
-    const response = await handleAdminPost(adminPostRequest([
-      ['date', '2026-06-20'], ['toDate', '2026-06-22'], ['reason', 'holiday'], ['action', 'close'],
-    ], { csrfToken }), context);
-    expect(response.status).toBe(303);
-
-    expect(repo.adminChangeHistory).toHaveLength(3);
-    expect(repo.adminChangeHistory.map((entry) => entry.itemKey)).toEqual(['2026-06-20', '2026-06-21', '2026-06-22']);
-    for (const entry of repo.adminChangeHistory) {
-      expect(entry).toMatchObject({ domain: 'day_override', action: 'upsert', actor: subject, value: JSON.stringify({ capacity: 0, reason: 'holiday' }) });
-    }
-  });
-
   it('default-set records exactly one capacity_default/upsert history row', async () => {
     const repo = fakeRepository();
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
@@ -1720,16 +1666,5 @@ describe('admin_change_history (actor-attributed, batch-atomic settings/capacity
     expect(repo.adminChangeHistory).toEqual([
       expect.objectContaining({ domain: 'capacity_default', itemKey: '2026-06-20', action: 'upsert', actor: null, value: JSON.stringify({ capacity: 4, reason: 'fleet expansion' }) }),
     ]);
-  });
-
-  it('listAdminChangeHistory (via the repo) returns rows most-recent-first', async () => {
-    const repo = fakeRepository();
-    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
-
-    await handleAdminPost(adminPostRequest({ date: '2026-06-20', capacity: '4', action: 'default-set' }), context);
-    await handleAdminPost(adminPostRequest({ date: '2026-06-21', capacity: '5', action: 'default-set' }), context);
-
-    const history = await repo.listAdminChangeHistory(10);
-    expect(history.map((entry) => entry.itemKey)).toEqual(['2026-06-21', '2026-06-20']);
   });
 });

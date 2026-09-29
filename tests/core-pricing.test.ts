@@ -1,15 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { validateConfig, type PricingRule, type ResolvedServiceConfig } from '../src/core/config';
-import { PricingError, pricingCombinations, priceFor, priceForService, resolvedPriceTableFor } from '../src/core/pricing';
+import { PricingError, pricingCombinations, priceFor, resolvedPriceTableFor } from '../src/core/pricing';
 import { config, service } from './fixtures';
 
 describe('core pricing', () => {
-  it('resolves every supported quantity and pickup combination', () => {
-    expect(pricingCombinations(service)).toHaveLength(16);
-    expect(priceForService(config, 'vintage', 1, 'default')).toBe(10000);
-    expect(priceForService(config, 'vintage', 8, 'custom')).toBe(20000);
-  });
-
   it('keeps server prices and the widget lookup table in parity after canonicalization', () => {
     const pricingVariants = [
       [
@@ -37,6 +31,7 @@ describe('core pricing', () => {
       const canonicalService = validated.services.vintage;
       if (!canonicalService) throw new Error('expected vintage service');
       const prices = resolvedPriceTableFor(canonicalService);
+      expect(pricingCombinations(canonicalService)).toHaveLength(16);
 
       for (let quantity = 1; quantity <= 8; quantity += 1) {
         expect(priceFor(canonicalService, quantity, 'default')).toBe(quantity <= 4 ? 10000 : 18000);

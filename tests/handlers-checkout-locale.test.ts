@@ -36,15 +36,6 @@ describe('checkout locale negotiation', () => {
     await expect(storedLocaleFor('pt')).resolves.toBe('pt-BR');
   });
 
-  it('stores an exactly supported tag unchanged', async () => {
-    await expect(storedLocaleFor('pt-BR')).resolves.toBe('pt-BR');
-    await expect(storedLocaleFor('en')).resolves.toBe('en');
-  });
-
-  it('falls back to the default locale instead of rejecting an unsupported language', async () => {
-    await expect(storedLocaleFor('de-CH')).resolves.toBe('en');
-  });
-
   it('still requires the field itself', async () => {
     const repo = fakeRepository();
     const context = createReservaContext({

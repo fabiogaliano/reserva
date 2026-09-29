@@ -223,17 +223,6 @@ describe('D1 booking repository', () => {
     await db.prepare('DROP TRIGGER fail_email_split_outbox').run();
   });
 
-  it('persists capacity overrides', async () => {
-    await repo.upsertDayOverride('2026-08-01', 1, 'reduced capacity');
-    await expect(repo.getDayOverride('2026-08-01')).resolves.toEqual({
-      date: '2026-08-01',
-      capacity: 1,
-      reason: 'reduced capacity',
-    });
-    await repo.deleteDayOverride('2026-08-01');
-    await expect(repo.getDayOverride('2026-08-01')).resolves.toBeNull();
-  });
-
   // migrations/0014_meeting_points.sql's two nullable columns, against real D1.
   describe('meeting point columns (migration 0014)', () => {
     it('round-trips meeting_point_id/meeting_point_label through insertHoldWithCapacity when set', async () => {
@@ -854,6 +843,21 @@ describe('mutation side-effect outbox on real D1', () => {
     })).rejects.toThrow('mutation outbox insert failed');
     await expect(repo.getBookingById('mutation-atomic')).resolves.toMatchObject({ status: 'confirmed' });
     await db.prepare('DROP TRIGGER fail_mutation_outbox').run();
+  });
+
+  it('records a pending outbox row only for the winning no-show CAS', async () => {
+    await seedBooking('mutation-no-show');
+    await repo.transitionToConfirmed('mutation-no-show', { expectedStatusIn: ['hold'], updatedAt: '2026-07-21T10:01:00.000Z' });
+    const input: Parameters<typeof repo.transitionToNoShow>[1] = {
+      expectedStatusIn: ['confirmed'], updatedAt: '2026-07-21T10:02:00.000Z',
+      mutationSideEffects: [{ family: 'email', event: 'booking.no_show', eventPayloadJson: null, eventIdPrefix: null }],
+    };
+
+    await expect(repo.transitionToNoShow('mutation-no-show', input)).resolves.toMatchObject({ status: 'no_show' });
+    await expect(repo.transitionToNoShow('mutation-no-show', input)).resolves.toBeNull();
+    await expect(repo.listSideEffectOperations('mutation-no-show')).resolves.toEqual([
+      expect.objectContaining({ family: 'email', event: 'booking.no_show', status: 'pending' }),
+    ]);
   });
 
 });

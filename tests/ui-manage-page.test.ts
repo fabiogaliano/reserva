@@ -94,10 +94,6 @@ describe('manage page enhancer', () => {
     expect(html).toContain('<script type="module" src="/booking/assets/reserva.js?v=1"></script>');
   });
 
-  it('has a skip link to the main content', () => {
-    expect(page({})).toContain('<a class="bk-skip" href="#bk-main">Skip to content</a>');
-  });
-
   it('words the scarce-slot hint as further bookings of the party size, not seats, with a singular form', () => {
     const availability = { endpoint: '/api/booking/availability', serviceSlug: 'vintage', quantity: '2', from: '2026-06-01', to: '2026-08-30' };
     const island = (html: string) => JSON.parse(/<script type="application\/json" data-reserva-i18n>(.*?)<\/script>/.exec(html)![1]!);

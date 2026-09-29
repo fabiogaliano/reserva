@@ -2,7 +2,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 import { createReservaContext } from '../src/context';
 import { PAYMENT_EVENTS, type ResolvedClientConfig, type PaymentProvider } from '../src/core';
-import { handleCheckout, handlePaymentWebhook, handleStatus } from '../src/handlers';
+import { handleCheckout, handleManage, handlePaymentWebhook, handleStatus } from '../src/handlers';
 import { defineReservaRuntime, defineCloudflareReservaRuntime } from '../src/runtime-context';
 import { booking, config } from './fixtures';
 import { fakeRepository, providers } from './fakes';
@@ -169,16 +169,22 @@ describe('/status and manage report the same settled confirmation without re-run
       }),
     });
 
-    const status = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_port_settled'), context);
-    expect(status.status).toBe(200);
-    const payload = await status.json() as { status: string; booking: Record<string, unknown> };
-    expect(payload.status).toBe('confirmed');
-    expect(payload.booking).toMatchObject({
+    const facts = {
       reference: seeded.reference,
       serviceSlug: seeded.serviceSlug,
       quantity: seeded.quantity,
       priceMinor: seeded.priceMinor,
-    });
+    };
+    const status = await handleStatus(new Request('https://example.test/api/booking/status?session_id=cs_port_settled'), context);
+    expect(status.status).toBe(200);
+    const payload = await status.json() as { status: string; booking: Record<string, unknown> };
+    expect(payload.status).toBe('confirmed');
+    expect(payload.booking).toMatchObject(facts);
+
+    const manage = await handleManage(new Request(`https://example.test/api/booking/manage?token=${seeded.cancelToken}`), context);
+    expect(manage.status).toBe(200);
+    const managed = await manage.json() as { booking: Record<string, unknown> };
+    expect(managed.booking).toMatchObject({ ...facts, status: 'confirmed' });
 
     const stored = repo.rows.get(seeded.id);
     expect(stored).toMatchObject({ status: 'confirmed', updatedAt: seeded.updatedAt });

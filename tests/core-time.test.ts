@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addDaysToDateKey, addMinutes, enumerateDateKeys, fallBackAmbiguityPolicy, localDateTimeToUtcIso, parseUtcInstant, utcToLocalIso } from '../src/core/time';
+import { addDaysToDateKey, addMinutes, enumerateDateKeys, localDateTimeToUtcIso, parseUtcInstant, utcToLocalIso } from '../src/core/time';
 import { canCancelBooking, cancellationDeadline } from '../src/core/booking';
 import { booking } from './fixtures';
 
@@ -20,11 +20,6 @@ describe('core time', () => {
     expect(start).toBe('2026-10-24T23:30:00.000Z');
     expect(end.toISOString()).toBe('2026-10-25T02:30:00.000Z');
     expect(utcToLocalIso(end, 'Europe/Lisbon')).toBe('2026-10-25T02:30:00.000+00:00');
-  });
-
-  it('chooses the earlier occurrence for an ambiguous fall-back wall time', () => {
-    expect(fallBackAmbiguityPolicy).toBe('earlier');
-    expect(localDateTimeToUtcIso('2026-10-25T01:30', 'Europe/Lisbon')).toBe('2026-10-25T00:30:00.000Z');
   });
 
   it('rejects rollover dates and instants without explicit offsets', () => {

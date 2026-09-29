@@ -462,8 +462,8 @@ describe('reserva-migrate applies reserva packaged migrations against real wrang
     expect(listResult.stdout).toContain('No migrations to apply');
   }
 
-  // 120s budgets match integration-smoke's real-build precedent: these spawn several real
-  // wrangler subprocesses, and the original 20s proved flaky under machine load.
+  // 120s budgets: these spawn several real wrangler subprocesses, and the original 20s proved
+  // flaky under machine load.
   it('applies every manifest migration from the packaged directory when the consumer config has no migrations_dir', () => {
     const cwd = realFixtureDirectory();
     writeFileSync(resolve(cwd, 'wrangler.jsonc'), `{

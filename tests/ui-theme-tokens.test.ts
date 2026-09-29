@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { renderEmbedTokensCss } from '../scripts/generate-ui-tokens';
 import { GET as getCss } from '../src/routes/booking/assets';
 import { GET as getJs } from '../src/routes/booking/assets-js';
 import { cssAssetHref, jsAssetHref } from '../src/ui/asset-hrefs';
@@ -46,8 +45,8 @@ describe('token specificity (a plain :root override wins in both schemes)', () =
 });
 
 describe('embed tokens (components.css never touches the host :root)', () => {
-  it('is the committed output of the generator, imported by components.css', () => {
-    expect(embedTokensCss).toBe(renderEmbedTokensCss(readFileSync(resolve(repoRoot, 'src/ui/tokens.css'), 'utf8')));
+  // Freshness against tokens.css is `bun run generate:check`'s job; this pins that it is loaded at all.
+  it('is imported by components.css', () => {
     expect(componentsCss).toContain("@import './generated/embed-tokens.css';");
   });
 

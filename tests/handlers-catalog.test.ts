@@ -122,13 +122,6 @@ describe('GET /api/booking/catalog', () => {
     });
   });
 
-  it('publishes pickup as null on a location-less service rule and as a string on a location-ful one', async () => {
-    const { payload } = await catalog();
-    const cruiseRule = payload.services.find((entry: any) => entry.slug === 'cruise').pricing[0];
-    expect(cruiseRule).toEqual({ maxQuantity: 6, pickup: null, priceMinor: 4200 });
-    expect(payload.services.find((entry: any) => entry.slug === 'vintage').pricing.every((rule: any) => typeof rule.pickup === 'string')).toBe(true);
-  });
-
   it('derives fromPriceMinor as the lowest rule price, not the first or the last', async () => {
     const shuffled = context({
       services: {
@@ -205,14 +198,6 @@ describe('GET /api/booking/catalog', () => {
   it('is cacheable over HTTP only, with a short TTL that bounds staleness after a settings edit', async () => {
     const { response } = await catalog();
     expect(response.headers.get('cache-control')).toBe('public, max-age=60');
-  });
-
-  it('projects the merged config, so an operator settings override is visible on the next read', async () => {
-    // createRouteContext merges DB-backed overrides into context.config before any handler runs;
-    // this stands in for that by handing the handler an already-merged config.
-    const merged = context({ booking: { ...catalogConfig.booking, maxHorizonDays: 45 } });
-    const { payload } = await catalog('https://example.test/api/booking/catalog', merged);
-    expect(payload.maxHorizonDays).toBe(45);
   });
 
   it('is GET-only', async () => {

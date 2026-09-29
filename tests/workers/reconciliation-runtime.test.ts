@@ -60,9 +60,10 @@ describe('runReconciliation against real D1', () => {
     await expect(context.repo.getBookingById('recon-d1-expired')).resolves.toMatchObject({ status: 'expired' });
   });
 
-  it('resumes a stuck cancelled-booking refund via the real claim and shared executor', async () => {
+  it('resumes a stuck cancelled-booking refund via the real claim and shared executor, opening no incident on success', async () => {
     const id = 'recon-d1-refund';
     await seedConfirmed(id);
+    let refunds = 0;
     const context = createReservaContext({
       config, db, clock,
       providers: providers({
@@ -70,7 +71,7 @@ describe('runReconciliation against real D1', () => {
           createCheckout: async () => ({ url: '', sessionRef: '' }),
           parseWebhook: async () => { throw new Error('unused'); },
           getSession: async () => ({ status: 'open' }),
-          refund: async () => ({ refundRef: 're_recon_d1', amountMinor: 12000 }),
+          refund: async () => { refunds += 1; return { refundRef: 're_recon_d1', amountMinor: 12000 }; },
         },
       }),
     });
@@ -80,7 +81,9 @@ describe('runReconciliation against real D1', () => {
     await context.repo.claimRefundOperation({ id: 'op-recon-d1', bookingId: id, paymentIntent: `pi_${id}`, choice: 'full', requestedAt: '2026-08-14T09:00:00.000Z' });
 
     const summary = await runReconciliation(context);
+    expect(refunds).toBe(1);
     expect(summary.refundBookingsProcessed).toBe(1);
+    expect(summary.incidentsOpened).toBe(0);
     await expect(context.repo.getRefundOperationByBookingId(id)).resolves.toMatchObject({ status: 'succeeded', stripeRefundId: 're_recon_d1' });
   });
 
@@ -181,7 +184,7 @@ describe('runReconciliation against real D1', () => {
     ]));
   });
 
-  it('reports an unreported oversell marker as a persisted, real-D1 incident row', async () => {
+  it('reports an unreported oversell marker as a persisted, real-D1 incident row, exactly once', async () => {
     const id = 'recon-d1-oversell';
     await seedConfirmed(id);
     const context = createReservaContext({ config, db, clock, providers: providers() });
@@ -195,5 +198,8 @@ describe('runReconciliation against real D1', () => {
     await expect(context.repo.getIncidentBySource('oversell', id)).resolves.toMatchObject({
       status: 'open', severity: 'action_required', action: 'oversell', bookingId: id,
     });
+
+    const second = await runReconciliation(context);
+    expect(second.incidentsOpened).toBe(0);
   });
 });

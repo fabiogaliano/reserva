@@ -245,21 +245,6 @@ describe('email providers', () => {
     expect(body.htmlContent).toContain('Open map');
   });
 
-  // An existing single-point `meetingPoint` config renders byte-identical output — no
-  // meetingPointId/-Label on the booking resolves to the service's one declared point, same as
-  // before.
-  it('renders the single declared meeting point unchanged for a single-point service', async () => {
-    const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
-    const provider = brevoEmail({ apiKey: 'key', fetch: request });
-
-    await provider.sendToRecipient('customer', 'booking.confirmed', booking(), config);
-
-    const body = JSON.parse(request.mock.calls[0]![1]!.body as string) as { htmlContent: string };
-    expect(body.htmlContent).toContain('Praça do Comércio');
-    expect(body.htmlContent).toContain('https://maps.google.com/?q=Praca+do+Comercio');
-    expect(body.htmlContent).toContain('Open map');
-  });
-
   it('escapes the manage-link URLs like every other interpolated field', async () => {
     const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
     const provider = brevoEmail({ apiKey: 'key', fetch: request });

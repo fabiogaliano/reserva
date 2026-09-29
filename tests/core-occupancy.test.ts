@@ -34,18 +34,18 @@ describe('core occupancy', () => {
     })).toBe(true);
   });
 
-  it('uses the booking service turnaround and occupancy resolver across services', () => {
+  it('uses the booking service turnaround and seatsPerUnit across services', () => {
     const largeTour = {
       ...service,
       turnaroundMin: 90,
-      occupancyFor: (quantity: number) => quantity > 4 ? 2 : 1,
+      occupancy: { seatsPerUnit: 3 },
     };
     const intervals = getOccupancyIntervals(occupancyOptions({
       bookings: [booking({ quantity: 8, serviceSlug: 'large' })],
       services: { large: largeTour },
     }));
     expect(intervals).toHaveLength(1);
-    expect(intervals[0]?.units).toBe(2);
+    expect(intervals[0]?.units).toBe(3);
     expect(intervals[0]?.end).toBe('2026-06-15T11:30:00.000Z');
   });
 

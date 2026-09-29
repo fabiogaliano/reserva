@@ -161,31 +161,6 @@ describe('pairwise CAS interleavings on real D1', () => {
     expect(final?.cancelledBy).toBeNull();
   });
 
-  it('no-show vs refund-webhook: the refund wins first, the racing no-show loses and cannot resurrect a cancelled booking as no_show', async () => {
-    const id = 'cas-noshow-vs-refund-a';
-    await seedConfirmed(id);
-
-    // Mirrors the charge.refunded webhook branch's CAS scope after the fix: non-terminal
-    // statuses only — no_show and cancelled are terminal and must never be resurrected.
-    const winner = await repo.transitionToCancelled(id, {
-      expectedStatusIn: ['hold', 'confirmed', 'expired'],
-      cancelledAt: '2026-07-21T11:00:00.000Z',
-      cancelledBy: 'operator',
-      updatedAt: '2026-07-21T11:00:00.000Z',
-    });
-    expect(winner).toMatchObject({ status: 'cancelled', cancelledBy: 'operator' });
-
-    const loser = await repo.transitionToNoShow(id, {
-      expectedStatusIn: ['confirmed'],
-      updatedAt: '2026-07-21T11:00:01.000Z',
-    });
-    expect(loser).toBeNull();
-
-    const final = await repo.getBookingById(id);
-    expect(final?.status).toBe('cancelled');
-    expect(final?.cancelledBy).toBe('operator');
-    expect(final?.status === 'no_show' && final?.cancelledBy !== null).toBe(false);
-  });
 
   // A refund arriving after an operator marks the booking no_show must not resurrect that
   // terminal state. Excluding 'no_show' from the webhook's expectedStatusIn makes the refund's

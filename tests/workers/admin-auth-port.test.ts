@@ -156,6 +156,8 @@ describe('admin auth port: custom adminAuth drives the whole admin surface (no a
     const csrfToken = csrfMatch[1]!;
 
     const postContext = await buildContext(new Request(ADMIN_URL, { method: 'POST' }));
+    await postContext.repo.upsertDayOverrides(['2026-06-20'], 1, 'seeded', { actor: null, changedAt: new Date().toISOString() });
+    await expect(postContext.repo.listDayOverrides('2026-06-01', '2026-06-30')).resolves.toHaveLength(1);
     const form = new URLSearchParams({ action: 'clear', date: '2026-06-20', csrf_token: csrfToken });
     const postRequest = new Request(ADMIN_URL, {
       method: 'POST',
@@ -163,7 +165,12 @@ describe('admin auth port: custom adminAuth drives the whole admin surface (no a
       headers: { ...authorizedHeaders({ origin: 'https://example.test', 'sec-fetch-site': 'same-origin' }) },
     });
     const postResponse = await handleAdminPost(postRequest, postContext);
+    // A rejected CSRF token also answers 303, so only the success redirect and the write prove acceptance.
     expect(postResponse.status).toBe(303);
+    const location = new URL(postResponse.headers.get('location')!);
+    expect(location.searchParams.get('error')).toBeNull();
+    expect(location.searchParams.get('saved')).toBe('day');
+    await expect(postContext.repo.listDayOverrides('2026-06-01', '2026-06-30')).resolves.toEqual([]);
   });
 
   it('the operator no-show endpoint (its own per-booking-token auth, unaffected by admin.access being absent) still works', async () => {

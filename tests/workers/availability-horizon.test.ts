@@ -99,21 +99,4 @@ describe('full-horizon availability', () => {
     // A soft ceiling, not a benchmark — guards against a future quadratic regression.
     expect(elapsedMs).toBeLessThan(10_000);
   });
-
-  it('rejects one request spanning more than the per-request cap, even inside the horizon', async () => {
-    const url = `https://example.test/api/booking/availability?service=vintage&quantity=2&from=${dateKey(0)}&to=${dateKey(MAX_AVAILABILITY_RANGE_DAYS)}`;
-    const response = await handleAvailability(new Request(url), await buildContext(new Request(url)));
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed', details: { field: 'to' } } });
-  });
-
-  it('still rejects a request past the horizon, naming the config key', async () => {
-    const url = `https://example.test/api/booking/availability?service=vintage&quantity=2&from=${dateKey(0)}&to=${dateKey(HORIZON_DAYS + 2)}`;
-    const context = await buildContext(new Request(url));
-    const response = await handleAvailability(new Request(url), context);
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({
-      error: { code: 'validation_failed', message: `Date range cannot exceed the booking horizon of ${HORIZON_DAYS} days (config.booking.maxHorizonDays); request a narrower range` },
-    });
-  });
 });

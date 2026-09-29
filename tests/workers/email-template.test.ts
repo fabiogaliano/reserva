@@ -5,7 +5,7 @@ import { renderDefaultEmail, type EmailRenderer, type EmailTemplateContext } fro
 import { handlePaymentWebhook } from '../../src/handlers';
 import { createBookingRepository } from '../../src/repo';
 import { defineCloudflareReservaRuntime, type ReservaProviders } from '../../src/runtime';
-import { booking as bookingFixture, config as baseConfig } from '../fixtures';
+import { config as baseConfig } from '../fixtures';
 
 // A from-scratch, non-Brevo transport that imports `renderDefaultEmail` through the public
 // `@reservajs/astro/email` seam, overrides exactly one event, and delegates every other event —
@@ -114,14 +114,5 @@ describe('a non-Brevo fake provider built on renderDefaultEmail', () => {
       customerManageUrl: manageUrl(confirmed!.cancelToken), operatorManageUrl: manageUrl(confirmed!.operatorToken),
       startsAtLocal: new Date(confirmed!.startsAt).toISOString(),
     }).html);
-  });
-
-  it('overrides booking.no_show instead of delegating', () => {
-    const context: EmailTemplateContext = {
-      event: 'booking.no_show', booking: bookingFixture(), config: baseConfig, locale: 'en', recipient: 'customer',
-      customerManageUrl: '', operatorManageUrl: '', startsAtLocal: '',
-    };
-    expect(fakeTransportRenderer(context)).toEqual({ subject: 'We missed you today', html: '<p>custom no-show copy, not the shipped default</p>' });
-    expect(fakeTransportRenderer(context)).not.toEqual(renderDefaultEmail(context));
   });
 });

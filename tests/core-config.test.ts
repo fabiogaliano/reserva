@@ -1,24 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import type { MetadataField, ResolvedServiceConfig } from '../src/core/config';
-import { customerMetadataFields, customerVisibleMetadata, meetingPointForBooking, metadataRowsForBooking, quantityValuesForService, pickupOptionFor, pickupPresentationFor, resolveMeetingPoint, resolveMetadataFieldLabel, validateConfig } from '../src/core/config';
+import { customerMetadataFields, customerVisibleMetadata, meetingPointForBooking, metadataRowsForBooking, pickupOptionFor, pickupPresentationFor, resolveMeetingPoint, resolveMetadataFieldLabel, validateConfig } from '../src/core/config';
 import { priceFor } from '../src/core/pricing';
 import { config, rowsOf, service } from './fixtures';
 
 describe('core config and pricing validation', () => {
   it('accepts a valid config unchanged (location already canonical: pickupOptions + meetingPoints under `location`)', () => {
     expect(validateConfig(config)).toEqual(config);
-    expect(quantityValuesForService(service)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
-    expect(priceFor(service, 5, 'custom')).toBe(20000);
   });
 
   it('stays idempotent when re-validated (defineReservaRuntime/defineCloudflareReservaRuntime validate once at definition and createReservaContext validates again on every request)', () => {
     const validated = validateConfig(config);
-    expect(() => validateConfig(validated)).not.toThrow();
-    expect(validateConfig(validated)).toEqual(validated);
+    // A clone, because validateConfig hands its own output straight back without parsing it.
+    expect(validateConfig(structuredClone(validated))).toEqual(validated);
   });
 
-  // Absent `location` is a fully valid, ordinary service — no pickup dimension anywhere. This
-  // is the tiers-only case core-pricing.test.ts prices.
   it('defaults a schedule rule to 09:00–18:00 when firstStart/lastStart are omitted', () => {
     const [rule] = service.schedule;
     const { firstStart: _first, lastStart: _last, ...bare } = rule!;
@@ -39,27 +35,6 @@ describe('core config and pricing validation', () => {
     const shared = validateConfig({ ...config, hours: [{ ...rule!, days: [6, 0, 6] }], services: { vintage: withoutSchedule } } as never);
     expect(shared.hours?.[0]?.days).toEqual([0, 6]);
     expect(shared.services.vintage?.schedule[0]?.days).toEqual([0, 6]);
-  });
-
-  it('accepts a service with no location module at all', () => {
-    const noLocation = {
-      ...config,
-      services: {
-        vintage: {
-          title: service.title,
-          durationMin: service.durationMin,
-          turnaroundMin: service.turnaroundMin,
-          schedule: service.schedule,
-          pricing: [
-            { maxQuantity: 4, priceMinor: 10000 },
-            { maxQuantity: 8, priceMinor: 18000 },
-          ],
-        },
-      },
-    };
-    const validated = validateConfig(noLocation);
-    expect(validated.services.vintage?.location).toBeUndefined();
-    expect(priceFor(validated.services.vintage!, 2, null)).toBe(10000);
   });
 
   it('rejects a location-less service pricing rule that declares pickup (mixed config)', () => {

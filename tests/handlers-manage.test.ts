@@ -310,7 +310,7 @@ describe('GET /manage (spec §11)', () => {
 
   it('checks cancel_token before operator_token: a value that matches one row\'s cancel_token and a different row\'s operator_token resolves to the cancel_token row, as customer', async () => {
     // Real rows never share a token across the two columns, but the handler's lookup order
-    // (handlers/index.ts:355-357) is only observable by giving two distinct rows a shared
+    // (handleManage in src/handlers/status-manage.ts) is only observable by giving two distinct rows a shared
     // string in the two different columns.
     const shared = 'shared-token-value';
     const bookingA = booking({ id: 'b-manage-precedence-a', cancelToken: shared, operatorToken: 'op-a-token' });

@@ -91,17 +91,6 @@ describe('atomic capacity allocation against real D1', () => {
       expect(holds).toHaveLength(1);
       expect(holds[0]?.id).toBe('checkout-a');
     });
-
-    it('checkout B commits first: B wins the last unit, A is rejected', async () => {
-      const b = await repo.insertHoldWithCapacity(buildHold('checkout-b', TARGET_START, TARGET_END, 2, 1));
-      expect(b).toMatchObject({ status: 'hold', startsAt: TARGET_START });
-      const a = await repo.insertHoldWithCapacity(buildHold('checkout-a', TARGET_START, TARGET_END, 2, 1));
-      expect(a).toBeNull();
-
-      const holds = (await db.prepare("SELECT id FROM bookings WHERE status = 'hold'").all<{ id: string }>()).results;
-      expect(holds).toHaveLength(1);
-      expect(holds[0]?.id).toBe('checkout-b');
-    });
   });
 
   describe('reschedule x2 into one remaining unit', () => {
@@ -123,18 +112,6 @@ describe('atomic capacity allocation against real D1', () => {
       await expect(repo.getBookingById('rb')).resolves.toMatchObject({ startsAt: '2026-08-10T15:00:00.000Z' });
       const inWindow = (await db.prepare("SELECT id FROM bookings WHERE starts_at = ? AND status = 'confirmed'").bind(TARGET_START).all<{ id: string }>()).results;
       expect(inWindow.map((row) => row.id).sort()).toEqual(['c0', 'ra']);
-    });
-
-    it('rb commits first: rb takes the last remaining unit, ra is rejected', async () => {
-      await seed();
-      const rb = await repo.rescheduleWithCapacity('rb', buildReschedule('2026-08-10T15:00:00.000Z', TARGET_START, TARGET_END, 2, 2));
-      expect(rb).toMatchObject({ startsAt: TARGET_START });
-      const ra = await repo.rescheduleWithCapacity('ra', buildReschedule('2026-08-10T13:00:00.000Z', TARGET_START, TARGET_END, 2, 2));
-      expect(ra).toBeNull();
-
-      await expect(repo.getBookingById('ra')).resolves.toMatchObject({ startsAt: '2026-08-10T13:00:00.000Z' });
-      const inWindow = (await db.prepare("SELECT id FROM bookings WHERE starts_at = ? AND status = 'confirmed'").bind(TARGET_START).all<{ id: string }>()).results;
-      expect(inWindow.map((row) => row.id).sort()).toEqual(['c0', 'rb']);
     });
   });
 

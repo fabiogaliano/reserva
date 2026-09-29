@@ -24,34 +24,30 @@ const payments = {
 // The fingerprint is generated from migrations/*.sql (plan item 28), so a "fully migrated" fake is
 // derived from it rather than hand-listing columns that drift with every migration. What the fake
 // owns is the D1 response *shape* for the two queries the check makes.
-function fingerprintResults(query: string, fingerprintOk: boolean): Array<Record<string, unknown>> | null {
+function fingerprintResults(query: string): Array<Record<string, unknown>> | null {
   if (query.includes("type='index'")) {
-    if (!fingerprintOk) return [];
     return Object.entries(RESERVA_SCHEMA_TABLES).flatMap(([table, { indexes }]) =>
       indexes.map((name) => ({ name, tbl_name: table })));
   }
   const pragma = query.match(/^PRAGMA table_info\((\w+)\)$/);
   if (!pragma) return null;
-  // An empty column list is how a real database reports "this table isn't there", which is exactly
-  // the consumer-migration collision the check has to catch.
-  if (!fingerprintOk) return [];
   return (RESERVA_SCHEMA_TABLES[pragma[1]!]?.columns ?? []).map((name) => ({ name }));
 }
 
 // A fake for the D1 surface the check uses: `db.prepare(sql).all()` returning `{ results }`.
 // Distinguishes the ledger probe, the fingerprint queries, and the `d1_migrations` select by query
-// text. `schemaFingerprint` defaults to fully-migrated so ledger-only tests don't need to know about it.
+// text. The schema always reads as fully migrated; the fingerprint collision is proven against real
+// D1 in tests/workers/migrations-fingerprint.test.ts.
 function fakeD1(
   appliedNames: string[],
-  options: { missingTable?: boolean; selectError?: Error; tableName?: string; queries?: string[]; schemaFingerprint?: boolean } = {},
+  options: { missingTable?: boolean; selectError?: Error; tableName?: string; queries?: string[] } = {},
 ): MigrationsQueryable {
   const tableName = options.tableName ?? 'd1_migrations';
-  const fingerprintOk = options.schemaFingerprint ?? true;
   return {
     prepare: (query: string) => ({
       all: async <T>() => {
         options.queries?.push(query);
-        const fingerprint = fingerprintResults(query, fingerprintOk);
+        const fingerprint = fingerprintResults(query);
         if (fingerprint !== null) return { results: fingerprint as T[] };
         if (query.includes('sqlite_master')) {
           return { results: (options.missingTable ? [] : [{ name: tableName }]) as T[] };
@@ -64,10 +60,6 @@ function fakeD1(
 }
 
 describe('checkReservaMigrationsApplied', () => {
-  it('passes silently when every reserva migration is applied', async () => {
-    await expect(checkReservaMigrationsApplied(fakeD1([...RESERVA_MIGRATIONS]))).resolves.toBeUndefined();
-  });
-
   it('is tolerant of extra, consumer-owned migrations', async () => {
     const applied = [...RESERVA_MIGRATIONS, '0004_consumer_custom_table.sql'];
     await expect(checkReservaMigrationsApplied(fakeD1(applied))).resolves.toBeUndefined();
@@ -97,14 +89,6 @@ describe('checkReservaMigrationsApplied', () => {
       "SELECT name FROM sqlite_master WHERE type='table' AND name='reserva_migrations'",
       'SELECT name FROM reserva_migrations',
     ]);
-  });
-
-  it('fails with a distinct collision error when the ledger is satisfied but the schema fingerprint is missing', async () => {
-    const db = fakeD1([...RESERVA_MIGRATIONS], { schemaFingerprint: false });
-    await expect(checkReservaMigrationsApplied(db)).rejects.toThrow(/migration ledger reports every migration applied, but the schema itself/);
-    await expect(checkReservaMigrationsApplied(db)).rejects.toThrow(/dedicated D1 database/);
-    // Must not be conflated with the missing-migrations ledger error above.
-    await expect(checkReservaMigrationsApplied(db)).rejects.not.toThrow(/is missing/);
   });
 
   it('rejects an unsafe configured migration table name', () => {
@@ -143,9 +127,8 @@ describe('migration check memoization', () => {
     const db = {
       prepare: (query: string) => ({
         all: async () => {
-          // Schema fingerprint queries always report a fully-migrated schema here --
-          // this test is about ledger memoization/retry, not the fingerprint itself.
-          const fingerprint = fingerprintResults(query, true);
+          // This test is about ledger memoization/retry, not the fingerprint itself.
+          const fingerprint = fingerprintResults(query);
           if (fingerprint !== null) return { results: fingerprint };
           if (query.includes('sqlite_master')) return { results: [{ name: 'd1_migrations' }] };
           selectCalls += 1;

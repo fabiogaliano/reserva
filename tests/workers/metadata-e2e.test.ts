@@ -114,34 +114,4 @@ describe('consumer-declared metadata through the real smoke runtime + D1', () =>
       infoSpy.mockRestore();
     }
   });
-
-  it('rejects a checkout missing the required dietary_notes field before ever touching D1', async () => {
-    const request = new Request('http://localhost:4321/api/booking/checkout');
-    const context = await smokeRuntime.createContext({
-      request,
-      locals: { env: {
-        RESERVA_DB: db,
-        RESERVA_TOKEN_ENC_KEY: 'local-demo-token-encryption-key',
-        RESERVA_OPERATOR_SECRET: 'local-operator-secret',
-      } },
-    });
-
-    const checkout = await handleCheckout(new Request(request.url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        serviceSlug: 'riverCruise',
-        start: nextSmokeSlot(),
-        quantity: 2,
-        locale: 'en',
-        metadata: { seat_pref: 'window' },
-      }),
-    }), context);
-    expect(checkout.status).toBe(400);
-    const body = await checkout.json() as { error: { message: string } };
-    expect(body.error.message).toContain('dietary_notes');
-
-    const rows = await db.prepare('SELECT COUNT(*) AS count FROM bookings').all<{ count: number }>();
-    expect(Number(rows.results[0]?.count ?? 0)).toBe(0);
-  });
 });

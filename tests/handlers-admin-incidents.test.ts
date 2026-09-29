@@ -210,9 +210,24 @@ describe('admin incidents', () => {
 
   it('rejects incident-retry/incident-resolve for an unknown or already-resolved incident, back on the Attention tab', async () => {
     const repo = fakeRepository();
+    await repo.upsertOpenIncident({
+      id: 'incident-done', bookingId: null, sourceType: 'reconciliation', sourceKey: 'sweep',
+      action: 'reconciliation_stale', severity: 'action_required', attemptCount: 1, sourceUpdatedAt: '2026-06-14T07:00:00.000Z',
+      now: '2026-06-14T07:00:00.000Z', escalate: false,
+    });
+    await repo.resolveIncidentManual({ sourceType: 'reconciliation', sourceKey: 'sweep', resolvedAt: '2026-06-14T07:30:00.000Z', resolvedBy: 'first@example.test', resolutionNote: 'first fix' });
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
-    const response = await handleAdminPost(adminPostRequest({ action: 'incident-retry', source_type: 'side_effect', source_key: 'missing:calendar_create' }), context);
-    expect(adminErrorOf(response)).toEqual({ code: 'validation_failed', field: null, tab: 'attention' });
+
+    const targets = [
+      { source_type: 'side_effect', source_key: 'missing:calendar_create' },
+      { source_type: 'reconciliation', source_key: 'sweep' },
+    ];
+    for (const target of targets) {
+      for (const fields of [{ action: 'incident-retry' }, { action: 'incident-resolve', note: 'handled again' }]) {
+        const response = await handleAdminPost(adminPostRequest({ ...fields, ...target }), context);
+        expect(adminErrorOf(response), `${fields.action} on ${target.source_key}`).toEqual({ code: 'validation_failed', field: null, tab: 'attention' });
+      }
+    }
   });
 
   // The server refuses a retry for these (nothing to re-run), so the card must not offer one.

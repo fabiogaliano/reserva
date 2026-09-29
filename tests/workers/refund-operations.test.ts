@@ -45,26 +45,7 @@ async function seedConfirmed(id: string): Promise<void> {
 // race-proof — UNIQUE(booking_id) plus WHERE NOT EXISTS is a true claim under real concurrent
 // writers, not just a single-threaded fake.
 describe('refund_operations concurrent claim uniqueness on real D1', () => {
-  it('exactly one of two concurrent claims for the same booking (different choices) wins', async () => {
-    const id = 'refund-claim-race-a';
-    await seedConfirmed(id);
-
-    const [full, none] = await Promise.all([
-      repo.claimRefundOperation({ id: 'op-full', bookingId: id, paymentIntent: `pi_${id}`, choice: 'full', requestedAt: '2026-07-21T11:00:00.000Z' }),
-      repo.claimRefundOperation({ id: 'op-none', bookingId: id, paymentIntent: null, choice: 'none', requestedAt: '2026-07-21T11:00:00.001Z' }),
-    ]);
-
-    // Exactly one claim succeeds — never both, never neither.
-    expect([full, none].filter(Boolean)).toHaveLength(1);
-
-    const stored = await repo.getRefundOperationByBookingId(id);
-    expect(stored).not.toBeNull();
-    // The stored row's id/choice agree with whichever call actually won.
-    expect(stored?.id).toBe(full ? 'op-full' : 'op-none');
-    expect(stored?.choice).toBe(full ? 'full' : 'none');
-  });
-
-  it('exactly one of five concurrent claims for the same booking wins', async () => {
+  it('exactly one of five concurrent claims for the same booking (alternating choices) wins', async () => {
     const id = 'refund-claim-race-b';
     await seedConfirmed(id);
 
@@ -84,6 +65,7 @@ describe('refund_operations concurrent claim uniqueness on real D1', () => {
     expect(stored).not.toBeNull();
     const winnerIndex = attempts.findIndex(Boolean);
     expect(stored?.id).toBe(`op-${winnerIndex}`);
+    expect(stored?.choice).toBe(winnerIndex % 2 === 0 ? 'full' : 'none');
   });
 
   it('a claim attempt after an existing operation row is a no-op and never overwrites it', async () => {
