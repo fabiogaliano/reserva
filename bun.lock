@@ -30,9 +30,9 @@
     },
     "packages/stripe": {
       "name": "@reservajs/stripe",
-      "version": "0.8.0",
+      "version": "0.8.1",
       "peerDependencies": {
-        "@reservajs/astro": "^0.14.0",
+        "@reservajs/astro": "^0.15.0",
       },
     },
   },
