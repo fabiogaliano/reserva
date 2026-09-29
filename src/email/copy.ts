@@ -39,6 +39,7 @@ export const englishEmailCopy: Record<string, string> = {
   'label.bookingId': 'Booking ID',
   'pickup.pending': 'Custom pickup address pending',
   'cancellation.free': 'Free cancellation until {cancelDeadline}',
+  'cancellation.closed': 'Free cancellation is not available: booked less than {cancelCutoffHours} hours before the start',
   'contact.lead.whatsapp': 'Questions? Just reply to this email, or call / WhatsApp us:',
   'contact.lead.plain': 'Questions? Just reply to this email, or call us:',
   // Neutral default; a consumer can override with a concrete turnaround promise via
@@ -105,6 +106,7 @@ export const portuguesePortugalEmailCopy: Record<string, string> = {
   'label.bookingId': 'Referência',
   'pickup.pending': 'Endereço de recolha a confirmar',
   'cancellation.free': 'Cancelamento gratuito até {cancelDeadline}',
+  'cancellation.closed': 'Sem cancelamento gratuito: reservado com menos de {cancelCutoffHours} horas de antecedência',
   'contact.lead.whatsapp': 'Dúvidas? Responda a este email, ou contacte-nos por telefone / WhatsApp:',
   'contact.lead.plain': 'Dúvidas? Responda a este email, ou ligue-nos:',
   'refund.timing': 'Qualquer reembolso devido é devolvido ao seu método de pagamento original.',

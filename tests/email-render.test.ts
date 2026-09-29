@@ -209,3 +209,16 @@ describe('operator-only metadata', () => {
     }
   });
 });
+
+describe('the cancellation row', () => {
+  it('shows the free-cancellation deadline while it is still ahead', () => {
+    expect(renderDefaultEmail(context()).text).toContain('Free cancellation until');
+  });
+
+  it('says free cancellation is not available when the booking was made inside the cutoff', () => {
+    const lateBooking = booking({ startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z', createdAt: '2026-06-15T06:00:00.000Z' });
+    const rendered = renderDefaultEmail(context({ booking: lateBooking }));
+    expect(rendered.text).not.toContain('Free cancellation until');
+    expect(rendered.text).toContain('Free cancellation is not available: booked less than 24 hours before the start');
+  });
+});

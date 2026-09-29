@@ -101,10 +101,16 @@ function buildModel(context: EmailTemplateContext): EmailModel {
   // The booking's own currency, captured at checkout — never today's configured one, which a
   // deployment may have changed since the money moved.
   const price = numberFormat(formatLocale, { style: 'currency', currency: booking.currency.toUpperCase() }).format(toMajorUnits(booking.priceMinor, booking.currency));
-  const cancelDeadline = dateTimeFormat(formatLocale, { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', timeZone }).format(cancellationDeadline(booking, config.booking.cancelCutoffHours));
+  const cancelDeadlineAt = cancellationDeadline(booking, config.booking.cancelCutoffHours);
+  const cancelDeadline = dateTimeFormat(formatLocale, { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', timeZone }).format(cancelDeadlineAt);
+  // A booking made inside the cutoff (minNoticeHours allows it) would otherwise be promised a
+  // free-cancellation date that had already passed. Judged at booking time, not render time, so a
+  // confirmation retried late by the cron still tells the truth about when it was booked.
+  const cancellationKey = cancelDeadlineAt.getTime() < new Date(booking.createdAt).getTime() ? 'cancellation.closed' : 'cancellation.free';
 
   const rawValues: Record<string, string> = {
     serviceTitle, when, customerName, reference: booking.reference, price, cancelDeadline,
+    cancelCutoffHours: String(config.booking.cancelCutoffHours),
     quantity: String(booking.quantity), guestsWord, startsAtLocal: context.startsAtLocal,
     // Copy key so a consumer can override with a concrete promise, interpolated like every
     // other placeholder.
@@ -204,7 +210,7 @@ function buildModel(context: EmailTemplateContext): EmailModel {
           ? [
               row(copy('label.paid'), price),
               row(copy('label.bookingId'), booking.reference),
-              row(copy('label.cancellation'), interpolate(copy('cancellation.free'), rawValues)),
+              row(copy('label.cancellation'), interpolate(copy(cancellationKey), rawValues)),
             ]
           : []),
       ]
