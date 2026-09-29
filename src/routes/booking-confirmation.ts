@@ -3,6 +3,7 @@ import type { StatusResponse } from '../core/api.js';
 import { handleStatus } from '../handlers/index.js';
 import { confirmationPage } from '../ui/pages/confirmation-page.js';
 import { createRouteContext } from './route-context.js';
+import { contentSecurityPolicyHeaders } from '../csp.js';
 
 export const prerender = false;
 
@@ -30,6 +31,7 @@ export async function GET({ request, locals }: APIContext): Promise<Response> {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store',
       'referrer-policy': 'no-referrer',
+      ...contentSecurityPolicyHeaders(context.config),
     },
   });
 }

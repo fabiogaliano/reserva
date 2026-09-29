@@ -523,8 +523,12 @@ const clientConfigShape = z.object({
     faviconUrl: z.string().min(1).optional(),
     // Raw head markup (a font link, a stylesheet overriding the --bk-* tokens), appended after
     // Reserva's own stylesheet so consumer CSS wins. Trusted verbatim and never escaped: it is the
-    // consumer's own markup, and their CSP is the thing that bounds it.
+    // consumer's own markup, bounded by contentSecurityPolicy below.
     headHtml: z.string().optional(),
+    // Sent as the Content-Security-Policy header on every page Reserva renders. The default allows
+    // only Reserva's own same-origin assets; a site whose headHtml, faviconUrl or logo loads from
+    // another origin replaces it here, and `false` leaves the header to the site.
+    contentSecurityPolicy: z.union([z.string().min(1), z.literal(false)]).optional(),
   }).optional(),
   emails: z.object({
     // Forces every outgoing email into one locale regardless of the language the customer booked

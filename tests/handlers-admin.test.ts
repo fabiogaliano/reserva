@@ -7,6 +7,7 @@ import { handleAdminGet, handleAdminPost } from '../src/handlers';
 import { formatDayDate } from '../src/ui/format';
 import { booking, config, rowsOf } from './fixtures';
 import { fakeRepository, providers } from './fakes';
+import { DEFAULT_CONTENT_SECURITY_POLICY } from '../src/csp';
 
 const clock = () => new Date('2026-06-14T08:00:00.000Z');
 const CSRF_NOW = clock().getTime();
@@ -396,6 +397,23 @@ describe('GET /admin listing (one window + status query)', () => {
     const response = await handleAdminGet(adminGetRequest(), context);
     expect(response.headers.get('cache-control')).toBe('no-store');
     expect(response.headers.get('referrer-policy')).toBe('same-origin');
+  });
+
+  it('sends the strict default CSP, a configured replacement, or none when the site opts out', async () => {
+    const respond = async (ui: Record<string, unknown>) => {
+      const context = createReservaContext({ config: { ...config, ui: { ...config.ui, ...ui } }, db: {} as D1Database, repo: fakeRepository(), clock, adminAuth: async () => ({ subject: '' }), providers: providers(), secrets: csrfSecrets });
+      return handleAdminGet(adminGetRequest(), context);
+    };
+    const strict = await respond({});
+    expect(strict.headers.get('content-security-policy')).toBe(DEFAULT_CONTENT_SECURITY_POLICY);
+    // The policy only holds if the page needs nothing it forbids: no inline script or style.
+    const body = await strict.text();
+    expect(body).not.toMatch(/<script(?![^>]*\bsrc=)(?![^>]*type="application\/json")[^>]*>/);
+    expect(body).not.toMatch(/<style[\s>]|\sstyle="/);
+
+    const custom = "default-src 'self'; font-src https://fonts.example";
+    expect((await respond({ contentSecurityPolicy: custom })).headers.get('content-security-policy')).toBe(custom);
+    expect((await respond({ contentSecurityPolicy: false })).headers.has('content-security-policy')).toBe(false);
   });
 
   // The day calendar must show capacity units consumed, not a raw booking-row count — a single

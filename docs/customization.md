@@ -93,8 +93,32 @@ ui: {
 
 `faviconUrl` becomes `<link rel="icon" href="…">`. `headHtml` is emitted **verbatim, after**
 Reserva's own stylesheet link, so a `--bk-*` override in it wins over the defaults. It is trusted
-markup: Reserva never escapes or parses it, and keeping it within your Content-Security-Policy is
-your responsibility.
+markup: Reserva never escapes or parses it, and it has to fit the page's Content-Security-Policy
+(below).
+
+### Content-Security-Policy
+
+Every page Reserva renders is sent with this `Content-Security-Policy` header:
+
+```
+default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self';
+connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'
+```
+
+The pages load only their own stylesheet, module script and same-origin images, so nothing else
+needs allowing. If your `headHtml`, `faviconUrl` or `branding.logoUrl` loads from another origin (a
+font host, a CDN), replace the policy with one that allows it, or pass `false` to send none and set
+your own:
+
+```ts
+ui: {
+  headHtml: '<link rel="stylesheet" href="https://fonts.example/css?family=Inter">',
+  contentSecurityPolicy:
+    "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.example; img-src 'self' data:; " +
+    "font-src https://fonts.example; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; " +
+    "base-uri 'none'; object-src 'none'",
+}
+```
 
 > **Keep analytics out of `headHtml`, or strip the query string.** The manage page URL contains
 > the booking's manage token, and the confirmation URL the payment session id. Most analytics

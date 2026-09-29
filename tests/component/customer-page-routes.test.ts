@@ -8,6 +8,7 @@ import { GET as manageGET, POST as managePOST } from '../../src/routes/booking/m
 import { booking } from '../fixtures';
 import { fakeRepository } from '../fakes';
 import { componentState, FIXED_NOW } from './fixtures/runtime';
+import { DEFAULT_CONTENT_SECURITY_POLICY } from '../../src/csp';
 
 const call = (handler: (context: APIContext) => Promise<Response>, request: Request) =>
   handler({ request, locals: {} } as unknown as APIContext);
@@ -52,6 +53,35 @@ describe('confirmation route', () => {
     expect(regional).toContain('<html lang="pt-BR"');
     const unsupported = await (await call(confirmationGET, new Request('https://example.test/booking-confirmation?sessionId=cs_none&locale=de-DE'))).text();
     expect(unsupported).toContain('<html lang="en"');
+  });
+});
+
+describe('content security policy', () => {
+  const inlineScript = /<script(?![^>]*\bsrc=)(?![^>]*type="application\/json")[^>]*>/;
+  const inlineStyle = /<style[\s>]|\sstyle="/;
+
+  it('sends the strict policy on the confirmation and manage pages, which need nothing it forbids', async () => {
+    const seeded = booking();
+    componentState.repo = fakeRepository([seeded]);
+    for (const request of [
+      new Request('https://example.test/booking-confirmation?sessionId=cs_none'),
+      new Request(`https://example.test/booking/manage?token=${seeded.cancelToken}`),
+      new Request(`https://example.test/booking/manage?token=${seeded.operatorToken}`),
+      new Request('https://example.test/booking/manage?token=not-a-token'),
+    ]) {
+      const response = await call(request.url.includes('manage') ? manageGET : confirmationGET, request);
+      expect(response.headers.get('content-security-policy'), request.url).toBe(DEFAULT_CONTENT_SECURITY_POLICY);
+      const html = await response.text();
+      expect(html, request.url).not.toMatch(inlineScript);
+      expect(html, request.url).not.toMatch(inlineStyle);
+    }
+  });
+
+  it('sends it on the cancelled page a customer cancel renders', async () => {
+    const seeded = booking();
+    componentState.repo = fakeRepository([seeded]);
+    const response = await call(managePOST, form({ action: 'cancel', token: seeded.cancelToken, refund: 'none' }));
+    expect(response.headers.get('content-security-policy')).toBe(DEFAULT_CONTENT_SECURITY_POLICY);
   });
 });
 

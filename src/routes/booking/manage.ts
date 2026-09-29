@@ -18,10 +18,11 @@ import { errorResponse, HttpError, requestFormData } from '../../http.js';
 import { cssAssetHref, jsAssetHref } from '../../ui/asset-hrefs.js';
 import { resolveMessages } from '../../ui/messages.js';
 import { createRouteContext } from '../route-context.js';
+import { contentSecurityPolicyHeaders } from '../../csp.js';
 
 export const prerender = false;
 
-const htmlHeaders = {
+const baseHtmlHeaders = {
   'content-type': 'text/html; charset=utf-8',
   'cache-control': 'no-store',
   // `strict-origin` trims Referer to the origin alone (no path, no token) while still sending a
@@ -29,6 +30,10 @@ const htmlHeaders = {
   // spec and trip Astro's checkOrigin default; `strict-origin` avoids that without leaking the token.
   'referrer-policy': 'strict-origin',
 };
+
+function htmlHeaders(context: ReservaContext): Record<string, string> {
+  return { ...baseHtmlHeaders, ...contentSecurityPolicyHeaders(context.config) };
+}
 
 function pageOptions(context: ReservaContext, locale: string): ManagePageOptions {
   return {
@@ -74,7 +79,7 @@ export async function GET({ request, locals }: APIContext): Promise<Response> {
   if (!response.ok) {
     return new Response(renderManageErrorPage(context.routeConfig.paths.managePage, options), {
       status: response.status,
-      headers: htmlHeaders,
+      headers: htmlHeaders(context),
     });
   }
   payload.token = new URL(request.url).searchParams.get('token') ?? '';
@@ -94,7 +99,7 @@ export async function GET({ request, locals }: APIContext): Promise<Response> {
   }
   return new Response(renderManagePage(payload, context.routeConfig.paths.managePage, options), {
     status: 200,
-    headers: htmlHeaders,
+    headers: htmlHeaders(context),
   });
 }
 
@@ -199,7 +204,7 @@ export async function POST({ request, locals }: APIContext): Promise<Response> {
     const options = pageOptions(context, cancelling?.locale ?? context.config.locales.default);
     return new Response(renderCancelledPage({ reference: cancelling?.reference ?? '', priceMinor: cancelling?.priceMinor ?? 0 }, options), {
       status: 200,
-      headers: htmlHeaders,
+      headers: htmlHeaders(context),
     });
   }
   if (action === 'reschedule') location.searchParams.set('done', 'reschedule');

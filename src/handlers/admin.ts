@@ -31,6 +31,7 @@ import { dispatchSettingsChanged } from '../settings-events.js';
 import type { SettingsChange } from '../core/events.js';
 import type { ReservaContext } from '../context.js';
 import { nowIso } from '../context.js';
+import { contentSecurityPolicyHeaders } from '../csp.js';
 import type {
   AdminBookingWindow,
   OperationalIncidentSourceType,
@@ -216,6 +217,7 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
     if (url.searchParams.get('view') === 'settings') {
       const [storedRows, openIncidentCount] = await Promise.all([context.repo.listSettings(), context.repo.countOpenIncidents()]);
       return html(settingsPage(context, storedRows, url.searchParams.get('saved') === '1', url.searchParams.get('section') ?? '', csrfToken, error, openIncidentCount), 200, {
+        ...contentSecurityPolicyHeaders(context.config),
         'cache-control': 'no-store',
         // Same referrer-policy reasoning as the dashboard response below.
         'referrer-policy': 'same-origin',
@@ -330,6 +332,7 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
       glance,
       activeTab,
     }), 200, {
+      ...contentSecurityPolicyHeaders(context.config),
       'cache-control': 'no-store',
       // `no-referrer` would null the Origin header on this page's own same-origin POSTs, tripping
       // Astro's checkOrigin default. `same-origin` avoids that while keeping the same token-leak protection.
