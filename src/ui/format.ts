@@ -94,10 +94,19 @@ export function formatDateParts(isoWithOffset: string, locale: string, timezone:
   }
 }
 
+// Called for every booking row, so looked up without building the generic cache's key.
+const priceFormats = new Map<string, Intl.NumberFormat>();
+
 export function formatPrice(amountMinor: number, locale: string, currency: string): string {
   const major = toMajorUnits(amountMinor, currency);
   try {
-    return numberFormat(formatLocaleFor(locale), { style: 'currency', currency: currency.toUpperCase() }).format(major);
+    const key = `${locale}|${currency}`;
+    let formatter = priceFormats.get(key);
+    if (!formatter) {
+      formatter = numberFormat(formatLocaleFor(locale), { style: 'currency', currency: currency.toUpperCase() });
+      priceFormats.set(key, formatter);
+    }
+    return formatter.format(major);
   } catch {
     return `${major.toFixed(minorUnitDigits(currency))} ${currency.toUpperCase()}`;
   }
