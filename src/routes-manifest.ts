@@ -9,7 +9,7 @@ import { resolvedRoutePaths, routePatterns, type ReservaRouteId, type ReservaRou
 export { routePath, resolvedRoutePaths } from './core/route-paths.js';
 export type { ReservaRouteGroup, ReservaRouteId, ReservaRoutePaths } from './core/route-paths.js';
 
-export interface ReservaRouteEntry {
+interface ReservaRouteEntry {
   readonly id: ReservaRouteId;
   readonly group: (typeof routePatterns)[number]['group'];
   readonly pattern: string;
@@ -54,7 +54,7 @@ export interface ReservaRouteGroupFlags {
   manage: boolean;
 }
 
-export function isRouteEnabled(entry: ReservaRouteEntry, groups: ReservaRouteGroupFlags): boolean {
+function isRouteEnabled(entry: ReservaRouteEntry, groups: ReservaRouteGroupFlags): boolean {
   if (entry.group === 'admin') return groups.admin;
   if (entry.group === 'ops') return groups.ops;
   if (entry.group === 'manage') return groups.manage;
@@ -129,7 +129,7 @@ const routeOptionsSchema = z.object({
   routePrefix: routePrefixSchema.optional(),
 });
 
-export type ReservaRouteOptions = z.infer<typeof routeOptionsSchema>;
+type ReservaRouteOptions = z.infer<typeof routeOptionsSchema>;
 
 export function validateRouteOptions(input: unknown): ReservaRouteOptions {
   const parsed = routeOptionsSchema.safeParse(input);

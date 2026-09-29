@@ -3,7 +3,6 @@ import {
   BookingTransitionError,
   cancelBooking,
   confirmBooking,
-  expireBooking,
   markNoShow,
   rescheduleBooking,
   transitionBooking,
@@ -14,8 +13,9 @@ describe('core booking state machine', () => {
   it('supports hold confirmation and expiration', () => {
     const hold = booking({ status: 'hold', holdExpiresAt: '2026-06-15T08:35:00.000Z' });
     expect(confirmBooking(hold, '2026-06-15T08:10:00.000Z').status).toBe('confirmed');
-    expect(expireBooking(hold, '2026-06-15T08:36:00.000Z').status).toBe('expired');
-    expect(confirmBooking(expireBooking(hold, '2026-06-15T08:36:00.000Z'), '2026-06-15T08:40:00.000Z').status).toBe('confirmed');
+    const expired = transitionBooking(hold, 'expired', '2026-06-15T08:36:00.000Z');
+    expect(expired.status).toBe('expired');
+    expect(confirmBooking(expired, '2026-06-15T08:40:00.000Z').status).toBe('confirmed');
   });
 
   it('supports customer cancellation and records its actor', () => {
@@ -46,6 +46,6 @@ describe('core booking state machine', () => {
   });
 
   it('rejects impossible state transitions', () => {
-    expect(() => expireBooking(booking(), '2026-06-15T08:00:00.000Z')).toThrow(BookingTransitionError);
+    expect(() => transitionBooking(booking(), 'expired', '2026-06-15T08:00:00.000Z')).toThrow(BookingTransitionError);
   });
 });

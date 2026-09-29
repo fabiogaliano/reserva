@@ -53,7 +53,6 @@ export interface OccupancyIntervalOptions {
   service: OccupancyService;
   services?: OccupancyServiceMap;
   serviceResolver?: OccupancyServiceResolver;
-  resolveService?: OccupancyServiceResolver;
   now?: string | Date;
   from?: string | Date;
   to?: string | Date;
@@ -76,7 +75,6 @@ export interface DayAvailabilityOptions {
   calendarEvents?: readonly CalEvent[];
   services?: OccupancyServiceMap;
   serviceResolver?: OccupancyServiceResolver;
-  resolveService?: OccupancyServiceResolver;
   requestedQuantity: number;
   now?: string | Date;
   minNoticeHours?: number;
@@ -145,7 +143,7 @@ export function occupancyFor(service: Pick<ResolvedServiceConfig, 'occupancy'>, 
 
 function serviceForBooking(booking: OccupancyBooking, options: OccupancyIntervalOptions): OccupancyService {
   if (!booking.serviceSlug) return options.service;
-  const resolver = options.serviceResolver ?? options.resolveService;
+  const resolver = options.serviceResolver;
   if (resolver) {
     const resolved = resolver(booking.serviceSlug);
     if (!resolved) throw new RangeError(`Unknown occupancy service: ${booking.serviceSlug}`);
@@ -369,7 +367,6 @@ export function availabilityForDay(options: DayAvailabilityOptions): DayAvailabi
     service: options.service,
     ...(options.services ? { services: options.services } : {}),
     ...(options.serviceResolver ? { serviceResolver: options.serviceResolver } : {}),
-    ...(options.resolveService ? { resolveService: options.resolveService } : {}),
     now,
     ...(options.excludeBookingId ? { excludeBookingId: options.excludeBookingId } : {}),
   });

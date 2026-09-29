@@ -162,10 +162,6 @@ export function confirmBooking(booking: Booking, now: string | Date = new Date()
   return transitionBooking(booking, 'confirmed', now, patch);
 }
 
-export function expireBooking(booking: Booking, now: string | Date = new Date()): Booking {
-  return transitionBooking(booking, 'expired', now);
-}
-
 export function cancellationDeadline(booking: Booking, cutoffHours: number): Date {
   return new Date(parseUtcInstant(booking.startsAt).getTime() - cutoffHours * 3_600_000);
 }
