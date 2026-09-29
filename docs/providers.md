@@ -70,7 +70,9 @@ made: Reserva keeps the largest total it has seen, so deliveries may arrive in a
 `dispute_closed` event carries `disputeOutcome` — `'won'` when the money stayed, `'lost'` when it
 went back. Leave it out when the processor's status is neither, and Reserva keeps the dispute open.
 Both dispute events may carry `disputeCreatedAt`, when the processor opened the dispute (ISO 8601);
-Reserva dates the dispute from it, falling back to the delivery time when it is absent.
+Reserva dates the dispute from it, falling back to the delivery time when it is absent. It also
+tells a second dispute on the same payment from a redelivery of the first: one opened later
+reopens a booking whose earlier dispute already closed.
 
 ### Optional members
 

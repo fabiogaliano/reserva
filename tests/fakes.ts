@@ -513,13 +513,21 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       const current = rows.get(id);
       if (current) rows.set(id, { ...current, amountRefundedMinor: Math.max(current.amountRefundedMinor, amountMinor) });
     },
-    markDisputed: async (id, at) => {
+    markDisputed: async (id, at, fromProvider = false) => {
       const current = rows.get(id);
-      if (current) rows.set(id, { ...current, disputedAt: current.disputedAt ?? at, disputeStatus: current.disputeStatus ?? 'open' });
+      if (!current) return;
+      const later = fromProvider && current.disputedAt !== null && at > current.disputedAt;
+      rows.set(id, {
+        ...current,
+        disputedAt: later ? at : current.disputedAt ?? at,
+        disputeStatus: later ? 'open' : current.disputeStatus ?? 'open',
+      });
     },
-    closeDispute: async (id, outcome, at) => {
+    closeDispute: async (id, outcome, at, fromProvider = false) => {
       const current = rows.get(id);
-      if (current) rows.set(id, { ...current, disputeStatus: outcome, disputedAt: current.disputedAt ?? at });
+      if (!current) return;
+      const later = fromProvider && current.disputedAt !== null && at > current.disputedAt;
+      rows.set(id, { ...current, disputeStatus: outcome, disputedAt: later ? at : current.disputedAt ?? at });
     },
     recordBookingEventOperations: async (bookingId, seeds, now) => {
       for (const seed of seeds) insertOperation(bookingId, seed, now, { eventPayloadJson: seed.eventPayloadJson });

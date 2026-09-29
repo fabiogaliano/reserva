@@ -229,15 +229,19 @@ There is nothing to configure: every booking carries what happened to its money 
   A refund event changes nothing else about the booking unless it returns the whole payment, which
   cancels the booking.
 - `booking.disputedAt` and `booking.disputeStatus` (`'open' | 'won' | 'lost'`, both `null` when the
-  payment was never disputed) record a chargeback or a bank inquiry. The date is when Reserva first
-  saw the dispute. The status turns `won` or `lost` when the provider reports the outcome (with
-  Stripe, `charge.dispute.closed`; an inquiry that closes without a chargeback counts as won), and
-  stays `open` on an endpoint that is not subscribed to it. When one payment is disputed twice, the
-  last outcome wins.
+  payment was never disputed) record a chargeback or a bank inquiry. The date is when the provider
+  opened the dispute (Stripe reports it), or when Reserva first saw it if the provider doesn't say.
+  The status turns `won` or `lost` when the provider reports the outcome (with Stripe,
+  `charge.dispute.closed`; an inquiry that closes without a chargeback counts as won), and stays
+  `open` on an endpoint that is not subscribed to it. When one payment is disputed twice, the
+  booking shows the later dispute: it reopens as `open` with the later date, then takes that
+  dispute's outcome. A provider that reports no opening time can't tell a second dispute from a
+  redelivered first one, so there the second leaves a recorded outcome alone until its own close,
+  and the last outcome wins.
 
 The admin dashboard shows both in the bookings list and the calendar day panel, beside the
 booking's status: a "Refunded €X" badge (warning tone) whenever any amount was refunded, and a
 dispute badge — "Dispute open" and "Dispute lost" in the danger tone, "Dispute won" in the
 neutral one, since the money stayed. The booking's details add matching rows after its declared
-fields: "Refunded" with the total, and "Dispute" with the outcome and the date it was first seen
+fields: "Refunded" with the total, and "Dispute" with the outcome and the date it opened
 ("Open since …", "Won (opened …)", "Lost (opened …)").

@@ -182,7 +182,7 @@ export function handlePaymentWebhook(request: Request, context: ReservaContext):
       const booking = await bookingForPaymentEvent(context, event);
       context.logger.warn?.('payment dispute created', { eventId: event.id, bookingId: booking?.id ?? event.bookingId });
       if (booking) {
-        await context.repo.markDisputed(booking.id, event.disputeCreatedAt ?? nowIso(context));
+        await context.repo.markDisputed(booking.id, event.disputeCreatedAt ?? nowIso(context), event.disputeCreatedAt !== undefined);
         await dispatchDisputeEvent(context, booking, event.id);
       }
     } else if (event.type === 'dispute_closed') {
@@ -190,15 +190,16 @@ export function handlePaymentWebhook(request: Request, context: ReservaContext):
       // either, and the operator already heard about it from the provider.
       const booking = await bookingForPaymentEvent(context, event);
       const openedAt = event.disputeCreatedAt ?? nowIso(context);
+      const fromProvider = event.disputeCreatedAt !== undefined;
       if (!booking) {
         // Without this the booking keeps showing an open dispute with nothing to explain why.
         context.logger.warn?.('payment dispute closed for no known booking', { eventId: event.id, paymentRef: event.paymentRef ?? null });
       } else if (event.disputeOutcome) {
-        await context.repo.closeDispute(booking.id, event.disputeOutcome, openedAt);
+        await context.repo.closeDispute(booking.id, event.disputeOutcome, openedAt, fromProvider);
       } else {
         // The close still proves a dispute existed, so it is recorded as open rather than dropped.
         context.logger.warn?.('payment dispute closed without a known outcome', { eventId: event.id, bookingId: booking.id });
-        await context.repo.markDisputed(booking.id, openedAt);
+        await context.repo.markDisputed(booking.id, openedAt, fromProvider);
       }
     }
     return json({ received: true });

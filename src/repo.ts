@@ -460,11 +460,15 @@ export interface BookingRepository {
   // ever grows: a delayed, smaller total from an earlier refund is a no-op.
   recordRefundedAmount(id: string, amountMinor: number): Promise<void>;
   // Opens a dispute unless one is already recorded, keeping the first date and any outcome that a
-  // close delivered ahead of this event already stored.
-  markDisputed(id: string, at: string): Promise<void>;
+  // close delivered ahead of this event already stored. With `fromProvider`, `at` is the provider's
+  // own creation time for the dispute, the same on every event about it, so a later time means a
+  // second dispute: it reopens the booking and takes over the date.
+  markDisputed(id: string, at: string, fromProvider?: boolean): Promise<void>;
   // Always overwrites the status (the last close wins when a payment is disputed twice), and fills
-  // the date when the close arrives before the event that opened the dispute.
-  closeDispute(id: string, outcome: DisputeOutcome, at: string): Promise<void>;
+  // the date when the close arrives before the event that opened the dispute. With `fromProvider`,
+  // a close for a later dispute also moves the date, so that dispute's own opening event, arriving
+  // after its close, does not read as yet another dispute.
+  closeDispute(id: string, outcome: DisputeOutcome, at: string, fromProvider?: boolean): Promise<void>;
   // For an event that isn't a booking transition (today only payment.dispute_created). Every
   // other seed rides the transition batch that owes it; this one has none, so the row itself is
   // the record and a plain conflict-free insert is enough.
@@ -1692,14 +1696,26 @@ export function createBookingRepository(
       await db.prepare('UPDATE bookings SET amount_refunded_minor = MAX(amount_refunded_minor, ?) WHERE id = ?')
         .bind(amountMinor, id).run();
     },
-    async markDisputed(id, at) {
+    async markDisputed(id, at, fromProvider = false) {
+      if (!fromProvider) {
+        await db.prepare(
+          `UPDATE bookings SET disputed_at = COALESCE(disputed_at, ?), dispute_status = COALESCE(dispute_status, 'open')
+           WHERE id = ?`,
+        ).bind(at, id).run();
+        return;
+      }
       await db.prepare(
-        `UPDATE bookings SET disputed_at = COALESCE(disputed_at, ?), dispute_status = COALESCE(dispute_status, 'open')
-         WHERE id = ?`,
+        `UPDATE bookings SET
+           dispute_status = CASE WHEN disputed_at IS NOT NULL AND ?1 > disputed_at THEN 'open' ELSE COALESCE(dispute_status, 'open') END,
+           disputed_at = CASE WHEN disputed_at IS NULL OR ?1 > disputed_at THEN ?1 ELSE disputed_at END
+         WHERE id = ?2`,
       ).bind(at, id).run();
     },
-    async closeDispute(id, outcome, at) {
-      await db.prepare('UPDATE bookings SET dispute_status = ?, disputed_at = COALESCE(disputed_at, ?) WHERE id = ?')
+    async closeDispute(id, outcome, at, fromProvider = false) {
+      const date = fromProvider
+        ? 'CASE WHEN disputed_at IS NULL OR ?2 > disputed_at THEN ?2 ELSE disputed_at END'
+        : 'COALESCE(disputed_at, ?2)';
+      await db.prepare(`UPDATE bookings SET dispute_status = ?1, disputed_at = ${date} WHERE id = ?3`)
         .bind(outcome, at, id).run();
     },
     async listSideEffectOperations(bookingId) {

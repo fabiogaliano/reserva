@@ -143,13 +143,14 @@ describe('dispute status from the payment webhook', () => {
     expect(row()).toMatchObject({ disputeStatus: 'won' });
   });
 
-  it('lets the last close win when a payment is disputed twice', async () => {
+  it('lets the last close win when a payment is disputed twice and the provider gives no creation time', async () => {
     const { deliver, row } = webhookHarness(seeded);
 
     await deliver(created, '2026-06-14T08:00:00.000Z');
     await deliver(closed('won'));
     await deliver({ ...created, id: 'evt_second_dispute_created' }, '2026-07-01T08:00:00.000Z');
-    // A second dispute opening does not reopen a recorded outcome.
+    // Without the provider's creation time a second opening can't be told from a redelivery, so it
+    // does not reopen a recorded outcome.
     expect(row()).toMatchObject({ disputedAt: '2026-06-14T08:00:00.000Z', disputeStatus: 'won' });
     await deliver(closed('lost'));
     expect(row()).toMatchObject({ disputedAt: '2026-06-14T08:00:00.000Z', disputeStatus: 'lost' });
@@ -164,6 +165,38 @@ describe('dispute status from the payment webhook', () => {
     await deliver({ ...closed('lost'), disputeCreatedAt: openedAt }, '2026-08-01T10:00:00.000Z');
     await deliver({ ...created, disputeCreatedAt: openedAt }, '2026-08-03T10:00:00.000Z');
     expect(row()).toMatchObject({ disputedAt: openedAt, disputeStatus: 'lost' });
+  });
+
+  // A won dispute reads as payable, so a later chargeback on the same payment must show as open.
+  it('reopens a won dispute when a later dispute opens on the same payment', async () => {
+    const first = '2026-06-10T09:30:00.000Z';
+    const second = '2026-07-20T11:00:00.000Z';
+    const { deliver, row, emails } = webhookHarness(seeded);
+
+    await deliver({ ...created, disputeCreatedAt: first });
+    await deliver({ ...closed('won'), disputeCreatedAt: first });
+    // A redelivery of the first dispute's opening changes nothing.
+    await deliver({ ...created, disputeCreatedAt: first });
+    expect(row()).toMatchObject({ disputedAt: first, disputeStatus: 'won' });
+
+    await deliver({ ...created, id: 'evt_second_dispute_created', disputeCreatedAt: second });
+    expect(row()).toMatchObject({ disputedAt: second, disputeStatus: 'open' });
+    expect(emails).toEqual(['owner:payment.dispute_created', 'owner:payment.dispute_created']);
+
+    await deliver({ ...closed('lost'), id: 'evt_second_dispute_closed', disputeCreatedAt: second });
+    expect(row()).toMatchObject({ disputedAt: second, disputeStatus: 'lost' });
+  });
+
+  it('keeps a later dispute’s outcome when its close arrives before its opening', async () => {
+    const first = '2026-06-10T09:30:00.000Z';
+    const second = '2026-07-20T11:00:00.000Z';
+    const { deliver, row } = webhookHarness(seeded);
+
+    await deliver({ ...created, disputeCreatedAt: first });
+    await deliver({ ...closed('won'), disputeCreatedAt: first });
+    await deliver({ ...closed('lost'), id: 'evt_second_dispute_closed', disputeCreatedAt: second });
+    await deliver({ ...created, id: 'evt_second_dispute_created', disputeCreatedAt: second });
+    expect(row()).toMatchObject({ disputedAt: second, disputeStatus: 'lost' });
   });
 
   it('warns and changes nothing when a close names a payment no booking owns', async () => {

@@ -388,6 +388,29 @@ describe('D1 booking repository', () => {
       await expect(repo.getBookingById(created.id)).resolves.toMatchObject({ disputedAt: '2026-07-22T08:00:00.000Z', disputeStatus: 'won' });
     });
 
+    it('reopens on a later dispute, and moves the date on a later close, only with the provider’s creation time', async () => {
+      const created = await insertMoneyBooking('money-dispute-second');
+      const first = '2026-07-22T08:00:00.000Z';
+      const second = '2026-08-30T08:00:00.000Z';
+
+      await repo.markDisputed(created.id, first, true);
+      await repo.closeDispute(created.id, 'won', first, true);
+      await repo.markDisputed(created.id, first, true);
+      await expect(repo.getBookingById(created.id)).resolves.toMatchObject({ disputedAt: first, disputeStatus: 'won' });
+
+      // Without the provider's time a later opening is indistinguishable from a redelivery.
+      await repo.markDisputed(created.id, second);
+      await expect(repo.getBookingById(created.id)).resolves.toMatchObject({ disputedAt: first, disputeStatus: 'won' });
+
+      await repo.markDisputed(created.id, second, true);
+      await expect(repo.getBookingById(created.id)).resolves.toMatchObject({ disputedAt: second, disputeStatus: 'open' });
+
+      const third = '2026-09-15T08:00:00.000Z';
+      await repo.closeDispute(created.id, 'lost', third, true);
+      await repo.markDisputed(created.id, third, true);
+      await expect(repo.getBookingById(created.id)).resolves.toMatchObject({ disputedAt: third, disputeStatus: 'lost' });
+    });
+
     it('ends in the outcome when the close is recorded before the dispute opens', async () => {
       const created = await insertMoneyBooking('money-dispute-reversed');
 
