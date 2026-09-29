@@ -8,7 +8,7 @@ test('admin dashboard lists a booking by reference, and its operator manage link
   const { reference } = await createBooking(page, { service: TOUR, quantity: 2 });
 
   await page.goto('/booking/admin');
-  await expect(page.locator('h1')).toHaveText('Dashboard');
+  await expect(page.locator('body')).toHaveClass(/\bbk-page--admin\b/);
 
   // A booking row is a disclosure: the summary carries the customer and the panel carries the
   // reference, so the row has to be opened before either is on screen.
@@ -17,10 +17,12 @@ test('admin dashboard lists a booking by reference, and its operator manage link
   await row.locator('summary').click();
   await expect(row.getByText(reference)).toBeVisible();
 
-  await row.getByRole('link', { name: 'Manage booking' }).click();
+  await row.locator('a.bk-booking-open').click();
   await expect(page.locator('h1')).toContainText(reference);
-  // Operator role, not customer: the admin dashboard only ever links the operator token.
-  await expect(page.getByText('Operator view')).toBeVisible();
+  // Operator role, not customer: the admin dashboard only ever links the operator token, so the
+  // page's forms post it back as operatorToken and never as a customer token.
+  await expect(page.locator('input[type="hidden"][name="operatorToken"]').first()).toBeAttached();
+  await expect(page.locator('input[name="token"]')).toHaveCount(0);
 });
 
 test('closing a day override removes it from availability, and clearing the override restores it', async ({ page, request }) => {

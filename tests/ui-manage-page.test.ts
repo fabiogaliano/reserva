@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderCancelledPage, renderManagePage } from '../src/ui/pages/manage-page';
-import { resolveMessages } from '../src/ui/messages';
+import { formatMessage, resolveMessages, type ReservaMessages } from '../src/ui/messages';
+import { escapeHtml } from '../src/http';
 import { config } from './fixtures';
 
 const options = {
@@ -13,6 +14,14 @@ const options = {
   contactConfig: config,
   now: new Date('2026-06-01T10:00:00.000Z'),
 };
+
+// Expected notices come from the catalog so a copy edit cannot break these state tests; the
+// deadlines stay literal because business-tz formatting of each cutoff is what they pin.
+const cancelBy = 'Sat, 13 June 2026 at 09:00';
+const rescheduleBy = 'Sun, 14 June 2026 at 09:00';
+const say = (key: keyof ReservaMessages, vars?: Record<string, string>): string =>
+  escapeHtml(vars ? formatMessage(options.messages[key], vars) : options.messages[key]);
+const cancelForm = 'name="action" value="cancel"';
 
 const booking = {
   reference: 'LVT-2026-001',
@@ -45,37 +54,37 @@ function page(overrides: Record<string, unknown>, extra: Record<string, unknown>
 describe('manage page deadlines', () => {
   it('states both deadlines while both actions are open', () => {
     const html = page({});
-    expect(html).toContain('Free cancellation until Sat, 13 June 2026 at 09:00.');
-    expect(html).toContain('You can reschedule online until Sun, 14 June 2026 at 09:00.');
+    expect(html).toContain(say('manage.cancelPolicy', { deadline: cancelBy }));
+    expect(html).toContain(say('manage.reschedulePolicy', { deadline: rescheduleBy }));
   });
 
   it('says rescheduling has closed, with the contact details, in place of its form while cancel stays open', () => {
     const html = page({ canReschedule: false });
-    expect(html).toContain('Online rescheduling closed on Sun, 14 June 2026 at 09:00. Contact us if you need a different time.');
+    expect(html).toContain(say('manage.rescheduleClosed', { deadline: rescheduleBy }));
     expect(html).not.toContain('data-reserva-reschedule');
-    expect(html).toContain('Yes, cancel this booking');
+    expect(html).toContain(cancelForm);
     expect(html).toContain('mailto:owner@example.test');
   });
 
   it('says cancellation has closed while reschedule stays open', () => {
     const html = page({ canCancel: false });
-    expect(html).toContain('Online cancellation closed on Sat, 13 June 2026 at 09:00. Contact us if you need to cancel.');
-    expect(html).not.toContain('Yes, cancel this booking');
+    expect(html).toContain(say('manage.cancelClosed', { deadline: cancelBy }));
+    expect(html).not.toContain(cancelForm);
     expect(html).toContain('data-reserva-reschedule');
     expect(html).toContain('mailto:owner@example.test');
   });
 
   it('says nothing about rescheduling when the deployment has it switched off', () => {
     const html = page({ canReschedule: false }, { rescheduleEnabled: false });
-    expect(html).not.toContain('Online rescheduling closed');
+    expect(html).not.toContain(say('manage.rescheduleClosed', { deadline: rescheduleBy }));
     expect(html).not.toContain('mailto:owner@example.test');
   });
 
   it('keeps the single combined notice when both actions are closed', () => {
     const html = page({ canCancel: false, canReschedule: false });
-    expect(html).toContain('The change deadline for this booking has passed.');
-    expect(html).not.toContain('Online cancellation closed');
-    expect(html).not.toContain('Online rescheduling closed');
+    expect(html).toContain(say('manage.pastCutoff'));
+    expect(html).not.toContain(say('manage.cancelClosed', { deadline: cancelBy }));
+    expect(html).not.toContain(say('manage.rescheduleClosed', { deadline: rescheduleBy }));
   });
 });
 
@@ -83,7 +92,7 @@ describe('manage page error notice', () => {
   it('maps an ?error= code it does not own to the generic copy, including inherited property names', () => {
     for (const code of ['constructor', 'toString', '__proto__', 'made_up']) {
       const html = page({}, { errorCode: code });
-      expect(html).toContain('Something went wrong and nothing was changed.');
+      expect(html).toContain(`<p class="bk-alert bk-alert--danger" role="alert">${say('manage.actionFailed')}</p>`);
     }
   });
 });
@@ -106,15 +115,15 @@ describe('manage page enhancer', () => {
 describe('cancelled page', () => {
   it('confirms the cancellation with the reference, a refund note, a way to book again and the contact details', () => {
     const html = renderCancelledPage({ reference: 'LVT-2026-001', priceMinor: 10000 }, options);
-    expect(html).toContain('<h1>Booking cancelled</h1>');
-    expect(html).toContain('Your booking LVT-2026-001 has been cancelled.');
-    expect(html).toContain('Any refund due is returned to your original payment method.');
-    expect(html).toContain('<a class="bk-btn" href="https://example.test">Book again</a>');
+    expect(html).toContain(`<h1>${say('manage.cancelDoneTitle')}</h1>`);
+    expect(html).toContain(say('manage.cancelDoneBody', { reference: 'LVT-2026-001' }));
+    expect(html).toContain(say('manage.cancelDoneRefund'));
+    expect(html).toContain(`<a class="bk-btn" href="https://example.test">${say('manage.bookAgain')}</a>`);
     expect(html).toContain('mailto:owner@example.test');
     expect(html).toContain('data-bk-status="cancelled"');
   });
 
   it('leaves the refund note out for a free booking', () => {
-    expect(renderCancelledPage({ reference: 'LVT-2026-002', priceMinor: 0 }, options)).not.toContain('refund');
+    expect(renderCancelledPage({ reference: 'LVT-2026-002', priceMinor: 0 }, options)).not.toContain(say('manage.cancelDoneRefund'));
   });
 });

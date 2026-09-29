@@ -64,20 +64,26 @@ test('a one-shot provider failure opens an incident, "Try again" resolves it, a 
   const retryCard = page.locator('.bk-incident-card', { hasText: retryTarget.reference });
   const manualCard = page.locator('.bk-incident-card', { hasText: manualTarget.reference });
   const oversellCard = page.locator('.bk-incident-card', { hasText: oversellTarget.reference });
-  await expect(retryCard).toContainText('Calendar not updated');
-  await expect(manualCard).toContainText('Calendar not updated');
-  await expect(oversellCard).toContainText('Booking may exceed capacity');
+  // Each card's details line leads with the incident's action code, which unlike its title is not copy.
+  const actionOf = (card: typeof retryCard) => card.locator('.bk-disclosure .bk-mono');
+  await expect(actionOf(retryCard)).toHaveText(/^calendar · /);
+  await expect(actionOf(manualCard)).toHaveText(/^calendar · /);
+  await expect(actionOf(oversellCard)).toHaveText(/^oversell · /);
+  const retryButton = 'button[name="action"][value="incident-retry"]';
+  const resolveButton = 'button[name="action"][value="incident-resolve"]';
 
-  // Oversell: no Retry button, only the manual-handling note.
-  await expect(oversellCard.getByRole('button', { name: 'Try again' })).toHaveCount(0);
-  await expect(oversellCard).toContainText('no automatic retry is available');
-  await expect(oversellCard.getByRole('button', { name: 'Mark as resolved' })).toBeVisible();
+  // Oversell: no Retry button, only the manual-handling note in its place.
+  await expect(oversellCard.locator(retryButton)).toHaveCount(0);
+  await expect(oversellCard.locator('.bk-actions > .bk-hint')).toBeVisible();
+  await expect(oversellCard.locator(resolveButton)).toBeVisible();
 
   // --- "Try again": the forced failure was one-shot, so the row recovers immediately and the
-  // redirect reports the real outcome ('Marked as handled.') instead of a generic "retry attempted"
-  // that said nothing about whether it worked. A further reconciliation pass must leave it resolved.
-  await retryCard.getByRole('button', { name: 'Try again' }).click();
-  await expect(page.locator('#bk-incidents')).toContainText('Marked as handled');
+  // redirect reports the real outcome (the ok-toned resolved notice, not the warn-toned retry
+  // failure) instead of a generic "retry attempted" that said nothing about whether it worked. A
+  // further reconciliation pass must leave it resolved.
+  const resolvedNotice = page.locator('#bk-incidents .bk-alert--ok[role="status"]');
+  await retryCard.locator(retryButton).click();
+  await expect(resolvedNotice).toBeVisible();
   await expect(page.locator('.bk-incident-card', { hasText: retryTarget.reference })).toHaveCount(0);
   await request.post('/dev/reconcile.json', { headers: DEV_POST_HEADERS });
   await page.reload();
@@ -85,18 +91,18 @@ test('a one-shot provider failure opens an incident, "Try again" resolves it, a 
 
   // --- Manual resolution on the manual-target card: requires the note, resolves synchronously
   // (no reconciliation pass needed), records who/when, and survives a reload in history.
-  const manualForm = manualCard.locator('form', { hasText: 'What did you do' });
+  const manualForm = manualCard.locator('form', { has: page.locator('[data-reserva-resolve-note]') });
   // First press reveals the note instead of submitting; the fill below then has somewhere to go.
-  await manualForm.getByRole('button', { name: 'Mark as resolved' }).click();
-  await manualForm.getByLabel('What did you do?').fill('Called the customer and confirmed the slot by phone.');
-  await manualForm.getByRole('button', { name: 'Mark as resolved' }).click();
-  await expect(page.locator('#bk-incidents')).toContainText('Marked as handled');
+  await manualForm.locator(resolveButton).click();
+  await manualForm.locator('textarea[name="note"]').fill('Called the customer and confirmed the slot by phone.');
+  await manualForm.locator(resolveButton).click();
+  await expect(resolvedNotice).toBeVisible();
   await expect(page.locator('.bk-incident-card', { hasText: manualTarget.reference })).toHaveCount(0);
 
   await page.reload();
   await expect(page.locator('.bk-incident-card', { hasText: manualTarget.reference })).toHaveCount(0);
-  await page.locator('#bk-incidents summary', { hasText: 'Resolved in the last 30 days' }).click();
-  const history = page.locator('.bk-incident-history');
-  await expect(history).toContainText(manualTarget.reference);
-  await expect(history).toContainText('Resolved manually by');
+  await page.locator('#bk-incidents-history > summary').click();
+  // A manual resolution names who resolved it: the dev admin identity's subject is 'dev'.
+  const manualEntry = page.locator('.bk-incident-history li', { hasText: manualTarget.reference });
+  await expect(manualEntry.locator('.bk-sub')).toHaveText(/\bdev\b/);
 });

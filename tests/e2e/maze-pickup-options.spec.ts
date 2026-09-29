@@ -175,9 +175,8 @@ test('custom drop-off carries the selected second meeting point and the collecte
   await expect(page.locator('.bk-facts')).toContainText('Maze north gate');
 });
 
-// A false usesMeetingPoint option hides/disables the meeting-point group and omits meetingPointId
-// — the declared-option counterpart to meeting-points.spec.ts's legacy pair, exercising both axes
-// together on a service that also has real meeting points.
+// A false usesMeetingPoint option hides/disables the meeting-point group and omits meetingPointId,
+// on the service that declares every pickup/drop-off combination alongside real meeting points.
 test('custom pick-up hides and disables the meeting-point group, and the checkout payload omits meetingPointId', async ({ page }) => {
   await page.goto('/maze');
   const group = page.locator('[data-reserva-meeting-points]');

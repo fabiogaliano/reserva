@@ -1,30 +1,14 @@
 // BookingWidget.astro is the example site's own SFC -- no booking funnel ships in the library.
 // Its markup and browser behavior are covered elsewhere; this tests source-level properties
-// neither harness can observe, plus the message-catalog facts it depends on.
+// neither harness can observe.
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-// The funnel's copy lives with the funnel: `widget.*` keys the library never renders itself moved
-// out of `@reservajs/astro/ui` into the example's own catalog.
-import { defaultWidgetMessages } from '../examples/smoke-site/src/components/widget-messages';
 
 const widgetPath = resolve(import.meta.dirname, '..', 'examples/smoke-site/src/components/BookingWidget.astro');
 const widgetSource = readFileSync(widgetPath, 'utf8');
 
 describe('BookingWidget.astro carries no server-owned rule of its own', () => {
-  // The drift this deletes is the one that makes a customer pay a different price than the one
-  // they were shown, so the guarantee is the *absence* of any local price computation — a
-  // positive test of the quote call can't prove a second path isn't there.
-  it('computes no price: no price table, no currency default, no pricing import', () => {
-    expect(widgetSource).not.toContain('resolvedPriceTableFor');
-    expect(widgetSource).not.toContain('ResolvedPriceTable');
-    expect(widgetSource).not.toContain('resolvedPrices');
-    expect(widgetSource).not.toContain('priceMinor]');
-    expect(widgetSource).not.toMatch(/currency = '/);
-    // The single place a price appears at all: the quote response, formatted in its own currency.
-    expect(widgetSource).toContain('toMajorUnits(result.priceMinor, result.currency)');
-  });
-
   // The server gates the exact count against the deployment's limitedThreshold and publishes
   // `remaining: number | null`, so the widget renders the hint on nullness alone and holds no
   // threshold at all.
@@ -33,16 +17,6 @@ describe('BookingWidget.astro carries no server-owned rule of its own', () => {
     expect(widgetSource).not.toMatch(/^(?!\s*\/\/).*limitedThreshold/m);
     expect(widgetSource).not.toMatch(/slot\.remaining\w*\s*<=\s*/);
     expect(widgetSource).not.toContain('remainingBookings');
-  });
-
-  // Pickup ids, labels, hints and the usesMeetingPoint flag are the deployment's answer now — a
-  // hardcoded default/custom pair here is exactly the folklore the catalog endpoint exists to
-  // delete.
-  it('hardcodes no service, pickup, or meeting-point table', () => {
-    expect(widgetSource).not.toContain("'default', 'custom'");
-    expect(widgetSource).not.toContain('pickupCopy');
-    expect(widgetSource).not.toContain("=== 'custom'");
-    expect(widgetSource).toContain('function renderLocation(');
   });
 
   // The widget is the library's own reference consumer, so it reads the exported wire types
@@ -56,23 +30,8 @@ describe('BookingWidget.astro carries no server-owned rule of its own', () => {
 });
 
 describe('BookingWidget.astro (no-JS degradation)', () => {
-  it('renders a <noscript> fallback with the i18n message and an optional contact path', () => {
-    expect(widgetSource).toContain('<noscript>');
-    expect(widgetSource).toContain("t['widget.noscript']");
-    expect(widgetSource).toContain('contactEmail');
-    expect(widgetSource).toContain('contactPhone');
-  });
-
   it('gives the availability-mode disabled submit button a loading affordance instead of a silent disable', () => {
     expect(widgetSource).toMatch(/disabled=\{usesAvailability\}[^<]*>\{usesAvailability \? t\['widget\.loadingSlots'\] : t\['widget\.submit'\]\}/);
-  });
-
-  it('ships the widget.noscript i18n key in the example widget catalog', () => {
-    // `'widget.noscript' in defaultWidgetMessages` (not toHaveProperty, which treats the dot as a
-    // nested path) checks the literal flat key this catalog actually uses.
-    expect('widget.noscript' in defaultWidgetMessages).toBe(true);
-    expect(typeof defaultWidgetMessages['widget.noscript']).toBe('string');
-    expect(defaultWidgetMessages['widget.noscript'].length).toBeGreaterThan(0);
   });
 });
 

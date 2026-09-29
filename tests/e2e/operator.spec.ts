@@ -33,7 +33,7 @@ test('operator can cancel a booking with a full refund, the page reflects the ca
   expect(cancelEmail).toBeTruthy();
 });
 
-test('operator can cancel with a partial refund, and the amount typed in major units is what gets refunded', async ({ page, request }) => {
+test('operator can cancel with a partial refund typed in major units', async ({ page, request }) => {
   const { reference, outboxEntry } = await createBooking(page, { service: TOUR, quantity: 2 });
 
   const manageUrl = new URL(outboxEntry.operatorManageUrl);
@@ -46,8 +46,8 @@ test('operator can cancel with a partial refund, and the amount typed in major u
 
   await page.getByText('Cancel booking').click();
   await page.getByRole('combobox', { name: /Refund/ }).selectOption('partial');
-  // Major units in the form, minor units on the wire — this is the only place that conversion runs
-  // end to end.
+  // The minor-unit amount this becomes is pinned by the component route suite, which can read the
+  // recorded refund decision; here the point is that a real browser submits the partial choice.
   await page.getByRole('spinbutton', { name: 'Partial refund amount' }).fill('5.50');
   await page.getByRole('button', { name: 'Yes, cancel this booking' }).click();
 
