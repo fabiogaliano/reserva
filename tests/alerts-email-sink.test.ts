@@ -1,7 +1,7 @@
 // The one shipped OperationalAlertSink, plus the runtime wiring that installs it by default.
 // Both read `virtual:reserva/config`, so the mock below is what lets a case change locale.
 import type { D1Database } from '@cloudflare/workers-types';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { emailAlertSink } from '../src/alerts/email-sink';
 import type { ReservaLogger } from '../src/context';
 import type { ResolvedClientConfig } from '../src/core/config';
@@ -19,6 +19,10 @@ vi.mock('virtual:reserva/config', async () => {
 
 beforeEach(() => {
   virtual.config = baseConfig;
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 const alert: OperationalAlert = {
@@ -144,5 +148,15 @@ describe('defineReservaRuntime alert-sink wiring', () => {
     // The cron must still run: a deployment without email gets its alerts in the Worker logs.
     await context.providers.alerts!.send(alert);
     expect(errors).toEqual([['reserva operational alert', alert]]);
+  });
+
+  it('logs alerts to the console default when neither a sendMessage transport nor a logger is configured, instead of dropping them', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const context = await contextFor({ email: { send: async () => undefined } });
+
+    await context.providers.alerts?.send(alert);
+
+    expect(consoleError).toHaveBeenCalledWith('reserva operational alert', alert);
   });
 });

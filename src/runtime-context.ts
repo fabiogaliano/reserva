@@ -176,12 +176,14 @@ function withDefaultAlertSink(
   to: string,
 ): ReservaProviders {
   if (providers.alerts) return providers;
+  // Same console default createReservaContext applies, or an unconfigured logger would swallow every alert.
+  const log: ReservaLogger = logger ?? console;
   const email = providers.email?.sendMessage ? providers.email : null;
-  const alerts = email ? emailAlertSink(email, { to }) : loggerAlertSink(logger);
+  const alerts = email ? emailAlertSink(email, { to }) : loggerAlertSink(log);
   if (!autoAlertSinkLogged) {
     autoAlertSinkLogged = true;
-    if (email) logger?.info?.('reserva operational alerts wired to the email provider', { to });
-    else logger?.warn?.('reserva operational alerts go to the logger only: no email provider with sendMessage');
+    if (email) log.info?.('reserva operational alerts wired to the email provider', { to });
+    else log.warn?.('reserva operational alerts go to the logger only: no email provider with sendMessage');
   }
   return { ...providers, alerts };
 }
