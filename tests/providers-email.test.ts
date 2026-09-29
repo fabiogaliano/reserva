@@ -64,7 +64,7 @@ describe('email providers', () => {
 
   it('uses the resolved manage path in emails and preserves the unprefixed fallback', async () => {
     const prefixedRequest = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
-    await brevoEmail({ apiKey: 'key', fetchImpl: prefixedRequest }).send(
+    await brevoEmail({ apiKey: 'key', fetch: prefixedRequest }).send(
       'booking.confirmed',
       booking(),
       config,
@@ -75,7 +75,7 @@ describe('email providers', () => {
     expect(prefixedBody).not.toContain(`${config.business.url}/booking/manage?token=`);
 
     const fallbackRequest = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
-    await brevoEmail({ apiKey: 'key', fetchImpl: fallbackRequest }).send('booking.confirmed', booking(), config);
+    await brevoEmail({ apiKey: 'key', fetch: fallbackRequest }).send('booking.confirmed', booking(), config);
     expect(fallbackRequest.mock.calls.map((call) => String(call[1]?.body)).join('\n')).toContain('/booking/manage?token=');
   });
 

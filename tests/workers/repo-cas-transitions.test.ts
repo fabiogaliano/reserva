@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createBookingRepository } from '../../src/repo';
+import { seedHold } from './seed';
 
 interface TestEnv {
   RESERVA_DB: D1Database;
@@ -19,7 +20,7 @@ beforeEach(async () => {
 // winner's row. Genuinely forbidden pairs run both orderings; confirm-vs-cancel doesn't, since a
 // cancel after a confirm is a legitimate sequential transition, not a race loss.
 async function seedConfirmed(id: string): Promise<void> {
-  await repo.insertHold({
+  await seedHold(repo, {
     id,
     reference: `BKT-2026-${id}`,
     serviceSlug: 'vintage',
@@ -194,7 +195,7 @@ describe('pairwise CAS interleavings on real D1', () => {
 
   it('confirm vs cancel: an operator cancel of a held booking wins first, the racing payment confirmation loses and cannot resurrect it', async () => {
     const id = 'cas-confirm-vs-cancel';
-    await repo.insertHold({
+    await seedHold(repo, {
       id,
       reference: `BKT-2026-${id}`,
       serviceSlug: 'vintage',

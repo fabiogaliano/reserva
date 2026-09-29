@@ -4,6 +4,7 @@ import { localDateKey } from '../../src/core/time';
 import { getOccupancyIntervals, isSlotAvailable, maxConcurrentOccupancy, occupancyFor } from '../../src/core/occupancy';
 import { createBookingRepository } from '../../src/repo';
 import { config, service } from '../fixtures';
+import { seedHold } from './seed';
 
 interface TestEnv {
   RESERVA_DB: D1Database;
@@ -144,7 +145,7 @@ describe('atomic capacity allocation against real D1', () => {
 
     it('the override commits first (capacity shrinks to 1 before the reschedule runs): the reschedule is rejected and final occupancy stays within the new capacity', async () => {
       await seed();
-      await repo.upsertDayOverride(localDate, 1, 'capacity reduced');
+      await repo.upsertDayOverrides([localDate], 1, 'capacity reduced', { actor: 'operator@example.test', changedAt: '2026-08-09T10:00:00.000Z' });
 
       const rescheduled = await repo.rescheduleWithCapacity('ra', buildReschedule('2026-08-10T13:00:00.000Z', TARGET_START, TARGET_END, 2, 2));
       expect(rescheduled).toBeNull();
@@ -162,7 +163,7 @@ describe('atomic capacity allocation against real D1', () => {
       const rescheduled = await repo.rescheduleWithCapacity('ra', buildReschedule('2026-08-10T13:00:00.000Z', TARGET_START, TARGET_END, 2, 2));
       expect(rescheduled).toMatchObject({ startsAt: TARGET_START });
 
-      await repo.upsertDayOverride(localDate, 1, 'capacity reduced');
+      await repo.upsertDayOverrides([localDate], 1, 'capacity reduced', { actor: 'operator@example.test', changedAt: '2026-08-09T10:00:00.000Z' });
 
       const inWindow = (await db.prepare("SELECT id FROM bookings WHERE starts_at = ? AND status = 'confirmed'").bind(TARGET_START).all<{ id: string }>()).results;
       expect(inWindow.map((row) => row.id).sort()).toEqual(['c0', 'ra']); // not retroactively evicted.
@@ -246,15 +247,15 @@ describe('atomic capacity allocation against real D1', () => {
   describe('rescheduleWithCapacity self-heals legacy occupancy_units (patch-05-r1 Fix 3)', () => {
     it('sets occupancy_units on a pre-migration-style NULL row it moves, matching occupancyFor(service, quantity)', async () => {
       const now = '2026-08-09T10:00:00.000Z';
-      // insertHold (not insertHoldWithCapacity) never writes occupancy_units/occupancy_ends_at,
-      // reproducing a pre-migration-0008 row -- exactly the NULL-column case migrations/
-      // 0008_occupancy_capacity.sql documents.
-      await repo.insertHold({
+      // Clearing occupancy_units/occupancy_ends_at after the insert reproduces a pre-migration-0008
+      // row -- exactly the NULL-column case migrations/0008_occupancy_capacity.sql documents.
+      await seedHold(repo, {
         id: 'legacy-row', reference: 'BKT-2026-legacy-row', serviceSlug: TOUR_SLUG, quantity: 5,
         pickupType: 'default', startsAt: '2026-08-10T13:00:00.000Z', endsAt: '2026-08-10T14:00:00.000Z',
         locale: 'en', priceMinor: 10000, currency: 'eur', holdExpiresAt: '2026-12-31T00:00:00.000Z',
         cancelToken: 'cancel-legacy-row', operatorToken: 'operator-legacy-row', createdAt: now, updatedAt: now,
       });
+      await db.prepare('UPDATE bookings SET occupancy_units = NULL, occupancy_ends_at = NULL WHERE id = ?').bind('legacy-row').run();
       await repo.transitionToConfirmed('legacy-row', { expectedStatusIn: ['hold'], updatedAt: now });
 
       const before = (await db.prepare('SELECT occupancy_units, occupancy_ends_at FROM bookings WHERE id = ?')

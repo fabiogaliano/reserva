@@ -6,6 +6,7 @@ import { config } from '../fixtures';
 import type { Booking } from '../../src/core/booking';
 import { createBookingRepository, sideEffectOperationKey, type SideEffectOperationRecord } from '../../src/repo';
 import worker, { WEBHOOK_SECRET, calendarEvents, emailOutbox, hookOutbox, resetWebhookWorkerOutboxes } from './worker';
+import { seedHold } from './seed';
 
 // The money path — a signed checkout.session.completed confirming a booking with durable side
 // effects — proven assembled: real worker, real Stripe HMAC verification, real
@@ -32,7 +33,7 @@ function futureIso(msFromNow: number): string {
 
 async function seedHeldBooking(id: string): Promise<Booking> {
   const now = new Date().toISOString();
-  return repo.insertHold({
+  return seedHold(repo, {
     id,
     reference: `WHT-2026-${id}`,
     serviceSlug: 'vintage',

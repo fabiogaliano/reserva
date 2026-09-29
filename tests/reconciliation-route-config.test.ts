@@ -30,7 +30,7 @@ describe('scheduledHandler with a routePrefix', () => {
       createdAt: '2026-08-14T09:00:00.000Z', updatedAt: '2026-08-14T09:00:00.000Z', failureStartedAt: '2026-08-14T09:00:00.000Z',
     });
     const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
-    const email = brevoEmail({ apiKey: 'key', fetchImpl: request });
+    const email = brevoEmail({ apiKey: 'key', fetch: request });
     const runtime = {
       createContext: () => createReservaContext({
         config, db: {} as D1Database, repo, clock,

@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createBookingRepository, type BookingInsert, type BookingRepository } from '../../src/repo';
+import { seedHold } from './seed';
 
 interface TestEnv {
   RESERVA_DB: D1Database;
@@ -20,12 +21,12 @@ beforeEach(async () => {
   await db.prepare('DELETE FROM admin_change_history').run();
 });
 
-// The required audit param, threaded through the plural/singular batched writes below.
+// The required audit param, threaded through the batched writes below.
 // The history rows it produces are covered end to end by tests/workers/admin-history.test.ts —
 // this file stays focused on the day-override/capacity-default mechanics it already covered.
 const TEST_AUDIT = { actor: 'operator@example.test', changedAt: '2026-08-01T00:00:00.000Z' };
 
-function seedHold(
+function seedSlotHold(
   repository: BookingRepository,
   id: string,
   startsAt: string,
@@ -33,7 +34,7 @@ function seedHold(
   holdExpiresAt: string,
   overrides: Partial<BookingInsert> = {},
 ) {
-  return repository.insertHold({
+  return seedHold(repository, {
     id,
     reference: `BKT-2026-${id}`,
     serviceSlug: 'vintage',
@@ -55,23 +56,25 @@ function seedHold(
 
 describe('day overrides against real D1', () => {
   it('round trips through upsert, a conflict-path update, and delete', async () => {
-    await repo.upsertDayOverride('2026-08-01', 2, 'initial');
+    await repo.upsertDayOverrides(['2026-08-01'], 2, 'initial', TEST_AUDIT);
     await expect(repo.getDayOverride('2026-08-01')).resolves.toEqual({ date: '2026-08-01', capacity: 2, reason: 'initial' });
 
     // Same date again -> ON CONFLICT(date) DO UPDATE, not a second row.
-    await repo.upsertDayOverride('2026-08-01', 5, 'revised');
+    await repo.upsertDayOverrides(['2026-08-01'], 5, 'revised', TEST_AUDIT);
     await expect(repo.getDayOverride('2026-08-01')).resolves.toEqual({ date: '2026-08-01', capacity: 5, reason: 'revised' });
 
-    await repo.deleteDayOverride('2026-08-01');
+    await repo.deleteDayOverrides(['2026-08-01'], TEST_AUDIT);
     await expect(repo.getDayOverride('2026-08-01')).resolves.toBeNull();
   });
 
   it('listDayOverrides includes rows exactly on the from/to boundaries, excludes rows outside them, and orders by date', async () => {
-    await repo.upsertDayOverride('2026-07-31', 1, 'before range');
-    await repo.upsertDayOverride('2026-08-05', 4, 'on to');
-    await repo.upsertDayOverride('2026-08-01', 2, 'on from');
-    await repo.upsertDayOverride('2026-08-06', 5, 'after range');
-    await repo.upsertDayOverride('2026-08-03', 3, 'middle');
+    for (const [date, capacity, reason] of [
+      ['2026-07-31', 1, 'before range'],
+      ['2026-08-05', 4, 'on to'],
+      ['2026-08-01', 2, 'on from'],
+      ['2026-08-06', 5, 'after range'],
+      ['2026-08-03', 3, 'middle'],
+    ] as const) await repo.upsertDayOverrides([date], capacity, reason, TEST_AUDIT);
 
     await expect(repo.listDayOverrides('2026-08-01', '2026-08-05')).resolves.toEqual([
       { date: '2026-08-01', capacity: 2, reason: 'on from' },
@@ -138,14 +141,8 @@ describe('plural batched day-override methods against real D1', () => {
     expect(afterDelete.filter((entry) => entry.action === 'delete')).toHaveLength(2);
   });
 
-  it('upsertDayOverrides overwrites an existing row on conflict, same as the singular method', async () => {
-    await repo.upsertDayOverride('2026-08-01', 5, 'original');
-    await repo.upsertDayOverrides(['2026-08-01'], 2, 'batched update', TEST_AUDIT);
-    await expect(repo.getDayOverride('2026-08-01')).resolves.toEqual({ date: '2026-08-01', capacity: 2, reason: 'batched update' });
-  });
-
   it('an empty dates array is a no-op for both plural methods', async () => {
-    await repo.upsertDayOverride('2026-08-01', 5, 'untouched');
+    await repo.upsertDayOverrides(['2026-08-01'], 5, 'untouched', TEST_AUDIT);
     await repo.upsertDayOverrides([], 9, 'should never land', TEST_AUDIT);
     await repo.deleteDayOverrides([], TEST_AUDIT);
     await expect(repo.listDayOverrides('2026-01-01', '2026-12-31')).resolves.toEqual([
@@ -158,19 +155,19 @@ describe('listOccupancyBookings(from, to) against real D1', () => {
   it('includes starts_at exactly at from, excludes exactly at to, excludes cancelled/no_show, includes hold/confirmed, ordered by starts_at', async () => {
     // Inserted out of starts_at order, so a passing assertion actually proves ORDER BY starts_at
     // rather than just mirroring insertion order.
-    await seedHold(repo, 'occ-confirmed', '2026-08-01T12:00:00.000Z', '2026-08-01T13:00:00.000Z', '2026-12-31T00:00:00.000Z');
+    await seedSlotHold(repo, 'occ-confirmed', '2026-08-01T12:00:00.000Z', '2026-08-01T13:00:00.000Z', '2026-12-31T00:00:00.000Z');
     await repo.transitionToConfirmed('occ-confirmed', { expectedStatusIn: ['hold'], updatedAt: '2026-08-01T00:01:00.000Z' });
 
-    await seedHold(repo, 'occ-on-from', '2026-08-01T00:00:00.000Z', '2026-08-01T01:00:00.000Z', '2026-12-31T00:00:00.000Z');
+    await seedSlotHold(repo, 'occ-on-from', '2026-08-01T00:00:00.000Z', '2026-08-01T01:00:00.000Z', '2026-12-31T00:00:00.000Z');
 
-    await seedHold(repo, 'occ-on-to', '2026-08-02T00:00:00.000Z', '2026-08-02T01:00:00.000Z', '2026-12-31T00:00:00.000Z');
+    await seedSlotHold(repo, 'occ-on-to', '2026-08-02T00:00:00.000Z', '2026-08-02T01:00:00.000Z', '2026-12-31T00:00:00.000Z');
 
-    await seedHold(repo, 'occ-cancelled', '2026-08-01T14:00:00.000Z', '2026-08-01T15:00:00.000Z', '2026-12-31T00:00:00.000Z');
+    await seedSlotHold(repo, 'occ-cancelled', '2026-08-01T14:00:00.000Z', '2026-08-01T15:00:00.000Z', '2026-12-31T00:00:00.000Z');
     await repo.transitionToCancelled('occ-cancelled', {
       expectedStatusIn: ['hold'], cancelledAt: '2026-08-01T00:02:00.000Z', cancelledBy: 'customer', updatedAt: '2026-08-01T00:02:00.000Z',
     });
 
-    await seedHold(repo, 'occ-noshow', '2026-08-01T16:00:00.000Z', '2026-08-01T17:00:00.000Z', '2026-12-31T00:00:00.000Z');
+    await seedSlotHold(repo, 'occ-noshow', '2026-08-01T16:00:00.000Z', '2026-08-01T17:00:00.000Z', '2026-12-31T00:00:00.000Z');
     await repo.transitionToConfirmed('occ-noshow', { expectedStatusIn: ['hold'], updatedAt: '2026-08-01T00:01:00.000Z' });
     await repo.transitionToNoShow('occ-noshow', { expectedStatusIn: ['confirmed'], updatedAt: '2026-08-01T00:03:00.000Z' });
 
@@ -184,18 +181,18 @@ describe('listLiveBookings against real D1', () => {
   const before = '2026-09-01T00:00:00.000Z';
 
   it('includes confirmed and live holds in [from, before), excludes an expired hold and rows outside the window, ordered by starts_at', async () => {
-    await seedHold(repo, 'future-confirmed', '2026-08-05T09:00:00.000Z', '2026-08-05T10:00:00.000Z', '2026-12-31T00:00:00.000Z');
+    await seedSlotHold(repo, 'future-confirmed', '2026-08-05T09:00:00.000Z', '2026-08-05T10:00:00.000Z', '2026-12-31T00:00:00.000Z');
     await repo.transitionToConfirmed('future-confirmed', { expectedStatusIn: ['hold'], updatedAt: now });
 
-    await seedHold(repo, 'live-hold', '2026-08-03T09:00:00.000Z', '2026-08-03T10:00:00.000Z', '2026-08-01T00:00:01.000Z');
+    await seedSlotHold(repo, 'live-hold', '2026-08-03T09:00:00.000Z', '2026-08-03T10:00:00.000Z', '2026-08-01T00:00:01.000Z');
 
-    await seedHold(repo, 'expired-hold', '2026-08-04T09:00:00.000Z', '2026-08-04T10:00:00.000Z', '2026-07-31T23:59:59.999Z');
+    await seedSlotHold(repo, 'expired-hold', '2026-08-04T09:00:00.000Z', '2026-08-04T10:00:00.000Z', '2026-07-31T23:59:59.999Z');
 
-    await seedHold(repo, 'past-confirmed', '2026-07-01T09:00:00.000Z', '2026-07-01T10:00:00.000Z', '2026-12-31T00:00:00.000Z');
+    await seedSlotHold(repo, 'past-confirmed', '2026-07-01T09:00:00.000Z', '2026-07-01T10:00:00.000Z', '2026-12-31T00:00:00.000Z');
     await repo.transitionToConfirmed('past-confirmed', { expectedStatusIn: ['hold'], updatedAt: now });
 
     // Exactly on `before`: the upper bound is exclusive.
-    await seedHold(repo, 'on-before', before, '2026-09-01T01:00:00.000Z', '2026-12-31T00:00:00.000Z');
+    await seedSlotHold(repo, 'on-before', before, '2026-09-01T01:00:00.000Z', '2026-12-31T00:00:00.000Z');
     await repo.transitionToConfirmed('on-before', { expectedStatusIn: ['hold'], updatedAt: now });
 
     const result = await repo.listLiveBookings(now, before, now, 10);
@@ -204,7 +201,7 @@ describe('listLiveBookings against real D1', () => {
   });
 
   it('without a token encryption key, hydrates nohash:-prefixed placeholder tokens (mirrors repo-d1.test.ts\'s no-key expectations)', async () => {
-    await seedHold(repo, 'token-plain', '2026-08-05T09:00:00.000Z', '2026-08-05T10:00:00.000Z', '2026-12-31T00:00:00.000Z', {
+    await seedSlotHold(repo, 'token-plain', '2026-08-05T09:00:00.000Z', '2026-08-05T10:00:00.000Z', '2026-12-31T00:00:00.000Z', {
       cancelToken: 'plain-cancel', operatorToken: 'plain-operator',
     });
 
@@ -219,7 +216,7 @@ describe('listLiveBookings against real D1', () => {
   });
 
   it('with a token encryption key configured, hydrateBookingTokens restores the real presented tokens (full encrypt-at-insert/decrypt-at-read round trip)', async () => {
-    await seedHold(encRepo, 'token-enc', '2026-08-05T09:00:00.000Z', '2026-08-05T10:00:00.000Z', '2026-12-31T00:00:00.000Z', {
+    await seedSlotHold(encRepo, 'token-enc', '2026-08-05T09:00:00.000Z', '2026-08-05T10:00:00.000Z', '2026-12-31T00:00:00.000Z', {
       cancelToken: 'real-cancel', operatorToken: 'real-operator',
     });
 
@@ -239,7 +236,7 @@ describe('listAdminBookings/countAdminBookings against real D1', () => {
   const now = '2026-08-01T00:00:00.000Z';
 
   async function seedConfirmed(id: string, startsAt: string): Promise<void> {
-    await seedHold(repo, id, startsAt, new Date(Date.parse(startsAt) + 3_600_000).toISOString(), '2026-12-31T00:00:00.000Z');
+    await seedSlotHold(repo, id, startsAt, new Date(Date.parse(startsAt) + 3_600_000).toISOString(), '2026-12-31T00:00:00.000Z');
     await repo.transitionToConfirmed(id, { expectedStatusIn: ['hold'], updatedAt: now });
   }
 
@@ -247,7 +244,7 @@ describe('listAdminBookings/countAdminBookings against real D1', () => {
     await seedConfirmed('adm-past', '2026-07-20T09:00:00.000Z');
     await seedConfirmed('adm-upcoming', '2026-08-05T09:00:00.000Z');
     // A hold that lapsed and was swept: still an upcoming row, with status expired.
-    await seedHold(repo, 'adm-expired', '2026-08-06T09:00:00.000Z', '2026-08-06T10:00:00.000Z', '2026-07-31T00:00:00.000Z');
+    await seedSlotHold(repo, 'adm-expired', '2026-08-06T09:00:00.000Z', '2026-08-06T10:00:00.000Z', '2026-07-31T00:00:00.000Z');
     await repo.sweepExpiredHolds(now);
 
     const all = await repo.listAdminBookings({ from: now }, { order: 'asc', limit: 10, offset: 0 });
@@ -271,7 +268,7 @@ describe('listAdminBookings/countAdminBookings against real D1', () => {
   it('reads the highest numeric reference under a prefix, past deleted rows and odd suffixes', async () => {
     await expect(repo.maxReferenceSequence('BKT-2026-')).resolves.toBe(0);
     const hold = (id: string, reference: string) =>
-      seedHold(repo, id, '2026-08-05T09:00:00.000Z', '2026-08-05T10:00:00.000Z', '2026-12-31T00:00:00.000Z', { reference });
+      seedSlotHold(repo, id, '2026-08-05T09:00:00.000Z', '2026-08-05T10:00:00.000Z', '2026-12-31T00:00:00.000Z', { reference });
     await hold('ref-a', 'BKT-2026-003');
     await hold('ref-b', 'BKT-2026-040');
     await hold('ref-c', 'BKT-2026-X99');

@@ -5,6 +5,7 @@ import { createReservaContext } from '../../src/context';
 import { createBookingRepository, HoldLimitExceededError, type SideEffectOperationIdentity, type SideEffectOperationSeed } from '../../src/repo';
 import { config } from '../fixtures';
 import { providers } from '../fakes';
+import { seedHold } from './seed';
 
 interface TestEnv {
   RESERVA_DB: D1Database;
@@ -23,7 +24,7 @@ beforeEach(async () => {
 
 describe('D1 booking repository', () => {
   it('creates, reads, updates, and expires a hold through the real D1 binding', async () => {
-    const created = await repo.insertHold({
+    const created = await seedHold(repo, {
       id: 'booking-1',
       reference: 'BKT-2026-001',
       serviceSlug: 'vintage',
@@ -52,9 +53,9 @@ describe('D1 booking repository', () => {
     await expect(repo.getBookingById(created.id)).resolves.toMatchObject({ status: 'expired', holdExpiresAt: null });
   });
 
-  // insertHoldWithCapacity is the checkout path; its per-IP cap is a separate WHERE clause from
-  // insertHold's, plus a post-failure reclassification that must throw rather than report a
-  // capacity loss. Capacity is ample so only the cap can refuse the second hold.
+  // The per-IP cap shares insertHoldWithCapacity's WHERE clause with the capacity guard, and a
+  // post-failure reclassification must throw rather than report a capacity loss. Capacity is
+  // ample so only the cap can refuse the second hold.
   it('refuses a second active hold from the same IP through insertHoldWithCapacity once the per-IP cap is reached', async () => {
     const hold = (id: string, holdIp: string, createdAt: string) => repo.insertHoldWithCapacity({
       id, reference: `BKT-2026-${id}`, serviceSlug: 'vintage', quantity: 1, pickupType: 'default',
@@ -72,7 +73,7 @@ describe('D1 booking repository', () => {
   });
 
   it('serializes confirmation leases and expires holds with compare-and-set semantics', async () => {
-    const created = await repo.insertHold({
+    const created = await seedHold(repo, {
       id: 'booking-lease',
       reference: 'BKT-2026-002',
       serviceSlug: 'vintage',
@@ -107,7 +108,7 @@ describe('D1 booking repository', () => {
   // A confirmer that stalls past its lease must not write outcomes once another caller has taken
   // the lease over; only the SQL token predicates enforce that, so it is proven here on real D1.
   it('fences an expired lease holder\'s late calendar claim and resolve after another caller takes the lease over', async () => {
-    const created = await repo.insertHold({
+    const created = await seedHold(repo, {
       id: 'booking-lease-fence', reference: 'BKT-2026-FENCE', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
       startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
       holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'cancel-token-fence', operatorToken: 'operator-token-fence',
@@ -143,7 +144,7 @@ describe('D1 booking repository', () => {
   });
 
   it('rolls back the confirmation status when creating its outbox rows fails inside the same batch', async () => {
-    const created = await repo.insertHold({
+    const created = await seedHold(repo, {
       id: 'booking-outbox-atomic',
       reference: 'BKT-2026-OUTBOX',
       serviceSlug: 'vintage',
@@ -181,7 +182,7 @@ describe('D1 booking repository', () => {
   // a failure inserting only the hook row must still roll back the whole batch, leaving the
   // booking unconfirmed and no partial rows behind.
   it('rolls back the confirmation status when creating its hook outbox row fails inside the same batch', async () => {
-    const created = await repo.insertHold({
+    const created = await seedHold(repo, {
       id: 'booking-hook-outbox-atomic',
       reference: 'BKT-2026-TFOUTBOX',
       serviceSlug: 'vintage',
@@ -223,7 +224,7 @@ describe('D1 booking repository', () => {
   // batch too — a failure inserting just the owner recipient's row must still roll back the whole
   // batch, leaving the booking unconfirmed and no partial rows behind.
   it('rolls back the confirmation status when creating a split email outbox row fails inside the same batch', async () => {
-    const created = await repo.insertHold({
+    const created = await seedHold(repo, {
       id: 'booking-email-split-outbox-atomic',
       reference: 'BKT-2026-EMAILSPLIT',
       serviceSlug: 'vintage',
@@ -259,7 +260,7 @@ describe('D1 booking repository', () => {
   });
 
   it('legacy repair adds no combined confirmation email row beside split rows after a swap to a send-only provider (re-mailed the customer)', async () => {
-    const created = await repo.insertHold({
+    const created = await seedHold(repo, {
       id: 'booking-email-repair-no-combined',
       reference: 'BKT-2026-EMAILREPAIR',
       serviceSlug: 'vintage',
@@ -334,7 +335,7 @@ describe('D1 booking repository', () => {
   // this is the row the old CHECK would have rejected, round-tripped through the real application
   // write/read paths (see schema-constraints.test.ts for the SQL-layer proof).
   it('inserts and reads back a booking with a non-enum pickup_type id (migration 0015)', async () => {
-    const created = await repo.insertHold({
+    const created = await seedHold(repo, {
       id: 'booking-pickup-non-enum', reference: 'BKT-2026-PICKUPNE', serviceSlug: 'vintage', quantity: 2,
       pickupType: 'custom_both',
       startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 21000, currency: 'eur',
@@ -350,7 +351,7 @@ describe('D1 booking repository', () => {
   // (e.g. a hand-restored row) -- mapBooking's read-time floor must reject it, since an empty id
   // is undeclarable under every possible config.
   it('rejects a stored empty-string pickup_type at read time (InvalidBookingRowError)', async () => {
-    await repo.insertHold({
+    await seedHold(repo, {
       id: 'booking-pickup-empty', reference: 'BKT-2026-PICKUPEMPTY', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
       startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
       holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'pickup-empty-cancel', operatorToken: 'pickup-empty-operator',
@@ -365,7 +366,7 @@ describe('D1 booking repository', () => {
   // at all" as NULL — the read-time floor must let NULL through untouched, since it's a declared
   // state, not a corrupt row.
   it('hydrates a NULL pickup_type as pickupType: null rather than rejecting the row', async () => {
-    await repo.insertHold({
+    await seedHold(repo, {
       id: 'booking-pickup-null', reference: 'BKT-2026-PICKUPNULL', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
       startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
       holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'pickup-null-cancel', operatorToken: 'pickup-null-operator',
@@ -377,7 +378,7 @@ describe('D1 booking repository', () => {
   });
 
   it('round-trips the payer-given headcount through confirmation without letting a late detail overwrite it', async () => {
-    const created = await repo.insertHold({
+    const created = await seedHold(repo, {
       id: 'booking-guests', reference: 'BKT-2026-GUESTS', serviceSlug: 'vintage', quantity: 4, pickupType: 'default',
       startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
       holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'guests-cancel', operatorToken: 'guests-operator',
@@ -396,7 +397,7 @@ describe('D1 booking repository', () => {
   });
 
   describe('refund total and dispute status', () => {
-    const insertMoneyBooking = (id: string) => repo.insertHold({
+    const insertMoneyBooking = (id: string) => seedHold(repo, {
       id, reference: `BKT-2026-${id}`, serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
       startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
       holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: `${id}-cancel`, operatorToken: `${id}-operator`,
@@ -405,7 +406,7 @@ describe('D1 booking repository', () => {
 
     it('counts bookings per stored metadata value: confirmed ahead as upcoming, confirmed or no-show behind as past', async () => {
       const place = async (id: string, value: string, status: string, startsAt: string) => {
-        const created = await repo.insertHold({
+        const created = await seedHold(repo, {
           id, reference: `BKT-2026-${id}`, serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
           startsAt, endsAt: startsAt.replace('T09:', 'T10:'), locale: 'en', priceMinor: 12000, currency: 'eur', metadata: { channel: value },
           holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: `${id}-cancel`, operatorToken: `${id}-operator`,
@@ -496,7 +497,7 @@ describe('D1 booking repository', () => {
     const encRepo = createBookingRepository(db, (name) => (name === 'RESERVA_TOKEN_ENC_KEY' ? 'test-only-token-encryption-secret' : undefined));
 
     it('never stores a plaintext token for a new booking, even without RESERVA_TOKEN_ENC_KEY configured, and lookup still authenticates', async () => {
-      const created = await repo.insertHold({
+      const created = await seedHold(repo, {
         id: 'booking-noenc-1', reference: 'BKT-2026-NOENC1', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
         startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
         holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'noenc-cancel-token', operatorToken: 'noenc-operator-token',
@@ -517,7 +518,7 @@ describe('D1 booking repository', () => {
     });
 
     it('with RESERVA_TOKEN_ENC_KEY configured: hashes for lookup, encrypts for link regeneration, denies the hash presented as a token, and enforces expiry + cancel-token-only revocation', async () => {
-      const created = await encRepo.insertHold({
+      const created = await seedHold(encRepo, {
         id: 'booking-hash-1', reference: 'BKT-2026-HASH1', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
         startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
         holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'hash-cancel-token', operatorToken: 'hash-operator-token',
@@ -560,7 +561,7 @@ describe('D1 booking repository', () => {
       // Simulate a pre-migration row: insert normally (which now writes a hash), then overwrite
       // the token columns back to exactly what a row created before this migration looked like —
       // real plaintext, no hash, no encrypted blob.
-      const created = await encRepo.insertHold({
+      const created = await seedHold(encRepo, {
         id: 'booking-legacy-1', reference: 'BKT-2026-LEGACY1', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
         startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
         holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'legacy-cancel-token', operatorToken: 'legacy-operator-token',
@@ -696,7 +697,7 @@ describe('D1 booking repository', () => {
     // hash-only checks above — for BOTH token families, every stored representation (hash,
     // placeholder, ciphertext) must be rejected by BOTH lookup methods, not just its "own" one.
     it('a dumped row never authenticates via its own hash, placeholder, or encrypted blob — for either token family, against either lookup method', async () => {
-      const created = await encRepo.insertHold({
+      const created = await seedHold(encRepo, {
         id: 'booking-dump-1', reference: 'BKT-2026-DUMP1', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
         startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
         holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'dump-cancel-token', operatorToken: 'dump-operator-token',
@@ -727,7 +728,7 @@ describe('D1 booking repository', () => {
     });
 
     it('fails closed (falls back to the placeholder, never throws or leaks a wrong value) when decrypting a corrupted or foreign-key-encrypted token blob', async () => {
-      const created = await encRepo.insertHold({
+      const created = await seedHold(encRepo, {
         id: 'booking-corrupt-1', reference: 'BKT-2026-CORRUPT1', serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
         startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
         holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: 'corrupt-cancel-token', operatorToken: 'corrupt-operator-token',
@@ -764,7 +765,7 @@ describe('D1 booking repository', () => {
 
 describe('mutation side-effect outbox on real D1', () => {
   async function seedBooking(id: string): Promise<void> {
-    await repo.insertHold({
+    await seedHold(repo, {
       id, reference: `BKT-2026-${id}`, serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
       startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
       holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: `cancel-${id}`, operatorToken: `operator-${id}`,

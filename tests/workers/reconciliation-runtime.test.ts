@@ -4,6 +4,7 @@ import { createReservaContext } from '../../src/context';
 import { runReconciliation } from '../../src/reconciliation';
 import { config } from '../fixtures';
 import { providers } from '../fakes';
+import { seedHold } from './seed';
 
 interface TestEnv {
   RESERVA_DB: D1Database;
@@ -21,7 +22,7 @@ beforeEach(async () => {
 
 async function seedConfirmed(id: string): Promise<void> {
   const context = createReservaContext({ config, db, clock, providers: providers() });
-  await context.repo.insertHold({
+  await seedHold(context.repo, {
     id,
     reference: `BKT-2026-${id}`,
     serviceSlug: 'vintage',
@@ -47,7 +48,7 @@ async function seedConfirmed(id: string): Promise<void> {
 describe('runReconciliation against real D1', () => {
   it('sweeps an expired hold', async () => {
     const context = createReservaContext({ config, db, clock, providers: providers() });
-    await context.repo.insertHold({
+    await seedHold(context.repo, {
       id: 'recon-d1-expired', reference: 'BKT-2026-recon-d1-expired', serviceSlug: 'vintage', quantity: 2,
       pickupType: 'default', startsAt: '2026-08-20T09:00:00.000Z', endsAt: '2026-08-20T10:00:00.000Z',
       locale: 'en', priceMinor: 12000, currency: 'eur', holdExpiresAt: '2026-08-14T09:00:00.000Z',

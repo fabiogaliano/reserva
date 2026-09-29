@@ -12,6 +12,7 @@ import { handleOpsHealth, handleOpsReconcile } from '../../src/handlers';
 import { scheduledHandler } from '../../src/reconciliation';
 import { defineCloudflareReservaRuntime } from '../../src/runtime-context';
 import { providers } from '../fakes';
+import { seedHold } from './seed';
 
 interface TestEnv {
   RESERVA_DB: D1Database;
@@ -67,7 +68,7 @@ function operatorHeaders(): HeadersInit {
 
 async function seedExpiredHold(context: ReservaContext, id: string): Promise<void> {
   const past = new Date(Date.now() - 3_600_000).toISOString();
-  await context.repo.insertHold({
+  await seedHold(context.repo, {
     id,
     reference: `LVT-REC-${id}`,
     serviceSlug: 'vintage',

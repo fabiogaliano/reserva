@@ -19,6 +19,10 @@ const holdInput = (id: string) => ({
   operatorToken: `operator-${id}`,
   createdAt: '2026-06-14T08:00:00.000Z',
   updatedAt: '2026-06-14T08:01:00.000Z',
+  occupancyUnits: 1,
+  occupancyEndsAt: '2026-06-20T10:00:00.000Z',
+  localDate: '2026-06-20',
+  defaultCapacity: 10,
 });
 
 describe('fakeRepository fidelity to the real D1 repository', () => {
@@ -74,7 +78,7 @@ describe('fakeRepository fidelity to the real D1 repository', () => {
     const input = holdInput('new-no-key');
     const repo = fakeRepository();
 
-    await expect(repo.insertHold(input)).resolves.toMatchObject({
+    await expect(repo.insertHoldWithCapacity(input)).resolves.toMatchObject({
       cancelToken: expect.stringMatching(/^nohash:/),
       operatorToken: expect.stringMatching(/^nohash:/),
     });
@@ -88,7 +92,7 @@ describe('fakeRepository fidelity to the real D1 repository', () => {
     const input = holdInput('new-with-key');
     const repo = fakeRepository([], { tokenEncryptionKey: 'test-token-key' });
 
-    await expect(repo.insertHold(input)).resolves.toMatchObject({
+    await expect(repo.insertHoldWithCapacity(input)).resolves.toMatchObject({
       cancelToken: input.cancelToken,
       operatorToken: input.operatorToken,
     });

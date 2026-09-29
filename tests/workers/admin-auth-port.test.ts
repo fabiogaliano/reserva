@@ -8,6 +8,7 @@ import type { ReservaContext } from '../../src/context';
 import { handleAdminGet, handleAdminPost, handleOperatorNoShow } from '../../src/handlers';
 import { defineCloudflareReservaRuntime } from '../../src/runtime-context';
 import { providers } from '../fakes';
+import { seedHold } from './seed';
 
 interface TestEnv {
   RESERVA_DB: D1Database;
@@ -91,7 +92,7 @@ const PAST_ENDS_AT = new Date(Date.now() - 30 * 86_400_000 + 3_600_000).toISOStr
 const PAST_HOLD_EXPIRES_AT = new Date(Date.now() - 30 * 86_400_000 - 1_500_000).toISOString();
 const PAST_REFERENCE = `BKT-PAST-${PAST_BOOKING_ID}`;
 async function seedConfirmedPastBooking(context: ReservaContext): Promise<void> {
-  await context.repo.insertHold({
+  await seedHold(context.repo, {
     id: PAST_BOOKING_ID,
     reference: PAST_REFERENCE,
     serviceSlug: 'vintage',

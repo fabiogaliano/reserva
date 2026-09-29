@@ -4,6 +4,7 @@
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createBookingRepository, DuplicatePaymentRefError } from '../../src/repo';
+import { seedHold } from './seed';
 
 interface TestEnv {
   RESERVA_DB: D1Database;
@@ -127,8 +128,8 @@ describe('capacity table CHECK constraints', () => {
 });
 
 describe('duplicate payment_ref surfaces a clean conflict through the real write paths, not an unhandled 500', () => {
-  async function seedHold(id: string) {
-    return repo.insertHold({
+  async function holdFor(id: string) {
+    return seedHold(repo, {
       id, reference: `BKT-DUPPI-${id}`, serviceSlug: 'vintage', quantity: 2, pickupType: 'default',
       startsAt: '2026-08-01T09:00:00.000Z', endsAt: '2026-08-01T10:00:00.000Z', locale: 'en', priceMinor: 12000, currency: 'eur',
       holdExpiresAt: '2026-07-21T10:35:00.000Z', cancelToken: `cancel-${id}`, operatorToken: `operator-${id}`,
@@ -137,8 +138,8 @@ describe('duplicate payment_ref surfaces a clean conflict through the real write
   }
 
   it('confirmWithSideEffectOperations rejects a second booking claiming an already-used payment intent, and leaves it unadvanced', async () => {
-    const first = await seedHold('confirm-1');
-    const second = await seedHold('confirm-2');
+    const first = await holdFor('confirm-1');
+    const second = await holdFor('confirm-2');
     await repo.acquireConfirmationLease(first.id, 'lease-1', '2026-07-21T10:00:00.000Z', '2026-07-21T10:05:00.000Z');
     await repo.confirmWithSideEffectOperations(first.id, {
       expectedStatusIn: ['hold'], paymentRef: 'pi_shared_confirm', leaseToken: 'lease-1', oversold: false,
@@ -159,8 +160,8 @@ describe('duplicate payment_ref surfaces a clean conflict through the real write
   });
 
   it('applyConfirmedPaymentDetails rejects backfilling an already-confirmed booking with a payment intent already used by another booking', async () => {
-    const first = await seedHold('apply-1');
-    const second = await seedHold('apply-2');
+    const first = await holdFor('apply-1');
+    const second = await holdFor('apply-2');
     await repo.transitionToConfirmed(first.id, {
       expectedStatusIn: ['hold'], paymentRef: 'pi_shared_apply', updatedAt: '2026-07-21T10:01:00.000Z',
     });
@@ -176,8 +177,8 @@ describe('duplicate payment_ref surfaces a clean conflict through the real write
   });
 
   it('the generic updateBooking also rejects a duplicate payment intent (defense in depth for any future caller)', async () => {
-    const first = await seedHold('update-1');
-    const second = await seedHold('update-2');
+    const first = await holdFor('update-1');
+    const second = await holdFor('update-2');
     await repo.updateBooking(first.id, { paymentRef: 'pi_shared_update', updatedAt: '2026-07-21T10:01:00.000Z' });
 
     const attempt = repo.updateBooking(second.id, { paymentRef: 'pi_shared_update', updatedAt: '2026-07-21T10:02:00.000Z' });
@@ -188,8 +189,8 @@ describe('duplicate payment_ref surfaces a clean conflict through the real write
   // guardDuplicatePaymentIntent used to skip reclassification via a truthiness check, so a
   // collision on '' would have bubbled up as an unhandled 500 instead of a clean 409.
   it('also rejects a duplicate EMPTY-STRING payment intent, not just a truthy one', async () => {
-    const first = await seedHold('empty-1');
-    const second = await seedHold('empty-2');
+    const first = await holdFor('empty-1');
+    const second = await holdFor('empty-2');
     await repo.updateBooking(first.id, { paymentRef: '', updatedAt: '2026-07-21T10:01:00.000Z' });
 
     const attempt = repo.updateBooking(second.id, { paymentRef: '', updatedAt: '2026-07-21T10:02:00.000Z' });

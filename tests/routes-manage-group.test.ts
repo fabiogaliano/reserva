@@ -35,7 +35,7 @@ async function adminHtml(manage: boolean): Promise<string> {
 
 async function emailBodies(manage: boolean): Promise<string> {
   const request = vi.fn<typeof fetch>(async () => new Response('{}', { status: 201 }));
-  await brevoEmail({ apiKey: 'key', fetchImpl: request }).send(
+  await brevoEmail({ apiKey: 'key', fetch: request }).send(
     'booking.confirmed',
     booking(),
     config,

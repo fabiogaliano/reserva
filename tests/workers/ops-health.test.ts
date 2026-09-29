@@ -9,6 +9,7 @@ import type { OpsHealthResponse } from '../../src/core/api';
 import { handleOpsHealth } from '../../src/handlers';
 import { defineCloudflareReservaRuntime } from '../../src/runtime-context';
 import { providers } from '../fakes';
+import { seedHold } from './seed';
 
 interface TestEnv {
   RESERVA_DB: D1Database;
@@ -57,7 +58,7 @@ const OLDEST_PENDING_AT = new Date(Date.now() - 3 * 3_600_000).toISOString();
 
 async function seedDebt(context: ReservaContext): Promise<void> {
   const startsAt = new Date(Date.now() + 5 * 86_400_000).toISOString();
-  await context.repo.insertHold({
+  await seedHold(context.repo, {
     id: BOOKING_ID,
     reference: `LVT-OPS-${BOOKING_ID}`,
     serviceSlug: 'vintage',

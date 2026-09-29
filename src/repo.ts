@@ -356,10 +356,9 @@ export interface BookingRepository {
   // The highest numeric sequence already used under `prefix` (0 when none). Deleted rows leave gaps,
   // so a row count would restart numbering inside the range already taken.
   maxReferenceSequence(prefix: string): Promise<number>;
-  insertHold(input: BookingInsert): Promise<Booking>;
-  // Same per-IP hold-cap guard as insertHold, plus a single-statement capacity guard. Returns
-  // null when the capacity guard loses the race, distinct from HoldLimitExceededError (still
-  // thrown for the per-IP cap), so the caller can surface the existing slot_unavailable 409.
+  // Per-IP hold-cap guard plus a single-statement capacity guard. Returns null when the capacity
+  // guard loses the race, distinct from HoldLimitExceededError (thrown for the per-IP cap), so
+  // the caller can surface the existing slot_unavailable 409.
   insertHoldWithCapacity(input: BookingInsert & CapacityGuardInput): Promise<Booking | null>;
   updateBooking(id: string, patch: BookingUpdate): Promise<Booking>;
   // Compare-and-set: a single conditional UPDATE scoped to expectedStatusIn (or, for reschedule,
@@ -522,10 +521,7 @@ export interface BookingRepository {
   listReminderCandidates(now: string, until: string, reminderHours: number, limit: number): Promise<Booking[]>;
   getDayOverride(date: string): Promise<DayCapacityOverride | null>;
   listDayOverrides(from: string, to: string): Promise<DayCapacityOverride[]>;
-  upsertDayOverride(date: string, capacity: number, reason: string | null): Promise<void>;
-  deleteDayOverride(date: string): Promise<void>;
-  // Batched siblings of upsertDayOverride/deleteDayOverride so a range submit is one D1 round
-  // trip instead of many. `audit` is required, not optional: an admin write with no history
+  // Batched so a range submit is one D1 round trip instead of many. `audit` is required, not optional: an admin write with no history
   // entry is a bug. One admin_change_history row per date rides the same batch as the change.
   upsertDayOverrides(dates: string[], capacity: number, reason: string | null, audit: AdminChangeAudit): Promise<void>;
   deleteDayOverrides(dates: string[], audit: AdminChangeAudit): Promise<void>;
@@ -534,8 +530,7 @@ export interface BookingRepository {
   deleteCapacityDefault(fromDate: string, audit: AdminChangeAudit): Promise<void>;
   // Operator-editable config overrides: key -> JSON-encoded value.
   listSettings(): Promise<Record<string, string>>;
-  upsertSetting(key: string, value: string): Promise<void>;
-  // Single-key write path; required audit param for the same reason as above.
+  // Single-key delete path; required audit param for the same reason as above.
   deleteSetting(key: string, audit: AdminChangeAudit): Promise<void>;
   // Applies every key of a settings section in one D1 batch, all-or-nothing. One history row
   // per operation rides the same batch.
@@ -1083,8 +1078,8 @@ export function createBookingRepository(
     return mapped;
   }
 
-  // Shared by insertHold/insertHoldWithCapacity: computes every column a new row needs
-  // to write, so both insert paths stay in sync instead of duplicating this logic.
+  // Every row written gets only a hash (+ encrypted blob, if a key is configured), never real
+  // plaintext in cancel_token/operator_token.
   async function newTokenColumns(input: BookingInsert): Promise<{
     cancelTokenPlaceholder: string; operatorTokenPlaceholder: string;
     cancelTokenHash: string; operatorTokenHash: string;
@@ -1330,41 +1325,7 @@ export function createBookingRepository(
       ).bind(prefix.length + 1, `${prefix}*`, prefix.length + 1).all<{ max: number | null }>());
       return Number(row?.max ?? 0);
     },
-    async insertHold(input) {
-      const holdIp = input.holdIp ?? null;
-      const holdLimit = input.maxActiveHoldsForIp ?? null;
-      // Every row written from here on gets only a hash (+ encrypted blob, if a key is
-      // configured), never real plaintext in cancel_token/operator_token.
-      const tokenColumns = await newTokenColumns(input);
-      const result = await db.prepare(
-        `INSERT INTO bookings (
-          id, reference, service_slug, quantity, pickup_type, starts_at, ends_at, locale, price_minor,
-          currency, status, hold_expires_at, cancel_token, operator_token, cancel_token_hash,
-          operator_token_hash, cancel_token_enc, operator_token_enc, tokens_expire_at, hold_ip,
-          meeting_point_id, meeting_point_label, metadata, created_at, updated_at
-        )
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'hold', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-        WHERE ? IS NULL OR (
-          SELECT COUNT(*) FROM bookings
-          WHERE hold_ip = ? AND status = 'hold' AND hold_expires_at >= ?
-        ) < ?`,
-      ).bind(
-        input.id, input.reference, input.serviceSlug, input.quantity, input.pickupType,
-        input.startsAt, input.endsAt, input.locale, input.priceMinor, input.currency, input.holdExpiresAt,
-        tokenColumns.cancelTokenPlaceholder, tokenColumns.operatorTokenPlaceholder,
-        tokenColumns.cancelTokenHash, tokenColumns.operatorTokenHash,
-        tokenColumns.cancelTokenEnc, tokenColumns.operatorTokenEnc, tokenColumns.tokensExpireAt,
-        holdIp, input.meetingPointId ?? null, input.meetingPointLabel ?? null,
-        serializeBookingMetadata(input.metadata),
-        input.createdAt, input.updatedAt,
-        holdLimit, holdIp, input.createdAt, holdLimit,
-      ).run();
-      if (result.meta.changes === 0) throw new HoldLimitExceededError();
-      const created = await oneBooking('SELECT ' + bookingColumns + ' FROM bookings WHERE id = ?', input.id);
-      if (!created) throw new Error('Booking insert did not return a row');
-      return created;
-    },
-    // Same per-IP hold-cap guard as insertHold, plus a capacity guard, both in one INSERT ...
+    // Per-IP hold-cap guard plus a capacity guard, both in one INSERT ...
     // SELECT's WHERE clause, so D1 makes check-then-insert atomic. Tests max concurrency at each
     // booking's start point, not a SUM over overlaps (mirrors core/occupancy.ts, avoiding false 409s).
     //
@@ -1436,7 +1397,7 @@ export function createBookingRepository(
           'SELECT 1 AS hit FROM bookings WHERE reference = ? AND id != ?',
         ).bind(input.reference, input.id).all<{ hit: number }>());
         if (conflict) throw new ReferenceConflictError(input.reference);
-        // Reclassify a losing write: the hold-ip cap throws (matching insertHold's contract),
+        // Reclassify a losing write: the hold-ip cap throws HoldLimitExceededError,
         // anything else is a capacity loss reported as null. This re-check is for error
         // classification only — the atomic WHERE clause already made the authoritative decision.
         if (holdLimit !== null) {
@@ -1997,15 +1958,6 @@ export function createBookingRepository(
       ).bind(from, to).all<DayCapacityOverride>();
       return result.results.map((row) => ({ date: row.date, capacity: Number(row.capacity), reason: row.reason ?? null }));
     },
-    async upsertDayOverride(date, capacity, reason) {
-      await db.prepare(
-        `INSERT INTO day_overrides (date, capacity, reason) VALUES (?, ?, ?)
-         ON CONFLICT(date) DO UPDATE SET capacity = excluded.capacity, reason = excluded.reason`,
-      ).bind(date, capacity, reason).run();
-    },
-    async deleteDayOverride(date) {
-      await db.prepare('DELETE FROM day_overrides WHERE date = ?').bind(date).run();
-    },
     // Bounded by a 366-day cap so a single db.batch() call never risks exceeding D1's per-batch
     // statement limit. One history row per date rides the same batch as its override write.
     async upsertDayOverrides(dates, capacity, reason, audit) {
@@ -2053,11 +2005,6 @@ export function createBookingRepository(
     async listSettings() {
       const result = await db.prepare('SELECT key, value FROM settings').all<{ key: string; value: string }>();
       return Object.fromEntries(result.results.map((row) => [row.key, row.value]));
-    },
-    async upsertSetting(key, value) {
-      await db.prepare(
-        'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
-      ).bind(key, value).run();
     },
     async deleteSetting(key, audit) {
       await db.batch([

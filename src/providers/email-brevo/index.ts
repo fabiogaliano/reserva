@@ -29,7 +29,7 @@ export interface BrevoSender { email: string; name?: string }
 export interface BrevoRecipientAddress { email: string; name?: string }
 export interface BrevoEmailProviderOptions {
   apiKey: string; sender?: BrevoSender; owner?: BrevoRecipientAddress; endpoint?: string;
-  fetch?: typeof fetch; fetchImpl?: typeof fetch;
+  fetch?: typeof fetch;
   // Speaks the provider-neutral `EmailRenderer` contract, not a Brevo-specific shape, so a
   // renderer written against this option also works unmodified with any other transport.
   renderEmail?: EmailRenderer;
@@ -89,7 +89,7 @@ export class BrevoEmailProvider implements EmailProvider {
   constructor(options: BrevoEmailProviderOptions) {
     if (!options.apiKey) throw new Error('Brevo apiKey is required');
     this.apiKey = options.apiKey; this.sender = options.sender; this.owner = options.owner; this.endpoint = options.endpoint ?? BREVO_TRANSACTIONAL_EMAIL_URL;
-    this.request = options.fetchImpl ?? options.fetch ?? globalThis.fetch.bind(globalThis); this.renderer = options.renderEmail ?? renderDefaultEmail;
+    this.request = options.fetch ?? globalThis.fetch.bind(globalThis); this.renderer = options.renderEmail ?? renderDefaultEmail;
   }
   // Exposed so a caller can record and retry each recipient as its own durable operation
   // without knowing this provider's template config.

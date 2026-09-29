@@ -8,6 +8,7 @@ import { MAX_AVAILABILITY_RANGE_DAYS, type AvailabilityDay, type AvailabilityRes
 import { handleAvailability } from '../../src/handlers';
 import { defineCloudflareReservaRuntime } from '../../src/runtime-context';
 import { providers } from '../fakes';
+import { seedHold } from './seed';
 
 interface TestEnv {
   RESERVA_DB: D1Database;
@@ -53,7 +54,7 @@ beforeAll(async () => {
   for (let index = 0; index < SEEDED_BOOKINGS; index += 1) {
     const startsAt = new Date(Date.now() + Math.floor((index * HORIZON_DAYS) / SEEDED_BOOKINGS) * 86_400_000).toISOString();
     const id = `horizon-${index}`;
-    await context.repo.insertHold({
+    await seedHold(context.repo, {
       id,
       reference: `LVT-HZN-${index}`,
       serviceSlug: 'vintage',

@@ -96,7 +96,7 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     });
   };
   // Seeded rows model pre-migration legacy rows: their hash columns are null and their raw
-  // token columns retain plaintext. Rows created by insertHold* use nohash placeholders at rest,
+  // token columns retain plaintext. Rows created by insertHoldWithCapacity use nohash placeholders at rest,
   // so only hydrated reads with a configured key can recover their presented values.
   const tokenState = new Map<string, FakeTokenState>(
     seed.map((item) => [item.id, {
@@ -314,32 +314,6 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       .map((item) => item.reference)
       .filter((reference) => reference.startsWith(prefix) && /^\d+$/.test(reference.slice(prefix.length)))
       .map((reference) => Number(reference.slice(prefix.length)))),
-    insertHold: async (input) => {
-      if (input.holdIp && input.maxActiveHoldsForIp) {
-        const active = [...rows.values()].filter((item) =>
-          holdIps.get(item.id) === input.holdIp
-          && item.status === 'hold'
-          && item.holdExpiresAt !== null
-          && item.holdExpiresAt >= input.createdAt,
-        );
-        if (active.length >= input.maxActiveHoldsForIp) throw new HoldLimitExceededError();
-      }
-      const created: Booking = { ...booking(), ...input, guestCount: null, amountRefundedMinor: 0, disputedAt: null, disputeStatus: null, pickupAddress: null, customerName: null, customerEmail: null, customerPhone: null, status: 'hold', paymentSessionRef: null, paymentRef: null, calendarEventId: null, cancelledAt: null, cancelledBy: null, rescheduledFrom: null };
-      const stored = storeTokens(created);
-      rows.set(stored.id, stored);
-      // A newly created row is hash-backed from the start (never "legacy"), mirroring
-      // src/repo.ts's insertHold/insertHoldWithCapacity, which write only a hash.
-      tokenState.set(stored.id, {
-        cancelToken: input.cancelToken,
-        operatorToken: input.operatorToken,
-        cancelTokenHash: await sha256Base64Url(input.cancelToken),
-        operatorTokenHash: await sha256Base64Url(input.operatorToken),
-        tokensExpireAt: input.tokensExpireAt ?? null,
-        cancelTokenRevokedAt: null,
-      });
-      if (input.holdIp) holdIps.set(stored.id, input.holdIp);
-      return hydrateBooking(stored);
-    },
     // Mirrors src/repo.ts's insertHoldWithCapacity: hold-ip cap still throws
     // HoldLimitExceededError, but a capacity loss returns null. Capacity resolves first (await),
     // then decide+write run as one synchronous block with no await between them, so a concurrent
@@ -367,7 +341,8 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       const stored = storeTokens(created);
       rows.set(stored.id, stored);
       occupancyMeta.set(stored.id, { units: input.occupancyUnits, endsAt: input.occupancyEndsAt });
-      // See the identical comment in insertHold above.
+      // A newly created row is hash-backed from the start (never "legacy"), mirroring
+      // src/repo.ts's insertHoldWithCapacity, which writes only a hash.
       tokenState.set(stored.id, {
         cancelToken: input.cancelToken,
         operatorToken: input.operatorToken,
@@ -746,10 +721,6 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       .filter(([date]) => date >= from && date <= to)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([date, value]) => ({ date, ...value })),
-    // Mirrors src/repo.ts:1435-1439 — INSERT ... ON CONFLICT(date) DO UPDATE (upsert-by-date).
-    upsertDayOverride: async (date, capacity, reason) => { dayOverrides.set(date, { capacity, reason }); },
-    // Mirrors src/repo.ts:1441-1443.
-    deleteDayOverride: async (date) => { dayOverrides.delete(date); },
     // Bounded by handleAdminPost's 366-day cap (a year of daily overrides), so a plain db.batch()
     // (mirrored here as a plain loop) never risks D1's per-batch statement limit. One
     // history entry per date, pushed in the same order the real batch's statements would run.
@@ -782,7 +753,6 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     },
     settings,
     listSettings: async () => Object.fromEntries(settings),
-    upsertSetting: async (key, value) => { settings.set(key, value); },
     deleteSetting: async (key, audit) => {
       settings.delete(key);
       pushAdminChangeHistory('setting', key, 'delete', null, audit);

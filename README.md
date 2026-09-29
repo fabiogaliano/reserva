@@ -260,8 +260,8 @@ behavior behind the less usual status codes.
   deliberate boundaries.
 - [`docs/decisions.md`](./docs/decisions.md) — where the implementation deliberately goes
   beyond the external build contract, and why.
-- [`docs/MIGRATING-v2.md`](./docs/MIGRATING-v2.md) — upgrading from the private 0.1.x
-  `bookkit` era: every renamed binding, symbol, module specifier, config key, and column.
+- [`docs/MIGRATING-v2.md`](./docs/MIGRATING-v2.md) — upgrading across breaking releases (0.2,
+  0.5, 0.6, 0.15): every renamed or removed binding, symbol, option, config key, and column.
 - [`AGENTS.md`](./AGENTS.md) — the packaged integration contract, written for a coding agent
   wiring Reserva into a site.
 

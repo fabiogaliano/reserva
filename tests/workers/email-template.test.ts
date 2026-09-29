@@ -6,6 +6,7 @@ import { handlePaymentWebhook } from '../../src/handlers';
 import { createBookingRepository } from '../../src/repo';
 import { defineCloudflareReservaRuntime, type ReservaProviders } from '../../src/runtime';
 import { config as baseConfig } from '../fixtures';
+import { seedHold } from './seed';
 
 // A from-scratch, non-Brevo transport that imports `renderDefaultEmail` through the public
 // `@reservajs/astro/email` seam, overrides exactly one event, and delegates every other event —
@@ -81,7 +82,7 @@ beforeEach(async () => {
 describe('a non-Brevo fake provider built on renderDefaultEmail', () => {
   it('delegates booking.confirmed to renderDefaultEmail and round-trips a real confirmation through real D1', async () => {
     const now = new Date().toISOString();
-    const seeded = await repo.insertHold({
+    const seeded = await seedHold(repo, {
       id: 'email-template-1', reference: 'ETP-2026-001', serviceSlug: 'vintage', quantity: 2,
       pickupType: 'default',
       startsAt: futureIso(30 * 24 * 60 * 60_000), endsAt: futureIso(30 * 24 * 60 * 60_000 + 60 * 60_000),

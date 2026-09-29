@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createBookingRepository } from '../../src/repo';
+import { seedHold } from './seed';
 
 interface TestEnv {
   RESERVA_DB: D1Database;
@@ -19,7 +20,7 @@ beforeEach(async () => {
 describe('calendar_patch outbox rows on real D1', () => {
   it('records one calendar_patch row per reschedule, keyed by the reschedule version', async () => {
     const id = 'calendar-patch-outbox';
-    await repo.insertHold({
+    await seedHold(repo, {
       id,
       reference: 'BKT-2026-900',
       serviceSlug: 'vintage',

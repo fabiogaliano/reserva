@@ -1,8 +1,8 @@
 # Migrating
 
-Three breaking cuts so far. [Migrating to 0.6.0](#migrating-to-060) and
-[Migrating to 0.5.0](#migrating-to-050) are at the end of this file; 0.2.0 (the first public
-release) is below.
+Four breaking cuts so far. [Migrating to 0.15.0](#migrating-to-0150),
+[Migrating to 0.6.0](#migrating-to-060) and [Migrating to 0.5.0](#migrating-to-050) are at the
+end of this file; 0.2.0 (the first public release) is below.
 
 # Migrating to 0.2.0
 
@@ -384,3 +384,29 @@ shared surcharge table and group-size dials, then one base price per formula ser
 services keep one amount per row. New setting keys: `hours.<i>.*`, `pricing.surcharges.<id>`,
 `pricing.maxUnits`, `pricing.surchargeScope`, `services.<slug>.pricing.baseMinor` (and
 `.surcharges.<id>`, `.maxUnits`, `.surchargeScope` for a service that declares them).
+
+# Migrating to 0.15.0
+
+0.15.0 removes four `BookingRepository` methods from `ReservaContext.repo` and one Brevo option
+alias. No config, schema, route or wire change; only code that called these directly breaks, as
+a compile error.
+
+## Repository methods
+
+Each removed method wrote around a guard its production sibling enforces: capacity and the
+per-IP hold cap, or the admin change history.
+
+| 0.14.x | 0.15.0 |
+|---|---|
+| `insertHold(input)` | `insertHoldWithCapacity({ ...input, occupancyUnits, occupancyEndsAt, localDate, defaultCapacity })` — returns `null` when the slot is full |
+| `upsertDayOverride(date, capacity, reason)` | `upsertDayOverrides([date], capacity, reason, { actor, changedAt })` |
+| `deleteDayOverride(date)` | `deleteDayOverrides([date], { actor, changedAt })` |
+| `upsertSetting(key, value)` | `applySettingsBatch([{ type: 'upsert', key, value }], { actor, changedAt })` |
+
+## Provider options
+
+`@reservajs/astro/providers/email-brevo` — `brevoEmail(options)`:
+
+| 0.14.x | 0.15.0 |
+|---|---|
+| `fetchImpl` | `fetch` |

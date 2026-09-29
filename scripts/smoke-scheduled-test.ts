@@ -66,13 +66,15 @@ async function seedAndAssert(): Promise<void> {
     const context = createReservaContext({ config, db, providers: unusedProviders, clock: () => new Date(now) });
     const id = 'smoke-scheduled-recovery';
 
-    await context.repo.insertHold({
+    const held = await context.repo.insertHoldWithCapacity({
       id, reference: `BKT-2026-${id}`, serviceSlug: 'oldTown', quantity: 2, pickupType: 'default',
       startsAt: '2026-08-20T09:00:00.000Z', endsAt: '2026-08-20T10:00:00.000Z', locale: 'en',
       priceMinor: 12000, currency: 'eur', holdExpiresAt: '2026-08-14T09:00:00.000Z',
       cancelToken: `cancel-${id}`, operatorToken: `operator-${id}`,
+      occupancyUnits: 1, occupancyEndsAt: '2026-08-20T10:00:00.000Z', localDate: '2026-08-20', defaultCapacity: 1000,
       createdAt: '2026-08-14T08:00:00.000Z', updatedAt: '2026-08-14T08:00:00.000Z',
     });
+    if (!held) throw new Error('smoke-scheduled-test: the capacity guard refused the seed hold');
     await context.repo.transitionToConfirmed(id, { expectedStatusIn: ['hold'], paymentRef: `pi_${id}`, updatedAt: '2026-08-14T08:01:00.000Z' });
 
     // ~11 minutes ago: past attempt 2's 10-minute backoff window and the delayed-incident

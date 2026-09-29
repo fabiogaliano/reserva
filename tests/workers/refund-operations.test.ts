@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createBookingRepository } from '../../src/repo';
+import { seedHold } from './seed';
 
 interface TestEnv {
   RESERVA_DB: D1Database;
@@ -16,7 +17,7 @@ beforeEach(async () => {
 });
 
 async function seedConfirmed(id: string): Promise<void> {
-  await repo.insertHold({
+  await seedHold(repo, {
     id,
     reference: `BKT-2026-${id}`,
     serviceSlug: 'vintage',

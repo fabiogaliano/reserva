@@ -20,9 +20,14 @@ beforeEach(async () => {
 
 const AUDIT: AdminChangeAudit = { actor: 'ops@example.test', changedAt: '2026-09-01T12:00:00.000Z' };
 
+// Written directly so the seed leaves no history row of its own for the assertions to discount.
+const seedSetting = async (key: string, value: string) => {
+  await db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').bind(key, value).run();
+};
+
 describe('applySettingsBatch + admin_change_history against real D1', () => {
   it('a mixed upsert+delete batch writes the settings rows AND their history rows in one call', async () => {
-    await repo.upsertSetting('booking.holdMinutes', '45');
+    await seedSetting('booking.holdMinutes', '45');
 
     await repo.applySettingsBatch([
       { type: 'upsert', key: 'booking.minNoticeHours', value: '2' },
@@ -43,7 +48,7 @@ describe('applySettingsBatch + admin_change_history against real D1', () => {
   });
 
   it('deleteSetting writes exactly one history row for the key it removed', async () => {
-    await repo.upsertSetting('legal.termsUrl', '"https://example.test/terms"');
+    await seedSetting('legal.termsUrl', '"https://example.test/terms"');
     await repo.deleteSetting('legal.termsUrl', AUDIT);
 
     const history = await repo.listAdminChangeHistory(10);
@@ -110,7 +115,7 @@ describe('admin change + history atomicity against real D1', () => {
   const families = [
     {
       name: 'applySettingsBatch',
-      seed: () => repo.upsertSetting('booking.holdMinutes', '45'),
+      seed: () => seedSetting('booking.holdMinutes', '45'),
       act: () => repo.applySettingsBatch([
         { type: 'upsert', key: 'booking.minNoticeHours', value: '2' },
         { type: 'delete', key: 'booking.holdMinutes' },
@@ -121,7 +126,7 @@ describe('admin change + history atomicity against real D1', () => {
     },
     {
       name: 'deleteSetting',
-      seed: () => repo.upsertSetting('legal.termsUrl', '"https://example.test/terms"'),
+      seed: () => seedSetting('legal.termsUrl', '"https://example.test/terms"'),
       act: () => repo.deleteSetting('legal.termsUrl', AUDIT),
       changeTrigger: 'BEFORE DELETE ON settings',
       lastItemKey: 'legal.termsUrl',
