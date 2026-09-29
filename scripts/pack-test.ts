@@ -166,8 +166,11 @@ function assertAdapterPackagedLayout(consumerDir: string): void {
   }
   const unexpected = readdirSync(installedRoot).filter((entry) => !['dist', 'README.md', 'LICENSE', 'package.json', 'node_modules'].includes(entry));
   if (unexpected.length > 0) fail('layout', `unexpected entries in packed @reservajs/stripe: ${unexpected.join(', ')}`);
+  // The adapter talks to Stripe's REST API with fetch; the SDK is ~750 KB a Worker would evaluate on
+  // the first payment request of every isolate, blowing the Free plan's CPU budget.
   const manifest = JSON.parse(readFileSync(resolve(installedRoot, 'package.json'), 'utf8')) as { dependencies?: Record<string, string> };
-  if (typeof manifest.dependencies?.stripe !== 'string') fail('layout', '@reservajs/stripe must declare the Stripe SDK as a dependency');
+  if (manifest.dependencies?.stripe) fail('layout', '@reservajs/stripe must not depend on the Stripe SDK');
+  if (existsSync(resolve(consumerDir, 'node_modules/stripe'))) fail('layout', 'the with-stripe consumer installed the stripe SDK');
 }
 
 // The core-only consumer proves the SDK is genuinely gone: a stripe/ directory in its node_modules

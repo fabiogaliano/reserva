@@ -1,8 +1,11 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import Stripe from 'stripe';
 import { describe, expect, it, vi } from 'vitest';
 import { stripe, type StripeClient } from '../src/index';
 import { sessionStatusFromStripe, stripeEventToParsed, STRIPE_DELAYED_PAYMENT_METHOD_TYPES } from '../src/provider';
+import {
+  StripeCardError, StripeIdempotencyError, StripeInvalidRequestError,
+  type StripeCheckoutSession, type StripeCheckoutSessionCreateParams, type StripeEvent, type StripeRefund,
+} from '../src/api';
 import type { ResolvedClientConfig, ResolvedServiceConfig } from '@reservajs/astro/core';
 
 // This suite additionally drives the library's internal checkout handler (not just the adapter's
@@ -42,31 +45,21 @@ function stripeRefund(
   id: string,
   amount: number,
   options: { status?: string; metadata?: Record<string, string>; paymentIntent?: string } = {},
-): Stripe.Refund {
+): StripeRefund {
   return {
     id,
     object: 'refund',
     amount,
-    balance_transaction: null,
-    charge: null,
-    created: 0,
     currency: 'eur',
-    customer: null,
-    customer_account: null,
     metadata: options.metadata ?? {},
     payment_intent: options.paymentIntent ?? 'pi_1',
-    payment_method: null,
-    reason: null,
-    receipt_number: null,
-    source_transfer_reversal: null,
     status: options.status ?? 'succeeded',
-    transfer_reversal: null,
   };
 }
 
 function makeClient() {
   const sessions = {
-    create: vi.fn(async (_params: Stripe.Checkout.SessionCreateParams, _options?: { idempotencyKey?: string }) => ({ id: 'cs_created', url: 'https://checkout.test/cs_created' })),
+    create: vi.fn(async (_params: StripeCheckoutSessionCreateParams, _options?: { idempotencyKey?: string }) => ({ id: 'cs_created', url: 'https://checkout.test/cs_created' })),
     retrieve: vi.fn(async () => ({
       id: 'cs_1',
       status: 'complete',
@@ -91,7 +84,7 @@ function makeClient() {
         customer_details: { name: 'Ada Lovelace', email: 'ada@example.com', phone: '+351910000000' },
         custom_fields: [{ key: 'pickup_address', text: { value: 'Praça do Comércio' }, type: 'text' }],
       } },
-    } as unknown as Stripe.Event)) },
+    } as unknown as StripeEvent)) },
   };
   return { client: client as unknown as StripeClient, sessions };
 }
@@ -441,7 +434,7 @@ describe('stripe() adapter', () => {
       checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
       refunds: {
         create: vi.fn(async () => {
-          throw new Stripe.errors.StripeInvalidRequestError({ message: 'Charge ch_1 has already been refunded.', code: 'charge_already_refunded' });
+          throw new StripeInvalidRequestError({ message: 'Charge ch_1 has already been refunded.', code: 'charge_already_refunded' });
         }),
         list: vi.fn(async () => ({ data: [stripeRefund('re_recovered', 10000, { metadata: { reserva_refund_key: 'reserva-refund-pi_1' } })] })),
       },
@@ -457,7 +450,7 @@ describe('stripe() adapter', () => {
       checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
       refunds: {
         create: vi.fn(async () => {
-          throw new Stripe.errors.StripeInvalidRequestError({ message: 'Charge ch_1 has already been refunded.', code: 'charge_already_refunded' });
+          throw new StripeInvalidRequestError({ message: 'Charge ch_1 has already been refunded.', code: 'charge_already_refunded' });
         }),
         // Wrong amount and no reserva_refund_key marker — not proof this request's refund succeeded.
         list: vi.fn(async () => ({ data: [stripeRefund('re_unrelated', 4000)] })),
@@ -474,7 +467,7 @@ describe('stripe() adapter', () => {
       checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
       refunds: {
         create: vi.fn(async () => {
-          throw new Stripe.errors.StripeInvalidRequestError({ message: 'No such payment_intent', code: 'resource_missing' });
+          throw new StripeInvalidRequestError({ message: 'No such payment_intent', code: 'resource_missing' });
         }),
         list: vi.fn(),
       },
@@ -490,7 +483,7 @@ describe('stripe() adapter', () => {
       checkout: { sessions: { create: vi.fn(), retrieve: vi.fn() } },
       refunds: {
         create: vi.fn(async () => {
-          throw new Stripe.errors.StripeCardError({ message: 'Your card was declined.' });
+          throw new StripeCardError({ message: 'Your card was declined.' });
         }),
         list: vi.fn(),
       },
@@ -526,7 +519,7 @@ describe('stripe() adapter', () => {
       customerPhone: '+351910000000',
       pickupAddress: 'Praça do Comércio',
     });
-    expect(client.webhooks.constructEventAsync).toHaveBeenCalledWith('{"raw":true}', 't=1,v1=x', 'whsec_test', 300, expect.anything());
+    expect(client.webhooks.constructEventAsync).toHaveBeenCalledWith('{"raw":true}', 't=1,v1=x', 'whsec_test', 300);
   });
 
   // A body whose declared Content-Length already exceeds the 1 MB webhook limit must 413 ahead of
@@ -569,9 +562,9 @@ describe('Checkout idempotency', () => {
     // structuredClone snapshots each call's params: the provider reuses the same object across
     // both attempts, so pushing the live reference would make paramsPerCall[0] and [1] always
     // "equal" regardless of what a drifting implementation did to it.
-    const paramsPerCall: Stripe.Checkout.SessionCreateParams[] = [];
+    const paramsPerCall: StripeCheckoutSessionCreateParams[] = [];
     let original: { id: string; url: string } | null = null;
-    const create = vi.fn(async (params: Stripe.Checkout.SessionCreateParams, options?: { idempotencyKey?: string }) => {
+    const create = vi.fn(async (params: StripeCheckoutSessionCreateParams, options?: { idempotencyKey?: string }) => {
       paramsPerCall.push(structuredClone(params));
       if (!original) {
         // Simulates Stripe having actually accepted/created the session but the response
@@ -613,7 +606,7 @@ describe('Checkout idempotency', () => {
 
   it('handleCheckout: an ambiguous createCheckout failure that recovers on retry does not expire the hold, and paymentSessionRef lands on the booking', async () => {
     let original: { id: string; url: string } | null = null;
-    const create = vi.fn(async (_params: Stripe.Checkout.SessionCreateParams, _options?: { idempotencyKey?: string }) => {
+    const create = vi.fn(async (_params: StripeCheckoutSessionCreateParams, _options?: { idempotencyKey?: string }) => {
       if (!original) {
         original = { id: 'cs_recovered', url: 'https://checkout.test/cs_recovered' };
         throw new TypeError('fetch failed');
@@ -646,8 +639,8 @@ describe('Checkout idempotency', () => {
   it('handleCheckout: a definitive Stripe rejection is not retried, and the hold IS still expired (pinned behavior)', async () => {
     // Declared with the real create() parameter list (even though it always throws) so the mock's
     // inferred type keeps both positional args and .mock.calls[n][1] type-checks below.
-    const create = vi.fn(async (_params: Stripe.Checkout.SessionCreateParams, _options?: { idempotencyKey?: string }): Promise<Stripe.Checkout.Session> => {
-      throw new Stripe.errors.StripeInvalidRequestError({ message: 'Invalid locale' });
+    const create = vi.fn(async (_params: StripeCheckoutSessionCreateParams, _options?: { idempotencyKey?: string }): Promise<StripeCheckoutSession> => {
+      throw new StripeInvalidRequestError({ message: 'Invalid locale' });
     });
     const client = {
       checkout: { sessions: { create, retrieve: vi.fn() } },
@@ -675,8 +668,8 @@ describe('Checkout idempotency', () => {
   });
 
   it('handleCheckout: a 409 idempotency_error (same key, conflicting params) is not retried, and the hold IS still expired', async () => {
-    const create = vi.fn(async (_params: Stripe.Checkout.SessionCreateParams, _options?: { idempotencyKey?: string }): Promise<Stripe.Checkout.Session> => {
-      throw new Stripe.errors.StripeIdempotencyError({ message: 'Keys for idempotent requests can only be used with the same parameters as they were first used with' });
+    const create = vi.fn(async (_params: StripeCheckoutSessionCreateParams, _options?: { idempotencyKey?: string }): Promise<StripeCheckoutSession> => {
+      throw new StripeIdempotencyError({ message: 'Keys for idempotent requests can only be used with the same parameters as they were first used with' });
     });
     const client = {
       checkout: { sessions: { create, retrieve: vi.fn() } },
@@ -738,16 +731,16 @@ describe('Stripe mapping helpers', () => {
     // path keys off the amounts and carries no refundRef.
     expect(stripeEventToParsed({ id: 'evt_refund', type: 'charge.refunded', data: { object: {
       metadata: { bookingId: 'booking-1' }, payment_intent: { id: 'pi_1' }, amount_captured: 10000, amount_refunded: 10000,
-    } } } as unknown as Stripe.Event)).toMatchObject({ bookingId: 'booking-1', paymentRef: 'pi_1', amountCaptured: 10000, amountRefunded: 10000 });
+    } } } as unknown as StripeEvent)).toMatchObject({ bookingId: 'booking-1', paymentRef: 'pi_1', amountCaptured: 10000, amountRefunded: 10000 });
     expect(stripeEventToParsed({ id: 'evt_refund', type: 'charge.refunded', data: { object: {
       metadata: { bookingId: 'booking-1' }, payment_intent: { id: 'pi_1' }, amount_captured: 10000, amount_refunded: 10000,
-    } } } as unknown as Stripe.Event).refundRef).toBeUndefined();
+    } } } as unknown as StripeEvent).refundRef).toBeUndefined();
   });
 
   it('maps a partial refund to the charge’s cumulative refunded amount', () => {
     expect(stripeEventToParsed({ id: 'evt_partial', type: 'charge.refunded', data: { object: {
       payment_intent: 'pi_1', amount_captured: 10000, amount_refunded: 2500,
-    } } } as unknown as Stripe.Event)).toMatchObject({ type: 'refunded', paymentRef: 'pi_1', amountCaptured: 10000, amountRefunded: 2500 });
+    } } } as unknown as StripeEvent)).toMatchObject({ type: 'refunded', paymentRef: 'pi_1', amountCaptured: 10000, amountRefunded: 2500 });
   });
 
   describe('charge.dispute.closed', () => {
@@ -755,7 +748,7 @@ describe('Stripe mapping helpers', () => {
     // reference is what finds the booking.
     const closed = (status: string) => stripeEventToParsed({ id: `evt_closed_${status}`, type: 'charge.dispute.closed', data: { object: {
       id: 'du_1', object: 'dispute', charge: 'ch_1', payment_intent: 'pi_1', amount: 10000, metadata: {}, status,
-    } } } as unknown as Stripe.Event);
+    } } } as unknown as StripeEvent);
 
     it.each([
       ['won', 'won'],
@@ -780,19 +773,19 @@ describe('Stripe mapping helpers', () => {
     it('never sets an outcome on the event that opens a dispute', () => {
       expect(stripeEventToParsed({ id: 'evt_created', type: 'charge.dispute.created', data: { object: {
         id: 'du_1', object: 'dispute', payment_intent: 'pi_1', status: 'lost', metadata: {},
-      } } } as unknown as Stripe.Event)).not.toHaveProperty('disputeOutcome');
+      } } } as unknown as StripeEvent)).not.toHaveProperty('disputeOutcome');
     });
 
     it('carries the dispute’s own creation time on both dispute events, and none on a refund', () => {
       const created = 1781083800; // 2026-06-10T09:30:00Z
       const dispute = { id: 'du_1', object: 'dispute', payment_intent: 'pi_1', metadata: {}, created };
       for (const type of ['charge.dispute.created', 'charge.dispute.closed']) {
-        expect(stripeEventToParsed({ id: `evt_${type}`, type, data: { object: { ...dispute, status: 'won' } } } as unknown as Stripe.Event))
+        expect(stripeEventToParsed({ id: `evt_${type}`, type, data: { object: { ...dispute, status: 'won' } } } as unknown as StripeEvent))
           .toMatchObject({ disputeCreatedAt: '2026-06-10T09:30:00.000Z' });
       }
       expect(stripeEventToParsed({ id: 'evt_refunded', type: 'charge.refunded', data: { object: {
         id: 'ch_1', object: 'charge', payment_intent: 'pi_1', amount_captured: 10000, amount_refunded: 2500, metadata: {}, created,
-      } } } as unknown as Stripe.Event)).not.toHaveProperty('disputeCreatedAt');
+      } } } as unknown as StripeEvent)).not.toHaveProperty('disputeCreatedAt');
     });
   });
 
@@ -800,18 +793,18 @@ describe('Stripe mapping helpers', () => {
     const withGuestCount = (value: string | null) => ({
       id: 'cs_1', status: 'complete', payment_status: 'paid', payment_intent: 'pi_1', metadata: null,
       custom_fields: [{ key: 'guest_count', type: 'numeric', optional: true, numeric: { value } }],
-    }) as unknown as Stripe.Checkout.Session;
+    }) as unknown as StripeCheckoutSession;
     expect(sessionStatusFromStripe(withGuestCount('3')).guestCount).toBe(3);
     expect(sessionStatusFromStripe(withGuestCount(' 12 ')).guestCount).toBe(12);
     for (const unusable of [null, '', '0', '2.5', '-1', 'abc']) {
       expect(sessionStatusFromStripe(withGuestCount(unusable)).guestCount).toBeNull();
     }
-    expect(stripeEventToParsed({ id: 'evt_1', type: 'checkout.session.completed', data: { object: withGuestCount('4') } } as unknown as Stripe.Event).guestCount).toBe(4);
+    expect(stripeEventToParsed({ id: 'evt_1', type: 'checkout.session.completed', data: { object: withGuestCount('4') } } as unknown as StripeEvent).guestCount).toBe(4);
     // A service that never asked has no field, so the key stays absent rather than null.
-    expect(sessionStatusFromStripe({ id: 'cs_1', status: 'complete', metadata: null } as Stripe.Checkout.Session)).not.toHaveProperty('guestCount');
+    expect(sessionStatusFromStripe({ id: 'cs_1', status: 'complete', metadata: null } as StripeCheckoutSession)).not.toHaveProperty('guestCount');
   });
 
   it('maps a session to the public status shape', () => {
-    expect(sessionStatusFromStripe({ id: 'cs_1', status: 'open', payment_status: 'unpaid', amount_total: 10000, currency: 'eur', payment_intent: null, metadata: null } as Stripe.Checkout.Session)).toEqual({ id: 'cs_1', status: 'open', paymentStatus: 'unpaid', amountTotal: 10000, currency: 'eur', paymentRef: null });
+    expect(sessionStatusFromStripe({ id: 'cs_1', status: 'open', payment_status: 'unpaid', amount_total: 10000, currency: 'eur', payment_intent: null, metadata: null } as StripeCheckoutSession)).toEqual({ id: 'cs_1', status: 'open', paymentStatus: 'unpaid', amountTotal: 10000, currency: 'eur', paymentRef: null });
   });
 });
