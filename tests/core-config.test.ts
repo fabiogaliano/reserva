@@ -392,6 +392,31 @@ describe('core config and pricing validation', () => {
     expect(validateConfig(declarative).services.vintage?.occupancy).toEqual({ seatsPerUnit: 6 });
   });
 
+  // Undeclared, a party of 8 took one unit, so `capacity.default: 40` meant to be covers let 320
+  // people into one seating.
+  it('requires occupancy on a service that sells parties larger than one, naming both readings', () => {
+    const { occupancy: _omitted, ...partySized } = service;
+    try {
+      validateConfig({ ...config, services: { vintage: partySized } });
+      throw new Error('expected validation to fail');
+    } catch (error) {
+      const issues = (error as { issues?: Array<{ path: (string | number)[]; message: string }> }).issues ?? [];
+      expect(issues.map((issue) => issue.path)).toEqual([['services', 'vintage', 'occupancy']]);
+      expect(issues[0]?.message).toContain('parties of up to 8');
+      expect(issues[0]?.message).toContain('{ seatsPerUnit: 1 }');
+      expect(issues[0]?.message).toContain('{ seatsPerUnit: 8 }');
+    }
+  });
+
+  it('lets a single-person service omit occupancy, where one booking and one person are the same unit', () => {
+    const { occupancy: _omitted, ...solo } = service;
+    const singles = {
+      ...solo,
+      pricing: [{ maxQuantity: 1, pickup: 'default', priceMinor: 10000 }, { maxQuantity: 1, pickup: 'custom', priceMinor: 12000 }],
+    };
+    expect(validateConfig({ ...config, services: { vintage: singles } }).services.vintage?.occupancy).toBeUndefined();
+  });
+
   it('carries the collectGuestCount opt-in through, absent by default, and rejects a non-boolean', () => {
     expect(validateConfig({ ...config, services: { vintage: { ...service, collectGuestCount: true } } }).services.vintage?.collectGuestCount).toBe(true);
     expect(validateConfig(config).services.vintage?.collectGuestCount).toBeUndefined();
@@ -478,6 +503,7 @@ describe('meeting-point-only location shorthand', () => {
           durationMin: service.durationMin,
           turnaroundMin: service.turnaroundMin,
           schedule: service.schedule,
+          occupancy: service.occupancy,
           location: {
             meetingPoints: [{ id: 'square', label: 'The Square', mapsUrl: 'https://maps.google.com/?q=square' }],
           },

@@ -28,6 +28,9 @@ export default {
         lastStart: '17:00',
         intervalMin: 60,
       }],
+      // Every booking takes one of the 3 units per slot whatever its size, which is what the e2e
+      // capacity cases count on.
+      occupancy: { seatsPerUnit: 4 },
       pricing: [
         { maxQuantity: 4, pickup: 'default', priceMinor: 2500 },
         { maxQuantity: 4, pickup: 'custom', priceMinor: 3500 },
@@ -66,6 +69,7 @@ export default {
           { id: 'custom_both', label: 'Custom pick-up & drop-off', requiresAddress: true, usesMeetingPoint: false },
         ],
       },
+      occupancy: { seatsPerUnit: 4 },
       pricing: [
         { maxQuantity: 4, pickup: 'meeting_point', priceMinor: 18000 },
         { maxQuantity: 4, pickup: 'custom_dropoff', priceMinor: 20000 },
@@ -83,6 +87,7 @@ export default {
         lastStart: '16:00',
         intervalMin: 60,
       }],
+      occupancy: { seatsPerUnit: 6 },
       pricing: [{ maxQuantity: 6, priceMinor: 4200 }],
       metadataFields: [
         { key: 'dietary_notes', label: 'Dietary notes', type: 'text', required: true, maxLength: 200 },

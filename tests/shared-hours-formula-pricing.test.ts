@@ -51,6 +51,7 @@ const fleet = {
     },
     workshop: {
       title: 'Workshop', durationMin: 90, turnaroundMin: 0,
+      occupancy: { seatsPerUnit: 1 },
       pricing: [{ maxQuantity: 2, priceMinor: 3000 }, { maxQuantity: 6, priceMinor: 7000 }],
     },
   },

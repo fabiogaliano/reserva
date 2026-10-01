@@ -47,12 +47,13 @@ export default {
     timezone: 'Europe/Lisbon', currency: 'eur',
     contact: { email: 'bookings@lisbontuktours.example', phone: '+351 210 000 000' },
   },
-  capacity: { default: 3 },              // seats per departure
+  capacity: { default: 3 },              // tuk-tuks per departure
   admin: { access: { teamDomain: 'https://lisbontuktours.cloudflareaccess.com', aud: '<AUD>' } },
   services: {
     alfama: {
       title: 'Alfama Discovery', durationMin: 60, turnaroundMin: 15,
       schedule: [{ days: [1, 2, 3, 4, 5, 6], firstStart: '09:00', lastStart: '17:00', intervalMin: 60 }],
+      occupancy: { seatsPerUnit: 3 },    // one tuk-tuk seats a party of up to 3
       pricing: [{ maxQuantity: 3, priceMinor: 4500 }],
       location: {
         meetingPoints: [{ id: 'se', label: 'Sé Cathedral', mapsUrl: 'https://maps.google.com/?q=Se+Lisboa' }],

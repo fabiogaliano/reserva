@@ -15,6 +15,7 @@ const cruise: ResolvedServiceConfig = {
   durationMin: 90,
   turnaroundMin: 15,
   schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], firstStart: '10:00', lastStart: '16:00', intervalMin: 60 }],
+  occupancy: { seatsPerUnit: 1 },
   pricing: [{ maxQuantity: 6, priceMinor: 4200 }],
   metadataFields: [
     { key: 'dietary_notes', label: { en: 'Dietary notes', 'pt-BR': 'Restrições alimentares' }, type: 'text', required: true, maxLength: 200 },

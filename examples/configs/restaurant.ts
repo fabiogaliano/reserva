@@ -21,6 +21,8 @@ export default {
       durationMin: 90,
       turnaroundMin: 30,
       schedule: [{ days: [2, 3, 4, 5, 6], firstStart: '18:00', lastStart: '21:30', intervalMin: 30 }],
+      // Capacity counts covers, so a party of 6 takes 6 of the 40.
+      occupancy: { seatsPerUnit: 1 },
       // Breakpoints, not per-person maths: the first row covering the party size wins.
       pricing: [
         { maxQuantity: 2, priceMinor: 2000 },
