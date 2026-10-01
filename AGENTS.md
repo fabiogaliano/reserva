@@ -81,7 +81,7 @@ receive once the defaults below have been applied.
 | `hours` | no | `Array<ScheduleRule>` (same shape as a service `schedule` rule) — the business's opening hours, inherited by every service that declares no `schedule`; each service derives its own last departure from a shared `lastEnd` |
 | `pricing` | no | `{ surcharges?: Record<pickupId, minor>, maxUnits?, surchargeScope?: 'unit' \| 'booking' }` — defaults to `{ surcharges: {}, maxUnits: 1, surchargeScope: 'unit' }`; the shared half of formula pricing, inherited field by field by every formula service that leaves it undeclared |
 | `services` | yes | `Record<slug, ServiceConfig>` |
-| `booking` | no | `{ minNoticeHours, maxHorizonDays, holdMinutes (≥35), cancelCutoffHours, reschedule: { enabled, cutoffHours }, limitedThreshold, calendarMaxStaleSeconds, reminderHoursBefore, maxHoldsPerIp?, tokenExpiryDays? }` — the whole key defaults, as does each of its own: `0`, `90`, `35`, `24`, `{ enabled: true }` with `cutoffHours` inheriting `cancelCutoffHours`, `2`, `900`, `24` (`reminderHoursBefore: 0` disables the reminder email) |
+| `booking` | no | `{ minNoticeHours, maxHorizonDays, holdMinutes (≥35), cancelCutoffHours, reschedule: { enabled, cutoffHours }, limitedThreshold, calendarMaxStaleSeconds, reminderHoursBefore, maxHoldsPerIp, tokenExpiryDays? }` — the whole key defaults, as does each of its own: `0`, `90`, `35`, `24`, `{ enabled: true }` with `cutoffHours` inheriting `cancelCutoffHours`, `2`, `900`, `24` (`reminderHoursBefore: 0` disables the reminder email), `5` (unpaid holds one IP may have open at once; `null` removes the cap) |
 | `locales` | no | `{ supported: string[], default: string }` — defaults to `{ supported: ['en'], default: 'en' }` |
 | `legal` | no | `{ termsUrl? }` — defaults to `{}`; `termsUrl` itself is optional |
 | `webhooks` | no | `Array<{ name, url, secretBinding, events? }>` |
@@ -311,7 +311,7 @@ SQL error.
 | `400 invalid_payment_signature` on the payment webhook | signing secret does not match the endpoint sending events | a live endpoint's secret never verifies a test-mode event, and vice versa |
 | `409 payment_amount_mismatch` | captured amount ≠ the booking's stored price | never expected; alert on it, do not retry-loop it |
 | `503 confirmation_in_progress` | another caller holds the confirmation lease | retry; the payment webhook's retry is the intended path |
-| `429 too_many_holds` | `booking.maxHoldsPerIp` reached | expected under abuse; raise the cap or leave it |
+| `429 too_many_holds` | `booking.maxHoldsPerIp` reached (5 open holds per IP unless configured) | expected under abuse; raise the cap where many customers share one IP (a hotel desk), or `null` to remove it |
 | `400 validation_failed: pickup …` | service has no `location`, or the id is not declared | omit `pickup` for a location-less service; otherwise use a declared id |
 | `<ManageBooking />` throws about a missing endpoint | its route group is disabled in `config.routes` | pass an explicit `endpoint`, or re-enable the group |
 | Consumer build cannot resolve `virtual:reserva/runtime` | `reserva()` missing from `integrations`, or types not synced | add the integration; run `astro sync` |

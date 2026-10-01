@@ -452,10 +452,16 @@ describe('booking, locales, legal, and admin defaults', () => {
       limitedThreshold: 2,
       reminderHoursBefore: 24,
       calendarMaxStaleSeconds: 900,
+      maxHoldsPerIp: 5,
     });
     expect(validated.locales).toEqual({ supported: ['en'], default: 'en' });
     expect(validated.legal).toEqual({});
     expect(validated.admin).toEqual({});
+  });
+
+  it('keeps an explicit null maxHoldsPerIp as "no cap" instead of applying the default', () => {
+    const validated = validateConfig({ ...config, booking: { maxHoldsPerIp: null } });
+    expect(validated.booking.maxHoldsPerIp).toBeNull();
   });
 
   it('resolves reschedule.cutoffHours to cancelCutoffHours when reschedule is omitted', () => {
@@ -479,6 +485,7 @@ describe('booking, locales, legal, and admin defaults', () => {
       limitedThreshold: 2,
       reminderHoursBefore: 24,
       calendarMaxStaleSeconds: 900,
+      maxHoldsPerIp: 5,
     });
   });
 

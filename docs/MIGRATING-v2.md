@@ -414,8 +414,10 @@ per-IP hold cap, or the admin change history.
 
 # Migrating to 0.16.0
 
-0.16.0 makes `occupancy` required on a service that sells parties larger than one, and passes
-the effective config to `OperationalAlertSink.send`. No schema, route or wire change.
+0.16.0 makes `occupancy` required on a service that sells parties larger than one, passes the
+effective config to `OperationalAlertSink.send`, and caps unpaid holds per IP by default. No
+schema or wire change; the CORS allowlist and the sweep's query budget are additions that need
+no action.
 
 ## `occupancy` on party-sized services
 
@@ -439,6 +441,18 @@ services: {
 If `capacity.default` was meant as people (covers, class places), declare
 `occupancy: { seatsPerUnit: 1 }` instead and check the capacity number: a party of 4 now takes
 4 units. Holds and bookings already stored keep the units they were created with.
+
+## `booking.maxHoldsPerIp` defaults to 5
+
+A sixth unpaid hold from one IP while five are still open now answers `429 too_many_holds`. To
+keep the 0.15.x behaviour, declare the cap off explicitly:
+
+```ts
+booking: { maxHoldsPerIp: null },
+```
+
+Raise it instead where many customers share one IP (a hotel desk, an office). Clearing the field
+on the admin settings page stores `null` too, so it stays off rather than returning to 5.
 
 ## `OperationalAlertSink.send(alert, config)`
 

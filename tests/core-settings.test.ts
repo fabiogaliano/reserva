@@ -76,10 +76,10 @@ describe('core settings', () => {
     expect(applySettingOverrides(config, {})).toBe(config);
   });
 
-  it('an explicit null unsets optional settings', () => {
+  it('a cleared hold cap stays off through re-validation instead of falling back to the default', () => {
     const withLimit = { ...config, booking: { ...config.booking, maxHoldsPerIp: 5 } };
-    const merged = applySettingOverrides(withLimit, { 'booking.maxHoldsPerIp': 'null' });
-    expect(merged.booking.maxHoldsPerIp).toBeUndefined();
+    const merged = loadMergedConfig(withLimit, { 'booking.maxHoldsPerIp': 'null' });
+    expect(merged.booking.maxHoldsPerIp).toBeNull();
   });
 
   it('parses form values per kind: numbers, checkboxes, and optional empties', () => {

@@ -151,10 +151,7 @@ export const settingDefinitions: readonly SettingDefinition[] = [
     groupKey: 'settingGroup.holds',
     kind: { type: 'int', min: 1, optional: true },
     get: (config) => config.booking.maxHoldsPerIp ?? null,
-    set: (config, value) => {
-      if (value === null) delete config.booking.maxHoldsPerIp;
-      else config.booking.maxHoldsPerIp = value as number;
-    },
+    set: (config, value) => { config.booking.maxHoldsPerIp = value as number | null; },
   },
   {
     key: 'booking.limitedThreshold', section: 'policy', labelKey: 'setting.limitedThreshold',

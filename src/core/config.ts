@@ -387,7 +387,11 @@ const bookingSchema = z.object({
   // booking made inside the window never gets one (it just received its confirmation).
   reminderHoursBefore: z.number().int().nonnegative().default(24),
   calendarMaxStaleSeconds: z.number().int().min(60).default(15 * 60),
-  maxHoldsPerIp: z.number().int().positive().optional(),
+  // On by default because every unpaid hold blocks capacity for at least `holdMinutes`, so one
+  // script could otherwise hold a whole day. `null` is the explicit "no cap", and the value the
+  // admin settings page stores when the field is cleared; absence must not mean the same thing,
+  // or re-validating a cleared setting would bring the default back.
+  maxHoldsPerIp: z.number().int().positive().nullable().default(5),
   // Token lifetime counted from booking end, not creation, so links survive reschedules, refund
   // follow-up, and review requests. Defaults to `DEFAULT_TOKEN_EXPIRY_DAYS` when unset.
   tokenExpiryDays: z.number().int().positive().optional(),
