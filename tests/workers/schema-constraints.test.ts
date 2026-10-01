@@ -142,13 +142,13 @@ describe('duplicate payment_ref surfaces a clean conflict through the real write
     const second = await holdFor('confirm-2');
     await repo.acquireConfirmationLease(first.id, 'lease-1', '2026-07-21T10:00:00.000Z', '2026-07-21T10:05:00.000Z');
     await repo.confirmWithSideEffectOperations(first.id, {
-      expectedStatusIn: ['hold'], paymentRef: 'pi_shared_confirm', leaseToken: 'lease-1', oversold: false,
+      expectedStatusIn: ['hold'], paymentRef: 'pi_shared_confirm', leaseToken: 'lease-1', oversold: false, calendarEvent: 'owed',
       updatedAt: '2026-07-21T10:01:00.000Z',
     });
 
     await repo.acquireConfirmationLease(second.id, 'lease-2', '2026-07-21T10:00:00.000Z', '2026-07-21T10:05:00.000Z');
     const attempt = repo.confirmWithSideEffectOperations(second.id, {
-      expectedStatusIn: ['hold'], paymentRef: 'pi_shared_confirm', leaseToken: 'lease-2', oversold: false,
+      expectedStatusIn: ['hold'], paymentRef: 'pi_shared_confirm', leaseToken: 'lease-2', oversold: false, calendarEvent: 'owed',
       updatedAt: '2026-07-21T10:02:00.000Z',
     });
     await expect(attempt).rejects.toBeInstanceOf(DuplicatePaymentRefError);

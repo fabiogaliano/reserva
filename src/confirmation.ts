@@ -23,6 +23,7 @@ import {
   SIDE_EFFECT_MAX_ATTEMPTS,
   sameSideEffectOperation,
   sideEffectOperationKey,
+  type CalendarEventDebt,
   type SideEffectOperationIdentity,
   type SideEffectOperationRecord,
   type SideEffectOperationSeed,
@@ -206,13 +207,14 @@ async function executeOperation(
   token: string,
 ): Promise<void> {
   if (!isActionableSideEffectStatus(operation.status) || operation.family === 'oversell') return;
-  await renewConfirmationLease(context, booking.id, token);
+  // No lease renewal around these calls: the claim and the resolve each require this lease's
+  // token, so a caller that took the lease over has already replaced it and both refuse. An expiry
+  // check would add nothing but a second send: a lease that lapsed during a slow provider call,
+  // with nobody taking it over, would refuse the resolve and leave the row to run again.
   const attemptNumber = await context.repo.claimSideEffectOperation(booking.id, operation, token, nowIso(context));
   if (attemptNumber === null) throw new ConfirmationInProgressError();
   try {
-    await renewConfirmationLease(context, booking.id, token);
     const providerResultId = await runConfirmationOperation(context, booking, operation);
-    await renewConfirmationLease(context, booking.id, token);
     await resolveOperation(context, {
       bookingId: booking.id,
       identity: operation,
@@ -301,6 +303,7 @@ async function confirmBookingFromPaymentUnlocked(
       updatedAt: now,
       ...(eventSeeds.length > 0 ? { eventSeeds } : {}),
       ...(emailRecipients ? { emailRecipients } : {}),
+      calendarEvent: confirmationCalendarEvent(context),
     });
     transitionApplied = result !== null;
     current = result ?? await context.repo.getBookingById(current.id) ?? current;
@@ -324,7 +327,7 @@ async function confirmBookingFromPaymentUnlocked(
   // describe the booking as it stands now, which is also the occurrence a late subscriber is
   // being told about.
   await context.repo.ensureConfirmationSideEffectOperations(
-    current.id, token, nowIso(context),
+    current.id, token, nowIso(context), confirmationCalendarEvent(context),
     bookingEventSeeds(context, 'booking.confirmed', current, current.updatedAt),
     emailRecipients,
   );
@@ -409,6 +412,10 @@ export async function confirmBookingFromPayment(
     release();
     if (locks.get(booking.id) === queued) locks.delete(booking.id);
   }
+}
+
+function confirmationCalendarEvent(context: ReservaContext): CalendarEventDebt {
+  return context.providers.calendar ? 'owed' : 'not_owed';
 }
 
 // A confirmation's email rows only split into per-recipient debt when the provider implements

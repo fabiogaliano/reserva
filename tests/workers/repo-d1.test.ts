@@ -117,7 +117,7 @@ describe('D1 booking repository', () => {
     const calendar: SideEffectOperationIdentity = { family: 'calendar_create' };
     await expect(repo.acquireConfirmationLease(created.id, 'lease-a', '2026-07-21T10:00:00.000Z', '2026-07-21T10:05:00.000Z')).resolves.toBe(true);
     await expect(repo.confirmWithSideEffectOperations(created.id, {
-      expectedStatusIn: ['hold'], leaseToken: 'lease-a', oversold: false, updatedAt: '2026-07-21T10:01:00.000Z',
+      expectedStatusIn: ['hold'], leaseToken: 'lease-a', oversold: false, calendarEvent: 'owed', updatedAt: '2026-07-21T10:01:00.000Z',
     })).resolves.toMatchObject({ status: 'confirmed' });
     await expect(repo.claimSideEffectOperation(created.id, calendar, 'lease-a', '2026-07-21T10:01:00.000Z')).resolves.toBe(1);
 
@@ -169,7 +169,7 @@ describe('D1 booking repository', () => {
     await expect(repo.confirmWithSideEffectOperations(created.id, {
       expectedStatusIn: ['hold'],
       leaseToken: 'lease-outbox',
-      oversold: false,
+      oversold: false, calendarEvent: 'owed',
       updatedAt: '2026-07-21T10:01:00.000Z',
     })).rejects.toThrow('outbox insert failed');
 
@@ -207,7 +207,7 @@ describe('D1 booking repository', () => {
     await expect(repo.confirmWithSideEffectOperations(created.id, {
       expectedStatusIn: ['hold'],
       leaseToken: 'lease-tf-outbox',
-      oversold: false,
+      oversold: false, calendarEvent: 'owed',
       updatedAt: '2026-07-21T10:01:00.000Z',
       eventSeeds: [{
         family: 'hook', name: 'ops', event: 'booking.confirmed',
@@ -249,7 +249,7 @@ describe('D1 booking repository', () => {
     await expect(repo.confirmWithSideEffectOperations(created.id, {
       expectedStatusIn: ['hold'],
       leaseToken: 'lease-email-split-outbox',
-      oversold: false,
+      oversold: false, calendarEvent: 'owed',
       updatedAt: '2026-07-21T10:01:00.000Z',
       emailRecipients: ['customer', 'owner'],
     })).rejects.toThrow('email split outbox insert failed');
@@ -281,13 +281,13 @@ describe('D1 booking repository', () => {
     await repo.confirmWithSideEffectOperations(created.id, {
       expectedStatusIn: ['hold'],
       leaseToken: 'lease-email-repair',
-      oversold: false,
+      oversold: false, calendarEvent: 'owed',
       updatedAt: '2026-07-21T10:01:00.000Z',
       emailRecipients: ['customer', 'owner'],
     });
 
     // A later pass under a provider without sendToRecipient asks for the combined shape.
-    await repo.ensureConfirmationSideEffectOperations(created.id, 'lease-email-repair', '2026-07-21T10:02:00.000Z');
+    await repo.ensureConfirmationSideEffectOperations(created.id, 'lease-email-repair', '2026-07-21T10:02:00.000Z', 'owed');
 
     const emailRows = await db.prepare(
       `SELECT family, name FROM side_effect_operations WHERE booking_id = ? AND family IN ('email', 'email_confirmation') ORDER BY family, name`,
