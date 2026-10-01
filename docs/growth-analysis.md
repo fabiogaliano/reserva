@@ -526,6 +526,13 @@ Done (PR #31): capacity `occupancy` made explicit (conclusion 1); alerts follow 
 | 12 | ~~`docs/architecture.md:79` says ~59 repo methods; there are 81~~ | ~~**Build now**~~ Done | Doc-only |
 | 13 | MCP server example | **Later, low priority** | `examples/` only, over the public API (catalog, availability, quote, checkout link) |
 | 14 | Cloudflare Email Sending adapter | **Later, with trigger** | Trigger: Email Sending leaves beta or reaches the Free plan (today: public beta, Workers Paid, Cloudflare DNS required) |
+| 15 | ~~The idle sweep read the whole booking history every 5 minutes~~ | ~~**Build now**~~ Done | D1 bills the rows a query scans, and Free stops every query for the rest of the UTC day after 5M. Reminders, oversell markers and incident reprojection scanned history, and the ops-health debt count read every outbox row. Idle sweep at 2,000 bookings + 20 hand-closed incidents: 212,036 → 157 rows; Free broke at ~1,600 bookings, or ~160 with 20 closed incidents. Migration 0008 (oversell-only partial index). Pinned by `tests/workers/reconciliation-rows-read.test.ts` |
+| 16 | ~~Three lease renewals per confirmation record~~ | ~~**Build now**~~ Done | The claim and the resolve already fence on the lease token. Payment webhook with calendar, customer + owner email, one hook: 41 → 32 queries (53 → 44 on a cold isolate, so under 50 even if the Free cap is 50). Sweep step 9 → 6. A delivery outlasting the lease with nobody taking over is recorded instead of sent twice |
+| 17 | ~~A calendar record per confirmation with no calendar configured~~ | ~~**Build now**~~ Done | It was claimed and marked delivered with no call. Confirmation without calendar: 32 → 27 queries |
+| 18 | Remaining sweep step savings: release inside the resolve, booking returned by the lease acquire, one lease per booking, one incident read per booking, per-family step cost | **Later, with trigger** | Speed only (more work per 5-minute run); saves a few rows per booking, nothing billable. Trigger: item 19 shows the Free cap is 50, or slow recovery after an outage is reported. Not booking columns from the candidate query: `calendar_patch` must read the booking right before its call |
+| 19 | Free-plan D1 queries per invocation: 50 (D1 limits page, 2026-04-21) or 1,000 to Cloudflare services (Workers limits page, changelog 2026-02-11) | **Open; settle when 18 triggers** | Probe Worker on a Free account: 60 sequential queries, one `batch()` of 60, 1,001 sequential. Also settles whether a batch counts once. Production (lisbonvintagetours.com, Free, 13 confirmations at 41 / 53 queries) saw no partial confirmation, which suggests the cap is not 50 but does not prove it |
+| 20 | Faster backlog drain: Durable Object alarm, Queues, or a `ctx.exports` self-call | **Later, with trigger** | Adds usage rather than saving it; the cron stays as the safety net because arming a wake-up is not atomic with the D1 write. Retry backoff (5–60 min per row) dominates recovery, not the cadence. Trigger: after providers recover, the oldest pending outbox row stays past its backoff + 2 cadences. Then compare `ctx.exports` (no adopter setup; whether the callee gets its own D1 and CPU budget is undocumented), Queues (on Free since 2026-02-04), DO alarm |
+| 21 | Cron CPU against Free's 10 ms | **No action** | Production since Reserva 0.14: median 7.5 ms, p99 35 ms, 0 failures in 733 runs. Trigger: a cron run fails |
 
 ### Build queue (from the decisions above)
 
@@ -537,6 +544,11 @@ All done in PR #31, each with a changeset in `.changeset/`.
 4. ~~"Runs on the Workers Free plan" in README + deployment guide (item 11) — tiny~~
 5. ~~Sweep query budget per invocation (item 2) — small~~
 6. ~~CORS allowlist for customer routes (item 1) — small~~
+7. ~~Bounded rows read by the idle sweep and ops health (item 15) — small, one migration~~
+8. ~~Drop the per-record lease renewals (item 16) — small~~
+9. ~~Calendar record only with a calendar configured (item 17) — small~~
+
+Measured with `docs/tmp/measure-sweep-rows-read.test.ts` (copy it into `tests/workers/` to run).
 
 ### Planned later
 
@@ -548,3 +560,4 @@ All done in PR #31, each with a changeset in `.changeset/`.
 - Turnstile on checkout (item 6)
 - Framework-agnostic handler (item 5, on request); pre-hold hook (item 9, on request)
 - MCP example (item 13, low priority); Email Sending adapter (item 14, on trigger)
+- Sweep step savings (item 18, on trigger), with the Free cap probe (item 19); faster drain (item 20, on trigger)
