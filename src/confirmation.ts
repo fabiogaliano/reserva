@@ -585,7 +585,8 @@ interface MutationSideEffectAttempt {
 // Reconstructs a runnable attempt from the row's identity COLUMNS — no string is split, and no
 // positional convention decides what a segment means. Returning null means "the thing that would
 // run this is not configured": the row is left actionable for a later request. A hook/webhook row
-// is the exception — an unregistered name is a permanent failure raised by the delivery itself.
+// is the exception — an unregistered name is a permanent failure raised by the delivery itself —
+// and so is a per-recipient email the configured provider cannot send alone.
 function attemptForOperation(context: ReservaContext, booking: Booking, operation: SideEffectOperationRecord): MutationSideEffectAttempt | null {
   if (operation.family === 'calendar_delete') {
     const calendar = context.providers.calendar;
@@ -619,7 +620,14 @@ function attemptForOperation(context: ReservaContext, booking: Booking, operatio
     const event = operation.event as EmailBookingEvent;
     const recipient = confirmationEmailRecipient(operation);
     if (recipient) {
-      if (!email.sendToRecipient) return null;
+      // As in runConfirmationOperation: send() would re-mail the recipient already served, and the
+      // provider is configured, so the sweep keeps paging over the row until it is resolved.
+      if (!email.sendToRecipient) {
+        return {
+          provider: 'email',
+          run: () => Promise.reject(new ProviderFailure({ retryable: false, message: `email provider cannot send to the ${recipient} alone (no sendToRecipient)` })),
+        };
+      }
       const sendToRecipient = email.sendToRecipient.bind(email);
       return { provider: 'email', run: () => sendToRecipient(recipient, event, booking, context.config, context.routeConfig) };
     }

@@ -134,19 +134,22 @@ describe('mutation side-effect outbox', () => {
     ]);
   });
 
-  it('leaves an existing recipient row owed when the current provider cannot send to a recipient', async () => {
+  it('abandons an existing recipient row the current provider cannot send to that recipient alone (it stayed owed forever and filled the sweep\'s pages)', async () => {
     const seeded = booking({ id: 'mutation-provider-change' });
     const repo = fakeRepository([seeded]);
     await repo.recordMutationSideEffectOperations(seeded.id, [seed({ family: 'email', name: 'customer', event: 'booking.no_show' })], '2026-06-14T08:00:00.000Z');
     let sends = 0;
+    const errors: unknown[][] = [];
     const context = createReservaContext({
       config, db: {} as D1Database, repo, clock,
+      logger: { error: (...args: unknown[]) => { errors.push(args); }, warn: () => undefined, info: () => undefined },
       providers: providers({ email: { send: async () => { sends += 1; } } }),
     });
 
     await runOwedMutationSideEffects(context, seeded);
     expect(sends).toBe(0);
-    expect(sideEffectOperation(repo, seeded.id, { family: 'email', name: 'customer', event: 'booking.no_show' })).toMatchObject({ status: 'pending', attemptCount: 0 });
+    expect(sideEffectOperation(repo, seeded.id, { family: 'email', name: 'customer', event: 'booking.no_show' })).toMatchObject({ status: 'abandoned', attemptCount: 1 });
+    expect(errors.some(([message]) => message === 'reserva side effect operation abandoned')).toBe(true);
   });
 
   it('preserves a class-based provider method receiver for mutation recipient delivery', async () => {
