@@ -45,6 +45,9 @@ interface FakeTokenState {
 
 export interface FakeRepositoryOptions {
   tokenEncryptionKey?: string;
+  // The occupancy_units stored with a seeded booking, by id. A seeded booking without one counts
+  // as a row older than the column: one unit, as the real guard's COALESCE has it.
+  occupancyUnits?: Readonly<Record<string, number>>;
 }
 
 // Shared in-memory fake repository + provider harness for handler tests.
@@ -157,7 +160,12 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
   // Mirrors src/repo.ts's occupancy_units/occupancy_ends_at columns: rows seeded via the
   // `booking()` fixture have no entry, matching a pre-migration NULL row, so the same
   // COALESCE(units, 1) / COALESCE(endsAt, row.endsAt) fallback applies.
-  const occupancyMeta = new Map<string, { units: number; endsAt: string }>();
+  const occupancyMeta = new Map<string, { units: number; endsAt: string }>(
+    seed.flatMap((item) => {
+      const units = options.occupancyUnits?.[item.id];
+      return units === undefined ? [] : [[item.id, { units, endsAt: item.endsAt }] as const];
+    }),
+  );
   const find = (predicate: (item: Booking) => boolean) => [...rows.values()].find(predicate) ?? null;
   const adminWindowRows = (window: AdminBookingWindow): Booking[] => [...rows.values()]
     .filter((item) => (window.from === undefined || item.startsAt >= window.from)
@@ -188,7 +196,8 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       startsAt: item.startsAt,
       endsAt: meta?.endsAt ?? item.endsAt,
       holdExpiresAt: item.holdExpiresAt,
-      quantity: meta?.units ?? 1,
+      quantity: item.quantity,
+      occupancyUnits: meta?.units ?? 1,
     };
   };
   // Max-concurrent occupancy in [targetStart, targetEnd) — the same semantic src/repo.ts's guard
@@ -659,7 +668,8 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
     },
     listOccupancyBookings: async (from, to) => [...rows.values()]
       .filter((item) => (item.status === 'hold' || item.status === 'confirmed') && item.startsAt >= from && item.startsAt < to)
-      .sort((a, b) => a.startsAt.localeCompare(b.startsAt)),
+      .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
+      .map((item) => ({ ...item, occupancyUnits: occupancyMeta.get(item.id)?.units ?? 1 })),
     // Mirrors src/repo.ts listAdminBookings — optional [from, before) window and status, ordered by
     // (starts_at, id) in the requested direction, then paged.
     listAdminBookings: async (window, page) => {

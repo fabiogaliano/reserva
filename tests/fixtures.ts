@@ -1,5 +1,6 @@
 import type { AstroIntegration } from 'astro';
 import type { Booking } from '../src/core/booking';
+import type { OccupancyBooking } from '../src/core/occupancy';
 import type { PricingRule, ResolvedClientConfig, ResolvedServiceConfig } from '../src/core/config';
 
 // The breakpoint rows of a service the test knows prices by rows; narrows the pricing union once.
@@ -98,6 +99,12 @@ export function booking(overrides: Partial<Booking> = {}): Booking {
     updatedAt: '2026-01-01T00:00:00.000Z',
     ...overrides,
   };
+}
+
+// A booking as the repository lists it for occupancy, with the units stored when it was made.
+export function occupancyBooking(overrides: Partial<Booking> & { occupancyUnits?: number } = {}): OccupancyBooking {
+  const { occupancyUnits = 1, ...bookingOverrides } = overrides;
+  return { ...booking(bookingOverrides), occupancyUnits };
 }
 
 export interface AstroConfigSetupResult {

@@ -80,6 +80,12 @@ async function seedConfirmed(id: string, startsAt: string, endsAt: string, quant
 const TARGET_START = '2026-08-10T09:00:00.000Z';
 const TARGET_END = '2026-08-10T10:00:00.000Z';
 
+// What availability reads for the target day, so a parity check compares the guard with it rather
+// than with a hand-built booking.
+function listTargetDay() {
+  return repo.listOccupancyBookings('2026-08-10T00:00:00.000Z', '2026-08-11T00:00:00.000Z');
+}
+
 describe('atomic capacity allocation against real D1', () => {
   describe('concurrent last-unit checkout x2', () => {
     it('checkout A commits first: A wins the last unit, B is rejected', async () => {
@@ -182,20 +188,17 @@ describe('atomic capacity allocation against real D1', () => {
       const rejected = await repo.insertHoldWithCapacity(buildHold('single-unit-over', TARGET_START, TARGET_END, 2, 2));
       expect(rejected).toBeNull();
 
-      const referenceBooking = { id: 'multi-unit', status: 'confirmed' as const, startsAt: TARGET_START, endsAt: TARGET_END, holdExpiresAt: null, quantity: 5 };
-      const intervals = getOccupancyIntervals({ bookings: [referenceBooking], service, now: '2026-08-09T10:00:00.000Z' });
+      const intervals = getOccupancyIntervals({ bookings: await listTargetDay(), service, now: '2026-08-09T10:00:00.000Z' });
       expect(maxConcurrentOccupancy(intervals, TARGET_START, occupancyEndsAt(TARGET_END))).toBe(2);
       expect(isSlotAvailable(TARGET_START, TARGET_END, { capacity: 2, intervals, requestedUnits: 1, turnaroundMin: service.turnaroundMin })).toBe(false);
     });
 
     it('accepts a request that fits alongside a multi-unit party, exactly where maxConcurrentOccupancy says it must', async () => {
       await seedConfirmed('multi-unit', TARGET_START, TARGET_END, 5, 3);
+      const intervals = getOccupancyIntervals({ bookings: await listTargetDay(), service, now: '2026-08-09T10:00:00.000Z' });
 
       const accepted = await repo.insertHoldWithCapacity(buildHold('single-unit-fits', TARGET_START, TARGET_END, 2, 3));
       expect(accepted).toMatchObject({ status: 'hold', startsAt: TARGET_START });
-
-      const referenceBooking = { id: 'multi-unit', status: 'confirmed' as const, startsAt: TARGET_START, endsAt: TARGET_END, holdExpiresAt: null, quantity: 5 };
-      const intervals = getOccupancyIntervals({ bookings: [referenceBooking], service, now: '2026-08-09T10:00:00.000Z' });
       expect(isSlotAvailable(TARGET_START, TARGET_END, { capacity: 3, intervals, requestedUnits: 1, turnaroundMin: service.turnaroundMin })).toBe(true);
     });
   });
@@ -211,12 +214,9 @@ describe('atomic capacity allocation against real D1', () => {
     const REQUEST_START = '2026-08-10T11:00:00.000Z';
     const REQUEST_END = '2026-08-10T12:00:00.000Z'; // occupancy window [11:00, 12:30) straddles both neighbors
 
-    function crossCheckRealSemantic(): void {
-      const referenceBookings = [
-        { id: 'neighbor-a', status: 'confirmed' as const, startsAt: NEIGHBOR_A_START, endsAt: NEIGHBOR_A_END, holdExpiresAt: null, quantity: 2 },
-        { id: 'neighbor-b', status: 'confirmed' as const, startsAt: NEIGHBOR_B_START, endsAt: NEIGHBOR_B_END, holdExpiresAt: null, quantity: 2 },
-      ];
-      const intervals = getOccupancyIntervals({ bookings: referenceBookings, service, now: '2026-08-09T10:00:00.000Z' });
+    async function crossCheckRealSemantic(): Promise<void> {
+      const neighbors = (await listTargetDay()).filter((listed) => listed.id.startsWith('neighbor-'));
+      const intervals = getOccupancyIntervals({ bookings: neighbors, service, now: '2026-08-09T10:00:00.000Z' });
       expect(maxConcurrentOccupancy(intervals, REQUEST_START, occupancyEndsAt(REQUEST_END))).toBe(1);
       expect(isSlotAvailable(REQUEST_START, REQUEST_END, { capacity: 2, intervals, requestedUnits: 1, turnaroundMin: service.turnaroundMin })).toBe(true);
     }
@@ -224,7 +224,7 @@ describe('atomic capacity allocation against real D1', () => {
     it('insertHoldWithCapacity accepts a request straddling two neighbors that never overlap each other, which a SUM guard would wrongly reject', async () => {
       await seedConfirmed('neighbor-a', NEIGHBOR_A_START, NEIGHBOR_A_END, 2, 2);
       await seedConfirmed('neighbor-b', NEIGHBOR_B_START, NEIGHBOR_B_END, 2, 2);
-      crossCheckRealSemantic();
+      await crossCheckRealSemantic();
 
       // A naive SUM-of-overlaps guard computes occupied = 1 (neighbor-a) + 1 (neighbor-b) = 2 (both
       // overlap the request window) plus the requested unit = 3 > capacity 2, and rejects. The
@@ -237,7 +237,7 @@ describe('atomic capacity allocation against real D1', () => {
       await seedConfirmed('neighbor-a', NEIGHBOR_A_START, NEIGHBOR_A_END, 2, 2);
       await seedConfirmed('neighbor-b', NEIGHBOR_B_START, NEIGHBOR_B_END, 2, 2);
       await seedConfirmed('mover', '2026-08-10T15:00:00.000Z', '2026-08-10T16:00:00.000Z', 2, 2);
-      crossCheckRealSemantic();
+      await crossCheckRealSemantic();
 
       const rescheduled = await repo.rescheduleWithCapacity('mover', buildReschedule('2026-08-10T15:00:00.000Z', REQUEST_START, REQUEST_END, 2, 2));
       expect(rescheduled).toMatchObject({ startsAt: REQUEST_START });
