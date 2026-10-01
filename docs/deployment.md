@@ -4,6 +4,19 @@ Everything between a working local config and a production Worker: secrets, type
 admin access, the runbook, the scheduled reconciliation Worker, and how Reserva's migrations
 sit next to your own.
 
+## Which Workers plan
+
+Reserva runs on the Workers Free plan. The plan limit it has to design around is D1's 50 queries
+per Worker invocation (1,000 on Paid): a reconciliation sweep after a calendar or email outage
+can owe far more than that. The sweep therefore admits a step only when its worst-case query count
+still fits, keeps enough back to release its lease and send at least one operator alert, and
+leaves the rest for the next tick. On Free a tick delivers roughly two owed side effects, so a
+large backlog drains over several five-minute ticks; customer requests that touch a booking still
+deliver its owed effects on their own. A Paid deployment can drain it in one tick by raising the
+budget: `scheduledHandler(runtime, { requireAlertSink: true, queryBudget: 900 })`. The default,
+`DEFAULT_RECONCILIATION_QUERY_BUDGET`, is what remains of the Free cap after a cold isolate's
+schema check, the admin settings read, and the lease.
+
 ## Secrets and `astro:env`
 
 `reserva()` declares its own secret names — and only its own — in Astro's
@@ -197,7 +210,9 @@ regenerable — a row written without it never has its plaintext at rest again.
 
    `scheduledHandler` rethrows on failure, so a bad run is recorded as a failed cron invocation. An overlapping invocation takes no work: both it and
    `POST /api/booking/ops/reconcile` compete for one D1 lease row, and the loser logs a warning and
-   exits successfully. Pass `ReconciliationOptions` as the second argument to change the limits, or
+   exits successfully. Pass `ReconciliationOptions` as the second argument to change the limits
+   (`sourceLimit`, `alertLimit`, and `queryBudget`, covered under
+   [Which Workers plan](#which-workers-plan)), or
    call `runReconciliationWithLease(context, options)` yourself if you need to do more in the same
    invocation. Build that context the way `scheduledHandler` does:
 

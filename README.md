@@ -6,7 +6,8 @@
 your own Cloudflare account on Workers + D1.**
 
 Reserva plugs into an Astro 7 site: it injects a complete booking API and the operator pages
-behind it, and stores everything in your own D1 database.
+behind it, and stores everything in your own D1 database. It runs on the Workers Free plan; see
+[Which Workers plan](./docs/deployment.md#which-workers-plan) for what Paid changes.
 
 The library owns availability, holds, payment-session correctness, cancellation and reschedule
 rules, refunds, calendar and email side effects, retries, reconciliation, and the admin

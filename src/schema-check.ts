@@ -106,6 +106,10 @@ function migrationCollisionErrorMessage(): string {
     + 'sharing one with your own migrations.';
 }
 
+// The most queries one check issues: the ledger's existence and contents, the index list, and one
+// PRAGMA per table. A cold isolate spends them inside the first invocation's D1 query cap.
+export const SCHEMA_CHECK_QUERIES = 3 + Object.keys(RESERVA_SCHEMA_TABLES).length;
+
 // Runs once per isolate, never per request: a raw D1 SQL error from a missing column/table is the
 // most confusing failure mode for a new consumer, so this turns it into a named list of missing
 // migrations and the exact fix. Tolerant of extra, consumer-owned migrations.
