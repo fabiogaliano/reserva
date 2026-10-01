@@ -8,6 +8,7 @@
 export { API_ERROR_CODES, isApiErrorCode, MANAGE_TOKEN_HEADER } from './api.js';
 export type {
   ApiErrorCode,
+  ApiErrorDetails,
   ApiErrorEnvelope,
   AvailabilitySlot,
   AvailabilityDayStatus,
@@ -27,6 +28,8 @@ export type {
   ManageResponse,
   ManageActionResponse,
   ManageActionResponses,
+  CancelRequest,
+  RescheduleRequest,
   MetadataFieldType,
   CatalogMeetingPoint,
   CatalogPickupOption,
