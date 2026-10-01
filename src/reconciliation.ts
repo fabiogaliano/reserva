@@ -94,6 +94,8 @@ const REFUND_ATTEMPT_QUERIES = 3;
 // it created; each row then costs a claim and a resolve.
 const REFUND_CANCELLATION_QUERIES = 4;
 const OUTBOX_ROW_QUERIES = 2;
+// Deleting the calendar event also clears it from the booking: an UPDATE and the re-read.
+const CALENDAR_DELETE_WRITEBACK_QUERIES = 2;
 // Read the incident, then open, update or resolve it.
 const INCIDENT_PROJECTION_QUERIES = 2;
 // Claim, look up the booking reference, resolve.
@@ -332,8 +334,9 @@ async function processRefundCandidate(context: ReservaContext, bookingId: string
   let booking = initialBooking;
   if (booking.status !== 'cancelled') {
     if (operation.status !== 'requested' || booking.status !== 'confirmed') return true;
-    const outboxRows = cancellationSideEffectSeeds(context, booking, 'booking.cancelled_by_operator', nowIso(context)).length;
-    if (!budget.fits(REFUND_CANCELLATION_QUERIES + outboxRows * OUTBOX_ROW_QUERIES + REFUND_ATTEMPT_QUERIES)) return false;
+    const outboxQueries = cancellationSideEffectSeeds(context, booking, 'booking.cancelled_by_operator', nowIso(context))
+      .reduce((sum, seed) => sum + OUTBOX_ROW_QUERIES + (seed.family === 'calendar_delete' ? CALENDAR_DELETE_WRITEBACK_QUERIES : 0), 0);
+    if (!budget.fits(REFUND_CANCELLATION_QUERIES + outboxQueries + REFUND_ATTEMPT_QUERIES)) return false;
     const cancellation = await resumeClaimedOperatorCancellation(context, booking, operation.id);
     if (cancellation.kind !== 'cancelled') return true;
     booking = cancellation.booking;

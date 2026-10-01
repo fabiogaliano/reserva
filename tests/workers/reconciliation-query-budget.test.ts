@@ -104,6 +104,36 @@ describe('reconciliation query budget against real D1', () => {
     expect(ticks).toBeGreaterThan(1);
   });
 
+  it('sends a waiting operator alert from every sweep, whatever the budget, when a refund cancels a booking with a calendar event (the event delete\'s writeback went uncounted and ate the alert reserve)', async () => {
+    for (let queryBudget = 6; queryBudget <= 40; queryBudget += 1) {
+      for (const table of ['operational_incidents', 'side_effect_operations', 'refund_operations', 'bookings']) {
+        await db.prepare(`DELETE FROM ${table}`).run();
+      }
+      await seedConfirmed('refund', '2026-08-20T09:00:00.000Z');
+      await db.prepare("UPDATE bookings SET calendar_event_id = 'cal_refund' WHERE id = 'refund'").run();
+      await createReservaContext({ config, db, providers: providers() }).repo.claimRefundOperation({
+        id: 'op-refund', bookingId: 'refund', paymentIntent: 'pi_refund', choice: 'full', requestedAt: '2026-08-14T09:00:00.000Z',
+      });
+      await seedConfirmed('abandoned', '2026-08-20T09:00:00.000Z');
+      await owe('abandoned', 'email_confirmation', 'abandoned');
+      await db.prepare(
+        `INSERT INTO operational_incidents (id, booking_id, source_type, source_key, action, status, severity, attempt_count,
+           first_detected_at, last_detected_at, source_updated_at, alert_revision, alerted_revision, alert_attempt_count)
+         VALUES ('incident-abandoned', 'abandoned', 'side_effect', 'abandoned:email_confirmation', 'confirmation_email', 'open',
+           'action_required', 10, '2026-08-14T09:00:00.000Z', '2026-08-14T09:00:00.000Z', '2026-08-14T09:00:00.000Z', 1, 0, 0)`,
+      ).run();
+      const context = createReservaContext({
+        config, db, clock: () => new Date('2026-08-14T10:00:00.000Z'), logger: {},
+        providers: providers({ alerts: { send: async () => undefined } }),
+      });
+
+      await runReconciliationWithLease(context, { queryBudget });
+
+      const alerted = await count("SELECT alerted_revision AS n FROM operational_incidents WHERE id = 'incident-abandoned'");
+      expect(alerted, `query budget ${queryBudget}`).toBe(1);
+    }
+  });
+
   it('drains the same backlog in one sweep when given a Paid-plan budget', async () => {
     await seedBacklog();
     let alertsSent = 0;
