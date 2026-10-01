@@ -16,6 +16,8 @@ const cruise: ResolvedServiceConfig = {
   durationMin: 60,
   turnaroundMin: 30,
   schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], firstStart: '09:00', lastStart: '12:00', intervalMin: 30 }],
+  // One unit per booking, so every party size fits the fixture's capacity of 2 and reaches checkout.
+  occupancy: { seatsPerUnit: 4 },
   pricing: [
     { maxQuantity: 2, priceMinor: 4200 },
     { maxQuantity: 4, priceMinor: 7900 },

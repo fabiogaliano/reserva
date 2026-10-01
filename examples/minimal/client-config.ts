@@ -35,6 +35,8 @@ export default {
           intervalMin: 60,
         },
       ],
+      // Each booking gets its own guide, so a party of up to 4 takes one of the 3 per slot.
+      occupancy: { seatsPerUnit: 4 },
       // A single meeting point implies one pickup option, so pricing carries no `pickup` column.
       pricing: [{ maxQuantity: 4, priceMinor: 2500 }],
       location: {

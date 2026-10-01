@@ -103,6 +103,7 @@ describe('location-less pricing (tiers only)', () => {
     durationMin: service.durationMin,
     turnaroundMin: service.turnaroundMin,
     schedule: service.schedule,
+    occupancy: service.occupancy,
     pricing: tieredPricing,
   };
 

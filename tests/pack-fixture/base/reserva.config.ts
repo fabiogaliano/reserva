@@ -10,6 +10,7 @@ const demoTour: ServiceConfig = {
   durationMin: 60,
   turnaroundMin: 15,
   schedule: [{ days: [0, 1, 2, 3, 4, 5, 6], firstStart: '09:00', lastStart: '17:00', intervalMin: 60 }],
+  occupancy: { seatsPerUnit: 4 },
   // Config validation requires a rule for every declared pickup option at every quantity-count up
   // to maxQuantity.
   pricing: [

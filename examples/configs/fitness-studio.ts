@@ -23,6 +23,8 @@ export default {
         { days: [1, 2, 3, 4, 5], firstStart: '07:00', lastStart: '09:00', intervalMin: 60 },
         { days: [1, 2, 3, 4, 5], firstStart: '18:00', lastStart: '20:00', intervalMin: 60 },
       ],
+      // Capacity counts mats, so someone bringing three friends takes 4 of the 12.
+      occupancy: { seatsPerUnit: 1 },
       // 15 € per person, expressed as breakpoints: the first row covering the quantity wins.
       pricing: [
         { maxQuantity: 1, priceMinor: 1500 },

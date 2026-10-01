@@ -693,6 +693,13 @@ function validateService(service: ResolvedServiceConfig, serviceSlug: string, ad
 
   if (Array.isArray(service.pricing)) {
     validatePricingRules(service.pricing, location !== undefined, pickupOptionIds, serviceSlug, add);
+    // Without `occupancy` a booking takes one unit whatever its size, so a party-sized service
+    // silently reads `capacity.default` as bookings, not people. Only the config author knows
+    // which was meant, and guessing wrong oversells.
+    const largestParty = maxQuantityFor(service);
+    if (service.occupancy === undefined && largestParty > 1) {
+      add(['services', serviceSlug, 'occupancy'], `service ${serviceSlug} sells parties of up to ${largestParty}, so services.${serviceSlug}.occupancy must say what one unit of capacity holds: { seatsPerUnit: 1 } when each person takes one place, or { seatsPerUnit: ${largestParty} } when a whole booking takes one unit (a table, a vehicle)`);
+    }
   } else {
     // Checkout and availability count units with `occupancyFor`, which is one unit per booking when
     // `occupancy` is absent; a formula price that multiplied by headcount would then charge for

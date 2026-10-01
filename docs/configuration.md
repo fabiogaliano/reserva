@@ -53,11 +53,20 @@ it reads; a location-less formula service has no surcharge column. The resolved 
 materializes the inherited values onto each service and records which came from the shared block,
 so an admin edit of the shared surcharge reaches every service that inherits it.
 
-`occupancy: { seatsPerUnit }` maps a headcount onto capacity units when they are not 1:1: a
-booking takes `ceil(quantity / seatsPerUnit)` units, so a party of 5 on a 4-seat vehicle holds
-two of them. Omit the key and every booking takes exactly one unit, which is what most
-deployments want. A formula-priced service must declare it: the formula multiplies by the same
-units checkout reserves, and a headcount with no `seatsPerUnit` has no unit count to multiply by.
+`occupancy: { seatsPerUnit }` says what one unit of `capacity` holds: a booking takes
+`ceil(quantity / seatsPerUnit)` units. Every service that sells parties larger than one must
+declare it, because the same `capacity.default: 40` means 40 people or 40 bookings depending on
+this one value:
+
+- `{ seatsPerUnit: 1 }` — capacity counts people (covers, class places, seats on a walk).
+  A party of 4 takes 4.
+- `{ seatsPerUnit: 4 }` — capacity counts 4-seat vehicles (or tables, boats). A party of 5 takes
+  two of them.
+- `{ seatsPerUnit: N }` with N at least the largest party — every booking takes exactly one unit,
+  whatever its size (one private guide per booking).
+
+A service whose largest party is 1 may omit it. A formula-priced service must declare it too: the
+formula multiplies by the same units checkout reserves.
 
 `collectGuestCount: true` is for a service sold as "up to N", where `quantity` is the priced tier
 rather than the number of people coming. The payment page asks for the exact headcount as an
