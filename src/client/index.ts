@@ -55,7 +55,8 @@ export interface ReservaClientOptions {
   // `base`: pass this when the site mounts Reserva under a `routePrefix` or on custom paths.
   paths?: Partial<ReservaClientPaths>;
   // A plain origin/prefix the default patterns hang off ('' for a same-origin default mount,
-  // 'https://booking.example.com' for a cross-origin funnel).
+  // 'https://booking.example.com' for a cross-origin funnel, which only works once the funnel's
+  // origin is listed in the deployment's `routes.cors.origins`).
   base?: string;
   fetch?: typeof fetch;
   // Operator secret for the `operator*` and `ops*` routes; never needed by a customer funnel.

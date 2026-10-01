@@ -115,4 +115,6 @@ export default {
   },
   locales: { supported: ['pt-PT', 'en'], default: 'en' },
   legal: { termsUrl: 'https://example.test/terms' },
+  // A funnel hosted elsewhere: the preview smoke test sends this Origin to the built routes.
+  routes: { cors: { origins: ['https://funnel.example.test'] } },
 } satisfies ClientConfig;

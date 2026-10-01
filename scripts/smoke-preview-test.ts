@@ -68,6 +68,18 @@ async function requestOk(path: string): Promise<void> {
   if (response.status !== 200) throw new Error(`GET ${path} returned ${response.status}, expected 200`);
 }
 
+// The allowlist only answers if `routes.cors` reached the compiled route through the virtual
+// config, which the unit suite never builds. GET only: `astro preview`'s Vite server answers every
+// OPTIONS itself (the adapter starts it with `configFile: false`, so that can't be switched off).
+async function expectCorsAllowed(path: string): Promise<void> {
+  const origin = 'https://funnel.example.test';
+  const response = await fetch(`${baseUrl}${path}`, { headers: { origin } });
+  const allowed = response.headers.get('access-control-allow-origin');
+  if (allowed !== origin) {
+    throw new Error(`GET ${path} from ${origin} answered ${response.status} with access-control-allow-origin ${allowed ?? '(none)'}`);
+  }
+}
+
 try {
   await waitForReady(30_000);
 
@@ -76,6 +88,7 @@ try {
   const to = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
   await requestOk(`/api/booking/availability?service=oldTown&quantity=2&from=${from}&to=${to}`);
   await requestOk('/booking/assets/reserva.js');
+  await expectCorsAllowed(`/api/booking/availability?serviceSlug=oldTown&quantity=2&from=${from}&to=${to}`);
 
   console.log('smoke-preview-test: built smoke-site output served successfully through `astro preview`');
 } finally {
