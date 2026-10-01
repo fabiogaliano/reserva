@@ -1,8 +1,9 @@
 # Migrating
 
-Four breaking cuts so far. [Migrating to 0.15.0](#migrating-to-0150),
-[Migrating to 0.6.0](#migrating-to-060) and [Migrating to 0.5.0](#migrating-to-050) are at the
-end of this file; 0.2.0 (the first public release) is below.
+Five breaking cuts so far. [Migrating to 0.16.0](#migrating-to-0160),
+[Migrating to 0.15.0](#migrating-to-0150), [Migrating to 0.6.0](#migrating-to-060) and
+[Migrating to 0.5.0](#migrating-to-050) are at the end of this file; 0.2.0 (the first public
+release) is below.
 
 # Migrating to 0.2.0
 
@@ -410,3 +411,39 @@ per-IP hold cap, or the admin change history.
 | 0.14.x | 0.15.0 |
 |---|---|
 | `fetchImpl` | `fetch` |
+
+# Migrating to 0.16.0
+
+0.16.0 makes `occupancy` required on a service that sells parties larger than one, and passes
+the effective config to `OperationalAlertSink.send`. No schema, route or wire change.
+
+## `occupancy` on party-sized services
+
+A service whose largest `maxQuantity` is above 1 and that declares no `occupancy` now fails the
+build at `services.<slug>.occupancy`. Before, such a service took one capacity unit per booking
+whatever the party size, so `capacity.default` silently counted bookings, not people.
+
+To keep exactly the 0.15.x behaviour, declare `seatsPerUnit` equal to the service's largest
+`maxQuantity` (the error message names it):
+
+```ts
+services: {
+  alfama: {
+    // …
+    occupancy: { seatsPerUnit: 3 }, // 0.15.x: one unit per booking for parties up to 3
+    pricing: [{ maxQuantity: 3, priceMinor: 4500 }],
+  },
+},
+```
+
+If `capacity.default` was meant as people (covers, class places), declare
+`occupancy: { seatsPerUnit: 1 }` instead and check the capacity number: a party of 4 now takes
+4 units. Holds and bookings already stored keep the units they were created with.
+
+## `OperationalAlertSink.send(alert, config)`
+
+The reconciler now calls `send(alert, config)` with the effective config, admin settings
+included. A custom sink that ignores the second argument keeps working unchanged. Code that calls
+`emailAlertSink(…).send(alert)` directly must pass the config; without `to`, the sink addresses
+the alert to that config's `business.contact.email`, so an edit on the admin settings page now
+reaches alerts.
