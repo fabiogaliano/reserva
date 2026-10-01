@@ -76,7 +76,7 @@ Reserva treats them as a first-class audience.
 
 ## Deferred — with revisit triggers
 
-- **`src/repo.ts` split** (~59 methods): real debt, deliberately deferred —
+- **`src/repo.ts` split** (81 methods): real debt, deliberately deferred —
   the surface is CAS/transaction-sensitive. Revisit once the concurrency
   patterns have been stable for a few months.
 - **Enhancer DOM test harness** (manage/admin/settings enhancers have no
