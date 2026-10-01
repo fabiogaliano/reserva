@@ -8,7 +8,8 @@ export const RESERVA_MIGRATIONS = [
   "0004_partial_refunds.sql",
   "0005_calendar_patch_outbox.sql",
   "0006_guest_count.sql",
-  "0007_refunds_disputes.sql"
+  "0007_refunds_disputes.sql",
+  "0008_oversell_marker_index.sql"
 ] as const;
 
 export interface ReservaSchemaTable {
@@ -198,6 +199,7 @@ export const RESERVA_SCHEMA_TABLES: Readonly<Record<string, ReservaSchemaTable>>
     ],
     "indexes": [
       "idx_side_effect_operations_identity",
+      "idx_side_effect_operations_oversell",
       "idx_side_effect_operations_pending",
       "idx_side_effect_operations_reconciliation"
     ]
