@@ -326,12 +326,13 @@ implementations through `providers`.
 | `PaymentProvider` | `createCheckout`, `parseWebhook`, `getSession`, `refund` | `cancelPayment`, `validateConfig` |
 | `CalendarProvider` | `listEvents`, `createEvent`, `patchEvent`, `deleteEvent` | `cacheKey` |
 | `EmailProvider` | `send` | `recipientsForEvent`, `sendToRecipient`, `sendMessage` |
-| `OperationalAlertSink` | `send` | — |
+| `OperationalAlertSink` | `send(alert, config)` | — |
 
 `EmailProvider.sendMessage({ to, subject, html, text })` sends a plain message with no booking
 behind it. When `providers.alerts` is absent and the email provider implements it, the runtime
-wires `emailAlertSink(providers.email, { to: business.contact.email })` automatically and logs it
-once. An explicit `providers.alerts` always wins.
+wires `emailAlertSink(providers.email)` automatically and logs it once; each alert goes to the
+`business.contact.email` of the `config` it is sent with, which includes admin settings edits. An
+explicit `providers.alerts` always wins.
 
 ## Boundaries
 

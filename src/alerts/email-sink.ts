@@ -2,8 +2,7 @@
 // deployment already configured for booking mail, so an operator gets nothing new to set up. If
 // email is down the incident still shows on the admin dashboard — there is deliberately no second
 // channel to keep failing over to.
-import virtualConfig from 'virtual:reserva/config';
-import { validateConfig, type ResolvedClientConfig } from '../core/config.js';
+import type { ResolvedClientConfig } from '../core/config.js';
 import type { EmailProvider, OperationalAlert, OperationalAlertSink } from '../core/events.js';
 import { emailString } from '../email/copy.js';
 import { renderMessageEmail } from '../email/render.js';
@@ -25,14 +24,10 @@ export function emailAlertSink(email: EmailProvider, options: EmailAlertSinkOpti
     throw new Error('emailAlertSink requires an email provider implementing sendMessage(); the shipped Brevo adapter does.');
   }
   const send = email.sendMessage.bind(email);
-  // Lazy so importing this module costs nothing until a deployment actually wires it.
-  let resolved: ResolvedClientConfig | undefined;
-  const config = (): ResolvedClientConfig => (resolved ??= validateConfig(virtualConfig.config));
 
   return {
-    async send(alert: OperationalAlert): Promise<void> {
-      const current = config();
-      const locale = current.emails?.locale ?? current.locales.default;
+    async send(alert: OperationalAlert, config: ResolvedClientConfig): Promise<void> {
+      const locale = config.emails?.locale ?? config.locales.default;
       const values: Record<string, string> = {
         action: alert.action,
         reference: alert.reference,
@@ -41,12 +36,12 @@ export function emailAlertSink(email: EmailProvider, options: EmailAlertSinkOpti
         firstDetectedAt: alert.firstDetectedAt,
         adminUrl: alert.adminUrl,
       };
-      const rendered = renderMessageEmail(current, {
-        subject: interpolate(emailString(current, locale, 'alert.subject'), values),
-        leadHtml: interpolate(emailString(current, locale, 'alert.body'), values),
+      const rendered = renderMessageEmail(config, {
+        subject: interpolate(emailString(config, locale, 'alert.subject'), values),
+        leadHtml: interpolate(emailString(config, locale, 'alert.body'), values),
       });
       await send({
-        to: options.to ?? current.business.contact.email,
+        to: options.to ?? config.business.contact.email,
         subject: rendered.subject,
         html: rendered.html,
         text: rendered.text ?? rendered.subject,

@@ -1,8 +1,9 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
+import { emailAlertSink } from '../src/alerts/email-sink';
 import { createReservaContext, type ReservaLogger } from '../src/context';
 import type { ResolvedClientConfig } from '../src/core/config';
-import type { EmailBookingEvent } from '../src/core/events';
+import type { EmailBookingEvent, EmailMessage, EmailProvider } from '../src/core/events';
 import { renderDefaultEmail } from '../src/email';
 import { englishEmailCopy } from '../src/email/copy';
 import { scheduledHandler } from '../src/reconciliation';
@@ -99,5 +100,27 @@ describe('scheduledHandler with admin setting overrides', () => {
       message: 'reserva.settings.invalid_override',
       data: expect.objectContaining({ key: 'booking.reminderHoursBefore' }),
     }));
+  });
+
+  it('mails an operator alert to the business.contact.email edited in the dashboard, not the file one', async () => {
+    const stuck = booking({ id: 'cron-alert-contact', startsAt: '2026-08-21T09:00:00.000Z', endsAt: '2026-08-21T10:00:00.000Z' });
+    const repo = fakeRepository([stuck]);
+    seedSideEffectOperation(repo, stuck.id, { family: 'calendar_create' }, {
+      status: 'abandoned', attemptCount: 10, error: 'calendar down',
+      createdAt: '2026-08-14T09:00:00.000Z', updatedAt: '2026-08-14T09:00:00.000Z', failureStartedAt: '2026-08-14T09:00:00.000Z',
+    });
+    repo.settings.set('business.contact.email', JSON.stringify('new-owner@example.test'));
+    const messages: EmailMessage[] = [];
+    const email: EmailProvider = { send: async () => undefined, sendMessage: async (message) => { messages.push(message); } };
+    const runtime = {
+      createContext: () => createReservaContext({
+        config, db: {} as D1Database, repo, clock,
+        providers: providers({ email, alerts: emailAlertSink(email) }),
+      }),
+    };
+
+    await scheduledHandler(runtime)({} as ScheduledController, {}, {} as ExecutionContext);
+
+    expect(messages.map((message) => message.to)).toEqual(['new-owner@example.test']);
   });
 });

@@ -238,9 +238,11 @@ export interface OperationalAlert {
 }
 
 // Durable delivery (claim/attempt/backoff) is the reconciler's job. `send` is a single
-// best-effort attempt; a thrown error just means retry on the next claim pass.
+// best-effort attempt; a thrown error just means retry on the next claim pass. `config` is the
+// effective config, admin settings included, so a contact email edited in the dashboard is where
+// the alert goes, not the one the site was built with.
 export interface OperationalAlertSink {
-  send(alert: OperationalAlert): Promise<void>;
+  send(alert: OperationalAlert, config: ResolvedClientConfig): Promise<void>;
 }
 
 // `apiVersion` is the dispatch-shape version; `id` is stable across retries for deduplication.
