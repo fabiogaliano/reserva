@@ -357,7 +357,7 @@ async function drainAlerts(context: ReservaContext, limit: number): Promise<{ se
       context.logger.info?.('reserva reconciliation alert delivery started', {
         incidentId: claimed.id, alertRevision: claimed.alertRevision, lifecycle: 'started',
       });
-      await sink.send(alert);
+      await sink.send(alert, context.config);
       await context.repo.resolveIncidentAlertSuccess(id, token, claimed.alertRevision);
       sent += 1;
       context.logger.info?.('reserva reconciliation alert delivered', {

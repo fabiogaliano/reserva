@@ -173,16 +173,15 @@ let autoAlertSinkLogged = false;
 function withDefaultAlertSink(
   providers: ReservaProviders,
   logger: ReservaLogger | undefined,
-  to: string,
 ): ReservaProviders {
   if (providers.alerts) return providers;
   // Same console default createReservaContext applies, or an unconfigured logger would swallow every alert.
   const log: ReservaLogger = logger ?? console;
   const email = providers.email?.sendMessage ? providers.email : null;
-  const alerts = email ? emailAlertSink(email, { to }) : loggerAlertSink(log);
+  const alerts = email ? emailAlertSink(email) : loggerAlertSink(log);
   if (!autoAlertSinkLogged) {
     autoAlertSinkLogged = true;
-    if (email) log.info?.('reserva operational alerts wired to the email provider', { to });
+    if (email) log.info?.('reserva operational alerts wired to the email provider', { to: 'business.contact.email' });
     else log.warn?.('reserva operational alerts go to the logger only: no email provider with sendMessage');
   }
   return { ...providers, alerts };
@@ -201,7 +200,7 @@ export function defineReservaRuntime(options: ReservaRuntimeFactoryOptions): Res
       }
       return createReservaContext({
         ...contextInput,
-        providers: withDefaultAlertSink(contextInput.providers, contextInput.logger, config.business.contact.email),
+        providers: withDefaultAlertSink(contextInput.providers, contextInput.logger),
       });
     },
   };
@@ -265,7 +264,7 @@ export function defineCloudflareReservaRuntime<TEnv extends object>(
         ? resolveBinding(options.cache, bindings, 'RESERVA_CACHE')
         : getCache(locals);
       const logger = typeof options.logger === 'function' ? options.logger(bindings) : options.logger;
-      const providers = withDefaultAlertSink(rawProviders, logger, config.business.contact.email);
+      const providers = withDefaultAlertSink(rawProviders, logger);
       const contextInput: ReservaContextInput = {
         config,
         db,

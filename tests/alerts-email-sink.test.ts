@@ -1,24 +1,17 @@
-// The one shipped OperationalAlertSink, plus the runtime wiring that installs it by default.
-// Both read `virtual:reserva/config`, so the mock below is what lets a case change locale.
+// The one shipped OperationalAlertSink, plus the runtime wiring that installs it by default. The
+// wiring reads `virtual:reserva/config`, which the mock below stands in for.
 import type { D1Database } from '@cloudflare/workers-types';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { emailAlertSink } from '../src/alerts/email-sink';
 import type { ReservaLogger } from '../src/context';
-import type { ResolvedClientConfig } from '../src/core/config';
 import type { EmailMessage, EmailProvider, OperationalAlert, OperationalAlertSink } from '../src/core/events';
 import { defineReservaRuntime } from '../src/runtime-context';
 import { config as baseConfig } from './fixtures';
 
-// A getter, not a frozen object: the sink reads the virtual config on its first alert.
-const virtual = vi.hoisted(() => ({ config: undefined as unknown as ResolvedClientConfig }));
 vi.mock('virtual:reserva/config', async () => {
   const { resolveRouteConfig } = await import('../src/routes-manifest');
-  const routes = resolveRouteConfig();
-  return { default: { get config() { return virtual.config; }, routes } };
-});
-
-beforeEach(() => {
-  virtual.config = baseConfig;
+  const { config } = await import('./fixtures');
+  return { default: { config, routes: resolveRouteConfig() } };
 });
 
 afterEach(() => {
@@ -53,7 +46,7 @@ describe('emailAlertSink', () => {
   it('mails the business contact a message naming the incident, with both an HTML and a text body', async () => {
     const email = capturingEmail();
 
-    await emailAlertSink(email).send(alert);
+    await emailAlertSink(email).send(alert, baseConfig);
 
     expect(email.messages).toHaveLength(1);
     const message = email.messages[0]!;
@@ -71,26 +64,24 @@ describe('emailAlertSink', () => {
   it('routes alerts to an override address, leaving the customer-facing contact alone', async () => {
     const email = capturingEmail();
 
-    await emailAlertSink(email, { to: 'ops@example.test' }).send(alert);
+    await emailAlertSink(email, { to: 'ops@example.test' }).send(alert, baseConfig);
 
     expect(email.messages[0]?.to).toBe('ops@example.test');
   });
 
   it('renders the alert in the pinned email locale (config.emails.locale)', async () => {
-    virtual.config = { ...baseConfig, emails: { locale: 'pt-PT' } };
     const email = capturingEmail();
 
-    await emailAlertSink(email).send(alert);
+    await emailAlertSink(email).send(alert, { ...baseConfig, emails: { locale: 'pt-PT' } });
 
     expect(email.messages[0]?.subject).toContain('Atenção necessária');
     expect(email.messages[0]?.text).toContain('precisa de atenção');
   });
 
   it('falls back to the deployment default locale when no email locale is pinned', async () => {
-    virtual.config = { ...baseConfig, locales: { supported: ['pt-PT', 'en'], default: 'pt-PT' } };
     const email = capturingEmail();
 
-    await emailAlertSink(email).send(alert);
+    await emailAlertSink(email).send(alert, { ...baseConfig, locales: { supported: ['pt-PT', 'en'], default: 'pt-PT' } });
 
     expect(email.messages[0]?.subject).toContain('Atenção necessária');
   });
@@ -123,7 +114,7 @@ describe('defineReservaRuntime alert-sink wiring', () => {
     const email = capturingEmail();
 
     const context = await contextFor({ email });
-    await context.providers.alerts?.send(alert);
+    await context.providers.alerts?.send(alert, baseConfig);
 
     expect(email.messages).toHaveLength(1);
     expect(email.messages[0]?.to).toBe(baseConfig.business.contact.email);
@@ -135,7 +126,7 @@ describe('defineReservaRuntime alert-sink wiring', () => {
     const explicit: OperationalAlertSink = { send: async (incident) => { delivered.push(incident); } };
 
     const context = await contextFor({ email, alerts: explicit });
-    await context.providers.alerts?.send(alert);
+    await context.providers.alerts?.send(alert, baseConfig);
 
     expect(delivered).toEqual([alert]);
     expect(email.messages).toEqual([]);
@@ -146,7 +137,7 @@ describe('defineReservaRuntime alert-sink wiring', () => {
     const context = await contextFor({ email: { send: async () => undefined } }, { error: (...args: unknown[]) => { errors.push(args); } });
 
     // The cron must still run: a deployment without email gets its alerts in the Worker logs.
-    await context.providers.alerts!.send(alert);
+    await context.providers.alerts!.send(alert, baseConfig);
     expect(errors).toEqual([['reserva operational alert', alert]]);
   });
 
@@ -155,7 +146,7 @@ describe('defineReservaRuntime alert-sink wiring', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const context = await contextFor({ email: { send: async () => undefined } });
 
-    await context.providers.alerts?.send(alert);
+    await context.providers.alerts?.send(alert, baseConfig);
 
     expect(consoleError).toHaveBeenCalledWith('reserva operational alert', alert);
   });

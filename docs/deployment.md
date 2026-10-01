@@ -226,8 +226,10 @@ regenerable — a row written without it never has its plaintext at rest again.
    the dashboard. Reserva ships one: `emailAlertSink(email, { to })`, which renders through the same
    branded email shell as booking mail and sends through the email provider's `sendMessage`. You do
    not normally construct it — when `providers.alerts` is absent and `providers.email` implements
-   `sendMessage` (the shipped Brevo adapter does), the runtime wires it to
-   `business.contact.email` and logs `reserva operational alerts wired to the email provider` once.
+   `sendMessage` (the shipped Brevo adapter does), the runtime wires it and logs
+   `reserva operational alerts wired to the email provider` once. Without `to`, each alert goes to
+   `business.contact.email` as currently saved, so changing it on the admin settings page moves
+   alerts too.
    Without such a provider the runtime wires `loggerAlertSink` instead and warns once: alerts then
    land in the Worker logs only. Pass `providers.alerts` explicitly to override the mailbox or the
    channel. If email is down the incident still shows on `/booking/admin`.
