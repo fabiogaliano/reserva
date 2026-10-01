@@ -254,6 +254,9 @@ export const MUTATION_SIDE_EFFECT_LEASE_MS = 5 * 60_000;
  */
 export type CalendarEventDebt = 'owed' | 'not_owed';
 
+/** A provider the deployment has not configured, so the outbox rows only it can run wait for it. */
+export type UnconfiguredProvider = 'calendar' | 'email';
+
 // Attempt count means executions started. The resolve side already turns a retryable failure's
 // 10th attempt into 'abandoned', but claim predicates enforce this cap too, as a second line
 // of defense rather than relying on resolve alone.
@@ -587,7 +590,11 @@ export interface BookingRepository {
 
   // Execution, incident projection, and incident maintenance each use separate bounded pages, so
   // terminal rows never consume the page reserved for executable debt.
-  listSideEffectExecutionCandidates(now: string, staleBefore: string, limit: number): Promise<SideEffectOperationRecord[]>;
+  // Rows only an unconfigured provider can run are left out: they wait unchanged for it, and as the
+  // oldest owed rows they would fill every page and starve the retries queued behind them.
+  listSideEffectExecutionCandidates(
+    now: string, staleBefore: string, limit: number, unconfigured: readonly UnconfiguredProvider[],
+  ): Promise<SideEffectOperationRecord[]>;
   listRefundExecutionCandidateBookingIds(now: string, staleBefore: string, limit: number): Promise<string[]>;
   listSideEffectIncidentCandidateBookingIds(failureDueBefore: string, limit: number): Promise<string[]>;
   listRefundIncidentCandidateBookingIds(limit: number): Promise<string[]>;
@@ -2116,10 +2123,17 @@ export function createBookingRepository(
       return result.results[0]?.attempt_count ?? null;
     },
 
-    async listSideEffectExecutionCandidates(now, staleBefore, limit) {
+    async listSideEffectExecutionCandidates(now, staleBefore, limit, unconfigured) {
+      // A booking.confirmed email row runs under the confirmation lease, which settles it with or
+      // without an email provider, so only the mutation emails wait for one.
+      const waiting = [
+        ...(unconfigured.includes('calendar') ? ["family IN ('calendar_delete', 'calendar_patch')"] : []),
+        ...(unconfigured.includes('email') ? ["(family = 'email' AND event != 'booking.confirmed')"] : []),
+      ];
       const result = await db.prepare(
         `SELECT ${sideEffectOperationColumns} FROM side_effect_operations
          WHERE family != 'oversell' AND attempt_count < ?
+           ${waiting.map((condition) => `AND NOT ${condition}`).join(' ')}
            AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
            AND (
              status = 'pending'

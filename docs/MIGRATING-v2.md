@@ -416,7 +416,7 @@ per-IP hold cap, or the admin change history.
 
 0.16.0 makes `occupancy` required on a service that sells parties larger than one, passes the
 effective config to `OperationalAlertSink.send`, caps unpaid holds per IP by default, adds one
-index (migration 0008), and changes two confirmation methods on `ReservaContext.repo`. No wire
+index (migration 0008), and changes three outbox methods on `ReservaContext.repo`. No wire
 change; the CORS allowlist and the sweep's query budget are additions that need no action.
 
 ## Run `bunx reserva-migrate`
@@ -476,3 +476,8 @@ and `ensureConfirmationSideEffectOperations` takes it as its fourth argument, be
 and `emailRecipients`. Pass `'owed'` only when a calendar provider is configured; a custom `repo`
 inserts its `calendar_create` row only for `'owed'`. A deployment without a calendar no longer
 records a calendar delivery per confirmed booking.
+
+`listSideEffectExecutionCandidates` takes a fourth argument, the providers the deployment has not
+configured (`'calendar'`, `'email'`). A custom `repo` leaves out `calendar_delete` and
+`calendar_patch` rows when it lists `'calendar'`, and `email` rows for any event but
+`booking.confirmed` when it lists `'email'`.

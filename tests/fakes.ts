@@ -875,11 +875,13 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       return attemptNumber;
     },
 
-    listSideEffectExecutionCandidates: async (now, staleBefore, limit) => {
+    listSideEffectExecutionCandidates: async (now, staleBefore, limit, unconfigured) => {
       const backoffMinutes = (attemptCount: number) => [5, 10, 20, 40, 60][Math.min(Math.max(attemptCount, 1) - 1, 4)] ?? 60;
       return [...sideEffectOperations.values()]
         .filter((row) => {
           if (row.family === 'oversell' || row.attemptCount >= SIDE_EFFECT_MAX_ATTEMPTS) return false;
+          if (unconfigured.includes('calendar') && (row.family === 'calendar_delete' || row.family === 'calendar_patch')) return false;
+          if (unconfigured.includes('email') && row.family === 'email' && row.event !== 'booking.confirmed') return false;
           if (row.nextAttemptAt !== null && row.nextAttemptAt > now) return false;
           if (row.status === 'pending') return true;
           if (row.status === 'in_flight') return row.attemptedAt !== null && row.attemptedAt < staleBefore;

@@ -10,7 +10,9 @@ import {
 import { DEFAULT_TOKEN_EXPIRY_DAYS } from '../core/config.js';
 import { occupancyFor } from '../core/occupancy.js';
 import { localDateKey, parseUtcInstant } from '../core/time.js';
-import { cancellationSideEffectSeeds, dispatchMutation, mutationSideEffectSeeds, runOwedMutationSideEffects } from '../confirmation.js';
+import {
+  calendarSyncSeeds, cancellationSideEffectSeeds, dispatchMutation, mutationSideEffectSeeds, runOwedMutationSideEffects,
+} from '../confirmation.js';
 import type { ReservaContext } from '../context.js';
 import { getSecret, nowIso, OPERATOR_SECRET_NAME } from '../context.js';
 import { resumeClaimedOperatorCancellation } from '../operator-cancellation.js';
@@ -107,7 +109,7 @@ async function rescheduleWithToken(context: ReservaContext, booking: Booking, ne
       ...mutationSideEffectSeeds(context, 'booking.rescheduled', next, next.updatedAt),
       // The calendar is synced through the outbox, not inline: the booking has moved the moment
       // this write commits, so a calendar outage is retried debt, never a failed reschedule.
-      ...(booking.calendarEventId ? [{ family: 'calendar_patch' as const, eventPayloadJson: null, eventIdPrefix: null }] : []),
+      ...calendarSyncSeeds(context, booking, 'calendar_patch'),
     ],
   });
   if (!updated) {
