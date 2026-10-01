@@ -154,7 +154,7 @@ describe('Reserva handlers', () => {
     const context = createReservaContext({
       config: multiTourConfig,
       db: {} as D1Database,
-      repo: fakeRepository([existing]),
+      repo: fakeRepository([existing], { occupancyUnits: { [existing.id]: 2 } }),
       clock: () => new Date('2026-06-14T08:00:00.000Z'),
       providers: providers(),
     });

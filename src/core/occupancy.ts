@@ -43,6 +43,10 @@ export type OccupancyServiceResolver = (serviceSlug: string) => OccupancyService
 export type OccupancyServiceMap = ReadonlyMap<string, OccupancyService> | Readonly<Record<string, OccupancyService>>;
 
 export type OccupancyBooking = Pick<Booking, 'id' | 'status' | 'startsAt' | 'endsAt' | 'holdExpiresAt' | 'quantity'> & {
+  // The units stored when the booking was made, which the repository's atomic capacity guard sums.
+  // Counting the same number here keeps availability from disagreeing with that guard after a
+  // service's seatsPerUnit changes; a disagreement lets concurrent checkouts past it.
+  occupancyUnits: number;
   calendarEventId?: string | null;
   serviceSlug?: string;
 };
@@ -183,7 +187,7 @@ export function getOccupancyIntervals(options: OccupancyIntervalOptions): Occupa
       continue;
     }
     if (overlaps(start, end, options.from, options.to)) {
-      intervals.push({ start, end, units: occupancyFor(bookingService, booking.quantity), source: 'booking', bookingId: booking.id });
+      intervals.push({ start, end, units: booking.occupancyUnits, source: 'booking', bookingId: booking.id });
     }
   }
   const seenCalendarEventIds = new Set<string>();

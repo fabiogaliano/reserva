@@ -442,7 +442,7 @@ describe('GET /admin listing (one window + status query)', () => {
       startsAt: '2026-06-20T09:00:00.000Z', endsAt: '2026-06-20T10:00:00.000Z',
       operatorToken: 'op-multiunit', cancelToken: 'cancel-multiunit',
     });
-    const repo = fakeRepository([multiUnit]);
+    const repo = fakeRepository([multiUnit], { occupancyUnits: { [multiUnit.id]: 2 } });
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, adminAuth: async () => ({ subject: '' }), providers: providers() });
     const response = await handleAdminGet(new Request(`${ADMIN_URL}?tab=availability`), context);
     const body = await response.text();

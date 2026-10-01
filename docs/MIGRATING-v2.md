@@ -446,7 +446,16 @@ services: {
 
 If `capacity.default` was meant as people (covers, class places), declare
 `occupancy: { seatsPerUnit: 1 }` instead and check the capacity number: a party of 4 now takes
-4 units. Holds and bookings already stored keep the units they were created with.
+4 units. Holds and bookings already stored keep the units they were created with, one each, in
+availability and in the capacity check alike, so a slot booked before the upgrade can still take
+more people than the capacity. To count those bookings in people too, re-count their stored units
+once after deploying (name your service and database):
+
+```bash
+bunx wrangler d1 execute <database> --remote --command "UPDATE bookings SET occupancy_units = quantity WHERE service_slug = 'alfama' AND status IN ('hold', 'confirmed') AND starts_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+```
+
+A slot that already holds more people than its capacity keeps its bookings and takes no more.
 
 ## `booking.maxHoldsPerIp` defaults to 5
 

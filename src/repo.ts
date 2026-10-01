@@ -785,7 +785,7 @@ function mapBooking(row: BookingRow): Booking {
 
 // Everything `getOccupancyIntervals` reads, and nothing else — status/hold_expires_at decide
 // whether a row counts, calendar_event_id deduplicates a booking against its own calendar event.
-const occupancyBookingColumns = 'id, service_slug, quantity, starts_at, ends_at, hold_expires_at, status, calendar_event_id';
+const occupancyBookingColumns = 'id, service_slug, quantity, starts_at, ends_at, hold_expires_at, status, calendar_event_id, occupancy_units';
 
 interface OccupancyBookingRow {
   id: string;
@@ -796,6 +796,7 @@ interface OccupancyBookingRow {
   hold_expires_at: string | null;
   status: BookingStatus;
   calendar_event_id: string | null;
+  occupancy_units: number | null;
 }
 
 function adminWindowPredicate(window: AdminBookingWindow): { where: string; params: string[] } {
@@ -1889,6 +1890,8 @@ export function createBookingRepository(
         holdExpiresAt: row.hold_expires_at,
         status: row.status,
         calendarEventId: row.calendar_event_id,
+        // The same COALESCE the capacity guard applies to a row older than the column.
+        occupancyUnits: Number(row.occupancy_units ?? 1),
       }));
     },
     // Not hydrated: the admin dashboard decrypts tokens only for the rows it ends up emitting,

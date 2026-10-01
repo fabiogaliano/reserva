@@ -6,9 +6,10 @@ import {
   getOccupancyIntervals,
   isSlotAvailable,
   maxConcurrentOccupancy,
+  occupancyFor,
   remainingBookings,
 } from '../src/core/occupancy';
-import { booking, config, service } from './fixtures';
+import { config, occupancyBooking, service } from './fixtures';
 
 const slotStart = '2026-06-15T09:00:00.000Z';
 const slotEnd = '2026-06-15T10:00:00.000Z';
@@ -24,7 +25,7 @@ function occupancyOptions(overrides: Partial<Parameters<typeof getOccupancyInter
 
 describe('core occupancy', () => {
   it('offers a slot with capacity two and one one-vehicle booking', () => {
-    const intervals = getOccupancyIntervals(occupancyOptions({ bookings: [booking()] }));
+    const intervals = getOccupancyIntervals(occupancyOptions({ bookings: [occupancyBooking()] }));
     expect(isSlotAvailable(slotStart, slotEnd, {
       capacity: 2,
       intervals,
@@ -33,32 +34,39 @@ describe('core occupancy', () => {
     })).toBe(true);
   });
 
-  it('uses the booking service turnaround and seatsPerUnit across services', () => {
-    const largeTour = {
-      ...service,
-      turnaroundMin: 90,
-      occupancy: { seatsPerUnit: 3 },
-    };
+  it('uses the booking service turnaround across services', () => {
+    const largeTour = { ...service, turnaroundMin: 90 };
     const intervals = getOccupancyIntervals(occupancyOptions({
-      bookings: [booking({ quantity: 8, serviceSlug: 'large' })],
+      bookings: [occupancyBooking({ quantity: 8, serviceSlug: 'large', occupancyUnits: 3 })],
       services: { large: largeTour },
     }));
     expect(intervals).toHaveLength(1);
-    expect(intervals[0]?.units).toBe(3);
     expect(intervals[0]?.end).toBe('2026-06-15T11:30:00.000Z');
   });
 
-  it('removes a slot at capacity and treats eight quantity as two vehicles', () => {
-    const one = booking();
-    const intervals = getOccupancyIntervals(occupancyOptions({ bookings: [one, booking({ id: 'booking-2', quantity: 2 })] }));
-    expect(isSlotAvailable(slotStart, slotEnd, { capacity: 2, intervals, requestedUnits: 1, turnaroundMin: 30 })).toBe(false);
+  it('counts the units stored with a booking, not ones recomputed from a seatsPerUnit changed since (the capacity guard sums the stored ones, so concurrent checkouts got past it)', () => {
+    const peoplePerUnit = { ...service, occupancy: { seatsPerUnit: 1 } };
+    const intervals = getOccupancyIntervals(occupancyOptions({
+      bookings: [occupancyBooking({ quantity: 4, occupancyUnits: 1 })],
+      service: peoplePerUnit,
+    }));
+    expect(intervals[0]?.units).toBe(1);
+  });
 
-    const large = getOccupancyIntervals(occupancyOptions({ bookings: [booking({ quantity: 8 })] }));
-    expect(large[0]?.units).toBe(2);
+  it('stores eight people as two vehicles at four seats each', () => {
+    expect(occupancyFor(service, 8)).toBe(2);
+    expect(occupancyFor({ ...service, occupancy: { seatsPerUnit: 3 } }, 8)).toBe(3);
+  });
+
+  it('removes a slot at capacity', () => {
+    const intervals = getOccupancyIntervals(occupancyOptions({
+      bookings: [occupancyBooking(), occupancyBooking({ id: 'booking-2', occupancyUnits: 1 })],
+    }));
+    expect(isSlotAvailable(slotStart, slotEnd, { capacity: 2, intervals, requestedUnits: 1, turnaroundMin: 30 })).toBe(false);
   });
 
   it('blocks the following grid slot exactly through turnaround', () => {
-    const intervals = getOccupancyIntervals(occupancyOptions({ bookings: [booking()] }));
+    const intervals = getOccupancyIntervals(occupancyOptions({ bookings: [occupancyBooking()] }));
     expect(isSlotAvailable(slotStart, slotEnd, { capacity: 1, intervals, requestedUnits: 1, turnaroundMin: 30 })).toBe(false);
     expect(isSlotAvailable('2026-06-15T10:30:00.000Z', '2026-06-15T11:30:00.000Z', {
       capacity: 1,
@@ -72,7 +80,7 @@ describe('core occupancy', () => {
     const result = capacityForDate('2026-06-15', 2, [{ date: '2026-06-15', capacity: 1 }]);
     expect(result.capacity).toBe(1);
     const twoBookings = getOccupancyIntervals(occupancyOptions({
-      bookings: [booking(), booking({ id: 'booking-2' })],
+      bookings: [occupancyBooking(), occupancyBooking({ id: 'booking-2' })],
     }));
     expect(isSlotAvailable(slotStart, slotEnd, { capacity: result.capacity, intervals: twoBookings, requestedUnits: 1, turnaroundMin: 30 })).toBe(false);
     const full = availabilityForDay({
@@ -155,7 +163,7 @@ describe('core occupancy', () => {
     const intervals = getOccupancyIntervals(occupancyOptions({
       from: '2026-06-15T09:30:00.000Z',
       to: '2026-06-15T10:00:00.000Z',
-      bookings: [booking({ startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:30:00.000Z' })],
+      bookings: [occupancyBooking({ startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:30:00.000Z' })],
     }));
     expect(intervals).toHaveLength(1);
     expect(intervals[0]?.start).toBe('2026-06-15T09:00:00.000Z');
@@ -163,7 +171,7 @@ describe('core occupancy', () => {
 
   it('does not double-count a reserva-tagged calendar event', () => {
     const intervals = getOccupancyIntervals(occupancyOptions({
-      bookings: [booking()],
+      bookings: [occupancyBooking()],
       calendarEvents: [{
         id: 'calendar-copy', start: slotStart, end: slotEnd,
         extendedProperties: { private: { reservaBookingId: 'booking-1' } },
@@ -185,7 +193,7 @@ describe('core occupancy', () => {
   });
 
   it('counts a hold at exact expiry until the SQL sweep runs', () => {
-    const hold = booking({ status: 'hold', holdExpiresAt: '2026-06-15T08:00:00.000Z' });
+    const hold = occupancyBooking({ status: 'hold', holdExpiresAt: '2026-06-15T08:00:00.000Z' });
     const intervals = getOccupancyIntervals(occupancyOptions({
       now: '2026-06-15T08:00:00.000Z',
       bookings: [hold],
@@ -216,7 +224,7 @@ describe('core occupancy', () => {
   });
 
   it('excludes the moved booking from reschedule validation', () => {
-    const moved = booking();
+    const moved = occupancyBooking();
     const intervals = getOccupancyIntervals(occupancyOptions({
       bookings: [moved],
       excludeBookingId: moved.id,
