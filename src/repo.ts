@@ -247,6 +247,13 @@ export type SideEffectOperationStatus = 'pending' | 'in_flight' | 'succeeded' | 
 // attempted_at be reclaimed too — same 5-minute judgment call as the confirmation lease.
 export const MUTATION_SIDE_EFFECT_LEASE_MS = 5 * 60_000;
 
+/**
+ * Whether a confirmation owes a calendar event. Only a configured calendar provider can pay it:
+ * without one, a calendar_create row would be claimed and marked delivered with no call on every
+ * confirmation, and enabling a calendar later still could not reach it.
+ */
+export type CalendarEventDebt = 'owed' | 'not_owed';
+
 // Attempt count means executions started. The resolve side already turns a retryable failure's
 // 10th attempt into 'abandoned', but claim predicates enforce this cap too, as a second line
 // of defense rather than relying on resolve alone.
@@ -405,6 +412,7 @@ export interface BookingRepository {
     // instead of the single combined email_confirmation row, in the same D1 batch so the shape
     // and the transition can never diverge.
     emailRecipients?: EmailRecipientRole[];
+    calendarEvent: CalendarEventDebt;
   }): Promise<Booking | null>;
   applyConfirmedPaymentDetails(id: string, patch: {
     paymentRef?: string | null;
@@ -417,7 +425,7 @@ export interface BookingRepository {
   // Lazy repair for a confirmed booking whose confirmation rows are missing (a subscriber or a
   // split-capable email provider configured after confirmation). A split email row is only
   // inserted when no combined email_confirmation row already exists.
-  ensureConfirmationSideEffectOperations(id: string, leaseToken: string, now: string, eventSeeds?: SideEffectOperationSeed[], emailRecipients?: EmailRecipientRole[]): Promise<void>;
+  ensureConfirmationSideEffectOperations(id: string, leaseToken: string, now: string, calendarEvent: CalendarEventDebt, eventSeeds?: SideEffectOperationSeed[], emailRecipients?: EmailRecipientRole[]): Promise<void>;
   listSideEffectOperations(bookingId: string): Promise<SideEffectOperationRecord[]>;
   // Returns the authoritative attempt number assigned by the atomic claim, or null when the row
   // was not claimable. Callers must classify failures against this value rather than a prior read.
@@ -1498,7 +1506,7 @@ export function createBookingRepository(
       return oneBooking(`SELECT ${bookingColumns} FROM bookings WHERE id = ?`, id);
     },
     async confirmWithSideEffectOperations(id, input) {
-      const { expectedStatusIn, updatedAt, leaseToken, oversold, eventSeeds, emailRecipients, ...patch } = input;
+      const { expectedStatusIn, updatedAt, leaseToken, oversold, eventSeeds, emailRecipients, calendarEvent, ...patch } = input;
       const columnMap: Record<string, string> = {
         paymentRef: 'payment_ref', customerName: 'customer_name',
         customerEmail: 'customer_email', customerPhone: 'customer_phone', pickupAddress: 'pickup_address',
@@ -1542,7 +1550,7 @@ export function createBookingRepository(
             `UPDATE bookings SET ${setClauses.join(', ')}
              WHERE id = ? AND status IN (${placeholders}) AND confirmation_lease_token = ?`,
           ).bind(...entries.map(([, value]) => value), updatedAt, id, ...expectedStatusIn, leaseToken),
-          operation({ family: 'calendar_create' }, null, 'pending', null, null),
+          ...(calendarEvent === 'owed' ? [operation({ family: 'calendar_create' }, null, 'pending', null, null)] : []),
           ...emailOperations,
           ...(oversold ? [operation({ family: 'oversell' }, null, 'succeeded', 'capacity_exceeded', updatedAt)] : []),
           ...eventOperations,
@@ -1567,7 +1575,7 @@ export function createBookingRepository(
         ).bind(...entries.map(([, value]) => value), updatedAt, id, leaseToken).run());
       return result.meta.changes > 0;
     },
-    async ensureConfirmationSideEffectOperations(id, leaseToken, now, eventSeeds, emailRecipients) {
+    async ensureConfirmationSideEffectOperations(id, leaseToken, now, calendarEvent, eventSeeds, emailRecipients) {
       const calendarOperation = db.prepare(
         `INSERT INTO side_effect_operations (
            booking_id, family, name, event, discriminator, event_payload_json,
@@ -1617,7 +1625,7 @@ export function createBookingRepository(
          ON CONFLICT DO NOTHING`,
       ).bind(id, ...sideEffectIdentityParams(seed), seed.eventPayloadJson, now, now, id, leaseToken));
       await db.batch([
-        calendarOperation,
+        ...(calendarEvent === 'owed' ? [calendarOperation] : []),
         ...emailOperations,
         ...eventOperations,
       ]);

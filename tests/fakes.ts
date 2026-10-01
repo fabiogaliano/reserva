@@ -410,11 +410,11 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       const current = rows.get(id);
       if (!current || !input.expectedStatusIn.includes(current.status) || leases.get(id)?.token !== input.leaseToken) return null;
       guardDuplicatePaymentIntent(id, input.paymentRef);
-      const { expectedStatusIn, leaseToken, oversold, updatedAt, eventSeeds, emailRecipients, ...patch } = input;
+      const { expectedStatusIn, leaseToken, oversold, updatedAt, eventSeeds, emailRecipients, calendarEvent, ...patch } = input;
       const defined = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
       const updated: Booking = { ...current, ...defined, status: 'confirmed', holdExpiresAt: null, updatedAt };
       rows.set(id, updated);
-      insertOperation(id, { family: 'calendar_create' }, updatedAt);
+      if (calendarEvent === 'owed') insertOperation(id, { family: 'calendar_create' }, updatedAt);
       // Split rows (one per recipient) for a split-capable provider, otherwise the single
       // legacy combined row. Brand-new confirmation, so no row of either shape can already exist.
       const emailIdentities: SideEffectOperationIdentity[] = emailRecipients && emailRecipients.length > 0
@@ -449,18 +449,20 @@ export function fakeRepository(seed: Booking[] = [], options: FakeRepositoryOpti
       rows.set(id, updated);
       return true;
     },
-    ensureConfirmationSideEffectOperations: async (id, leaseToken, now, eventSeeds, emailRecipients) => {
+    ensureConfirmationSideEffectOperations: async (id, leaseToken, now, calendarEvent, eventSeeds, emailRecipients) => {
       if (rows.get(id)?.status !== 'confirmed' || leases.get(id)?.token !== leaseToken) return;
       const booking = rows.get(id);
       if (!booking) return;
       // The retired calendar_synced flag's information now lives in calendar_event_id
       // (an id is only ever written once the provider accepted the event) — mirrors src/repo.ts.
       const calendarSucceeded = booking.calendarEventId !== null;
-      insertOperation(id, { family: 'calendar_create' }, now, {
-        status: calendarSucceeded ? 'succeeded' : 'pending',
-        providerResultId: booking.calendarEventId,
-        resolvedAt: calendarSucceeded ? now : null,
-      });
+      if (calendarEvent === 'owed') {
+        insertOperation(id, { family: 'calendar_create' }, now, {
+          status: calendarSucceeded ? 'succeeded' : 'pending',
+          providerResultId: booking.calendarEventId,
+          resolvedAt: calendarSucceeded ? now : null,
+        });
+      }
       // Same split-vs-combined choice as confirmWithSideEffectOperations, applied here for
       // legacy repair: each shape is only inserted when the other is absent — mirrors
       // src/repo.ts's NOT EXISTS guards.

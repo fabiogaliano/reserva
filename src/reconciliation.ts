@@ -84,8 +84,8 @@ export const DEFAULT_RECONCILIATION_QUERY_BUDGET = D1_FREE_PLAN_QUERIES_PER_INVO
 // tests/workers/reconciliation-query-budget.test.ts. A step is admitted only when its worst case
 // fits: hitting the cap between a claim and its resolve would re-run the provider call on the
 // next tick, and the customer would get the email twice.
-// Load the booking, take the lease, claim, renew three times, resolve (two statements), release.
-const SIDE_EFFECT_STEP_QUERIES = 9;
+// Load the booking, take the lease, claim, resolve (two statements), release.
+const SIDE_EFFECT_STEP_QUERIES = 6;
 const REFUND_LOAD_QUERIES = 2;
 // Claim the execution, record the refunded amount, resolve the operation.
 const REFUND_ATTEMPT_QUERIES = 3;
