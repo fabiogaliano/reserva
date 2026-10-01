@@ -10,6 +10,7 @@ import type {
   PaymentProvider,
 } from './core/events.js';
 import { validateBookingEventHooks } from './core/events.js';
+import { countD1Queries } from './d1-query-count.js';
 import { createBookingRepository, type BookingRepository } from './repo.js';
 import { resolvedRoutePaths, type ReservaResolvedRouteConfig } from './routes-manifest.js';
 import type { ThemePreference } from './ui/theme.js';
@@ -48,6 +49,10 @@ export interface ReservaContext {
   baseConfig?: ResolvedClientConfig;
   db: D1Database;
   repo: BookingRepository;
+  // D1 queries the repo has issued so far, for work that has to stay under D1's per-invocation
+  // query cap. Absent when the repo was supplied instead of built from `db`, since its queries
+  // can't be seen from here.
+  d1QueriesIssued?: () => number;
   providers: ReservaProviders;
   cache?: ReservaCache;
   secrets?: SecretLookup;
@@ -87,13 +92,15 @@ export interface ReservaContextInput extends Omit<ReservaContext, 'repo' | 'cloc
 
 export function createReservaContext(input: ReservaContextInput): ReservaContext {
   validateBookingEventHooks(input.hooks ?? []);
+  const counted = input.repo ? undefined : countD1Queries(input.db);
   return {
     ...input,
+    ...(counted ? { d1QueriesIssued: counted.issued } : {}),
     config: validateConfig(input.config),
     // Threads the same secrets accessor the rest of ReservaContext uses through to the repo, so it
     // can resolve the optional RESERVA_TOKEN_ENC_KEY — repo.ts can't import SecretLookup from here
     // since the reverse import would be circular.
-    repo: input.repo ?? createBookingRepository(input.db, input.secrets),
+    repo: input.repo ?? createBookingRepository(counted?.db ?? input.db, input.secrets),
     clock: input.clock ?? (() => new Date()),
     logger: input.logger ?? console,
     providers: input.providers,

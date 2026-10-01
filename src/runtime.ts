@@ -33,6 +33,7 @@ export {
   runReconciliationWithLease,
   scheduledHandler,
   RECONCILIATION_CADENCE_MINUTES,
+  DEFAULT_RECONCILIATION_QUERY_BUDGET,
   type LeasedReconciliationResult,
   type ReconciliationOptions,
   type ReconciliationSummary,

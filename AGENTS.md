@@ -312,6 +312,7 @@ SQL error.
 | `409 payment_amount_mismatch` | captured amount ≠ the booking's stored price | never expected; alert on it, do not retry-loop it |
 | `503 confirmation_in_progress` | another caller holds the confirmation lease | retry; the payment webhook's retry is the intended path |
 | `429 too_many_holds` | `booking.maxHoldsPerIp` reached (5 open holds per IP unless configured) | expected under abuse; raise the cap where many customers share one IP (a hotel desk), or `null` to remove it |
+| Log: `reserva reconciliation query budget reached` | the sweep's backlog needs more D1 queries than one invocation allows (50 on the Workers Free plan) | expected after an outage: later ticks drain the rest. On Workers Paid, pass `queryBudget` to `scheduledHandler` to drain it in one |
 | `400 validation_failed: pickup …` | service has no `location`, or the id is not declared | omit `pickup` for a location-less service; otherwise use a declared id |
 | `<ManageBooking />` throws about a missing endpoint | its route group is disabled in `config.routes` | pass an explicit `endpoint`, or re-enable the group |
 | Consumer build cannot resolve `virtual:reserva/runtime` | `reserva()` missing from `integrations`, or types not synced | add the integration; run `astro sync` |

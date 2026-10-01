@@ -5,6 +5,7 @@
 // their persisted next_attempt_at.
 import virtualConfig from 'virtual:reserva/config';
 import {
+  cancellationSideEffectSeeds,
   classifyAttemptOutcome,
   reminderSideEffectSeeds,
   runOwedMutationSideEffects,
@@ -38,6 +39,7 @@ import {
   type RefundOperationRecord,
   type SideEffectOperationRecord,
 } from './repo.js';
+import { SCHEMA_CHECK_QUERIES } from './schema-check.js';
 
 // Default/hard-capped bounded page sizes for one invocation.
 const DEFAULT_SOURCE_LIMIT = 10;
@@ -52,6 +54,9 @@ export interface ReconciliationOptions {
   sourceLimit?: number;
   alertLimit?: number;
   requireAlertSink?: boolean;
+  // The most D1 queries one sweep may issue. Defaults to what fits the Workers Free plan; a Paid
+  // deployment can raise it toward 1,000.
+  queryBudget?: number;
 }
 
 // Re-exported from its original home so every existing importer keeps working now that the shape
@@ -67,6 +72,63 @@ const RECONCILIATION_MAX_WALL_CLOCK_MS = 20_000;
 // One minute under the cadence, so a lease left behind by a killed invocation frees itself before
 // the next tick rather than skipping one.
 const RECONCILIATION_LEASE_MS = 4 * 60_000;
+
+// D1 refuses every query past its per-invocation cap, 50 on the Workers Free plan. Before the sweep
+// starts, the same invocation may already have run a cold isolate's schema check, the admin
+// settings read and the lease acquisition.
+const D1_FREE_PLAN_QUERIES_PER_INVOCATION = 50;
+const QUERIES_BEFORE_SWEEP = SCHEMA_CHECK_QUERIES + 2;
+export const DEFAULT_RECONCILIATION_QUERY_BUDGET = D1_FREE_PLAN_QUERIES_PER_INVOCATION - QUERIES_BEFORE_SWEEP;
+
+// Worst-case queries per step, measured against real D1 and pinned by
+// tests/workers/reconciliation-query-budget.test.ts. A step is admitted only when its worst case
+// fits: hitting the cap between a claim and its resolve would re-run the provider call on the
+// next tick, and the customer would get the email twice.
+// Load the booking, take the lease, claim, renew three times, resolve (two statements), release.
+const SIDE_EFFECT_STEP_QUERIES = 9;
+const REFUND_LOAD_QUERIES = 2;
+// Claim the execution, record the refunded amount, resolve the operation.
+const REFUND_ATTEMPT_QUERIES = 3;
+// The cancellation CAS (two statements) and the booking it returns, then listing the outbox rows
+// it created; each row then costs a claim and a resolve.
+const REFUND_CANCELLATION_QUERIES = 4;
+const OUTBOX_ROW_QUERIES = 2;
+// Read the incident, then open, update or resolve it.
+const INCIDENT_PROJECTION_QUERIES = 2;
+// Claim, look up the booking reference, resolve.
+const ALERT_STEP_QUERIES = 3;
+// Releasing the reconciliation lease, plus listing and sending one alert, so a backlog that eats
+// every tick's budget can never starve the operator's alerts.
+const CLOSING_QUERIES = 1;
+const ALERT_FLOOR_QUERIES = 1 + ALERT_STEP_QUERIES;
+
+interface QueryBudget {
+  fits(queries: number): boolean;
+  // The alert phase may spend what the earlier phases had to keep back for it.
+  releaseAlertReserve(): void;
+  readonly exhausted: boolean;
+}
+
+// Counted from the sweep's own start, so a context that outlives one invocation (a test, a long-lived
+// caller) gets a fresh budget per sweep. Without a count (a context built on a supplied repo) every
+// step fits, as before the budget existed.
+function queryBudget(context: ReservaContext, limit: number): QueryBudget {
+  const issued = context.d1QueriesIssued;
+  const start = issued?.() ?? 0;
+  let reserve = CLOSING_QUERIES + ALERT_FLOOR_QUERIES;
+  let exhausted = false;
+  return {
+    fits(queries) {
+      if (!issued || issued() - start + queries + reserve <= limit) return true;
+      exhausted = true;
+      return false;
+    },
+    releaseAlertReserve() { reserve = CLOSING_QUERIES; },
+    get exhausted() { return exhausted; },
+  };
+}
+
+const UNBOUNDED_BUDGET: QueryBudget = { fits: () => true, releaseAlertReserve: () => undefined, exhausted: false };
 
 function clampLimit(requested: number | undefined, fallback: number, hardCap: number): number {
   return Math.max(1, Math.min(requested ?? fallback, hardCap));
@@ -147,10 +209,12 @@ function sideEffectSignal(operation: SideEffectOperationRecord, nowIsoValue: str
   return { detected: false, severity: 'delayed', action, attemptCount: operation.attemptCount, sourceUpdatedAt: operation.updatedAt };
 }
 
-async function projectSideEffectIncidentsForBooking(context: ReservaContext, tally: IncidentTally, bookingId: string): Promise<void> {
+async function projectSideEffectIncidentsForBooking(context: ReservaContext, tally: IncidentTally, bookingId: string, budget: QueryBudget): Promise<void> {
+  if (!budget.fits(1)) return;
   const operations = await context.repo.listSideEffectOperations(bookingId);
   const now = nowIso(context);
   for (const operation of operations) {
+    if (!budget.fits(INCIDENT_PROJECTION_QUERIES)) return;
     const sourceKey = sideEffectIncidentSourceKey(operation);
     const signal = sideEffectSignal(operation, now);
     await applyIncidentProjection(context, tally, bookingId, 'side_effect', sourceKey, signal.action, signal);
@@ -165,7 +229,8 @@ function refundSignal(operation: RefundOperationRecord, booking: Booking | null)
   return { detected, severity: 'action_required', action: 'refund', attemptCount: operation.attemptCount, sourceUpdatedAt: operation.resolvedAt ?? operation.requestedAt };
 }
 
-async function projectRefundIncidentForBooking(context: ReservaContext, tally: IncidentTally, bookingId: string): Promise<void> {
+async function projectRefundIncidentForBooking(context: ReservaContext, tally: IncidentTally, bookingId: string, budget: QueryBudget): Promise<void> {
+  if (!budget.fits(2 + INCIDENT_PROJECTION_QUERIES)) return;
   const [operation, booking] = await Promise.all([
     context.repo.getRefundOperationByBookingId(bookingId),
     context.repo.getBookingById(bookingId),
@@ -202,8 +267,8 @@ export async function reprojectIncidentAfterAdminRetry(
   // booking-less incident has nothing to project against.
   if (bookingId === null || (sourceType !== 'side_effect' && sourceType !== 'refund')) return 'not_retryable';
   const tally: IncidentTally = { opened: 0, updated: 0, resolved: 0 };
-  if (sourceType === 'side_effect') await projectSideEffectIncidentsForBooking(context, tally, bookingId);
-  else await projectRefundIncidentForBooking(context, tally, bookingId);
+  if (sourceType === 'side_effect') await projectSideEffectIncidentsForBooking(context, tally, bookingId, UNBOUNDED_BUDGET);
+  else await projectRefundIncidentForBooking(context, tally, bookingId, UNBOUNDED_BUDGET);
   const incident = await context.repo.getIncidentBySource(sourceType, sourceKey);
   return !incident || incident.status !== 'open' ? 'resolved' : 'still_open';
 }
@@ -211,10 +276,12 @@ export async function reprojectIncidentAfterAdminRetry(
 // Oversell markers are permanent (never retried) and always
 // action_required the first time they're observed unreported — listUnreportedOversellMarkers
 // already excludes markers with an existing incident row, so this is always a fresh 'open'.
-async function reportUnreportedOversellMarkers(context: ReservaContext, tally: IncidentTally, limit: number): Promise<void> {
+async function reportUnreportedOversellMarkers(context: ReservaContext, tally: IncidentTally, limit: number, budget: QueryBudget): Promise<void> {
+  if (!budget.fits(1)) return;
   const markers = await context.repo.listUnreportedOversellMarkers(limit);
   const now = nowIso(context);
   for (const marker of markers) {
+    if (!budget.fits(1)) return;
     const incidentId = crypto.randomUUID();
     await context.repo.upsertOpenIncident({
       id: incidentId,
@@ -253,24 +320,29 @@ async function processSideEffectCandidate(
 // The same cancellation CAS used by HTTP recovery is resumed before an execution claim. A crash
 // after claimRefundOperation therefore cannot strand a confirmed booking, and Stripe remains
 // unreachable until the returned booking is durably cancelled.
-async function processRefundCandidate(context: ReservaContext, bookingId: string): Promise<void> {
+async function processRefundCandidate(context: ReservaContext, bookingId: string, budget: QueryBudget): Promise<boolean> {
+  if (!budget.fits(REFUND_LOAD_QUERIES)) return false;
   const [initialBooking, operation] = await Promise.all([
     context.repo.getBookingById(bookingId),
     context.repo.getRefundOperationByBookingId(bookingId),
   ]);
-  if (!initialBooking || !operation || operation.status === 'succeeded' || operation.status === 'abandoned') return;
+  if (!initialBooking || !operation || operation.status === 'succeeded' || operation.status === 'abandoned') return true;
 
   let booking = initialBooking;
   if (booking.status !== 'cancelled') {
-    if (operation.status !== 'requested' || booking.status !== 'confirmed') return;
+    if (operation.status !== 'requested' || booking.status !== 'confirmed') return true;
+    const outboxRows = cancellationSideEffectSeeds(context, booking, 'booking.cancelled_by_operator', nowIso(context)).length;
+    if (!budget.fits(REFUND_CANCELLATION_QUERIES + outboxRows * OUTBOX_ROW_QUERIES + REFUND_ATTEMPT_QUERIES)) return false;
     const cancellation = await resumeClaimedOperatorCancellation(context, booking, operation.id);
-    if (cancellation.kind !== 'cancelled') return;
+    if (cancellation.kind !== 'cancelled') return true;
     booking = cancellation.booking;
+  } else if (!budget.fits(REFUND_ATTEMPT_QUERIES)) {
+    return false;
   }
 
   const now = nowIso(context);
   const attemptNumber = await context.repo.claimRefundExecution(operation.id, now);
-  if (attemptNumber === null) return;
+  if (attemptNumber === null) return true;
   try {
     await attemptRefund(context, booking, {
       operationId: operation.id,
@@ -281,14 +353,15 @@ async function processRefundCandidate(context: ReservaContext, bookingId: string
   } catch (error) {
     context.logger.warn?.('reserva reconciliation refund attempt failed', { bookingId, error: String(error) });
   }
+  return true;
 }
 
 // Arms the reminder email for every confirmed booking that just entered the reminder window.
 // Bounded by the same `sourceLimit` as the other sweeps; a backlog drains over consecutive runs.
 // The row is the record — a second sweep finds nothing because the row already exists.
-async function sweepReminders(context: ReservaContext, now: string, limit: number): Promise<number> {
+async function sweepReminders(context: ReservaContext, now: string, limit: number, budget: QueryBudget): Promise<number> {
   const reminderHours = context.config.booking.reminderHoursBefore;
-  if (reminderHours <= 0) return 0;
+  if (reminderHours <= 0 || !budget.fits(1)) return 0;
   const until = new Date(Date.parse(now) + reminderHours * 3_600_000).toISOString();
   const candidates = await context.repo.listReminderCandidates(now, until, reminderHours, limit);
   let armed = 0;
@@ -296,6 +369,8 @@ async function sweepReminders(context: ReservaContext, now: string, limit: numbe
     const seeds = reminderSideEffectSeeds(context, booking, now);
     // No email provider and no durable subscriber: nothing to deliver, so nothing to record.
     if (seeds.length === 0) continue;
+    // Recording the rows (one statement each) and listing them back, then a claim and a resolve per row.
+    if (!budget.fits(seeds.length + 1 + seeds.length * OUTBOX_ROW_QUERIES)) break;
     await context.repo.recordBookingEventOperations(booking.id, seeds, now);
     armed += 1;
     // Same outbox drain every other mutation uses: retries, abandonment and incidents come free.
@@ -310,11 +385,12 @@ async function projectIncidents(
   sideEffectBookingIds: Iterable<string>,
   refundBookingIds: Iterable<string>,
   limit: number,
+  budget: QueryBudget,
 ): Promise<IncidentTally> {
   const tally: IncidentTally = { opened: 0, updated: 0, resolved: 0 };
-  for (const bookingId of sideEffectBookingIds) await projectSideEffectIncidentsForBooking(context, tally, bookingId);
-  for (const bookingId of refundBookingIds) await projectRefundIncidentForBooking(context, tally, bookingId);
-  await reportUnreportedOversellMarkers(context, tally, limit);
+  for (const bookingId of sideEffectBookingIds) await projectSideEffectIncidentsForBooking(context, tally, bookingId, budget);
+  for (const bookingId of refundBookingIds) await projectRefundIncidentForBooking(context, tally, bookingId, budget);
+  await reportUnreportedOversellMarkers(context, tally, limit, budget);
   return tally;
 }
 
@@ -326,8 +402,10 @@ function adminUrlForIncident(context: ReservaContext, incidentId: string): strin
 // Alert delivery has its own claim/attempt/backoff. Only open incidents are eligible: a revision
 // that auto-resolves before delivery is obsolete, while a later reopen increments alert_revision
 // and becomes independently deliverable.
-async function drainAlerts(context: ReservaContext, limit: number): Promise<{ sent: number; failed: number }> {
+async function drainAlerts(context: ReservaContext, limit: number, budget: QueryBudget): Promise<{ sent: number; failed: number }> {
   const sink = context.providers.alerts;
+  budget.releaseAlertReserve();
+  if (!budget.fits(1)) return { sent: 0, failed: 0 };
   const ids = await context.repo.listAlertCandidateIds(nowIso(context), limit);
   if (!sink && ids.length > 0) {
     context.logger.error?.('reserva reconciliation alert sink missing', {
@@ -338,6 +416,7 @@ async function drainAlerts(context: ReservaContext, limit: number): Promise<{ se
   let sent = 0;
   let failed = 0;
   for (const id of ids) {
+    if (!budget.fits(ALERT_STEP_QUERIES)) break;
     const now = nowIso(context);
     const token = crypto.randomUUID();
     const leaseUntil = new Date(Date.parse(now) + ALERT_CLAIM_LEASE_MS).toISOString();
@@ -402,8 +481,10 @@ export async function runReconciliation(context: ReservaContext, options: Reconc
     lifecycle: 'started', sourceLimit, alertLimit,
   });
 
-  const expiredHoldsSwept = await context.repo.sweepExpiredHolds(startedAt);
-  await sweepReminders(context, startedAt, sourceLimit);
+  const queryLimit = options.queryBudget ?? DEFAULT_RECONCILIATION_QUERY_BUDGET;
+  const budget = queryBudget(context, queryLimit);
+  const expiredHoldsSwept = budget.fits(1) ? await context.repo.sweepExpiredHolds(startedAt) : 0;
+  await sweepReminders(context, startedAt, sourceLimit, budget);
 
   const incidentTally: IncidentTally = { opened: 0, updated: 0, resolved: 0 };
   const sideEffectBookingIds = new Set<string>();
@@ -416,25 +497,41 @@ export async function runReconciliation(context: ReservaContext, options: Reconc
   let batches = 0;
   // One page of candidates was never a decision about how much debt exists, only about how much
   // one query returns. Keep pulling pages until a short one says the backlog is drained, or the
-  // wall clock says this invocation has had its share — the next tick resumes where this stopped.
+  // wall clock or the query budget says this invocation has had its share — the next tick resumes
+  // where this stopped.
   const deadline = Date.parse(startedAt) + RECONCILIATION_MAX_WALL_CLOCK_MS;
   for (;;) {
     batches += 1;
     const batchStartedAt = nowIso(context);
-    const sideEffectCandidates = await context.repo.listSideEffectExecutionCandidates(batchStartedAt, staleBefore, sourceLimit);
-    for (const operation of sideEffectCandidates) await processSideEffectCandidate(context, operation);
+    const sideEffectCandidates = budget.fits(1)
+      ? await context.repo.listSideEffectExecutionCandidates(batchStartedAt, staleBefore, sourceLimit)
+      : [];
+    const sideEffectsRun: SideEffectOperationRecord[] = [];
+    for (const operation of sideEffectCandidates) {
+      if (!budget.fits(SIDE_EFFECT_STEP_QUERIES)) break;
+      await processSideEffectCandidate(context, operation);
+      sideEffectsRun.push(operation);
+    }
 
-    const refundBookingIds = await context.repo.listRefundExecutionCandidateBookingIds(batchStartedAt, staleBefore, sourceLimit);
-    for (const bookingId of refundBookingIds) await processRefundCandidate(context, bookingId);
-    refundBookingsProcessed += refundBookingIds.length;
+    const refundCandidates = budget.fits(1)
+      ? await context.repo.listRefundExecutionCandidateBookingIds(batchStartedAt, staleBefore, sourceLimit)
+      : [];
+    const refundsRun: string[] = [];
+    for (const bookingId of refundCandidates) {
+      if (!await processRefundCandidate(context, bookingId, budget)) break;
+      refundsRun.push(bookingId);
+    }
+    refundBookingsProcessed += refundsRun.length;
 
-    const [sideEffectIncidentIds, refundIncidentIds, reprojectionCandidates] = await Promise.all([
-      context.repo.listSideEffectIncidentCandidateBookingIds(failureDueBefore, sourceLimit),
-      context.repo.listRefundIncidentCandidateBookingIds(sourceLimit),
-      context.repo.listIncidentReprojectionCandidates(sourceLimit),
-    ]);
-    const sideEffectProjectionIds = new Set(sideEffectCandidates.map((operation) => operation.bookingId));
-    const refundProjectionIds = new Set(refundBookingIds);
+    const [sideEffectIncidentIds, refundIncidentIds, reprojectionCandidates] = budget.fits(3)
+      ? await Promise.all([
+        context.repo.listSideEffectIncidentCandidateBookingIds(failureDueBefore, sourceLimit),
+        context.repo.listRefundIncidentCandidateBookingIds(sourceLimit),
+        context.repo.listIncidentReprojectionCandidates(sourceLimit),
+      ])
+      : [[], [], []];
+    const sideEffectProjectionIds = new Set(sideEffectsRun.map((operation) => operation.bookingId));
+    const refundProjectionIds = new Set(refundsRun);
     for (const bookingId of sideEffectIncidentIds) sideEffectProjectionIds.add(bookingId);
     for (const bookingId of refundIncidentIds) refundProjectionIds.add(bookingId);
     for (const incident of reprojectionCandidates) {
@@ -444,22 +541,27 @@ export async function runReconciliation(context: ReservaContext, options: Reconc
       else if (incident.sourceType === 'refund') refundProjectionIds.add(incident.bookingId);
     }
 
-    const batchTally = await projectIncidents(context, sideEffectProjectionIds, refundProjectionIds, sourceLimit);
+    const batchTally = await projectIncidents(context, sideEffectProjectionIds, refundProjectionIds, sourceLimit, budget);
     incidentTally.opened += batchTally.opened;
     incidentTally.updated += batchTally.updated;
     incidentTally.resolved += batchTally.resolved;
-    for (const operation of sideEffectCandidates) sideEffectBookingIds.add(operation.bookingId);
+    for (const operation of sideEffectsRun) sideEffectBookingIds.add(operation.bookingId);
 
-    const progressed = sideEffectCandidates.some((operation) => !seenSideEffects.has(`${operation.bookingId}:${sideEffectOperationKey(operation)}`))
-      || refundBookingIds.some((bookingId) => !seenRefunds.has(bookingId));
-    for (const operation of sideEffectCandidates) seenSideEffects.add(`${operation.bookingId}:${sideEffectOperationKey(operation)}`);
-    for (const bookingId of refundBookingIds) seenRefunds.add(bookingId);
+    const progressed = sideEffectsRun.some((operation) => !seenSideEffects.has(`${operation.bookingId}:${sideEffectOperationKey(operation)}`))
+      || refundsRun.some((bookingId) => !seenRefunds.has(bookingId));
+    for (const operation of sideEffectsRun) seenSideEffects.add(`${operation.bookingId}:${sideEffectOperationKey(operation)}`);
+    for (const bookingId of refundsRun) seenRefunds.add(bookingId);
 
-    const full = sideEffectCandidates.length >= sourceLimit || refundBookingIds.length >= sourceLimit;
-    if (!full || !progressed || context.clock().getTime() >= deadline) break;
+    const full = sideEffectCandidates.length >= sourceLimit || refundCandidates.length >= sourceLimit;
+    if (budget.exhausted || !full || !progressed || context.clock().getTime() >= deadline) break;
   }
 
-  const alertResult = await drainAlerts(context, alertLimit);
+  const alertResult = await drainAlerts(context, alertLimit, budget);
+  if (budget.exhausted) {
+    context.logger.info?.('reserva reconciliation query budget reached', {
+      lifecycle: 'budget_reached', queryBudget: queryLimit, queriesIssued: context.d1QueriesIssued?.(),
+    });
+  }
   const summary: ReconciliationSummary = {
     expiredHoldsSwept,
     sideEffectBookingsProcessed: sideEffectBookingIds.size,

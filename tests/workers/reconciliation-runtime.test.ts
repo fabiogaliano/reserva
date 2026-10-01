@@ -176,7 +176,8 @@ describe('runReconciliation against real D1', () => {
       providers: providers({ calendar: { listEvents: async () => [], createEvent: async () => { calendarCalls += 1; return 'cal_fair_d1'; }, deleteEvent: async () => undefined, patchEvent: async () => undefined } }),
     });
 
-    const summary = await runReconciliation(context, { sourceLimit: 10 });
+    // A Paid-plan budget, so the page size alone decides how much this one sweep projects.
+    const summary = await runReconciliation(context, { sourceLimit: 10, queryBudget: 1000 });
     expect(calendarCalls).toBe(1);
     expect(summary.sideEffectBookingsProcessed).toBe(1);
     expect(summary.incidentsOpened).toBe(10);
