@@ -55,6 +55,7 @@ export const config: ResolvedClientConfig = {
     limitedThreshold: 2,
     reminderHoursBefore: 24,
     calendarMaxStaleSeconds: 15 * 60,
+    maxHoldsPerIp: 5,
   },
   locales: { supported: ['en', 'pt-BR'], default: 'en' },
   legal: { termsUrl: 'https://example.test/terms' },
