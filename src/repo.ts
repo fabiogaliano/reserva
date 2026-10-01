@@ -1934,8 +1934,10 @@ export function createBookingRepository(
     // customer token has to be readable. Bounded by `limit` like every other sweep query.
     async listReminderCandidates(now, until, reminderHours, limit) {
       const result = await db.prepare(
+        // `+status` keeps the planner on the starts_at window index: nearly every booking is
+        // 'confirmed', so the status index it would otherwise pick reads the whole table.
         `SELECT ${bookingColumns} FROM bookings
-         WHERE status = 'confirmed' AND starts_at > ? AND starts_at <= ?
+         WHERE +status = 'confirmed' AND starts_at > ? AND starts_at <= ?
            AND julianday(created_at) < julianday(starts_at) - (? / 24.0)
            AND NOT EXISTS (
              SELECT 1 FROM side_effect_operations o
@@ -2177,7 +2179,10 @@ export function createBookingRepository(
            AND (
              (source_type = 'side_effect' AND EXISTS (
                SELECT 1 FROM side_effect_operations
-               WHERE source_key = ${sideEffectSourceKeySql}
+               -- The booking match lets the identity index find this incident's few rows; the
+               -- key expression alone can use no index and read the whole outbox per incident.
+               WHERE side_effect_operations.booking_id = operational_incidents.booking_id
+                 AND source_key = ${sideEffectSourceKeySql}
                  AND side_effect_operations.updated_at != operational_incidents.source_updated_at
              ))
              OR (source_type = 'refund' AND (
@@ -2196,8 +2201,10 @@ export function createBookingRepository(
     },
     async listUnreportedOversellMarkers(limit) {
       const result = await db.prepare(
+        // `+status` keeps the planner on the oversell-only index: `status = 'succeeded'` would
+        // otherwise pick the status index, and nearly every delivered row is 'succeeded'.
         `SELECT ${sideEffectOperationColumns} FROM side_effect_operations
-         WHERE family = 'oversell' AND status = 'succeeded'
+         WHERE family = 'oversell' AND +status = 'succeeded'
            AND NOT EXISTS (
              SELECT 1 FROM operational_incidents
              WHERE source_type = 'oversell' AND source_key = side_effect_operations.booking_id
@@ -2281,14 +2288,15 @@ export function createBookingRepository(
     },
     async countSideEffectDebtByFamily() {
       // The WHERE drops settled rows so the aggregate only scans debt; families with none
-      // simply don't come back.
+      // simply don't come back. The unsettled statuses are listed rather than written as
+      // `!= 'succeeded'`, which no index can serve and would read the whole outbox on every poll.
       const result = await db.prepare(
         `SELECT family,
                 SUM(CASE WHEN status = 'abandoned' THEN 0 ELSE 1 END) AS pending,
                 SUM(CASE WHEN status = 'abandoned' THEN 1 ELSE 0 END) AS abandoned,
                 MIN(CASE WHEN status = 'abandoned' THEN NULL ELSE created_at END) AS oldest_pending_at
          FROM side_effect_operations
-         WHERE status != 'succeeded'
+         WHERE status IN ('pending', 'in_flight', 'failed', 'abandoned')
          GROUP BY family
          ORDER BY family`,
       ).all<{ family: SideEffectFamily; pending: number; abandoned: number; oldest_pending_at: string | null }>();
