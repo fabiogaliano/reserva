@@ -415,9 +415,15 @@ per-IP hold cap, or the admin change history.
 # Migrating to 0.16.0
 
 0.16.0 makes `occupancy` required on a service that sells parties larger than one, passes the
-effective config to `OperationalAlertSink.send`, and caps unpaid holds per IP by default. No
-schema or wire change; the CORS allowlist and the sweep's query budget are additions that need
-no action.
+effective config to `OperationalAlertSink.send`, caps unpaid holds per IP by default, adds one
+index (migration 0008), and changes two confirmation methods on `ReservaContext.repo`. No wire
+change; the CORS allowlist and the sweep's query budget are additions that need no action.
+
+## Run `bunx reserva-migrate`
+
+Migration `0008_oversell_marker_index.sql` adds an index the reconciliation sweep needs to stop
+reading the whole booking history every five minutes. Apply it before deploying 0.16.0: until it
+is applied, the runtime refuses to start and names the missing migration.
 
 ## `occupancy` on party-sized services
 
@@ -461,3 +467,12 @@ included. A custom sink that ignores the second argument keeps working unchanged
 `emailAlertSink(…).send(alert)` directly must pass the config; without `to`, the sink addresses
 the alert to that config's `business.contact.email`, so an edit on the admin settings page now
 reaches alerts.
+
+## `calendarEvent` on the confirmation repository methods
+
+Only code that calls these methods on `ReservaContext.repo` itself, or supplies its own `repo`,
+needs a change. `confirmWithSideEffectOperations` requires `calendarEvent: 'owed' | 'not_owed'`,
+and `ensureConfirmationSideEffectOperations` takes it as its fourth argument, before `eventSeeds`
+and `emailRecipients`. Pass `'owed'` only when a calendar provider is configured; a custom `repo`
+inserts its `calendar_create` row only for `'owed'`. A deployment without a calendar no longer
+records a calendar delivery per confirmed booking.
