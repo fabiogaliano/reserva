@@ -221,12 +221,24 @@ Two display settings, independent of each other:
   be disabled. A disabled group is never injected and no generated link points at it: with
   `manage: false` emails omit their manage buttons and `<ManageBooking />` throws unless given
   an explicit `endpoint`.
+- `config.routes?.cors?: { origins: string[] }` — lets a booking funnel on another site call
+  the customer API from the browser, e.g. a WordPress or Next.js site using
+  `createReservaClient({ base: 'https://booking.example.com' })`. Each entry is an exact origin
+  as the browser sends it (`https://www.example.com`, `http://localhost:4321`): no path, no
+  trailing slash, no wildcard. Only the customer API routes answer: `availability`, `checkout`,
+  `quote`, `catalog`, `status`, `manageApi`, `cancel` and `reschedule` reply to the preflight
+  and carry `Access-Control-Allow-Origin` for a listed origin. The admin, operator, ops and
+  payment-webhook routes and the pages never do. Absent, no route sends CORS headers. The
+  payment provider still returns the customer to this deployment's `/booking-confirmation`.
 
 ```ts
 // reserva.config.ts (shared by reserva() and the runtime entrypoint)
 export default {
   // ...
-  routes: { ops: false }, // this site has no operator endpoints; admin stays on
+  routes: {
+    ops: false, // this site has no operator endpoints; admin stays on
+    cors: { origins: ['https://www.example.com'] }, // the funnel lives on the marketing site
+  },
 };
 
 // astro.config.ts

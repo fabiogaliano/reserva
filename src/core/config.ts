@@ -494,6 +494,11 @@ const clientConfigShape = z.object({
     // Controls only the built-in server-rendered /booking/manage page; the manage/cancel/reschedule
     // APIs stay mounted either way. False stops library link producers from pointing at it.
     manage: z.boolean().optional(),
+    // Sites on other origins allowed to call the customer API from a browser. Exact origins, never
+    // a pattern: the browser compares `Origin` byte for byte, so anything else would never match.
+    cors: z.object({
+      origins: z.array(z.string().refine(isSerializedOrigin, 'must be an exact http(s) origin: scheme, host and optional port, with no path, trailing slash or wildcard (e.g. "https://www.example.com")')).min(1),
+    }).optional(),
   }).optional(),
   ui: z.object({
     // Per-locale overrides for Reserva's rendered copy, merged over its bundled catalog and
@@ -632,6 +637,18 @@ function isValidAccessTeamDomain(value: string): boolean {
       && url.hash === ''
       && url.username === ''
       && url.password === '';
+  } catch {
+    return false;
+  }
+}
+
+// Round-tripping through URL is what rejects a path, a trailing slash, credentials, uppercase or a
+// default port spelled out: each serializes to something other than the input. `*` is a legal
+// hostname character to the URL parser, so a wildcard has to be refused by hand.
+function isSerializedOrigin(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (url.protocol === 'https:' || url.protocol === 'http:') && url.origin === value && !value.includes('*');
   } catch {
     return false;
   }

@@ -147,7 +147,9 @@ const { checkoutUrl } = await reserva.checkout({ serviceSlug, start, quantity, l
 
 - `paths` (the deployment's resolved table, which already honours `routePrefix`) and `base` (a
   plain prefix or origin the default patterns hang off) are mutually exclusive; with neither, the
-  client uses the default patterns on the current origin.
+  client uses the default patterns on the current origin. A `base` on another origin needs the
+  page's origin in the deployment's `routes.cors.origins` (see
+  [configuration](./configuration.md#moving-and-disabling-routes)).
 - `fetch` swaps the transport (tests, a server-side call); `bearer` is the operator secret the
   `operator.*`, `opsHealth` and `opsReconcile` methods send.
 - Methods: `catalog`, `availability`, `quote`, `checkout`, `status`, `manage`, `cancel`,

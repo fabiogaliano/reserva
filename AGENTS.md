@@ -85,7 +85,7 @@ receive once the defaults below have been applied.
 | `locales` | no | `{ supported: string[], default: string }` — defaults to `{ supported: ['en'], default: 'en' }` |
 | `legal` | no | `{ termsUrl? }` — defaults to `{}`; `termsUrl` itself is optional |
 | `webhooks` | no | `Array<{ name, url, secretBinding, events? }>` |
-| `routes` | no | `{ admin?, ops?, manage? }` — all default `true` |
+| `routes` | no | `{ admin?, ops?, manage?, cors?: { origins: string[] } }` — the three groups default `true`. `cors.origins` lists exact origins (`https://www.example.com`, no path or wildcard) allowed to call the customer API routes from a browser; absent, no route sends CORS headers |
 | `ui` | no | `{ messages?: Record<locale, Partial<messages>>, faviconUrl?, headHtml?, branding?: { logoUrl?, logoWidth?, logoHeight?, colorScheme?: 'auto' \| 'light' \| 'dark', accentColor? (hex), mastheadBackground?, fontFamily? }, confirmation?: { statusPlacement?: 'masthead' \| 'ticket' } }`. `branding` affects only the confirmation and manage pages. Page hook classes (`bk-page--*`, `data-bk-status`) and the `- ` list syntax in messages are listed in `docs/customization.md` |
 | `emails` | no | `{ locale?, branding?, messages? }` |
 
@@ -111,7 +111,10 @@ resolved with the same candidate-locale → base-language → default-locale cha
 
 Every route is server-only (`prerender: false`). `reserva({ routePrefix })` prepends a
 prefix to all of them; `config.routes` disables the `admin`, `ops`, and `manage` groups.
-The `customer` and `webhook` groups are load-bearing and cannot be disabled.
+The `customer` and `webhook` groups are load-bearing and cannot be disabled. With
+`config.routes.cors`, the customer API routes (`availability`, `checkout`, `quote`, `catalog`,
+`status`, `manageApi`, `cancel`, `reschedule`) answer `OPTIONS` preflights from the listed
+origins; no other route ever does.
 
 <!-- generated:routes -->
 | Route id | Path | Group |
@@ -315,6 +318,7 @@ SQL error.
 | Log: `reserva reconciliation query budget reached` | the sweep's backlog needs more D1 queries than one invocation allows (50 on the Workers Free plan) | expected after an outage: later ticks drain the rest. On Workers Paid, pass `queryBudget` to `scheduledHandler` to drain it in one |
 | `400 validation_failed: pickup …` | service has no `location`, or the id is not declared | omit `pickup` for a location-less service; otherwise use a declared id |
 | `<ManageBooking />` throws about a missing endpoint | its route group is disabled in `config.routes` | pass an explicit `endpoint`, or re-enable the group |
+| Browser console: "blocked by CORS policy" calling the booking API from another site | the page's origin is not in `config.routes.cors.origins`, or it differs by scheme, port or `www` | add the exact origin the console names; a path, trailing slash or wildcard is rejected at build time |
 | Consumer build cannot resolve `virtual:reserva/runtime` | `reserva()` missing from `integrations`, or types not synced | add the integration; run `astro sync` |
 
 ## Provider ports

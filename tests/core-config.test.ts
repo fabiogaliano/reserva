@@ -354,6 +354,20 @@ describe('core config and pricing validation', () => {
     expect(() => validateConfig({ ...config, routes: { admin: 'nope' } })).toThrow();
   });
 
+  // The browser compares Origin byte for byte, so anything but an exact serialized origin would be
+  // an allowlist entry that silently never matches.
+  it('accepts exact http(s) origins in routes.cors and rejects anything a browser would never send as Origin', () => {
+    const origins = ['https://www.example.com', 'http://localhost:4321'];
+    expect(validateConfig({ ...config, routes: { cors: { origins } } }).routes?.cors?.origins).toEqual(origins);
+    for (const origin of [
+      'https://www.example.com/', 'https://www.example.com/booking', 'https://*.example.com',
+      'https://WWW.example.com', 'https://www.example.com:443', 'www.example.com', 'ftp://example.com', '*',
+    ]) {
+      expect(() => validateConfig({ ...config, routes: { cors: { origins: [origin] } } }), origin).toThrow(/must be an exact http\(s\) origin/);
+    }
+    expect(() => validateConfig({ ...config, routes: { cors: { origins: [] } } })).toThrow();
+  });
+
   it('accepts equal season endpoints as a one-day inclusive range', () => {
     const oneDay = {
       ...config,

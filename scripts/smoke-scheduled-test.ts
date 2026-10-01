@@ -133,6 +133,21 @@ async function assertRecovered(): Promise<void> {
   }
 }
 
+// `astro preview` answers every OPTIONS from Vite's own middleware before the Worker sees it, so
+// this Worker is the one place the built routes' preflight answer is exercised.
+async function assertCorsPreflight(): Promise<void> {
+  const origin = 'https://funnel.example.test';
+  const response = await fetch(`http://${HOST}:${PORT}/api/booking/checkout`, {
+    method: 'OPTIONS',
+    headers: { origin, 'access-control-request-method': 'POST', 'access-control-request-headers': 'content-type' },
+  });
+  const allowed = response.headers.get('access-control-allow-origin');
+  if (response.status !== 204 || allowed !== origin) {
+    throw new Error(`OPTIONS /api/booking/checkout from ${origin} answered ${response.status} with access-control-allow-origin ${allowed ?? '(none)'}`);
+  }
+  console.log('smoke-scheduled-test: the built checkout route answered a cross-origin preflight');
+}
+
 await seedAndAssert();
 
 const cronWorker = spawn('bunx', ['wrangler', 'dev', '--persist-to', PERSIST_DIR, '--port', String(PORT)], {
@@ -146,6 +161,7 @@ try {
   if (exited) throw new Error('wrangler dev exited before becoming ready');
   await waitForScheduledTrigger(30_000);
   await assertRecovered();
+  await assertCorsPreflight();
   console.log('smoke-scheduled-test: OK');
 } finally {
   cronWorker.kill('SIGTERM');
