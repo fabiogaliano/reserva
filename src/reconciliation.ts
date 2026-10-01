@@ -10,6 +10,7 @@ import {
   reminderSideEffectSeeds,
   runOwedMutationSideEffects,
   runScheduledSideEffectOperation,
+  unconfiguredProviders,
 } from './confirmation.js';
 import { dispatchNonDurableBookingEvent } from './booking-events.js';
 import type { Booking } from './core/booking.js';
@@ -504,7 +505,7 @@ export async function runReconciliation(context: ReservaContext, options: Reconc
     batches += 1;
     const batchStartedAt = nowIso(context);
     const sideEffectCandidates = budget.fits(1)
-      ? await context.repo.listSideEffectExecutionCandidates(batchStartedAt, staleBefore, sourceLimit)
+      ? await context.repo.listSideEffectExecutionCandidates(batchStartedAt, staleBefore, sourceLimit, unconfiguredProviders(context))
       : [];
     const sideEffectsRun: SideEffectOperationRecord[] = [];
     for (const operation of sideEffectCandidates) {

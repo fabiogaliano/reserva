@@ -480,3 +480,20 @@ describe('POST /reschedule (customer, spec §11)', () => {
     expect(repo.tokenState.get(seeded.id)?.tokensExpireAt).not.toBe(staleExpiry);
   });
 });
+
+describe('calendar sync without a calendar provider', () => {
+  it('records no calendar delete or patch for an event made while a calendar was configured (the rows could never run)', async () => {
+    const cancelled = booking({ id: 'b-no-calendar-cancel', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z', calendarEventId: 'cal-old-1' });
+    const moved = booking({ id: 'b-no-calendar-move', startsAt: '2026-06-15T09:00:00.000Z', endsAt: '2026-06-15T10:00:00.000Z', calendarEventId: 'cal-old-2' });
+    const repo = fakeRepository([cancelled, moved]);
+    const { calendar: _unused, ...noCalendar } = providers();
+    const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: noCalendar });
+
+    expect((await handleCustomerCancel(cancelRequest(cancelled.cancelToken), context)).status).toBe(200);
+    expect((await handleCustomerReschedule(rescheduleRequest(moved.cancelToken, validNewStart), context)).status).toBe(200);
+
+    const families = [...repo.sideEffectOperations.values()].map((operation) => operation.family);
+    expect(families).not.toContain('calendar_delete');
+    expect(families).not.toContain('calendar_patch');
+  });
+});

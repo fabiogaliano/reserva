@@ -28,6 +28,7 @@ import {
   type SideEffectOperationRecord,
   type SideEffectOperationSeed,
   type SideEffectOperationStatus,
+  type UnconfiguredProvider,
 } from './repo.js';
 
 // Which rows are CONFIRMATION debt drained under the confirmation lease (executeOperation).
@@ -553,7 +554,26 @@ export function cancellationSideEffectSeeds(
   };
   return [
     ...mutationSideEffectSeeds(context, event, snapshot, occurredAt),
-    ...(booking.calendarEventId ? [{ family: 'calendar_delete' as const, eventPayloadJson: null, eventIdPrefix: null }] : []),
+    ...calendarSyncSeeds(context, booking, 'calendar_delete'),
+  ];
+}
+
+// Only a configured calendar can delete or move the booking's event. Without one the row could
+// never run, and the event stays as it was in a calendar this deployment no longer writes to.
+export function calendarSyncSeeds(
+  context: ReservaContext,
+  booking: Booking,
+  family: 'calendar_delete' | 'calendar_patch',
+): SideEffectOperationSeed[] {
+  return booking.calendarEventId && context.providers.calendar ? [{ family, eventPayloadJson: null, eventIdPrefix: null }] : [];
+}
+
+// The providers whose absence makes attemptForOperation return null, so the sweep can leave the
+// rows waiting for them out of its pages.
+export function unconfiguredProviders(context: ReservaContext): UnconfiguredProvider[] {
+  return [
+    ...(context.providers.calendar ? [] : ['calendar' as const]),
+    ...(context.providers.email ? [] : ['email' as const]),
   ];
 }
 

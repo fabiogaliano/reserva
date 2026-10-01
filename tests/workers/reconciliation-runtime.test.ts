@@ -186,6 +186,30 @@ describe('runReconciliation against real D1', () => {
     ]));
   });
 
+  it('does not let more rows waiting for an unconfigured calendar than sourceLimit starve a due email retry (they filled every page and the retry never ran)', async () => {
+    const waitingIds = Array.from({ length: 12 }, (_, index) => `recon-d1-no-calendar-${index}`);
+    for (const id of [...waitingIds, 'recon-d1-email-retry']) await seedConfirmed(id);
+    for (const id of waitingIds) {
+      await db.prepare(
+        `INSERT INTO side_effect_operations (booking_id, family, status, attempt_count, created_at, updated_at)
+         VALUES (?, 'calendar_delete', 'pending', 0, ?, ?)`,
+      ).bind(id, '2026-08-01T10:00:00.000Z', '2026-08-01T10:00:00.000Z').run();
+    }
+    await db.prepare(
+      `INSERT INTO side_effect_operations (booking_id, family, event, status, attempt_count, attempted_at, resolved_at, error, created_at, updated_at, failure_started_at)
+       VALUES ('recon-d1-email-retry', 'email', 'booking.rescheduled', 'failed', 1, ?, ?, 'email unavailable', ?, ?, ?)`,
+    ).bind('2026-08-14T09:00:00.000Z', '2026-08-14T09:00:00.000Z', '2026-08-14T09:00:00.000Z', '2026-08-14T09:00:00.000Z', '2026-08-14T09:00:00.000Z').run();
+    const sent: string[] = [];
+    const { calendar: _unused, ...noCalendar } = providers({ email: { send: async (event, booking) => { sent.push(`${event}:${booking.id}`); } } });
+    const context = createReservaContext({ config, db, clock, providers: noCalendar });
+
+    await runReconciliation(context, { sourceLimit: 10, queryBudget: 1000 });
+
+    expect(sent).toEqual(['booking.rescheduled:recon-d1-email-retry']);
+    const waiting = await db.prepare("SELECT status FROM side_effect_operations WHERE family = 'calendar_delete'").all<{ status: string }>();
+    expect(waiting.results.map((row) => row.status)).toEqual(Array.from({ length: 12 }, () => 'pending'));
+  });
+
   it('reports an unreported oversell marker as a persisted, real-D1 incident row, exactly once', async () => {
     const id = 'recon-d1-oversell';
     await seedConfirmed(id);
