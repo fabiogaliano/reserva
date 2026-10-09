@@ -13,7 +13,14 @@ concurrency:
 
 jobs:
   detect:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    # `branches: [main]` matches the triggering run's head branch by name, which
+    # a fork PR from its own "main" also has. Only a push to this repository's
+    # main, or a manual run on main, may reach jobs that can push and publish.
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     permissions:
       contents: read
