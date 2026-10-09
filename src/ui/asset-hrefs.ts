@@ -4,6 +4,7 @@ import { manageEnhancerJs } from './manage-enhancer.js';
 import { confirmationEnhancerJs } from './confirmation-enhancer.js';
 import { adminEnhancerJs } from './admin-enhancer.js';
 import { settingsEnhancerJs } from './settings-enhancer.js';
+import { partnersEnhancerJs } from './partners-enhancer.js';
 import { themeToggleJs } from './theme-toggle.js';
 import { callyBundleJs } from './vendor/cally-bundle.js';
 
@@ -18,7 +19,7 @@ function contentVersion(source: string): string {
 }
 
 export const themeCssVersion = contentVersion(themeCss);
-export const bundleJsVersion = contentVersion(callyBundleJs + manageEnhancerJs + confirmationEnhancerJs + adminEnhancerJs + settingsEnhancerJs + themeToggleJs);
+export const bundleJsVersion = contentVersion(callyBundleJs + manageEnhancerJs + confirmationEnhancerJs + adminEnhancerJs + settingsEnhancerJs + partnersEnhancerJs + themeToggleJs);
 
 // The branding rules are appended to the served sheet, so they version it too; an unbranded
 // deployment keeps exactly the URL it had.

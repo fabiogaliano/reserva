@@ -4,7 +4,7 @@ import { createReservaContext, type ReservaContext } from '../../src/context';
 import type { QuoteResponse } from '../../src/core/api';
 import type { Booking } from '../../src/core/booking';
 import type { ResolvedServiceConfig } from '../../src/core/config';
-import { handleCheckout, handleCustomerReschedule, handleManage, handleOperatorCancel, handlePaymentWebhook, handleQuote, handleResolveReferral, handleStatus } from '../../src/handlers';
+import { handleAdminGet, handleCheckout, handleCustomerReschedule, handleManage, handleOperatorCancel, handlePaymentWebhook, handleQuote, handleResolveReferral, handleStatus } from '../../src/handlers';
 import { createPartnerStore, PartnerStoreError, type PartnerRecord } from '../../src/partners';
 import { defineCloudflareReservaRuntime } from '../../src/runtime-context';
 import { config, service } from '../fixtures';
@@ -69,6 +69,11 @@ async function quote(context: ReservaContext, code?: string, overrides: Record<s
 
 function checkout(context: ReservaContext, code?: string, fingerprint?: string, overrides: Record<string, unknown> = {}) {
   return handleCheckout(request({ serviceSlug: 'vintage', start: START, quantity: 4, pickup: 'custom', locale: 'en', ...(code === undefined ? {} : { referralCode: code }), ...(fingerprint === undefined ? {} : { quoteFingerprint: fingerprint }), ...overrides }), context);
+}
+
+// The same deployment as the operator sees it: signed in, with a CSRF secret for the page's forms.
+function asAdmin(context: ReservaContext): ReservaContext {
+  return { ...context, adminAuth: async () => ({ subject: 'admin' }), secrets: (name) => name === 'RESERVA_CSRF_SECRET' ? 'partner-checkout-csrf-secret' : name === 'RESERVA_TOKEN_ENC_KEY' ? 'local-test-token-encryption-key' : undefined };
 }
 
 const holdCount = async () => (await db.prepare('SELECT COUNT(*) AS n FROM bookings').first<{ n: number }>())?.n;
@@ -315,6 +320,34 @@ describe('partner API through real D1 and checkout/payment boundary', () => {
     expect((await handleOperatorCancel(request({ operatorToken: confirmed.operatorToken, refund: 'full' }), context)).status).toBe(200);
     expect(refunds).toEqual([{ paymentRef: `pi_${accepted.id}`, amount: 9_000 }]);
     expect(await context.repo.getBookingById(accepted.id)).toMatchObject({ status: 'cancelled', priceMinor: 9_000, partnerPricing: reviewed.pricing, partnerAttribution: { name: current.name } });
+  });
+
+  it('shows the operator the partner and what its offer took off, as recorded on the booking', async () => {
+    const current = await partner();
+    const { context } = harness();
+    const admin = asAdmin(context);
+    const reviewed = await quote(context, current.code);
+    expect((await checkout(context, current.code, reviewed.quoteFingerprint)).status).toBe(201);
+    // A later rename must not relabel bookings already made.
+    await save(current, { name: 'Renamed partner', state: 'active', offer: current.offer });
+    const html = await (await handleAdminGet(new Request('https://example.test/booking/admin'), admin)).text();
+    const text = html.replace(/<[^>]+>/g, '');
+    expect(html).toContain('class="bk-badge bk-badge--accent" title="Partner">Operator-only partner label</span>');
+    expect(text).toContain('€90.00 Price before the offer: €120.00');
+    expect(text).toContain('10% off (−€10.00) · Hotel pickup free of charge (−€20.00)');
+    expect(html).toContain(`href="/booking/admin?view=partners&amp;partner=${current.id}"`);
+    expect(text).not.toContain('Renamed partner');
+  });
+
+  it('shows a legacy partner field once, as the partner, not again as the raw field', async () => {
+    const current = await partner();
+    const legacyService: ResolvedServiceConfig = { ...formula, metadataFields: [{ key: 'partner', label: 'Partner field', type: 'text', visibility: 'operator' }] };
+    const { context } = harness(false, legacyService);
+    const admin = asAdmin(context);
+    expect((await checkout(context, undefined, undefined, { metadata: { partner: current.code } })).status).toBe(201);
+    const text = (await (await handleAdminGet(new Request('https://example.test/booking/admin'), admin)).text()).replace(/<[^>]+>/g, '');
+    expect(text).toContain('PartnerOperator-only partner label');
+    expect(text).not.toContain('Partner field');
   });
 
   it('supports the explicit legacy metadata bridge only while application is off', async () => {

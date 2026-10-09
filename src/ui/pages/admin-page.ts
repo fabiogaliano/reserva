@@ -9,6 +9,7 @@ import { escapeHtml } from '../../http.js';
 import { ownerFacingIncidentTitle } from '../../reconciliation-helpers.js';
 import { isManageableToken, type OperationalIncidentRecord } from '../../repo.js';
 import type { ReservaResolvedRouteConfig } from '../../routes-manifest.js';
+import { formatPercentage, partnerHref } from '../partner-text.js';
 import { cssAssetHref, jsAssetHref } from '../asset-hrefs.js';
 import { formatDayDate, formatPrice } from '../format.js';
 import { digitsOf, emailLink, factList, pageShell, phoneLinks, statusToneOf, themeToggle } from '../layout.js';
@@ -542,7 +543,7 @@ function meterMarkup(peak: number, capacity: number, className = 'bk-meter'): st
 // enhancer rebuilds the same markup from it.
 interface AdminRowBadge {
   t: string;
-  m?: 'field' | 'warn' | 'danger';
+  m?: 'field' | 'warn' | 'danger' | 'accent';
   h?: string;
 }
 
@@ -604,6 +605,8 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
     const badges: AdminRowBadge[] = metadataRows
       .filter((row) => tagged.has(row.key))
       .map((row) => ({ t: String(row.value), m: 'field', h: row.label }));
+    // The name recorded when the booking was made, so renaming a partner later doesn't relabel it.
+    if (booking.partnerAttribution) badges.unshift({ t: booking.partnerAttribution.name, m: 'accent', h: messages['admin.partner'] });
     if (booking.amountRefundedMinor > 0) {
       badges.push({ t: formatMessage(messages['admin.refundedBadge'], { amount: formatAmount(booking, booking.amountRefundedMinor) }), m: 'warn' });
     }
@@ -648,11 +651,34 @@ export function adminPage(context: ReservaContext, input: AdminPageInput): strin
     // mail client that isn't the default one.
     if (booking.customerEmail) facts.push([messages['common.email'], `${emailLink(booking.customerEmail)}${copyButton(booking.customerEmail, messages['admin.copyEmail'], messages['admin.copied'])}`]);
     if (booking.customerPhone) facts.push([messages['common.phone'], phoneLinks(booking.customerPhone, messages)]);
-    facts.push([messages['common.price'], escapeHtml(formatAmount(booking, booking.priceMinor))]);
+    const pricing = booking.partnerPricing;
+    const discounted = pricing && pricing.savingsMinor > 0 && pricing.priceMinor === booking.priceMinor;
+    facts.push([messages['common.price'], escapeHtml(formatAmount(booking, booking.priceMinor))
+      + (discounted ? ` <s class="bk-price-before"><span class="bk-sr-only">${escapeHtml(messages['admin.priceBeforeOffer'])}: </span>${escapeHtml(formatAmount(booking, pricing.originalTotalMinor))}</s>` : '')]);
+    if (booking.partnerAttribution) {
+      const name = escapeHtml(booking.partnerAttribution.name);
+      facts.push([messages['admin.partner'], booking.partnerId ? `<a href="${escapeHtml(partnerHref(context.routeConfig.paths.adminPage, booking.partnerId))}">${name}</a>` : name]);
+    }
+    if (pricing?.appliedOffer && pricing.savingsMinor > 0) {
+      const parts: string[] = [];
+      const less = (minor: number): string => `−${formatAmount(booking, minor)}`;
+      if (pricing.serviceDiscountMinor > 0) {
+        parts.push(formatMessage(messages['admin.partnerOfferDiscount'], { percentage: formatPercentage(pricing.appliedOffer.basisPoints, locale), amount: less(pricing.serviceDiscountMinor) }));
+      }
+      if (pricing.pickupDiscountMinor > 0 && pricing.appliedOffer.waivedPickupId) {
+        const option = rowService ? pickupOptionFor(rowService, pricing.appliedOffer.waivedPickupId) : undefined;
+        const pickup = option?.label ? resolveLocalizedText(option.label, locale, context.config.locales.default) : pricing.appliedOffer.waivedPickupId;
+        parts.push(formatMessage(messages['admin.partnerOfferPickup'], { pickup, amount: less(pricing.pickupDiscountMinor) }));
+      }
+      facts.push([messages['admin.partnerOffer'], escapeHtml(parts.join(' · '))]);
+    }
     // Every declared field, whoever else may see it: a terminal row has no Manage link, so this
     // is the only place its values can be read. Boolean copy matches the manage page's.
     const metadataRows = adminMetadataRows(context.config, booking);
+    // The site's own partner field repeats what the partner fact above already says.
+    const legacyPartnerField = booking.partnerAttribution ? context.partnerOffers?.legacyMetadataField : undefined;
     for (const row of metadataRows) {
+      if (row.key === legacyPartnerField) continue;
       const value = typeof row.value === 'boolean' ? (row.value ? messages['admin.on'] : messages['admin.off']) : String(row.value);
       facts.push([row.label, escapeHtml(value)]);
     }

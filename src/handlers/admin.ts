@@ -62,8 +62,8 @@ import {
 import { ownerFacingIncidentTitle } from '../reconciliation-helpers.js';
 import { securityPosture } from './ops-health.js';
 import { settingsPage } from '../ui/pages/settings-page.js';
-import { partnersPage } from '../ui/pages/partners-page.js';
-import { assertPartnerOffersStillSellable, performPartnerAdminAction } from './partner-admin.js';
+import { partnersPage, type PartnerDraft } from '../ui/pages/partners-page.js';
+import { assertPartnerOffersStillSellable, PartnerOffersSettingsError, performPartnerAdminAction } from './partner-admin.js';
 import {
   html,
   HttpError,
@@ -265,17 +265,23 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
       if (!partners.ok || !counts.ok) throw new HttpError(503, 'partner_storage_unavailable', 'Partner storage is unavailable.');
       return html(partnersPage(context, {
         partners: partners.value, counts: counts.value, openIncidentCount,
-        editId: url.searchParams.get('partner') ?? '', saved: url.searchParams.get('saved') === '1', csrfToken, error,
+        partnerId: url.searchParams.get('partner') ?? '', archived: url.searchParams.get('archived') === '1',
+        saved: url.searchParams.get('saved') ?? '', draft: partnerDraftFrom(url), csrfToken, error,
       }), 200, { ...contentSecurityPolicyHeaders(context.config), 'cache-control': 'no-store', 'referrer-policy': 'same-origin' });
     }
     if (url.searchParams.get('view') === 'settings') {
       const section = url.searchParams.get('section') ?? '';
-      const [storedRows, openIncidentCount, changeHistory] = await Promise.all([
+      const partnerId = error?.field === 'partner_offers' ? url.searchParams.get('partner') : null;
+      const [storedRows, openIncidentCount, changeHistory, partners] = await Promise.all([
         context.repo.listSettings(),
         context.repo.countOpenIncidents(),
         section === 'history' ? context.repo.listAdminChangeHistory(ADMIN_CHANGE_HISTORY_LIMIT) : Promise.resolve(null),
+        // Only to name the partner in a refused save; an unreadable registry leaves the alert generic.
+        partnerId && context.partners ? context.partners.list() : Promise.resolve(null),
       ]);
-      return html(settingsPage(context, storedRows, url.searchParams.get('saved') === '1', section, csrfToken, error, openIncidentCount, changeHistory), 200, {
+      const blockedPartner = partners?.ok ? partners.value.find((partner) => partner.id === partnerId) ?? null : null;
+      const partnerOffersError = blockedPartner ? { partner: blockedPartner, reason: url.searchParams.get('reason') ?? '' } : null;
+      return html(settingsPage(context, storedRows, url.searchParams.get('saved') === '1', section, csrfToken, error, openIncidentCount, changeHistory, partnerOffersError), 200, {
         ...contentSecurityPolicyHeaders(context.config),
         'cache-control': 'no-store',
         // Same referrer-policy reasoning as the dashboard response below.
@@ -448,10 +454,33 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
   });
 }
 
+// A refused partner form comes back with what the operator typed, so a fix is one edit rather than
+// re-entering the whole offer. Nothing here is secret: it is the operator's own unsaved input.
+const partnerDraftKeys = ['draft_name', 'draft_code', 'draft_percentage', 'draft_waived_pickup', 'draft_offer_enabled'] as const;
+
+function keepPartnerDraft(location: URL, form: FormData): void {
+  for (const key of partnerDraftKeys) {
+    for (const value of form.getAll(key.slice('draft_'.length))) {
+      if (typeof value === 'string' && value.length <= 200) location.searchParams.append(key, value);
+    }
+  }
+}
+
+function partnerDraftFrom(url: URL): PartnerDraft | null {
+  if (!url.searchParams.has('draft_name')) return null;
+  return {
+    name: url.searchParams.get('draft_name') ?? '',
+    code: url.searchParams.get('draft_code') ?? '',
+    percentage: url.searchParams.get('draft_percentage') ?? '',
+    waivedPickupIds: url.searchParams.getAll('draft_waived_pickup'),
+    enabled: url.searchParams.get('draft_offer_enabled') === 'on',
+  };
+}
+
 // The page a POST came from, minus the one-shot notices of an earlier round trip.
 function adminReturnLocation(request: Request): URL {
   const location = new URL(request.url);
-  for (const key of ['saved', 'error', 'field']) location.searchParams.delete(key);
+  for (const key of ['saved', 'error', 'field', 'reason', ...partnerDraftKeys]) location.searchParams.delete(key);
   location.hash = '';
   return location;
 }
@@ -481,9 +510,15 @@ function adminErrorRedirect(request: Request, context: ReservaContext, form: For
   if (action.startsWith('partner-')) {
     location.searchParams.set('view', 'partners');
     const id = form.get('partner_id');
-    if (typeof id === 'string' && id) location.searchParams.set('partner', id);
+    location.searchParams.set('partner', typeof id === 'string' && id ? id : 'new');
+    if (action === 'partner-create' || action === 'partner-save') keepPartnerDraft(location, form);
   } else if (action.startsWith('settings-')) {
     location.searchParams.set('view', 'settings');
+    // Names the partner whose offer the refused change would break, so the alert can link to it.
+    if (failure instanceof PartnerOffersSettingsError) {
+      location.searchParams.set('partner', failure.partnerId);
+      location.searchParams.set('reason', failure.reason);
+    }
     const section = form.get('section');
     if (typeof section === 'string' && section) location.searchParams.set('section', section);
   } else {
@@ -549,12 +584,11 @@ async function performAdminAction(request: Request, context: ReservaContext, for
   const audit = { actor: subject || null, changedAt: nowIso(context) };
   requireString(action, 'action');
   if (action.startsWith('partner-')) {
-    await performPartnerAdminAction(context, form, action, audit);
+    const id = await performPartnerAdminAction(context, form, action, audit);
     const location = adminReturnLocation(request);
     location.searchParams.set('view', 'partners');
-    location.searchParams.set('saved', '1');
-    const id = form.get('partner_id');
-    if (typeof id === 'string' && id) location.searchParams.set('partner', id);
+    location.searchParams.set('partner', id);
+    location.searchParams.set('saved', action === 'partner-create' ? 'created' : action === 'partner-save' ? '1' : action.slice('partner-'.length));
     return seeOther(location);
   }
   if (action === 'incident-retry' || action === 'incident-resolve') {

@@ -41,7 +41,12 @@ async function post(ctx: ReservaContext, fields: Record<string, string> | Array<
 }
 
 function creation(code = `partner-${crypto.randomUUID()}`) {
-  return { action: 'partner-create', code, name: 'Admin partner', state: 'active', percentage: '10.25', offer_enabled: 'on', waived_pickup: 'custom' };
+  return { action: 'partner-create', code, name: 'Admin partner', percentage: '10.25', offer_enabled: 'on', waived_pickup: 'custom' };
+}
+
+// The visible text of a page, so assertions read like what the operator sees.
+function text(html: string): string {
+  return html.replace(/<[^>]+>/g, '').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
 }
 
 function destination(response: Response): URL {
@@ -66,36 +71,48 @@ describe('authenticated partner admin through real D1', () => {
   it('creates combined decimal offers, labels configured pickups, audits the save and emits no rebuild event', async () => {
     const { ctx, rebuilds } = context();
     const input = creation();
-    expect(destination(await post(ctx, input)).searchParams.get('saved')).toBe('1');
+    const created = destination(await post(ctx, input));
+    expect(created.searchParams.get('saved')).toBe('created');
     const saved = await read(input.code);
+    // A new partner opens on its own page, where its link is.
+    expect(created.searchParams.get('partner')).toBe(saved.id);
     expect(saved.offer).toEqual({ enabled: true, basisPoints: 1_025, waivedPickupIds: ['custom'] });
     expect(await history(saved.id)).toMatchObject([{ actor: 'partner-admin', domain: 'partner' }]);
     expect(rebuilds).toEqual([]);
-    const response = await handleAdminGet(new Request(`https://example.test/booking/admin?view=partners&partner=${saved.id}`), ctx);
+    const response = await handleAdminGet(new Request(created), ctx);
     expect(response.status).toBe(200);
     expect(response.headers.get('cache-control')).toBe('no-store');
     expect(response.headers.get('referrer-policy')).toBe('same-origin');
     const html = await response.text();
-    expect(html).toContain('Offer application is globally off');
-    expect(html).toContain('Hotel pickup');
+    expect(text(html)).toContain("Offers aren't live yet");
+    expect(text(html)).toContain('Partner added. Send them the link below.');
     expect(html).toContain('value="10.25"');
     expect(html).toContain('name="csrf_token"');
     expect(html).toContain(`data-reserva-copy="https://example.test/?ref=${input.code}"`);
-    expect(html).toContain('Codes cannot be changed or reused');
-    expect(html).toContain('formnovalidate');
+    expect(text(html)).toContain("Codes can't be changed or reused.");
+    expect(html).toContain('value="partner-archive"');
+    // Only a pickup that costs something can be made free.
+    expect(html).toContain('name="waived_pickup" value="custom" checked');
+    expect(html).not.toContain('name="waived_pickup" value="default"');
+    // The preview prices the smallest booking: 100.00 less 10.25%, and the free hotel pickup.
+    expect(text(html)).toContain('€100.00 €89.75');
+    expect(text(html)).toContain('€120.00 €89.75');
   });
 
   it('allows partners without offers and archives/reactivates independently of the offer switch', async () => {
     const { ctx } = context();
     const input = { ...creation(), percentage: '0', offer_enabled: '', waived_pickup: '' };
-    const fields = { action: input.action, code: input.code, name: input.name, state: input.state, percentage: input.percentage };
+    const fields = { action: input.action, code: input.code, name: input.name, percentage: input.percentage };
     destination(await post(ctx, fields));
     const saved = await read(input.code);
     expect(saved.offer).toBeNull();
     destination(await post(ctx, { action: 'partner-archive', code: saved.code, partner_id: saved.id, revision: '1' }));
     expect((await read(input.code)).state).toBe('archived');
-    destination(await post(ctx, { action: 'partner-save', code: saved.code, partner_id: saved.id, revision: '2', name: 'Reactivated', state: 'active', percentage: '10' }));
-    expect(await read(input.code)).toMatchObject({ revision: 3, state: 'active', name: 'Reactivated', offer: { enabled: false, basisPoints: 1_000, waivedPickupIds: [] } });
+    // Saving an archived partner's details leaves it archived; only restoring brings it back.
+    destination(await post(ctx, { action: 'partner-save', code: saved.code, partner_id: saved.id, revision: '2', name: 'Renamed', percentage: '10' }));
+    expect(await read(input.code)).toMatchObject({ revision: 3, state: 'archived', name: 'Renamed', offer: { enabled: false, basisPoints: 1_000, waivedPickupIds: [] } });
+    expect(destination(await post(ctx, { action: 'partner-restore', code: saved.code, partner_id: saved.id, revision: '3' })).searchParams.get('saved')).toBe('restore');
+    expect(await read(input.code)).toMatchObject({ revision: 4, state: 'active', name: 'Renamed', offer: { enabled: false, basisPoints: 1_000, waivedPickupIds: [] } });
   });
 
   it('rejects duplicate/reserved codes and stale writes without touching records/audit', async () => {
@@ -103,14 +120,20 @@ describe('authenticated partner admin through real D1', () => {
     const input = creation();
     destination(await post(ctx, input));
     const saved = await read(input.code);
-    expect(destination(await post(ctx, input)).searchParams.get('error')).toBe('partner_conflict');
-    const changes = { action: 'partner-save', code: saved.code, partner_id: saved.id, revision: '1', name: 'New name', state: 'active', percentage: '5' };
+    const taken = destination(await post(ctx, { ...input, name: 'Second partner' }));
+    expect(taken.searchParams.get('error')).toBe('partner_conflict');
+    expect(taken.searchParams.get('field')).toBe('code');
+    // The add form comes back with what was typed, and says why the code was refused.
+    const retry = await (await handleAdminGet(new Request(taken), ctx)).text();
+    expect(retry).toContain('value="Second partner"');
+    expect(text(retry)).toContain('That code is in use, or was used by a partner before. Choose another.');
+    const changes = { action: 'partner-save', code: saved.code, partner_id: saved.id, revision: '1', name: 'New name', percentage: '5' };
     destination(await post(ctx, changes));
     expect(destination(await post(ctx, { ...changes, name: 'Stale name' })).searchParams.get('error')).toBe('partner_conflict');
     expect((await read(input.code)).name).toBe('New name');
     expect(await history(saved.id)).toHaveLength(2);
     const page = await handleAdminGet(new Request(`https://example.test/booking/admin?view=partners&partner=${saved.id}&error=partner_conflict`), ctx);
-    expect(await page.text()).toContain('Reload and review before saving');
+    expect(text(await page.text())).toContain('Reload it and make your change again.');
   });
 
   it('rejects unauthorized, cross-origin and invalid-CSRF mutations before any record or audit write', async () => {
@@ -146,6 +169,11 @@ describe('authenticated partner admin through real D1', () => {
     const input = { ...creation(), percentage: '75' };
     const location = destination(await post(cheap, input));
     expect(location.searchParams.get('field')).toBe('offer.payment_floor');
+    // The refusal says which tour, at what price, and how far the discount can go: 50% leaves
+    // the €1 tour at exactly the €0.50 minimum.
+    const refused = await (await handleAdminGet(new Request(location), cheap)).text();
+    expect(text(refused)).toContain('With this offer, Vintage Tour would cost €0.25, below the minimum payment of €0.50. Use 50% at most.');
+    expect(refused).toContain('value="75"');
     const noMinimum = { ...ctx, partnerOffers: { enabled: false, minimumChargeMinorByCurrency: {} } };
     expect(destination(await post(noMinimum, creation())).searchParams.get('field')).toBe('offer.payment_floor');
     expect(await store.findByCode(input.code)).toEqual({ ok: true, value: null });
@@ -173,8 +201,12 @@ describe('authenticated partner admin through real D1', () => {
     const refused = destination(await reset(50));
     expect(refused.searchParams.get('error')).toBe('validation_failed');
     expect(refused.searchParams.get('field')).toBe('partner_offers');
-    const page = await handleAdminGet(new Request(`https://example.test/booking/admin?view=settings&section=pricing&error=validation_failed&field=partner_offers`), ctx);
-    expect(await page.text()).toContain('Edit the offer on the Partners page first');
+    expect(refused.searchParams.get('reason')).toBe('payment_floor');
+    // Earlier tests share this database, so the partner named is whichever offer breaks first.
+    const blocked = refused.searchParams.get('partner') ?? '';
+    const page = await (await handleAdminGet(new Request(refused), ctx)).text();
+    expect(text(page)).toMatch(/With this change, the offer of partner .+ would take a tour below the minimum payment\./);
+    expect(page).toContain(`href="/booking/admin?view=partners&amp;partner=${blocked}"`);
     // An offer a deployment's higher minimum already took out of scope does not block unrelated edits.
     expect(destination(await reset(20_000)).searchParams.get('saved')).toBe('1');
   });
@@ -185,18 +217,34 @@ describe('authenticated partner admin through real D1', () => {
     destination(await post(ctx, input));
     const raised = { ...ctx, partnerOffers: { enabled: true, minimumChargeMinorByCurrency: { eur: 20_000 } } };
     const html = await (await handleAdminGet(new Request('https://example.test/booking/admin?view=partners'), raised)).text();
-    expect(html).toContain(`Not applied to: ${service.title}`);
-    expect(await (await handleAdminGet(new Request('https://example.test/booking/admin?view=partners'), ctx)).text()).not.toContain('Not applied to');
+    expect(text(html)).toContain(`Normal price on ${service.title}: the offer can't apply there.`);
+    expect(text(await (await handleAdminGet(new Request('https://example.test/booking/admin?view=partners'), ctx)).text())).not.toContain('Normal price on');
   });
 
-  it('labels partner history with the name and code, telling creation from edits', async () => {
+  it('describes what each partner change did in the history, linking to the partner', async () => {
     const { ctx } = context();
     const input = creation();
     destination(await post(ctx, input));
     const saved = await read(input.code);
-    destination(await post(ctx, { ...input, action: 'partner-save', partner_id: saved.id, revision: String(saved.revision), name: 'Renamed partner' }));
+    destination(await post(ctx, { ...input, action: 'partner-save', partner_id: saved.id, revision: '1', name: 'Renamed partner' }));
+    const edit = { action: 'partner-save', code: saved.code, partner_id: saved.id, name: 'Renamed partner', percentage: '15' };
+    destination(await post(ctx, { ...edit, revision: '2', offer_enabled: 'on' }));
+    destination(await post(ctx, { ...edit, revision: '3' }));
+    destination(await post(ctx, { action: 'partner-archive', code: saved.code, partner_id: saved.id, revision: '4' }));
     const html = await (await handleAdminGet(new Request('https://example.test/booking/admin?view=settings&section=history'), ctx)).text();
-    expect(html).toContain(`Created partner Admin partner (${input.code})`);
-    expect(html).toContain(`Updated partner Renamed partner (${input.code})`);
+    const page = text(html);
+    expect(page).toContain('Partner Admin partner added with an offer: 10.25% off · Hotel pickup free of charge');
+    expect(page).toContain('Partner Admin partner renamed to Renamed partner');
+    expect(page).toContain('Partner Renamed partner: offer changed to 15% off');
+    expect(page).toContain('Partner Renamed partner: offer paused');
+    expect(page).toContain('Partner Renamed partner archived');
+    expect(html).toContain(`<a href="/booking/admin?view=partners&amp;partner=${saved.id}">Renamed partner</a>`);
+  });
+
+  it('accepts a decimal comma, the way Portuguese is typed', async () => {
+    const { ctx } = context();
+    const input = { ...creation(), percentage: '12,5' };
+    destination(await post(ctx, input));
+    expect((await read(input.code)).offer?.basisPoints).toBe(1_250);
   });
 });

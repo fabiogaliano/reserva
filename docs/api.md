@@ -100,10 +100,15 @@ it accepts.
 ### Partner offers and reviewed quotes
 
 Partners are managed at `/booking/admin?view=partners` using the same admin authentication,
-origin checks and CSRF tokens as settings. Codes are immutable and reserved after archival.
-Archiving stops new attribution/benefits; disabling an offer leaves attribution active. Saves
-are revision-checked and audit records commit with the partner/offer changes. These saves do
-not dispatch `settings.changed` or trigger catalog rebuilds.
+origin checks and CSRF tokens as settings: a list, one page per partner
+(`&partner=<id>`, with its referral link, offer, price preview and archive/restore), and an add
+form (`&partner=new`). Codes are immutable and reserved after archival. Archiving stops new
+attribution/benefits; switching an offer off keeps its values and leaves attribution active.
+Saves are revision-checked and audit records commit with the partner/offer changes, recording
+which of the name, offer and state changed so Settings → Recent changes can say what happened.
+These saves do not dispatch `settings.changed` or trigger catalog rebuilds. A booking made
+through a partner shows that partner in the admin list and details, with the price before the
+offer and what the offer took off, as recorded when the booking was made.
 
 Offer application is **off by default**. Configure the server-only `partnerOffers` runtime
 option (never `ClientConfig`), either as an object or a per-request binding callback:
@@ -124,7 +129,7 @@ services are rejected, including disabled offers prepared in admin. A settings s
 push a saved offer below the minimum (for example a lower tour price) is refused until the offer
 is edited. If an offer still cannot be sold on a service, for example after a deployment raised
 the minimum, that service is outside the offer's scope: it is missing from the resolved
-benefits, quoted and charged at its normal price, and listed as "Not applied to" on the
+benefits, quoted and charged at its normal price, and named as charged the normal price on the
 partners page. Percentages accept up to
 two decimal places. Discounts apply only to service subtotals; selected pickup waivers remove
 the full surcharge without removing address requirements. The gate must remain off until the

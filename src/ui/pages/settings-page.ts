@@ -14,6 +14,19 @@ import {
 import type { ReservaContext } from '../../context.js';
 import { escapeHtml } from '../../http.js';
 import type { AdminChangeHistoryEntry } from '../../repo.js';
+import { hasOfferBenefits, parsePartnerOffer, type PartnerOffer } from '../../core/partner-offers.js';
+import type { PartnerRecord } from '../../partners.js';
+import { offerTags, partnerHref, partnerPickups } from '../partner-text.js';
+
+interface PartnerHistoryValue {
+  readonly event: string;
+  readonly name: string;
+  readonly state: 'active' | 'archived';
+  readonly offer: PartnerOffer | null;
+  readonly changed: readonly string[] | null;
+  readonly previousName: string | null;
+}
+
 import { cssAssetHref, jsAssetHref } from '../asset-hrefs.js';
 import { factList, pageShell, themeToggle } from '../layout.js';
 import { formatMessage, resolveMessages } from '../messages.js';
@@ -35,6 +48,8 @@ export function settingsPage(
   error: AdminErrorNotice | null = null,
   openIncidentCount = 0,
   changeHistory: readonly AdminChangeHistoryEntry[] | null = null,
+  // The partner whose offer a refused save would break, when the registry could name it.
+  partnerOffersError: { readonly partner: PartnerRecord; readonly reason: string } | null = null,
 ): string {
   const locale = adminLocaleFor(context.config);
   const messages = resolveMessages(context.config, locale);
@@ -342,21 +357,54 @@ export function settingsPage(
       return null;
     }
   };
-  const partnerHistoryValue = (raw: string | null): { event: string; name: string; code: string } | null => {
+  const pickups = partnerPickups(context.config, locale, messages);
+  const adminPath = context.routeConfig.paths.adminPage;
+  const partnerHistoryValue = (raw: string | null): PartnerHistoryValue | null => {
     try {
-      const parsed = JSON.parse(raw ?? '') as { event?: unknown; name?: unknown; code?: unknown };
-      return typeof parsed.event === 'string' && typeof parsed.name === 'string' && typeof parsed.code === 'string'
-        ? { event: parsed.event, name: parsed.name, code: parsed.code } : null;
+      const parsed = JSON.parse(raw ?? '') as Record<string, unknown>;
+      if (typeof parsed.event !== 'string' || typeof parsed.name !== 'string') return null;
+      const offer = parsed.offer === null || parsed.offer === undefined ? null : parsePartnerOffer(parsed.offer);
+      return {
+        event: parsed.event,
+        name: parsed.name,
+        state: parsed.state === 'archived' ? 'archived' : 'active',
+        offer: offer?.ok ? offer.value : null,
+        // Entries written before history recorded what changed have neither field.
+        changed: Array.isArray(parsed.changed) ? parsed.changed.filter((field): field is string => typeof field === 'string') : null,
+        previousName: typeof parsed.previousName === 'string' ? parsed.previousName : null,
+      };
     } catch {
       return null;
     }
   };
-  const historyChange = (entry: AdminChangeHistoryEntry): string => {
-    if (entry.domain === 'partner') {
-      const value = partnerHistoryValue(entry.value);
-      if (!value) return escapeHtml(formatMessage(messages['admin.historyPartnerChanged'], { id: entry.itemKey }));
-      return escapeHtml(formatMessage(messages[value.event === 'created' ? 'admin.historyPartnerCreated' : 'admin.historyPartnerUpdated'], { name: value.name, code: value.code }));
+  // The partner's name links to its page; the sentence around it comes from the catalog.
+  const partnerSentence = (template: string, id: string, value: PartnerHistoryValue, extra: Record<string, string> = {}): string => {
+    const marker = '\u0000';
+    const link = `<a href="${escapeHtml(partnerHref(adminPath, id))}">${escapeHtml(value.name)}</a>`;
+    return escapeHtml(formatMessage(template, { ...extra, name: marker })).replace(marker, link);
+  };
+  const offerText = (offer: PartnerOffer): string => offerTags(offer, pickups, locale, messages).join(' · ');
+  const partnerChange = (entry: AdminChangeHistoryEntry): string => {
+    const value = partnerHistoryValue(entry.value);
+    if (!value) return escapeHtml(formatMessage(messages['admin.historyPartnerUpdated'], { name: entry.itemKey }));
+    const offer = value.offer && hasOfferBenefits(value.offer) ? value.offer : null;
+    if (value.event === 'created') {
+      return offer?.enabled
+        ? partnerSentence(messages['admin.historyPartnerCreatedOffer'], entry.itemKey, value, { offer: offerText(offer) })
+        : partnerSentence(messages['admin.historyPartnerCreated'], entry.itemKey, value);
     }
+    if (!value.changed?.length) return partnerSentence(messages['admin.historyPartnerUpdated'], entry.itemKey, value);
+    return value.changed.map((field) => {
+      if (field === 'state') return partnerSentence(messages[value.state === 'archived' ? 'admin.historyPartnerArchived' : 'admin.historyPartnerRestored'], entry.itemKey, value);
+      if (field === 'name') return partnerSentence(messages['admin.historyPartnerRenamed'], entry.itemKey, value, { previous: value.previousName ?? '' });
+      if (!offer) return partnerSentence(messages['admin.historyPartnerOfferRemoved'], entry.itemKey, value);
+      return offer.enabled
+        ? partnerSentence(messages['admin.historyPartnerOffer'], entry.itemKey, value, { offer: offerText(offer) })
+        : partnerSentence(messages['admin.historyPartnerOfferPaused'], entry.itemKey, value);
+    }).join('<br>');
+  };
+  const historyChange = (entry: AdminChangeHistoryEntry): string => {
+    if (entry.domain === 'partner') return partnerChange(entry);
     if (entry.domain === 'setting') {
       const definition = definitions.find((candidate) => candidate.key === entry.itemKey);
       const item = definition ? historyItemLabel(definition) : entry.itemKey;
@@ -410,9 +458,18 @@ export function settingsPage(
     + `</nav>`;
 
   const savedAlert = saved ? `<p class="bk-alert bk-alert--ok" role="status">${escapeHtml(messages['admin.saved'])}</p>` : '';
+  const partnerOffersReason: Record<string, 'admin.errorPartnerOffersPickup' | 'admin.errorPartnerOffersFloor' | 'admin.errorPartnerOffersPricing'> = {
+    invalid_offer: 'admin.errorPartnerOffersPickup',
+    payment_floor: 'admin.errorPartnerOffersFloor',
+    unsupported_pricing: 'admin.errorPartnerOffersPricing',
+  };
+  const blockedKey = partnerOffersError ? partnerOffersReason[partnerOffersError.reason] : undefined;
   const errorAlert = error?.field === 'partner_offers'
-    ? `<p class="bk-alert bk-alert--danger" role="alert">${escapeHtml(messages['admin.errorPartnerOffers'])}</p>`
-    : adminErrorAlert(messages, error, (field) => {
+    ? `<p class="bk-alert bk-alert--danger" role="alert">${partnerOffersError && blockedKey
+      ? `${escapeHtml(formatMessage(messages[blockedKey], { name: partnerOffersError.partner.name }))} <a class="bk-link" href="${escapeHtml(partnerHref(adminPath, partnerOffersError.partner.id))}">${escapeHtml(formatMessage(messages['admin.errorPartnerOffersLink'], { name: partnerOffersError.partner.name }))}</a>`
+      : escapeHtml(messages['admin.errorPartnerOffers'])}</p>`
+    : adminErrorAlert(
+messages, error, (field) => {
       const definition = definitions.find((candidate) => candidate.key === field);
       return definition ? labelFor(definition) : undefined;
     });

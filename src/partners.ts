@@ -50,7 +50,19 @@ export interface PartnerStore {
   list(): Promise<PartnerStoreResult<readonly PartnerRecord[]>>;
   bookingCounts(now: string): Promise<PartnerStoreResult<readonly PartnerBookingCount[]>>;
   create(input: { readonly id: string; readonly code: string; readonly changes: PartnerChanges }, audit: AdminChangeAudit): Promise<PartnerStoreResult<PartnerRecord>>;
-  save(id: string, expectedRevision: number, changes: PartnerChanges, audit: AdminChangeAudit): Promise<PartnerStoreResult<PartnerRecord>>;
+  /** `previous` is the record the form was opened from; history records what differs from it. */
+  save(id: string, expectedRevision: number, changes: PartnerChanges, audit: AdminChangeAudit, previous?: PartnerChanges): Promise<PartnerStoreResult<PartnerRecord>>;
+}
+
+/** Which parts of a partner an update touched, in the order history describes them. */
+export type PartnerChangedField = 'state' | 'offer' | 'name';
+
+function changedFields(previous: PartnerChanges, next: PartnerChanges): PartnerChangedField[] {
+  const fields: PartnerChangedField[] = [];
+  if (previous.state !== next.state) fields.push('state');
+  if (JSON.stringify(previous.offer) !== JSON.stringify(next.offer)) fields.push('offer');
+  if (previous.name !== next.name) fields.push('name');
+  return fields;
 }
 
 function fail(reason: PartnerStoreError['reason'], message: string, cause?: unknown): PartnerStoreResult<never> {
@@ -111,7 +123,7 @@ function parseRow(row: PartnerRow): PartnerStoreResult<PartnerRecord> {
  */
 export function createPartnerStore(db: D1Database): PartnerStore {
   async function persist(
-    input: { readonly id: string; readonly code?: string; readonly expectedRevision?: number; readonly changes: PartnerChanges },
+    input: { readonly id: string; readonly code?: string; readonly expectedRevision?: number; readonly changes: PartnerChanges; readonly previous?: PartnerChanges | undefined },
     audit: AdminChangeAudit,
   ): Promise<PartnerStoreResult<PartnerRecord>> {
     const parsed = parseChanges(input.changes);
@@ -136,7 +148,9 @@ export function createPartnerStore(db: D1Database): PartnerStore {
       // The immutable code is read from the row so history stays legible without the registry.
       const history = db.prepare(`INSERT INTO admin_change_history(domain, item_key, action, value, actor, changed_at)
           SELECT 'partner', id, 'upsert', json_set(?, '$.event', ?, '$.code', code), ?, ? FROM partners WHERE id = ? AND changes() = 1`)
-        .bind(JSON.stringify(changes), creating ? 'created' : 'updated', audit.actor, audit.changedAt, input.id);
+        .bind(JSON.stringify(input.previous
+          ? { ...changes, changed: changedFields(input.previous, changes), previousName: input.previous.name }
+          : changes), creating ? 'created' : 'updated', audit.actor, audit.changedAt, input.id);
       const offer = changes.offer;
       const offerMutation = offer === null
         ? db.prepare(`DELETE FROM partner_offers WHERE partner_id = ? AND changes() = 1`).bind(input.id)
@@ -194,6 +208,6 @@ export function createPartnerStore(db: D1Database): PartnerStore {
       }
     },
     create: (input, audit) => persist(input, audit),
-    save: (id, expectedRevision, changes, audit) => persist({ id, expectedRevision, changes }, audit),
+    save: (id, expectedRevision, changes, audit, previous) => persist({ id, expectedRevision, changes, previous }, audit),
   };
 }
