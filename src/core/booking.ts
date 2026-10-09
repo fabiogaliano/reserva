@@ -1,5 +1,6 @@
 import { resolveServiceTitle, type PickupType, type ResolvedClientConfig } from './config.js';
 import { addMinutes, compareInstants, parseUtcInstant } from './time.js';
+import type { OfferPricing, PartnerAttributionSnapshot } from './partner-offers.js';
 
 export const bookingStatuses = ['hold', 'confirmed', 'cancelled', 'expired', 'no_show'] as const;
 export type BookingStatus = (typeof bookingStatuses)[number];
@@ -48,6 +49,10 @@ export interface Booking {
   calendarEventId: string | null;
   // Declared and validated via `ServiceConfig.metadataFields`; this column only carries the value.
   metadata: Record<string, unknown> | null;
+  /** Server-authored checkout history, independent of mutable metadata/current offers. */
+  readonly partnerId: string | null;
+  readonly partnerAttribution: PartnerAttributionSnapshot | null;
+  readonly partnerPricing: OfferPricing | null;
   cancelToken: string;
   operatorToken: string;
   cancelledAt: string | null;
@@ -57,7 +62,7 @@ export interface Booking {
   updatedAt: string;
 }
 
-export type BookingPatch = Partial<Omit<Booking, 'id' | 'reference' | 'status'>>;
+export type BookingPatch = Partial<Omit<Booking, 'id' | 'reference' | 'status' | 'partnerId' | 'partnerAttribution' | 'partnerPricing'>>;
 
 // The one public projection of a booking. Webhooks, hooks, and the status/manage wire types all
 // read through this, so pushed and pulled shapes can't diverge; built field by field so a future

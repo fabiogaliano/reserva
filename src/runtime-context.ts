@@ -11,6 +11,7 @@ import { createReservaContext, OPERATOR_SECRET_NAME, type AdminAuth, type Reserv
 import { validateConfig, type ResolvedClientConfig } from './core/config.js';
 import { validateBookingEventHooks, type BookingEventHook } from './core/events.js';
 import { checkReservaMigrationsApplied, D1_MIGRATIONS_TABLE, requireMigrationsTableName } from './schema-check.js';
+import type { PartnerOffersPolicy } from './core/partner-offers.js';
 
 export interface ReservaRuntimeRequest {
   request: Request;
@@ -63,6 +64,8 @@ export interface CloudflareReservaRuntimeOptions<TEnv extends object = UntypedRe
   adminAuth?: AdminAuth;
   logger?: ReservaLogger | ((bindings: CloudflareRuntimeBindings<TEnv>) => ReservaLogger);
   migrationsTable?: string;
+  /** Server-only gate and provider minimums; a callback can read deployment bindings per request. */
+  partnerOffers?: PartnerOffersPolicy | ((bindings: CloudflareRuntimeBindings<TEnv>) => PartnerOffersPolicy);
 }
 
 function objectRecord(value: unknown): Record<string, unknown> | undefined {
@@ -269,6 +272,7 @@ export function defineCloudflareReservaRuntime<TEnv extends object>(
         config,
         db,
         providers,
+        ...(options.partnerOffers ? { partnerOffers: typeof options.partnerOffers === 'function' ? options.partnerOffers(bindings) : options.partnerOffers } : {}),
         ...(options.hooks ? { hooks: options.hooks } : {}),
         ...(cache ? { cache } : {}),
         secrets: async (name) => {

@@ -2,6 +2,7 @@ import type { D1Database, D1Result } from '@cloudflare/workers-types';
 import type { ApiErrorCode } from './core/api.js';
 import type { Booking, BookingStatus, CancellationActor, DisputeOutcome, DisputeStatus } from './core/booking.js';
 import type { PickupType } from './core/config.js';
+import { parseOfferPricingSnapshot, type OfferPricing, type PartnerAttributionSnapshot } from './core/partner-offers.js';
 import type { EmailRecipientRole } from './core/events.js';
 import { sha256Base64Url } from './http.js';
 import type { CapacityDefault, DayCapacityOverride, OccupancyBooking } from './core/occupancy.js';
@@ -27,6 +28,9 @@ export interface BookingInsert {
   meetingPointId?: string | null;
   meetingPointLabel?: string | null;
   metadata?: Record<string, unknown> | null;
+  partnerId?: string | null;
+  partnerAttribution?: PartnerAttributionSnapshot | null;
+  partnerPricing?: OfferPricing | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -43,7 +47,7 @@ export interface AdminChangeAudit {
   changedAt: string;
 }
 
-export type AdminChangeDomain = 'setting' | 'day_override' | 'capacity_default';
+export type AdminChangeDomain = 'setting' | 'day_override' | 'capacity_default' | 'partner';
 export type AdminChangeAction = 'upsert' | 'delete';
 
 export interface AdminChangeHistoryEntry {
@@ -692,6 +696,9 @@ interface BookingRow {
   payment_ref: string | null;
   calendar_event_id: string | null;
   metadata: string | null;
+  partner_id: string | null;
+  partner_attribution_snapshot: string | null;
+  partner_pricing_snapshot: string | null;
   cancel_token: string;
   operator_token: string;
   cancel_token_hash: string | null;
@@ -744,8 +751,37 @@ function serializeBookingMetadata(value: Record<string, unknown> | null | undefi
   return JSON.stringify(value);
 }
 
+function bookingPartnerSnapshots(row: BookingRow): Pick<Booking, 'partnerId' | 'partnerAttribution' | 'partnerPricing'> {
+  const partnerId = row.partner_id ?? null;
+  let partnerAttribution: PartnerAttributionSnapshot | null = null;
+  let partnerPricing: OfferPricing | null = null;
+  try {
+    if (row.partner_attribution_snapshot) {
+      const input: unknown = JSON.parse(row.partner_attribution_snapshot);
+      if (!input || typeof input !== 'object' || !('code' in input) || !('name' in input) || !('revision' in input)
+        || typeof input.code !== 'string' || !input.code || typeof input.name !== 'string' || !input.name
+        || typeof input.revision !== 'number' || !Number.isSafeInteger(input.revision) || input.revision < 1 || partnerId === null) {
+        throw new InvalidBookingRowError(row.id, 'invalid partner attribution snapshot');
+      }
+      partnerAttribution = { code: input.code, name: input.name, revision: input.revision };
+    }
+    if (row.partner_pricing_snapshot) {
+      const parsed = parseOfferPricingSnapshot(JSON.parse(row.partner_pricing_snapshot));
+      if (!parsed.ok || parsed.value.priceMinor !== Number(row.price_minor)) {
+        throw new InvalidBookingRowError(row.id, 'invalid partner pricing snapshot');
+      }
+      partnerPricing = parsed.value;
+    }
+  } catch (error) {
+    if (error instanceof InvalidBookingRowError) throw error;
+    throw new InvalidBookingRowError(row.id, 'unreadable partner snapshot JSON');
+  }
+  return { partnerId, partnerAttribution, partnerPricing };
+}
+
 function mapBooking(row: BookingRow): Booking {
   assertValidBookingRow(row);
+  const snapshots = bookingPartnerSnapshots(row);
   return {
     id: row.id,
     reference: row.reference,
@@ -773,6 +809,7 @@ function mapBooking(row: BookingRow): Booking {
     paymentRef: row.payment_ref,
     calendarEventId: row.calendar_event_id,
     metadata: parseBookingMetadata(row.metadata),
+    ...snapshots,
     cancelToken: row.cancel_token,
     operatorToken: row.operator_token,
     cancelledAt: row.cancelled_at,
@@ -828,7 +865,8 @@ const bookingColumns = `id, reference, service_slug, quantity, guest_count, pick
   meeting_point_label, starts_at, ends_at,
   customer_name, customer_email, customer_phone, locale, price_minor, currency,
   amount_refunded_minor, disputed_at, dispute_status, status, hold_expires_at,
-  payment_session_ref, payment_ref, calendar_event_id, metadata, cancel_token, operator_token,
+  payment_session_ref, payment_ref, calendar_event_id, metadata, partner_id, partner_attribution_snapshot,
+  partner_pricing_snapshot, cancel_token, operator_token,
   cancel_token_hash, operator_token_hash, cancel_token_enc, operator_token_enc, tokens_expire_at,
   cancel_token_revoked_at, cancelled_at, cancelled_by, rescheduled_from, created_at, updated_at`;
 
@@ -1356,9 +1394,10 @@ export function createBookingRepository(
           id, reference, service_slug, quantity, pickup_type, starts_at, ends_at, locale, price_minor,
           currency, status, hold_expires_at, cancel_token, operator_token, cancel_token_hash,
           operator_token_hash, cancel_token_enc, operator_token_enc, tokens_expire_at, hold_ip,
-          occupancy_units, occupancy_ends_at, meeting_point_id, meeting_point_label, metadata, created_at, updated_at
+          occupancy_units, occupancy_ends_at, meeting_point_id, meeting_point_label, metadata,
+          partner_id, partner_attribution_snapshot, partner_pricing_snapshot, created_at, updated_at
         )
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'hold', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'hold', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         WHERE (? IS NULL OR (
             SELECT COUNT(*) FROM bookings WHERE hold_ip = ? AND status = 'hold' AND hold_expires_at >= ?
           ) < ?)
@@ -1395,6 +1434,9 @@ export function createBookingRepository(
         holdIp, input.occupancyUnits, input.occupancyEndsAt,
         input.meetingPointId ?? null, input.meetingPointLabel ?? null,
         serializeBookingMetadata(input.metadata),
+        input.partnerId ?? null,
+        input.partnerAttribution ? JSON.stringify(input.partnerAttribution) : null,
+        input.partnerPricing ? JSON.stringify(input.partnerPricing) : null,
         input.createdAt, input.updatedAt,
         holdLimit, holdIp, input.createdAt, holdLimit,
         // Candidate points: the request's own start, then each active overlapping booking's own start.

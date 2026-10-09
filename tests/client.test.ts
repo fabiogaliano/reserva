@@ -120,6 +120,16 @@ describe('createReservaClient request shapes', () => {
     expect(headersOf(anonymous.last())[MANAGE_TOKEN_HEADER]).toBeUndefined();
   });
 
+  it('resolves one referral by uncached POST JSON, never in URL parameters', async () => {
+    const fake = recorder({ body: { status: 'active', benefits: [] } });
+    const result = await createReservaClient({ fetch: fake.fetchFn }).resolveReferral({ referralCode: 'a-partner' });
+    expect(fake.last().url).toBe('/api/booking/referral');
+    expect(fake.last().init.method).toBe('POST');
+    expect(fake.last().init.cache).toBe('no-store');
+    expect(bodyOf(fake.last())).toEqual({ referralCode: 'a-partner' });
+    expect(result).toEqual({ status: 'active', benefits: [] });
+  });
+
   it('posts the checkout payload verbatim as JSON', async () => {
     const fake = recorder({ body: { checkoutUrl: 'https://pay.test/c', bookingId: 'b1', reference: 'LVT-1', paymentDeadline: '2026-06-15T08:35:00.000Z' } });
     const response = await createReservaClient({ fetch: fake.fetchFn }).checkout(checkout);

@@ -14,6 +14,8 @@ import { countD1Queries } from './d1-query-count.js';
 import { createBookingRepository, type BookingRepository } from './repo.js';
 import { resolvedRoutePaths, type ReservaResolvedRouteConfig } from './routes-manifest.js';
 import type { ThemePreference } from './ui/theme.js';
+import { createPartnerStore, type PartnerStore } from './partners.js';
+import type { PartnerOffersPolicy } from './core/partner-offers.js';
 
 export interface ReservaCache {
   match(request: any): Promise<Response | undefined | null>;
@@ -49,6 +51,10 @@ export interface ReservaContext {
   baseConfig?: ResolvedClientConfig;
   db: D1Database;
   repo: BookingRepository;
+  /** Server-only registry port; never part of virtual/public configuration. */
+  partners?: PartnerStore;
+  /** Absent means benefits are globally disabled. */
+  partnerOffers?: PartnerOffersPolicy;
   // D1 queries the repo has issued so far, for work that has to stay under D1's per-invocation
   // query cap. Absent when the repo was supplied instead of built from `db`, since its queries
   // can't be seen from here.
@@ -101,6 +107,7 @@ export function createReservaContext(input: ReservaContextInput): ReservaContext
     // can resolve the optional RESERVA_TOKEN_ENC_KEY — repo.ts can't import SecretLookup from here
     // since the reverse import would be circular.
     repo: input.repo ?? createBookingRepository(counted?.db ?? input.db, input.secrets),
+    partners: input.partners ?? createPartnerStore(counted?.db ?? input.db),
     clock: input.clock ?? (() => new Date()),
     logger: input.logger ?? console,
     providers: input.providers,

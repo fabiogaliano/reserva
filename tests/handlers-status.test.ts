@@ -69,7 +69,7 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
     // projection plus presentation, and every key is always present (null when empty) — this list
     // is the leak guard: no ids, no tokens, no customer contact details.
     expect(Object.keys(payload.booking).sort()).toEqual([
-      'currency', 'end', 'locale', 'meetingPoint', 'metadataRows', 'priceMinor', 'quantity', 'reference', 'serviceSlug', 'serviceTitle', 'start',
+      'currency', 'end', 'locale', 'meetingPoint', 'metadataRows', 'priceMinor', 'pricing', 'quantity', 'reference', 'serviceSlug', 'serviceTitle', 'start',
     ]);
     expect(payload.booking).not.toHaveProperty('customerEmail');
     expect(payload.booking).not.toHaveProperty('customerPhone');
@@ -174,7 +174,8 @@ describe('GET /status self-heals a paid hold (spec §6/§11)', () => {
       // Present-as-null rather than absent, so a consumer never branches on key presence.
       expect(payload.booking.meetingPoint).toBeNull();
       expect(payload.booking).not.toHaveProperty('pickupAddress');
-      expect(Object.keys(payload.booking).sort()).toEqual(['currency', 'end', 'locale', 'meetingPoint', 'metadataRows', 'priceMinor', 'quantity', 'reference', 'serviceSlug', 'serviceTitle', 'start']);
+      expect(Object.keys(payload.booking).sort()).toEqual(['currency', 'end', 'locale', 'meetingPoint', 'metadataRows', 'priceMinor', 'pricing', 'quantity', 'reference', 'serviceSlug', 'serviceTitle', 'start']);
+      expect(payload.booking.pricing).toBeNull();
     });
 
     it('includes the chosen point for a declared usesMeetingPoint: true option (custom_dropoff)', async () => {

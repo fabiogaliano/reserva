@@ -16,6 +16,9 @@ export type {
   AvailabilityResponse,
   QuoteRequest,
   QuoteResponse,
+  ResolveReferralRequest,
+  ReferralResolution,
+  ReferralBenefit,
   CheckoutRequest,
   CheckoutResponse,
   WireMeetingPoint,
@@ -117,6 +120,8 @@ export { toMajorUnits } from './currency.js';
 // price grid from, so it never re-derives breakpoint semantics itself. All three are order-safe.
 export { priceFor, resolvedPriceTableFor, pricingCombinations, lowestPriceMinor, isPricingFormula, unitsFor } from './pricing.js';
 export type { ResolvedPriceTable, Priceable, PricingFormula, PricingRow } from './pricing.js';
+export { parseOfferPercentage, parsePartnerOffer, priceWithPartnerOffer, checkPartnerOfferForServices, PartnerOfferError } from './partner-offers.js';
+export type { PartnerOffer, AppliedPartnerOffer, OfferPricing, PartnerOfferResult, PartnerOffersPolicy, PartnerAttributionSnapshot } from './partner-offers.js';
 export { maxQuantityFor } from './config.js';
 
 // --- HTTP --------------------------------------------------------------------------------------

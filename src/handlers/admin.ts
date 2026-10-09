@@ -62,6 +62,8 @@ import {
 import { ownerFacingIncidentTitle } from '../reconciliation-helpers.js';
 import { securityPosture } from './ops-health.js';
 import { settingsPage } from '../ui/pages/settings-page.js';
+import { partnersPage } from '../ui/pages/partners-page.js';
+import { performPartnerAdminAction } from './partner-admin.js';
 import {
   html,
   HttpError,
@@ -256,6 +258,17 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
     const csrfToken = await mintAdminCsrfToken(context, access.subject, context.clock().getTime());
     const url = new URL(request.url);
     const error = adminErrorFrom(url);
+    if (url.searchParams.get('view') === 'partners') {
+      const store = context.partners;
+      if (!store) throw new HttpError(503, 'partner_storage_unavailable', 'Partner storage is unavailable.');
+      const today = localDayStartUtcIso(localDateKey(nowIso(context), context.config.business.timezone), context.config.business.timezone);
+      const [partners, counts, openIncidentCount] = await Promise.all([store.list(), store.bookingCounts(today), context.repo.countOpenIncidents()]);
+      if (!partners.ok || !counts.ok) throw new HttpError(503, 'partner_storage_unavailable', 'Partner storage is unavailable.');
+      return html(partnersPage(context, {
+        partners: partners.value, counts: counts.value, openIncidentCount,
+        editId: url.searchParams.get('partner') ?? '', saved: url.searchParams.get('saved') === '1', csrfToken, error,
+      }), 200, { ...contentSecurityPolicyHeaders(context.config), 'cache-control': 'no-store', 'referrer-policy': 'same-origin' });
+    }
     if (url.searchParams.get('view') === 'settings') {
       const section = url.searchParams.get('section') ?? '';
       const [storedRows, openIncidentCount, changeHistory] = await Promise.all([
@@ -466,7 +479,11 @@ function adminErrorRedirect(request: Request, context: ReservaContext, form: For
   }
   location.searchParams.set('error', code);
   if (field) location.searchParams.set('field', field);
-  if (action.startsWith('settings-')) {
+  if (action.startsWith('partner-')) {
+    location.searchParams.set('view', 'partners');
+    const id = form.get('partner_id');
+    if (typeof id === 'string' && id) location.searchParams.set('partner', id);
+  } else if (action.startsWith('settings-')) {
     location.searchParams.set('view', 'settings');
     const section = form.get('section');
     if (typeof section === 'string' && section) location.searchParams.set('section', section);
@@ -532,6 +549,15 @@ async function performAdminAction(request: Request, context: ReservaContext, for
   // no per-user identity; normalized to null so an anonymous-verifier deployment records "no known actor", not empty string.
   const audit = { actor: subject || null, changedAt: nowIso(context) };
   requireString(action, 'action');
+  if (action.startsWith('partner-')) {
+    await performPartnerAdminAction(context, form, action, audit);
+    const location = adminReturnLocation(request);
+    location.searchParams.set('view', 'partners');
+    location.searchParams.set('saved', '1');
+    const id = form.get('partner_id');
+    if (typeof id === 'string' && id) location.searchParams.set('partner', id);
+    return seeOther(location);
+  }
   if (action === 'incident-retry' || action === 'incident-resolve') {
     const sourceType = requireString(form.get('source_type'), 'source_type') as OperationalIncidentSourceType;
     const sourceKey = requireString(form.get('source_key'), 'source_key');

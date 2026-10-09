@@ -84,11 +84,14 @@ describe('POST /api/booking/quote', () => {
     }
   });
 
-  it('returns the tier price and the deployment currency, nothing else', async () => {
+  it('returns the legacy tier total without inventing component subtotals', async () => {
     const response = await quote({ serviceSlug: 'vintage', quantity: 5, pickup: 'custom' });
     expect(response.status).toBe(200);
-    // No breakdown field: flat totals only.
-    await expect(response.json()).resolves.toEqual({ priceMinor: 20000, currency: 'eur' });
+    await expect(response.json()).resolves.toEqual({
+      priceMinor: 20000, currency: 'eur', referral: { status: 'none' },
+      pricing: { serviceSubtotalMinor: null, pickupSubtotalMinor: null, originalTotalMinor: 20000, serviceDiscountMinor: 0, pickupDiscountMinor: 0, savingsMinor: 0, priceMinor: 20000, appliedOffer: null },
+      quoteFingerprint: expect.stringMatching(/^quote_v1\./),
+    });
   });
 
   it('rejects the same pickup mistakes checkout rejects, with the same remediating messages', async () => {
@@ -131,11 +134,12 @@ describe('POST /api/booking/quote', () => {
   it('ignores a locale sent for payload symmetry with checkout, whatever its type', async () => {
     const accepted = await quote({ serviceSlug: 'cruise', quantity: 2, locale: 'pt' });
     expect(accepted.status).toBe(200);
-    await expect(accepted.json()).resolves.toEqual({ priceMinor: 4200, currency: 'eur' });
+    const acceptedQuote = await accepted.json();
+    expect(acceptedQuote).toMatchObject({ priceMinor: 4200, currency: 'eur' });
 
     const malformed = await quote({ serviceSlug: 'cruise', quantity: 2, locale: 42 });
     expect(malformed.status).toBe(200);
-    await expect(malformed.json()).resolves.toEqual({ priceMinor: 4200, currency: 'eur' });
+    await expect(malformed.json()).resolves.toEqual(acceptedQuote);
   });
 
   it('is POST-only', async () => {

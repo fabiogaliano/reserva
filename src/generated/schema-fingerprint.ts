@@ -9,7 +9,8 @@ export const RESERVA_MIGRATIONS = [
   "0005_calendar_patch_outbox.sql",
   "0006_guest_count.sql",
   "0007_refunds_disputes.sql",
-  "0008_oversell_marker_index.sql"
+  "0008_oversell_marker_index.sql",
+  "0009_partner_offers.sql"
 ] as const;
 
 export interface ReservaSchemaTable {
@@ -78,13 +79,17 @@ export const RESERVA_SCHEMA_TABLES: Readonly<Record<string, ReservaSchemaTable>>
       "guest_count",
       "amount_refunded_minor",
       "disputed_at",
-      "dispute_status"
+      "dispute_status",
+      "partner_id",
+      "partner_attribution_snapshot",
+      "partner_pricing_snapshot"
     ],
     "indexes": [
       "idx_bookings_cancel_token_hash",
       "idx_bookings_confirmation_lease",
       "idx_bookings_hold_ip",
       "idx_bookings_operator_token_hash",
+      "idx_bookings_partner",
       "idx_bookings_payment_ref",
       "idx_bookings_status_hold",
       "idx_bookings_window"
@@ -135,6 +140,30 @@ export const RESERVA_SCHEMA_TABLES: Readonly<Record<string, ReservaSchemaTable>>
       "idx_operational_incidents_alert",
       "idx_operational_incidents_open"
     ]
+  },
+  "partner_offers": {
+    "columns": [
+      "partner_id",
+      "enabled",
+      "basis_points",
+      "waived_pickup_ids",
+      "revision",
+      "created_at",
+      "updated_at"
+    ],
+    "indexes": []
+  },
+  "partners": {
+    "columns": [
+      "id",
+      "code",
+      "name",
+      "state",
+      "revision",
+      "created_at",
+      "updated_at"
+    ],
+    "indexes": []
   },
   "reconciliation_lease": {
     "columns": [

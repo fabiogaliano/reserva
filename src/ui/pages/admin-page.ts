@@ -202,10 +202,8 @@ const icons = {
 
 const chevronIcon = `<svg class="bk-booking-chevron" aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${icons.chevron}</svg>`;
 
-// The operator surfaces have two destinations, so they sit in one dark bar across the top rather
-// than a column of chrome beside every page. The dashboard link carries the open-incident count,
-// so it stays visible from Settings too.
-export function adminTopbar(context: ReservaContext, messages: Messages, active: 'admin' | 'settings', openIncidentCount: number): string {
+// The dashboard link keeps incident counts visible from every authenticated operator surface.
+export function adminTopbar(context: ReservaContext, messages: Messages, active: 'admin' | 'settings' | 'partners', openIncidentCount: number): string {
   const adminPath = escapeHtml(context.routeConfig.paths.adminPage);
   const link = (href: string, iconBody: string, label: string, isActive: boolean, extra = ''): string =>
     `<a href="${href}"${isActive ? ' aria-current="page"' : ''}>${icon(iconBody)} ${escapeHtml(label)}${extra}</a>`;
@@ -213,7 +211,8 @@ export function adminTopbar(context: ReservaContext, messages: Messages, active:
     ? ` <span class="bk-topbar-count" aria-hidden="true">${openIncidentCount}</span><span class="bk-sr-only">(${escapeHtml(attentionCountText(messages, openIncidentCount))})</span>`
     : '';
   const links = link(adminPath, icons.dashboard, messages['admin.navOverview'], active === 'admin', count)
-    + link(`${adminPath}?view=settings`, icons.settings, messages['admin.settings'], active === 'settings');
+    + link(`${adminPath}?view=settings`, icons.settings, messages['admin.settings'], active === 'settings')
+    + link(`${adminPath}?view=partners`, icons.users, messages['admin.partners'], active === 'partners');
   return `<p class="bk-topbar-brand"><span>${escapeHtml(context.config.business.name)}</span></p>`
     + `<nav class="bk-topbar-nav" aria-label="${escapeHtml(messages['admin.navigation'])}">${links}</nav>`;
 }

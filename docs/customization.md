@@ -187,7 +187,7 @@ them in your CSS instead of markup order or `:has()`.
 
 | Hook | Where | Values |
 |---|---|---|
-| `bk-page--confirmation`, `bk-page--manage`, `bk-page--admin`, `bk-page--settings` | `<body>` | one per page |
+| `bk-page--confirmation`, `bk-page--manage`, `bk-page--admin`, `bk-page--settings`, `bk-page--partners` | `<body>` | one per page |
 | `data-bk-status` | `<body>`, confirmation page | `pending`, `confirmed`, `failed`, `expired`, `cancelled`, `not_found` |
 | `data-bk-status` | `<body>`, manage page (not on the invalid-link page) | the booking's status: `hold`, `confirmed`, `cancelled`, `expired`, `no_show` |
 | `bk-ticket` | confirmation, confirmed booking | the ticket (`bk-ticket-top`, `bk-ticket-date`, `bk-ticket-body`, `bk-ticket-status`, `bk-ticket-foot`) |

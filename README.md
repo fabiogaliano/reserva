@@ -210,6 +210,7 @@ package's route manifest:
 | `availability` | `/api/booking/availability` | customer |
 | `checkout` | `/api/booking/checkout` | customer |
 | `quote` | `/api/booking/quote` | customer |
+| `resolveReferral` | `/api/booking/referral` | customer |
 | `catalog` | `/api/booking/catalog` | customer |
 | `webhooksPayment` | `/api/booking/webhooks/payment` | webhook |
 | `status` | `/api/booking/status` | customer |
@@ -233,7 +234,7 @@ failure is `{ error: { code, message } }` whose `code` comes from the closed `AP
 set:
 
 <!-- generated:error-codes -->
-`validation_failed`, `method_not_allowed`, `payload_too_large`, `forbidden`, `not_found`, `past_cutoff`, `invalid_transition`, `slot_unavailable`, `too_many_holds`, `payment_session_mismatch`, `payment_amount_mismatch`, `invalid_payment_signature`, `duplicate_payment_ref`, `confirmation_in_progress`, `reconciliation_in_progress`, `refund_conflict`, `refund_payment_ref_missing`, `refund_failed`, `calendar_unavailable`, `internal_error`
+`validation_failed`, `method_not_allowed`, `payload_too_large`, `forbidden`, `not_found`, `past_cutoff`, `invalid_transition`, `slot_unavailable`, `too_many_holds`, `quote_changed`, `partner_storage_unavailable`, `partner_conflict`, `payment_session_mismatch`, `payment_amount_mismatch`, `invalid_payment_signature`, `duplicate_payment_ref`, `confirmation_in_progress`, `reconciliation_in_progress`, `refund_conflict`, `refund_payment_ref_missing`, `refund_failed`, `calendar_unavailable`, `internal_error`
 <!-- /generated:error-codes -->
 
 One vocabulary across the routes: `serviceSlug`, `pickup`, `start` and `sessionId`. The previous

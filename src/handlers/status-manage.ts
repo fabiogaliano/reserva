@@ -50,6 +50,7 @@ function manageBookingPayload(context: ReservaContext, booking: Booking, role: M
     status: wire.status,
     priceMinor: wire.priceMinor,
     currency: wire.currency,
+    pricing: booking.partnerPricing,
     metadata,
     // Labeled rows for rendering; the raw values stay on `metadata` above. This payload doubles as
     // the admin operator's view of the same booking (a role toggle, not a separate render path).
@@ -85,6 +86,7 @@ function confirmationBookingPayload(context: ReservaContext, booking: Booking): 
     quantity: wire.quantity,
     priceMinor: wire.priceMinor,
     currency: wire.currency,
+    pricing: booking.partnerPricing,
     meetingPoint: presentation?.usesMeetingPoint
       ? meetingPointForBooking(service, wire.meetingPointId, wire.meetingPointLabel, wire.locale, context.config.locales.default)
       : null,

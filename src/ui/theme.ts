@@ -1064,6 +1064,10 @@ a.bk-day { padding-bottom: 0.35rem; box-sizing: border-box; }
 .bk-tagtable td, .bk-tagtable tbody th { padding: 0.6rem 0.75rem 0.6rem 0; border-top: 1px solid color-mix(in srgb, var(--bk-border) 60%, transparent); vertical-align: middle; }
 .bk-tagtable tbody th { color: var(--bk-text); font-size: 0.875rem; font-weight: 600; }
 .bk-tagtable .bk-num { text-align: right; font-variant-numeric: tabular-nums; width: 1%; }
+/* Long operator codes and several status columns must scroll within the list, not the page. */
+.bk-page--partners .bk-partner-list { max-width: 100%; overflow-x: auto; margin-bottom: 2rem; }
+.bk-page--partners .bk-tagtable tbody th { white-space: normal; overflow-wrap: anywhere; min-width: 10rem; }
+.bk-page--partners .bk-fieldset label { display: inline-flex; align-items: center; gap: 0.5rem; min-height: 2.75rem; margin-right: 1rem; }
 /* Admin recent changes: when, who, and the change as a sentence. */
 .bk-history { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
 .bk-history th { padding: 0 0.75rem 0.5rem 0; text-align: left; font-size: 0.78rem; font-weight: 500; color: var(--bk-text-muted); white-space: nowrap; }

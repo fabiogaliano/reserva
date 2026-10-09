@@ -2,7 +2,8 @@ import type { CheckoutResponse } from '../core/api.js';
 import type { Booking } from '../core/booking.js';
 import { DEFAULT_TOKEN_EXPIRY_DAYS, pickupOptionFor, resolveLocalizedText, resolveMeetingPoint, resolveService, type MetadataField, type PickupType, type ResolvedServiceConfig } from '../core/config.js';
 import { availabilityForDay, capacityForDate, defaultCapacityForDate, occupancyFor } from '../core/occupancy.js';
-import { priceFor } from '../core/pricing.js';
+import { quoteReferralSelection } from '../referral-pricing.js';
+import { referralHttpError } from './referral.js';
 import { resolveLocale } from '../core/locale.js';
 import { generateReference } from '../core/reference.js';
 import { generateSlots } from '../core/slots.js';
@@ -30,22 +31,6 @@ export function resolvePickupAxis(service: ResolvedServiceConfig, value: unknown
   const validIds = service.location.pickupOptions.map((option) => option.id);
   requireString(value, field);
   throw new HttpError(400, 'validation_failed', `${field} must be one of: ${validIds.join(', ')}`, { field, allowed: validIds });
-}
-
-// The one priced-amount resolution — quote and checkout both call this, so the quoted price and
-// the charged price can never disagree for any (service, quantity, pickup).
-export function quotedPriceMinor(service: ResolvedServiceConfig, quantity: number, pickup: PickupType | null, serviceSlug: string): number {
-  assertSupportedPartySize(service, quantity);
-  try {
-    return priceFor(service, quantity, pickup);
-  } catch {
-    throw new HttpError(
-      400,
-      'validation_failed',
-      `quantity ${quantity} with pickupType ${pickup ?? 'none'} has no pricing rule for service ${serviceSlug}`,
-      { field: 'quantity' },
-    );
-  }
 }
 
 // meetingPointId is required exactly when the pickup option's usesMeetingPoint flag is set — not
@@ -141,13 +126,14 @@ function coerceMetadataValue(field: MetadataField, raw: unknown): string | numbe
 
 // Returns null (not `{}`) for "nothing to store", matching every existing row and
 // serializeBookingMetadata's own symmetry.
-function validateCheckoutMetadata(service: ResolvedServiceConfig, serviceSlug: string, raw: unknown): Record<string, unknown> | null {
+function validateCheckoutMetadata(service: ResolvedServiceConfig, serviceSlug: string, raw: unknown, legacyField?: string): Record<string, unknown> | null {
   const value = raw === undefined ? {} : raw;
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new HttpError(400, 'validation_failed', 'metadata must be an object');
   }
-  const input = value as Record<string, unknown>;
-  const fields = service.metadataFields ?? [];
+  // The explicit bridge owns its legacy field; retired select options must not govern referrals.
+  const input: Record<string, unknown> = Object.fromEntries(Object.entries(value).filter(([key]) => key !== legacyField));
+  const fields = (service.metadataFields ?? []).filter((field) => field.key !== legacyField);
   if (fields.length === 0) {
     if (Object.keys(input).length > 0) {
       throw new HttpError(400, 'validation_failed', `service ${serviceSlug} declares no metadata fields; do not send metadata`);
@@ -258,10 +244,53 @@ export function handleCheckout(request: Request, context: ReservaContext): Promi
     // being rejected, so only what the deployment supports is ever stored on the booking.
     const locale = resolveLocale(context.config.locales, requireString(body.locale, 'locale'));
     const location = resolveCheckoutLocation(context, service, body, locale);
-    const metadata = validateCheckoutMetadata(service, serviceSlug, body.metadata);
+    const legacyField = context.partnerOffers?.legacyMetadataField;
+    const claimedMetadata = validateCheckoutMetadata(service, serviceSlug, body.metadata, legacyField);
+    assertSupportedPartySize(service, quantity);
+    const legacyValue = legacyField && body.metadata && typeof body.metadata === 'object' ? Reflect.get(body.metadata, legacyField) : undefined;
+    if (legacyValue !== undefined && typeof legacyValue !== 'string') {
+      throw new HttpError(400, 'validation_failed', 'Legacy referral metadata must be a code string.', { field: 'referralCode' });
+    }
+    const legacyCode = typeof legacyValue === 'string' ? legacyValue : undefined;
+    if (legacyCode !== undefined && body.referralCode !== undefined && legacyCode !== body.referralCode) {
+      throw new HttpError(400, 'validation_failed', 'Legacy and typed referral codes must match.', { field: 'referralCode' });
+    }
+    if (legacyCode !== undefined && body.referralCode === undefined && context.partnerOffers?.enabled === true) {
+      throw new HttpError(400, 'validation_failed', 'Legacy metadata referral checkout is attribution-only. Send referralCode and a reviewed quoteFingerprint before using offers.', { field: 'referralCode' });
+    }
+    const referralCode = body.referralCode !== undefined ? body.referralCode : legacyCode;
+    const comparison = typeof body.quoteFingerprint === 'string' && body.quoteFingerprint.trim() ? body.quoteFingerprint : null;
+    if ((body.referralCode !== undefined || body.quoteFingerprint !== undefined) && comparison === null) {
+      throw new HttpError(400, 'validation_failed', 'quoteFingerprint is required', { field: 'quoteFingerprint' });
+    }
+    const selection = await quoteReferralSelection(context, { serviceSlug, service, quantity, pickup: location.pickupType, referralCode });
+    if (!selection.ok) {
+      if (comparison !== null && selection.error.reason === 'pricing') {
+        throw new HttpError(409, 'quote_changed', 'This selection can no longer be sold at the reviewed quote. Refetch the quote before checkout.');
+      }
+      throw referralHttpError(selection.error);
+    }
+    const { quote, referral } = selection.value;
+    if (comparison !== null && comparison !== quote.quoteFingerprint) {
+      throw new HttpError(409, 'quote_changed', 'Price or referral benefits changed. Review the new quote before checkout.', { quote });
+    }
+    // Acceptance is this coherent read and comparison, before any hold/payment. Subsequent edits
+    // affect later checkouts only; capacity retries must reuse these exact amounts and snapshots.
+    const priceMinor = quote.priceMinor;
+    const partnerId = referral.partner?.id ?? null;
+    const partnerAttribution = referral.partner
+      ? { code: referral.partner.code, name: referral.partner.name, revision: referral.partner.revision } : null;
+    const partnerPricing = referral.code === null ? null : quote.pricing;
+    // During the explicit bridge, only the resolved active code may retain the old operator tag.
+    // Unknown/archived codes never create new attribution, and retired selects cannot enumerate
+    // allowed partner codes in validation errors or override the runtime registry.
+    const retainLegacyTag = legacyField && referral.partner && service.metadataFields?.some((field) => field.key === legacyField && field.visibility === 'operator' && (field.type === 'select' || field.type === 'text'));
+    const metadata = retainLegacyTag && legacyField && referral.partner ? { ...claimedMetadata, [legacyField]: referral.partner.code } : claimedMetadata;
+    if (metadata !== claimedMetadata && new TextEncoder().encode(JSON.stringify(metadata)).length > METADATA_MAX_SERIALIZED_BYTES) {
+      throw new HttpError(400, 'validation_failed', 'metadata exceeds the serialized byte limit');
+    }
     const now = nowIso(context);
     const candidate = await checkSlot(context, serviceSlug, quantity, start, now);
-    const priceMinor = quotedPriceMinor(candidate.service, quantity, location.pickupType, serviceSlug);
     const year = Number(localDateKey(candidate.startsAt, context.config.business.timezone).slice(0, 4));
     const prefix = `${context.config.business.shortCode.toUpperCase()}-${year}-`;
     // No per-candidate pre-read: the insert's ON CONFLICT(reference) is the authority, and a
@@ -288,6 +317,7 @@ export function handleCheckout(request: Request, context: ReservaContext): Promi
           id: crypto.randomUUID(), reference, serviceSlug, quantity, pickupType: location.pickupType,
           meetingPointId: location.meetingPointId, meetingPointLabel: location.meetingPointLabel,
           startsAt: candidate.startsAt, endsAt: candidate.endsAt, locale, priceMinor, metadata,
+          partnerId, partnerAttribution, partnerPricing,
           currency: context.config.business.currency,
           holdExpiresAt: new Date(parseUtcInstant(now).getTime() + context.config.booking.holdMinutes * 60_000).toISOString(),
           cancelToken: tokenBytes(), operatorToken: tokenBytes(), createdAt: now, updatedAt: now,

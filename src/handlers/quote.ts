@@ -2,12 +2,13 @@ import type { QuoteResponse } from '../core/api.js';
 import { resolveService } from '../core/config.js';
 import type { ReservaContext } from '../context.js';
 import { HttpError, json, requestJson, requireInteger, requireString } from '../http.js';
-import { quotedPriceMinor, resolvePickupAxis } from './checkout.js';
+import { resolvePickupAxis } from './checkout.js';
+import { assertSupportedPartySize } from './availability.js';
+import { quoteReferralSelection } from '../referral-pricing.js';
+import { referralHttpError } from './referral.js';
 import { run } from './shared.js';
 
-// The pricing authority a headless consumer renders from. It can't drift: the pickup axis is
-// validated by the same resolvePickupAxis and the amount by the same quotedPriceMinor that
-// handleCheckout charges through — this endpoint adds no pricing logic of its own.
+// Checkout uses the same one-read referral and pricing calculation, never browser amounts.
 export function handleQuote(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
@@ -22,11 +23,12 @@ export function handleQuote(request: Request, context: ReservaContext): Promise<
     const pickup = resolvePickupAxis(service, body.pickup, 'pickup');
     // A `locale` sent by a payload builder shared with checkout is accepted and dropped without a
     // word: a price never varies by locale, so there is nothing to negotiate and nothing to reject.
-    return json<QuoteResponse>({
-      priceMinor: quotedPriceMinor(service, quantity, pickup, serviceSlug),
-      // The booking's currency is captured from this same config value at checkout, so a quote and
-      // the charge that follows are always denominated identically.
-      currency: context.config.business.currency,
-    });
+    assertSupportedPartySize(service, quantity);
+    const selection = await quoteReferralSelection(context, { serviceSlug, service, quantity, pickup, referralCode: body.referralCode });
+    if (!selection.ok) throw referralHttpError(selection.error);
+    return json<QuoteResponse>(selection.value.quote);
+  }).then((response) => {
+    response.headers.set('cache-control', 'no-store');
+    return response;
   });
 }

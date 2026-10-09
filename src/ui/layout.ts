@@ -95,7 +95,7 @@ export function messageHtml(message: string, paragraphClass?: string): string {
 
 // Public styling hooks: consumers scope rules per page and per status with these instead of
 // relying on markup order, so the names are kept stable across minor versions.
-export type PageKind = 'confirmation' | 'manage' | 'admin' | 'settings';
+export type PageKind = 'confirmation' | 'manage' | 'admin' | 'settings' | 'partners';
 
 export interface PageShellOptions {
   lang: string;

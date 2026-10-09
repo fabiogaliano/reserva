@@ -22,6 +22,7 @@ const routeEntrypoints: Record<ReservaRouteId, string> = {
   availability: './routes/api/booking/availability.ts',
   checkout: './routes/api/booking/checkout.ts',
   quote: './routes/api/booking/quote.ts',
+  resolveReferral: './routes/api/booking/referral.ts',
   catalog: './routes/api/booking/catalog.ts',
   webhooksPayment: './routes/api/booking/webhooks/payment.ts',
   status: './routes/api/booking/status.ts',

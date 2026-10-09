@@ -73,6 +73,9 @@ describe('schema fingerprint catches targeted drift in `bookings`', () => {
     await applyRealSchema();
     const dependentIndex = BOOKINGS_COLUMN_INDEX[column];
     if (dependentIndex) await db.prepare(`DROP INDEX ${dependentIndex}`).run();
+    // SQLite refuses to remove a column referenced by a trigger. Remove that dependency only
+    // to construct the damaged schema; the assertion still requires detecting the missing column.
+    if (column === 'currency') await db.prepare('DROP TRIGGER bookings_immutable_partner_checkout').run();
     await db.prepare(`ALTER TABLE bookings DROP COLUMN ${column}`).run();
 
     await expectFingerprintCollision();

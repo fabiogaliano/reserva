@@ -60,6 +60,11 @@ try {
 `@reservajs/astro/client` imports no Astro, Node or Cloudflare code; `@reservajs/astro/dev`
 exports `devProviders()` for `astro dev`. See [`docs/api.md`](./docs/api.md).
 
+For partner administration or referral-aware checkout, read [Partner offers and reviewed
+quotes](./docs/api.md#partner-offers-and-reviewed-quotes): runtime-only application gate,
+payment floors, `resolveReferral()`, `quoteFingerprint`, changed-price review and legacy
+metadata compatibility. Offers default off; the customer funnel must render live quotes before activation.
+
 The integration validates `config` once at `astro:config:setup` and serializes the result into
 `virtual:reserva/config` as `{ config, routes: { paths, groups, dev } }`. That is the single
 config source: `defineCloudflareReservaRuntime(options)` / `defineReservaRuntime(options)` take
@@ -112,7 +117,7 @@ resolved with the same candidate-locale → base-language → default-locale cha
 Every route is server-only (`prerender: false`). `reserva({ routePrefix })` prepends a
 prefix to all of them; `config.routes` disables the `admin`, `ops`, and `manage` groups.
 The `customer` and `webhook` groups are load-bearing and cannot be disabled. With
-`config.routes.cors`, the customer API routes (`availability`, `checkout`, `quote`, `catalog`,
+`config.routes.cors`, the customer API routes (`availability`, `checkout`, `quote`, `resolveReferral`, `catalog`,
 `status`, `manageApi`, `cancel`, `reschedule`) answer `OPTIONS` preflights from the listed
 origins; no other route ever does.
 
@@ -122,6 +127,7 @@ origins; no other route ever does.
 | `availability` | `/api/booking/availability` | customer |
 | `checkout` | `/api/booking/checkout` | customer |
 | `quote` | `/api/booking/quote` | customer |
+| `resolveReferral` | `/api/booking/referral` | customer |
 | `catalog` | `/api/booking/catalog` | customer |
 | `webhooksPayment` | `/api/booking/webhooks/payment` | webhook |
 | `status` | `/api/booking/status` | customer |
@@ -141,7 +147,7 @@ origins; no other route ever does.
 <!-- /generated:routes -->
 
 Request/response types for every one of these are exported from `@reservajs/astro/core`:
-`AvailabilityResponse`, `QuoteRequest`/`QuoteResponse`, `CheckoutRequest`/`CheckoutResponse`,
+`AvailabilityResponse`, `QuoteRequest`/`QuoteResponse`, `ResolveReferralRequest`/`ReferralResolution`, `CheckoutRequest`/`CheckoutResponse`,
 `CatalogResponse`, `StatusResponse`, `ManageResponse`, `ManageActionResponses`,
 `OpsHealthResponse`, `ApiErrorEnvelope`. Collections are always present and empty rather
 than absent; optional modules are always present and `null`. Nothing needs a key-presence
@@ -195,11 +201,11 @@ Two endpoints let a deployment describe itself without source access:
 Every failure at every status is `{ error: { code, message, details? } }`, where `code` is one of:
 
 <!-- generated:error-codes -->
-`validation_failed`, `method_not_allowed`, `payload_too_large`, `forbidden`, `not_found`, `past_cutoff`, `invalid_transition`, `slot_unavailable`, `too_many_holds`, `payment_session_mismatch`, `payment_amount_mismatch`, `invalid_payment_signature`, `duplicate_payment_ref`, `confirmation_in_progress`, `reconciliation_in_progress`, `refund_conflict`, `refund_payment_ref_missing`, `refund_failed`, `calendar_unavailable`, `internal_error`
+`validation_failed`, `method_not_allowed`, `payload_too_large`, `forbidden`, `not_found`, `past_cutoff`, `invalid_transition`, `slot_unavailable`, `too_many_holds`, `quote_changed`, `partner_storage_unavailable`, `partner_conflict`, `payment_session_mismatch`, `payment_amount_mismatch`, `invalid_payment_signature`, `duplicate_payment_ref`, `confirmation_in_progress`, `reconciliation_in_progress`, `refund_conflict`, `refund_payment_ref_missing`, `refund_failed`, `calendar_unavailable`, `internal_error`
 <!-- /generated:error-codes -->
 
 `validation_failed` messages always name the offending field and the rule that rejected
-it. The optional `details` (`ApiErrorDetails`) carries `{ field?, allowed? }` — the rejected
+it. The optional `details` (`ApiErrorDetails`) carries `{ field?, allowed?, quote? }` — the rejected
 field's name and, for a closed set, the accepted values. Switch on `code`, never on `message`
 or on the status alone.
 

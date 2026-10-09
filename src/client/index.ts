@@ -18,6 +18,8 @@ import {
   type ManageActionResponse,
   type ManageResponse,
   type QuoteRequest,
+  type ResolveReferralRequest,
+  type ReferralResolution,
   type OpsHealthResponse,
   type QuoteResponse,
   type ReconciliationSummary,
@@ -35,6 +37,7 @@ export type ReservaClientRouteId =
   | 'availability'
   | 'checkout'
   | 'quote'
+  | 'resolveReferral'
   | 'catalog'
   | 'status'
   | 'manageApi'
@@ -107,6 +110,7 @@ export interface ReservaClient {
   catalog(query?: { locale?: string }, init?: ReservaRequestInit): Promise<CatalogResponse>;
   availability(query: AvailabilityQuery, init?: ReservaRequestInit): Promise<AvailabilityResponse>;
   quote(body: QuoteRequest, init?: ReservaRequestInit): Promise<QuoteResponse>;
+  resolveReferral(body: ResolveReferralRequest, init?: ReservaRequestInit): Promise<ReferralResolution>;
   checkout(body: CheckoutRequest, init?: ReservaRequestInit): Promise<CheckoutResponse>;
   status(query: { sessionId: string }, init?: ReservaRequestInit): Promise<StatusResponse>;
   manage(query: { token: string }, init?: ReservaRequestInit): Promise<ManageResponse>;
@@ -241,7 +245,10 @@ export function createReservaClient(options: ReservaClientOptions = {}): Reserva
       return responses.length === 1 ? first : { ...first, days: responses.flatMap((response) => response.days) };
     },
     quote(body, init) {
-      return call<QuoteResponse>(pathFor('quote'), { method: 'POST', body, ...(init ? { init } : {}) });
+      return call<QuoteResponse>(pathFor('quote'), { method: 'POST', body, noStore: true, ...(init ? { init } : {}) });
+    },
+    resolveReferral(body, init) {
+      return call<ReferralResolution>(pathFor('resolveReferral'), { method: 'POST', body, noStore: true, ...(init ? { init } : {}) });
     },
     checkout(body, init) {
       return call<CheckoutResponse>(pathFor('checkout'), { method: 'POST', body, ...(init ? { init } : {}) });

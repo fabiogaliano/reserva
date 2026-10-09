@@ -343,6 +343,9 @@ export function settingsPage(
     }
   };
   const historyChange = (entry: AdminChangeHistoryEntry): string => {
+    if (entry.domain === 'partner') {
+      return escapeHtml(formatMessage(messages['admin.historyPartnerUpdated'], { id: entry.itemKey }));
+    }
     if (entry.domain === 'setting') {
       const definition = definitions.find((candidate) => candidate.key === entry.itemKey);
       const item = definition ? historyItemLabel(definition) : entry.itemKey;

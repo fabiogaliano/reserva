@@ -17,6 +17,7 @@ export const routePatterns = [
   { id: 'availability', group: 'customer', pattern: '/api/booking/availability' },
   { id: 'checkout', group: 'customer', pattern: '/api/booking/checkout' },
   { id: 'quote', group: 'customer', pattern: '/api/booking/quote' },
+  { id: 'resolveReferral', group: 'customer', pattern: '/api/booking/referral' },
   { id: 'catalog', group: 'customer', pattern: '/api/booking/catalog' },
   { id: 'webhooksPayment', group: 'webhook', pattern: '/api/booking/webhooks/payment' },
   { id: 'status', group: 'customer', pattern: '/api/booking/status' },

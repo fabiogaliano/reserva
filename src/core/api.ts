@@ -1,6 +1,7 @@
 // The HTTP contract in one place: every handler response type and error envelope, exported from
 // `@reservajs/astro/core` so a consumer's client types match the handlers exactly.
 import type { WireBooking } from './booking.js';
+import type { OfferPricing } from './partner-offers.js';
 import type { MetadataField, PickupType } from './config.js';
 // Type-only import: no runtime dependency on the repository. Keeps the outbox family union
 // single-sourced from `SIDE_EFFECT_FAMILIES` instead of restating it here.
@@ -22,6 +23,9 @@ export const API_ERROR_CODES = [
   'invalid_transition',
   'slot_unavailable',
   'too_many_holds',
+  'quote_changed',
+  'partner_storage_unavailable',
+  'partner_conflict',
   // Payment verification failures: session doesn't match the booking, webhook signature invalid,
   // or payment reference already confirmed a different booking.
   'payment_session_mismatch',
@@ -53,6 +57,8 @@ export function isApiErrorCode(value: unknown): value is ApiErrorCode {
 export interface ApiErrorDetails {
   field?: string;
   allowed?: string[];
+  /** Fresh server quote to review after a quote_changed response. */
+  quote?: QuoteResponse;
 }
 
 // The one failure shape every endpoint returns, at every status code.
@@ -112,15 +118,37 @@ export interface AvailabilityResponse {
 // module — the same rule checkout applies. A `locale` key is still tolerated on the wire (a
 // payload builder shared with checkout sends one) but is not part of the contract: price never
 // varies by locale.
+/** Safe benefits scoped to a service; operator labels and the registry stay private. */
+export interface ReferralBenefit {
+  serviceSlug: string;
+  serviceDiscountBasisPoints: number;
+  waivedPickupIds: string[];
+}
+
+/** Unknown and archived codes are publicly indistinguishable. */
+export type ReferralResolution =
+  | { status: 'active'; benefits: ReferralBenefit[] }
+  | { status: 'unavailable' };
+
+/** Resolve only the visitor-supplied referral, never the registry. */
+export interface ResolveReferralRequest {
+  referralCode: string;
+}
+
 export interface QuoteRequest {
   serviceSlug: string;
   quantity: number;
   pickup?: string;
+  referralCode?: string;
 }
 
 export interface QuoteResponse {
   priceMinor: number;
   currency: string;
+  pricing: OfferPricing;
+  referral: ReferralResolution | { status: 'none' };
+  /** Comparison guard, not authority to set a charge. */
+  quoteFingerprint: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -138,6 +166,9 @@ export interface CheckoutRequest {
   meetingPointId?: string;
   // Consumer-declared fields, validated against the service's own declarations.
   metadata?: Record<string, unknown>;
+  referralCode?: string;
+  /** Required whenever referralCode is supplied, including unavailable/no-benefit referrals. */
+  quoteFingerprint?: string;
 }
 
 export interface CheckoutResponse {
@@ -176,6 +207,7 @@ export interface ConfirmationSummary extends Pick<WireBooking, 'reference' | 'se
 // Picked from `WireBooking` so a projection change breaks this at compile time. Reachable by
 // anyone holding the payment session id, so it excludes contact details, ids, and tokens.
 export interface ConfirmationBooking extends ConfirmationSummary, Pick<WireBooking, 'serviceSlug' | 'quantity' | 'priceMinor' | 'currency'> {
+  pricing: OfferPricing | null;
   meetingPoint: WireMeetingPoint | null;
   metadataRows: WireMetadataRow[];
 }
@@ -202,6 +234,7 @@ export interface ManageBooking extends Pick<
   // The pickup option's id. Named `pickup` like the checkout and quote request field; the webhook
   // envelope's booking keeps `pickupType`, which is frozen for this release line.
   pickup: PickupType | null;
+  pricing: OfferPricing | null;
   start: string;
   end: string;
   // Always-present-nullable convention: `null` for a booking with no location data.

@@ -23,10 +23,17 @@ table inside the published tarball.
   manage token in the `x-reserva-manage-token` header (`MANAGE_TOKEN_HEADER`, or `manageToken` on
   the client) so the booking's own slot isn't counted against it. That answer is never cached; an
   unknown or revoked token gets the normal answer.
-- `POST /api/booking/quote` — `{ serviceSlug, quantity, pickup? }` →
-  `{ priceMinor, currency }`. The same validation and pricing path checkout charges on: a
-  consumer that shows a price never computes one. A `locale` key is accepted and ignored (a price
-  never varies by locale), so one payload builder can serve quote and checkout.
+- `POST /api/booking/quote` — `{ serviceSlug, quantity, pickup?, referralCode? }` →
+  `{ priceMinor, currency, pricing, referral, quoteFingerprint }`. Checkout recomputes through
+  the same pricing module. `pricing` contains original/service/pickup amounts, discounts and
+  savings; tier component subtotals are null rather than inferred. `referral.status` is `none`,
+  `active` or `unavailable`. A `locale` key is accepted and ignored. All answers are `no-store`.
+- `POST /api/booking/referral` — `{ referralCode }` → `ReferralResolution`: either
+  `{ status: 'active', benefits: [{ serviceSlug, serviceDiscountBasisPoints, waivedPickupIds }] }`
+  or `{ status: 'unavailable' }`. Unknown and archived codes are indistinguishable. Disabled
+  offers and a globally disabled application gate return active attribution with empty benefits.
+  Operator names, IDs, revisions and other referral codes are never returned. No list endpoint
+  exists. This endpoint and the typed `resolveReferral()` client method are uncached.
 - `GET /api/booking/catalog?locale=` — everything needed to build a booking flow before a date
   is chosen: per service `slug`, locale-resolved `title`, `durationMin`, `location` (or
   `null`), `metadataFields` (`[]` for none; fields declared `visibility: 'operator'` are left
@@ -43,7 +50,7 @@ table inside the published tarball.
   capacity, or occupancy — a charged price still comes from `/api/booking/quote`.
   `Cache-Control: public, max-age=60`.
 - `POST /api/booking/checkout` —
-  `{ serviceSlug, start, quantity, pickup?, locale, meetingPointId?, metadata? }` →
+  `{ serviceSlug, start, quantity, pickup?, locale, meetingPointId?, metadata?, referralCode?, quoteFingerprint? }` →
   `{ checkoutUrl, bookingId, reference, paymentDeadline }`.
   `meetingPointId` is required when the service declares more than one meeting point and the
   selected pickup option uses one; a single-point service resolves to its first declared
@@ -86,9 +93,67 @@ Every failure is `{ error: { code, message, details? } }`. The `code` is one of 
 exported as `API_ERROR_CODES` (with the `ApiErrorCode` union and `isApiErrorCode` guard), listed
 in the [README](../README.md#injected-routes). `validation_failed` messages name the offending
 field and the rule that rejected it. `details` (type `ApiErrorDetails`) is optional and carries
-`{ field?: string; allowed?: string[] }`: the rejected input's name and, when the input is a
+`{ field?: string; allowed?: string[]; quote?: QuoteResponse }`: the rejected input's name and, when the input is a
 closed set (service slugs, pickup ids, meeting point ids, `select` metadata options), the values
 it accepts.
+
+### Partner offers and reviewed quotes
+
+Partners are managed at `/booking/admin?view=partners` using the same admin authentication,
+origin checks and CSRF tokens as settings. Codes are immutable and reserved after archival.
+Archiving stops new attribution/benefits; disabling an offer leaves attribution active. Saves
+are revision-checked and audit records commit with the partner/offer changes. These saves do
+not dispatch `settings.changed` or trigger catalog rebuilds.
+
+Offer application is **off by default**. Configure the server-only `partnerOffers` runtime
+option (never `ClientConfig`), either as an object or a per-request binding callback:
+
+```ts
+// Inside defineCloudflareReservaRuntime<Env>({...}). The site defines this binding.
+partnerOffers: ({ env }) => ({
+  enabled: env.RESERVA_PARTNER_OFFERS_ENABLED === 'true',
+  minimumChargeMinorByCurrency: { eur: 50 },
+  legacyMetadataField: 'partner', // optional, explicit attribution-only bridge
+}),
+```
+
+Set the currency minimum to the payment provider/account's supported floor; the example is
+50 EUR minor units, not automatic provider discovery. Missing/nonpositive minimums,
+zero/below-minimum offer totals, unknown waiver IDs and assigning benefits to tier-priced
+services are rejected, including disabled offers prepared in admin. Percentages accept up to
+two decimal places. Discounts apply only to service subtotals; selected pickup waivers remove
+the full surcharge without removing address requirements. The gate must remain off until the
+customer funnel renders live quotes and implements changed-price review.
+
+Whenever `referralCode` is supplied, checkout requires `quoteFingerprint`, even for unknown
+codes or an active partner with no enabled benefit. Existing non-referral callers need no
+fingerprint; callers may opt into comparison by supplying one. The fingerprint is not a price
+or authorization token: checkout independently resolves and calculates everything. Never send
+browser percentages, savings or totals as payment authority.
+
+A mismatch returns **409 `quote_changed` before creating a hold/payment**, with
+`error.details.quote` containing the fresh quote to review. If the selection is no longer
+payable (for example a newly invalid payment floor), `quote_changed` has no fresh quote;
+refetch and correct the selection. **503 `partner_storage_unavailable`** is a retryable failure,
+not an unavailable referral; never remove the referral or fall back to a full-price checkout.
+
+Acceptance is the checkout's single coherent settings/offer read and fingerprint comparison.
+An edit after that read applies to later checkouts, not an accepted hold. Attribution
+(`booking.partnerId`, `partnerAttribution`) and customer-safe pricing (`partnerPricing`) are
+server-authored snapshots inserted atomically with the hold; they cannot be patched through
+metadata or later relabeled/repriced. Payment verification, rescheduling and refunds retain
+the stored `booking.priceMinor` and currency. Confirmation/manage responses expose the
+customer-safe snapshot as `booking.pricing` (null for legacy/non-referral rows), never operator
+attribution. Webhook booking field names remain unchanged.
+
+With `legacyMetadataField` explicitly configured, a metadata-only referral may be resolved
+and captured for attribution while the gate is off. The bridge resolves against the D1
+registry, not an old metadata select's options (which may be removed before old browser code
+expires). Only an active resolved code may retain an existing operator-only text/select tag;
+unknown/archived claims are stripped from new rows, and past metadata is untouched. Conflicting
+legacy/typed codes are rejected. Once application is enabled, that old
+checkout path is rejected: migrate to `referralCode` and the reviewed fingerprint. No silent
+metadata-drop retry is part of the new contract.
 
 ### Building a price table
 
@@ -152,10 +217,10 @@ const { checkoutUrl } = await reserva.checkout({ serviceSlug, start, quantity, l
   [configuration](./configuration.md#moving-and-disabling-routes)).
 - `fetch` swaps the transport (tests, a server-side call); `bearer` is the operator secret the
   `operator.*`, `opsHealth` and `opsReconcile` methods send.
-- Methods: `catalog`, `availability`, `quote`, `checkout`, `status`, `manage`, `cancel`,
+- Methods: `catalog`, `availability`, `quote`, `resolveReferral`, `checkout`, `status`, `manage`, `cancel`,
   `reschedule`, `operator.cancel` / `operator.reschedule` / `operator.noShow`, `opsHealth`,
   `opsReconcile`. Each takes an optional `{ signal }`; reads whose answer moves (availability,
-  status, manage) are sent `cache: 'no-store'`.
+  status, manage, quote, referral resolution) are sent `cache: 'no-store'`.
 - Every failure — a `validation_failed` envelope, a bare 502 from a proxy, or a dropped
   connection — arrives as a `ReservaApiError` with `status`, `code` (an `ApiErrorCode`) and
   `details`. A network failure carries `status: 0` and `code: 'internal_error'`. Narrow with

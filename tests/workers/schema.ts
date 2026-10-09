@@ -1,8 +1,8 @@
 import { RESERVA_SCHEMA_TABLES } from '../../src/generated/schema-fingerprint';
 
-// Every table reserva's migrations create, read from the generated fingerprint so a new table is
-// never missed. `bookings` goes last: the other tables hold foreign keys into it.
-const RESERVA_TABLES = [...Object.keys(RESERVA_SCHEMA_TABLES).filter((table) => table !== 'bookings'), 'bookings'];
+// Bookings outlive their dependent tables, and partners outlive bookings and current offers.
+// Reading the remaining tables from the fingerprint keeps future migrations in the reset.
+const RESERVA_TABLES = [...Object.keys(RESERVA_SCHEMA_TABLES).filter((table) => table !== 'bookings' && table !== 'partners'), 'bookings', 'partners'];
 
 // Tears the schema and the migration ledger back to nothing, so a suite can rebuild exactly the
 // state its scenario needs.
