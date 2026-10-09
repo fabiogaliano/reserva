@@ -15,7 +15,7 @@ import {
 import type { ReservaContext } from '../context.js';
 import { nowIso } from '../context.js';
 import { HttpError, json } from '../http.js';
-import { run, warnDeprecatedField, withSensitiveHeaders } from './shared.js';
+import { run, withSensitiveHeaders } from './shared.js';
 
 // Both summaries are built from `toWireBooking` and typed via `Pick<WireBooking>`, so a projection
 // change breaks these at compile time instead of letting pushed and pulled bookings diverge. They
@@ -112,10 +112,7 @@ async function cancelRejectedPayment(context: ReservaContext, paymentRef: string
 export function handleStatus(request: Request, context: ReservaContext): Promise<Response> {
   return run(async () => {
     if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
-    const params = new URL(request.url).searchParams;
-    const legacySessionRef = params.get('sessionId') === null ? params.get('session_id') : null;
-    if (legacySessionRef !== null) warnDeprecatedField(context, 'status', 'session_id');
-    const sessionRef = params.get('sessionId') ?? legacySessionRef;
+    const sessionRef = new URL(request.url).searchParams.get('sessionId');
     if (!sessionRef) throw new HttpError(400, 'validation_failed', 'sessionId is required');
     const booking = await context.repo.getBookingBySessionRef(sessionRef);
     if (!booking) return json<StatusResponse>({ status: 'not_found', booking: null });
@@ -195,15 +192,13 @@ export function handleStatus(request: Request, context: ReservaContext): Promise
 }
 
 // Cancel and reschedule are separate policies with separate cutoffs, so the response states both
-// rather than one `deadline` a consumer has to guess the meaning of. `deadline` stays as an alias
-// of the cancel cutoff for one minor.
-function manageDeadlines(context: ReservaContext, booking: Booking): { cancelDeadline: string; rescheduleDeadline: string; deadline: string } {
+// rather than one deadline a consumer has to guess the meaning of.
+function manageDeadlines(context: ReservaContext, booking: Booking): { cancelDeadline: string; rescheduleDeadline: string } {
   const startsAtMs = parseUtcInstant(booking.startsAt).getTime();
   const cancelDeadline = new Date(startsAtMs - context.config.booking.cancelCutoffHours * 3_600_000).toISOString();
   return {
     cancelDeadline,
     rescheduleDeadline: new Date(startsAtMs - context.config.booking.reschedule.cutoffHours * 3_600_000).toISOString(),
-    deadline: cancelDeadline,
   };
 }
 

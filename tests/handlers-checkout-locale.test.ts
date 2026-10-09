@@ -13,7 +13,7 @@ function checkoutWithLocale(locale: string): Request {
   return new Request('https://example.test/api/booking/checkout', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity: 2, pickupType: 'default', locale }),
+    body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity: 2, pickup: 'default', locale }),
   });
 }
 
@@ -48,7 +48,7 @@ describe('checkout locale negotiation', () => {
     const response = await handleCheckout(new Request('https://example.test/api/booking/checkout', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity: 2, pickupType: 'default' }),
+      body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity: 2, pickup: 'default' }),
     }), context);
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: 'locale is required' } });

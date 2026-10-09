@@ -23,18 +23,6 @@ export function runAdminPost(handler: () => Promise<Response>): Promise<Response
   });
 }
 
-// One vocabulary across endpoints (`serviceSlug`, `pickup`, `start`, `sessionId`); the previous
-// spellings still read, once, loudly. Per isolate rather than per request: the point is to tell an
-// operator a consumer needs updating before the fallbacks go, not to bill them a log line per call.
-const warnedDeprecatedFields = new Set<string>();
-
-export function warnDeprecatedField(context: ReservaContext, endpoint: string, field: string): void {
-  const key = `${endpoint}:${field}`;
-  if (warnedDeprecatedFields.has(key)) return;
-  warnedDeprecatedFields.add(key);
-  context.logger.warn?.('deprecated field', { endpoint, field });
-}
-
 // Expired holds are swept by the reconciliation cron, which is the guarantee; the read paths sweep
 // only to keep their own answer fresh, so once a minute per isolate spares D1 an UPDATE per request
 // without a customer ever seeing a materially stale picture. Driven by the context clock, not

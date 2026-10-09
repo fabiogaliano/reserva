@@ -104,7 +104,7 @@ describe('payment verification parity', () => {
         },
       }),
     });
-    const statusResponse = await handleStatus(new Request('https://example.test/status?session_id=cs_1'), statusContext);
+    const statusResponse = await handleStatus(new Request('https://example.test/status?sessionId=cs_1'), statusContext);
     const statusPayload = await statusResponse.json() as { status: string };
 
     // An unpaid completed session is a delayed payment method, which Reserva refuses by releasing

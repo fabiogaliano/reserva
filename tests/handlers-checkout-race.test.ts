@@ -8,7 +8,7 @@ import { fakeRepository, providers } from './fakes';
 const checkoutRequest = (quantity: number) => new Request('https://example.test/api/booking/checkout', {
   method: 'POST',
   headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity, pickupType: 'default', locale: 'en' }),
+  body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity, pickup: 'default', locale: 'en' }),
 });
 
 describe('checkout race for the last slot (was spec §11 / §6 accepted TOCTOU, now fixed)', () => {

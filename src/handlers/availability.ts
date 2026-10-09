@@ -7,7 +7,7 @@ import { addDaysToDateKey, enumerateDateKeys, localDateKey, localDateTimeToUtcIs
 import type { ReservaContext } from '../context.js';
 import { nowIso } from '../context.js';
 import { HttpError, json, parseDate, requireInteger, requireString } from '../http.js';
-import { run, sweepExpiredHoldsThrottled, warnDeprecatedField } from './shared.js';
+import { run, sweepExpiredHoldsThrottled } from './shared.js';
 
 // Checked BEFORE enumerating (zero-padded keys compare lexicographically) so an adversarial
 // multi-century range fails fast instead of allocating one key per day.
@@ -158,9 +158,7 @@ interface AvailabilityInput {
 
 function availabilityInput(request: Request, context: ReservaContext): AvailabilityInput {
   const url = new URL(request.url);
-  const legacyService = url.searchParams.get('serviceSlug') === null ? url.searchParams.get('service') : null;
-  if (legacyService !== null) warnDeprecatedField(context, 'availability', 'service');
-  const serviceSlug = requireString(url.searchParams.get('serviceSlug') ?? legacyService, 'serviceSlug');
+  const serviceSlug = requireString(url.searchParams.get('serviceSlug'), 'serviceSlug');
   if (!context.config.services[serviceSlug]) {
     const declared = Object.keys(context.config.services);
     throw new HttpError(400, 'validation_failed', `serviceSlug must be one of: ${declared.join(', ')}`, { field: 'serviceSlug', allowed: declared });

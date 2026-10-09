@@ -83,7 +83,7 @@ describe('full-horizon availability', () => {
     const startedAt = Date.now();
     for (let offset = 0; offset <= HORIZON_DAYS; offset += MAX_AVAILABILITY_RANGE_DAYS) {
       const chunkTo = dateKey(Math.min(offset + MAX_AVAILABILITY_RANGE_DAYS - 1, HORIZON_DAYS));
-      const url = `https://example.test/api/booking/availability?service=vintage&quantity=2&from=${dateKey(offset)}&to=${chunkTo}`;
+      const url = `https://example.test/api/booking/availability?serviceSlug=vintage&quantity=2&from=${dateKey(offset)}&to=${chunkTo}`;
       const response = await handleAvailability(new Request(url), await buildContext(new Request(url)));
       expect(response.status).toBe(200);
       days.push(...(await response.json() as AvailabilityResponse).days);

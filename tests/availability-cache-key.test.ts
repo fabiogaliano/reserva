@@ -48,7 +48,7 @@ describe('availability cache key', () => {
     const cache = memoryCache();
     const context = contextWithoutCalendar(cache, () => { computeCount += 1; });
 
-    const base = 'https://example.test/api/booking/availability?service=vintage&quantity=2&from=2026-06-15&to=2026-06-15';
+    const base = 'https://example.test/api/booking/availability?serviceSlug=vintage&quantity=2&from=2026-06-15&to=2026-06-15';
     await expect(handleAvailability(new Request(base), context)).resolves.toMatchObject({ status: 200 });
     await expect(handleAvailability(new Request(`${base}&nonce=whatever-junk`), context)).resolves.toMatchObject({ status: 200 });
 
@@ -62,11 +62,11 @@ describe('availability cache key', () => {
     const context = contextWithoutCalendar(cache, () => { computeCount += 1; });
 
     await expect(handleAvailability(
-      new Request('https://example.test/api/booking/availability?service=vintage&quantity=2&from=2026-06-15&to=2026-06-15'),
+      new Request('https://example.test/api/booking/availability?serviceSlug=vintage&quantity=2&from=2026-06-15&to=2026-06-15'),
       context,
     )).resolves.toMatchObject({ status: 200 });
     await expect(handleAvailability(
-      new Request('https://example.test/api/booking/availability?service=vintage&quantity=3&from=2026-06-15&to=2026-06-15'),
+      new Request('https://example.test/api/booking/availability?serviceSlug=vintage&quantity=3&from=2026-06-15&to=2026-06-15'),
       context,
     )).resolves.toMatchObject({ status: 200 });
 

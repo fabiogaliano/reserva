@@ -107,7 +107,7 @@ describe('confirmation-path per-recipient email outbox', () => {
       }),
     });
 
-    const response = await handleStatus(new Request('https://example.test/status?session_id=cs_email_legacy_upgrade'), context);
+    const response = await handleStatus(new Request('https://example.test/status?sessionId=cs_email_legacy_upgrade'), context);
 
     expect(response.status).toBe(200);
     expect(sendToRecipientCalls).toBe(0);
@@ -156,7 +156,7 @@ describe('confirmation-path per-recipient email outbox', () => {
       hooks: [{ name: 'ops', events: ['booking.confirmed'], handler: async () => { confirmedHookCalls += 1; } }],
       providers: providers({ email: { send: async () => undefined } }),
     });
-    const poll = () => handleStatus(new Request('https://example.test/status?session_id=cs_email_swapped'), context);
+    const poll = () => handleStatus(new Request('https://example.test/status?sessionId=cs_email_swapped'), context);
 
     await expect(poll()).resolves.toMatchObject({ status: 200 });
     // Resolving it 'succeeded' unsent would drop the owner's email silently; abandoning it is

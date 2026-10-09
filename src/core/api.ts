@@ -257,8 +257,6 @@ export interface ManageResponse {
   // When the reschedule cutoff falls (`booking.reschedule.cutoffHours`), as a UTC instant. The two
   // are independent policies and are only equal when the deployment configures them that way.
   rescheduleDeadline: string;
-  // @deprecated Alias of `cancelDeadline`, kept for one minor. Read `cancelDeadline`.
-  deadline: string;
 }
 
 // The customer sends `token`; an operator sends either its own `operatorToken` or a `bookingId`

@@ -75,10 +75,7 @@ describe('POST /api/booking/quote', () => {
 
     for (const entry of cases) {
       const quoted = await (await quote(entry)).json() as { priceMinor: number; currency: string };
-      const checkoutBody = entry.pickup === undefined
-        ? { serviceSlug: entry.serviceSlug, quantity: entry.quantity }
-        : { serviceSlug: entry.serviceSlug, quantity: entry.quantity, pickupType: entry.pickup };
-      const charged = await chargedPriceMinor(checkoutBody);
+      const charged = await chargedPriceMinor(entry);
       expect(quoted.priceMinor, `quote != charge for ${JSON.stringify(entry)}`).toBe(charged);
       expect(quoted.currency).toBe(matrixConfig.business.currency);
     }

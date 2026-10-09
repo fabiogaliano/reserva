@@ -14,7 +14,7 @@ import { nowIso } from '../context.js';
 import { HoldLimitExceededError, ReferenceConflictError } from '../repo.js';
 import { HttpError, json, requestJson, requireInteger, requireString, tokenBytes } from '../http.js';
 import { assertSupportedPartySize, calendarEventsForWindow } from './availability.js';
-import { run, warnDeprecatedField } from './shared.js';
+import { run } from './shared.js';
 
 // A location-less service must not receive pickupType/meetingPointId at all — the 400 names what
 // to remove. A location-ful service validates the value against its declared option ids; the 400
@@ -75,11 +75,7 @@ function resolveCheckoutLocation(
   body: Record<string, unknown>,
   locale: string,
 ): CheckoutLocation {
-  // `pickup` is the one spelling; `pickupType` still reads so a consumer can upgrade on its own
-  // schedule, and says so once per isolate in the log.
-  const legacyPickup = body.pickup === undefined ? body.pickupType : undefined;
-  if (legacyPickup !== undefined) warnDeprecatedField(context, 'checkout', 'pickupType');
-  const pickupType = resolvePickupAxis(service, body.pickup ?? legacyPickup, 'pickup');
+  const pickupType = resolvePickupAxis(service, body.pickup, 'pickup');
   if (pickupType === null) {
     if (body.meetingPointId !== undefined) throw new HttpError(400, 'validation_failed', 'This service has no location module; do not send meetingPointId');
     return { pickupType: null, meetingPointId: null, meetingPointLabel: null };

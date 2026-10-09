@@ -26,7 +26,7 @@ function rescheduleRequest(token: string, newStart: string): Request {
   return new Request('https://example.test/api/booking/reschedule', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ token, newStart }),
+    body: JSON.stringify({ token, start: newStart }),
   });
 }
 
@@ -175,7 +175,7 @@ describe('POST /cancel (customer, spec §11)', () => {
     expect(repo.rows.get(seeded.id)?.status).toBe('cancelled');
     expect(repo.sideEffectOperations.get(`${seeded.id}:calendar_delete`)).toMatchObject({ status: 'failed' });
 
-    const availabilityRequest = () => new Request('https://example.test/api/booking/availability?service=vintage&quantity=1&from=2026-06-15&to=2026-06-15');
+    const availabilityRequest = () => new Request('https://example.test/api/booking/availability?serviceSlug=vintage&quantity=1&from=2026-06-15&to=2026-06-15');
     const blocked = await handleAvailability(availabilityRequest(), context);
     expect(blocked.status).toBe(200);
     const blockedPayload = await blocked.json() as { days: Array<{ slots: Array<{ start: string }> }> };

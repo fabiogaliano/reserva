@@ -170,7 +170,7 @@ describe('confirmation side-effect outbox', () => {
       }),
     });
 
-    await expect(handleStatus(new Request(`https://example.test/status?session_id=${seeded.paymentSessionRef}`), context)).resolves.toMatchObject({ status: 200 });
+    await expect(handleStatus(new Request(`https://example.test/status?sessionId=${seeded.paymentSessionRef}`), context)).resolves.toMatchObject({ status: 200 });
     expect(repo.rows.get(seeded.id)).toMatchObject({ paymentRef: null, customerEmail: null });
 
     await expect(handlePaymentWebhook(new Request('https://example.test/webhook', { method: 'POST' }), context)).resolves.toMatchObject({ status: 200 });

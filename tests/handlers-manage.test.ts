@@ -50,11 +50,10 @@ describe('GET /manage (spec §11)', () => {
     expect(payload.canCancel).toBe(true);
     expect(payload.canReschedule).toBe(true);
     expect(payload.canNoShow).toBe(false);
-    // Each deadline is startsAt minus its own configured cutoff, independent of "now". The two are
-    // separate policies; `deadline` survives only as an alias of `cancelDeadline`.
+    // Each deadline is startsAt minus its own configured cutoff, independent of "now"; the two are
+    // separate policies.
     expect(payload.cancelDeadline).toBe('2026-06-14T09:00:00.000Z');
     expect(payload.rescheduleDeadline).toBe('2026-06-14T09:00:00.000Z');
-    expect(payload.deadline).toBe(payload.cancelDeadline);
     expect(payload.booking).toMatchObject({
       reference: seeded.reference,
       serviceSlug: seeded.serviceSlug,
@@ -178,7 +177,6 @@ describe('GET /manage (spec §11)', () => {
     const payload = await response.json() as Record<string, unknown>;
     expect(payload.cancelDeadline).toBe('2026-06-14T09:00:00.000Z');
     expect(payload.rescheduleDeadline).toBe('2026-06-15T03:00:00.000Z');
-    expect(payload.deadline).toBe(payload.cancelDeadline);
   });
 
   it('customer token inside the cutoff cannot cancel or reschedule', async () => {

@@ -77,7 +77,7 @@ describe('outbox permanent-failure classification and attempt cap', () => {
     expect(sideEffectOperation(repo, seeded.id, { family: 'email_confirmation' })).toMatchObject({ status: 'abandoned', attemptCount: 1 });
 
     // Nor must a /status poll.
-    const status = await handleStatus(new Request(`https://example.test/status?session_id=${seeded.paymentSessionRef}`), context);
+    const status = await handleStatus(new Request(`https://example.test/status?sessionId=${seeded.paymentSessionRef}`), context);
     expect(status.status).toBe(200);
     expect(emailCalls).toBe(1);
     expect(hookCalls).toBe(1);
@@ -184,14 +184,14 @@ describe('outbox permanent-failure classification and attempt cap', () => {
       hooks: [{ name: 'ops', durable: true, handler: async () => { pushCalls += 1; throw new ProviderFailure({ status: 403, message: 'forbidden' }); } }],
     });
 
-    const first = await handleStatus(new Request(`https://example.test/status?session_id=${seeded.paymentSessionRef}`), context);
+    const first = await handleStatus(new Request(`https://example.test/status?sessionId=${seeded.paymentSessionRef}`), context);
     expect(first.status).toBe(200);
     expect(pushCalls).toBe(1);
     expect(sideEffectOperation(repo, seeded.id, identity)).toMatchObject({ status: 'abandoned', attemptCount: 1 });
     expect(errors).toHaveLength(1);
     expect(errors[0]?.[1]).toMatchObject({ operation: 'hook:ops:booking.confirmed', provider: 'hook', status: 403, reason: 'permanent_failure' });
 
-    const second = await handleStatus(new Request(`https://example.test/status?session_id=${seeded.paymentSessionRef}`), context);
+    const second = await handleStatus(new Request(`https://example.test/status?sessionId=${seeded.paymentSessionRef}`), context);
     expect(second.status).toBe(200);
     // needsFulfillment now sees the row exists (abandoned) and stops re-entering fulfillment
     // (which would otherwise re-run confirmBookingFromPayment on every future poll); the mutation

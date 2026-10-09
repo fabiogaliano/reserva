@@ -19,14 +19,14 @@ function memoryCache(): ReservaCache {
 }
 
 function availabilityRequest(service = 'vintage', quantity = 2): Request {
-  return new Request(`https://example.test/api/booking/availability?service=${service}&quantity=${quantity}&from=2026-06-15&to=2026-06-15`);
+  return new Request(`https://example.test/api/booking/availability?serviceSlug=${service}&quantity=${quantity}&from=2026-06-15&to=2026-06-15`);
 }
 
 function checkoutRequest(): Request {
   return new Request('https://example.test/api/booking/checkout', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity: 2, pickupType: 'default', locale: 'en' }),
+    body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity: 2, pickup: 'default', locale: 'en' }),
   });
 }
 
@@ -256,7 +256,7 @@ describe('calendar availability hardening', () => {
       repo: fakeRepository(),
       providers: providers(),
     });
-    const response = await handleAvailability(new Request('https://example.test/api/booking/availability?service=vintage&quantity=2&from=2026-02-30&to=2026-03-01'), context);
+    const response = await handleAvailability(new Request('https://example.test/api/booking/availability?serviceSlug=vintage&quantity=2&from=2026-02-30&to=2026-03-01'), context);
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed' } });
   });

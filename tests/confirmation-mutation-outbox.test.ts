@@ -19,7 +19,7 @@ function operatorNoShowRequest(operatorToken: string): Request {
 
 function rescheduleRequest(token: string, newStart: string): Request {
   return new Request('https://example.test/api/booking/reschedule', {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token, newStart }),
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token, start: newStart }),
   });
 }
 

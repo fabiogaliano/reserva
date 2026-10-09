@@ -50,7 +50,7 @@ describe('the payment port is implementable without any vendor knowledge', () =>
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity: 2, pickupType: 'default', locale: 'en',
+        serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity: 2, pickup: 'default', locale: 'en',
       }),
     }), context);
     expect(checkout.status).toBe(201);

@@ -11,10 +11,7 @@ export async function GET({ request, locals }: APIContext): Promise<Response> {
   const context = await createRouteContext({ request, locals });
   const statusUrl = new URL(context.routeConfig.paths.status, request.url);
   const requestedLocale = new URL(request.url).searchParams.get('locale');
-  // `session_id` is the pre-0.5 spelling a provider success_url may still carry; the status
-  // handler logs the deprecation once, so this route only forwards whichever it was given.
-  const query = new URL(request.url).searchParams;
-  const sessionId = query.get('sessionId') ?? query.get('session_id');
+  const sessionId = new URL(request.url).searchParams.get('sessionId');
   if (sessionId) statusUrl.searchParams.set('sessionId', sessionId);
   const statusRequest = new Request(statusUrl, { headers: request.headers });
   const response = await handleStatus(statusRequest, context);

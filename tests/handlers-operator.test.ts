@@ -18,7 +18,7 @@ function rescheduleAsCustomer(token: string, newStart: string): Request {
   return new Request('https://example.test/api/booking/reschedule', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ token, newStart }),
+    body: JSON.stringify({ token, start: newStart }),
   });
 }
 
@@ -260,7 +260,7 @@ describe('POST /operator/cancel with refund (spec §11)', () => {
     const manage = await handleManage(new Request(`https://example.test/api/booking/manage?token=${seeded.operatorToken}`), context);
     expect(manage.status).toBe(403);
     const reschedule = await handleOperatorReschedule(operatorRequest('reschedule', {
-      operatorToken: seeded.operatorToken, newStart: validNewStart,
+      operatorToken: seeded.operatorToken, start: validNewStart,
     }), context);
     expect(reschedule.status).toBe(403);
     const noShow = await handleOperatorNoShow(operatorRequest('no-show', { operatorToken: seeded.operatorToken }), context);
@@ -723,7 +723,7 @@ describe('POST /operator/reschedule cutoff asymmetry (spec §11)', () => {
     await expect(customerAttempt.json()).resolves.toMatchObject({ error: { code: 'past_cutoff' } });
     expect(repo.rows.get(seeded.id)?.startsAt).toBe(seeded.startsAt);
 
-    const response = await handleOperatorReschedule(operatorRequest('reschedule', { operatorToken: seeded.operatorToken, newStart: validNewStart }), context);
+    const response = await handleOperatorReschedule(operatorRequest('reschedule', { operatorToken: seeded.operatorToken, start: validNewStart }), context);
     expect(response.status).toBe(200);
     expect(response.headers.get('cache-control')).toBe('no-store');
     const row = repo.rows.get(seeded.id);

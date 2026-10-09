@@ -86,7 +86,7 @@ try {
   await requestOk('/');
   const from = new Date().toISOString().slice(0, 10);
   const to = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
-  await requestOk(`/api/booking/availability?service=oldTown&quantity=2&from=${from}&to=${to}`);
+  await requestOk(`/api/booking/availability?serviceSlug=oldTown&quantity=2&from=${from}&to=${to}`);
   await requestOk('/booking/assets/reserva.js');
   await expectCorsAllowed(`/api/booking/availability?serviceSlug=oldTown&quantity=2&from=${from}&to=${to}`);
 

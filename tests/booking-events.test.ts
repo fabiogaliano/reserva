@@ -65,12 +65,12 @@ function stripeWebhookRequest(): Request {
 }
 
 function statusRequest(sessionRef: string): Request {
-  return new Request(`https://example.test/api/booking/status?session_id=${sessionRef}`);
+  return new Request(`https://example.test/api/booking/status?sessionId=${sessionRef}`);
 }
 
 function rescheduleRequest(token: string, newStart: string): Request {
   return new Request('https://example.test/api/booking/reschedule', {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token, newStart }),
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token, start: newStart }),
   });
 }
 

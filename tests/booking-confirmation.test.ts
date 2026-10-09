@@ -30,7 +30,7 @@ describe('booking confirmation page', () => {
           metadataRows: [],
         },
       },
-      'https://example.test/booking-confirmation?session_id=cs_confirmed_both',
+      'https://example.test/booking-confirmation?sessionId=cs_confirmed_both',
       null,
     );
 
@@ -46,7 +46,7 @@ describe('booking confirmation page', () => {
     const html = confirmationPage(
       { config, routeConfig: resolveRouteConfig() },
       { status: 'confirmed', booking: null },
-      'https://example.test/booking-confirmation?session_id=cs_confirmed',
+      'https://example.test/booking-confirmation?sessionId=cs_confirmed',
       null,
     );
 
@@ -82,7 +82,7 @@ describe('booking confirmation page', () => {
           ],
         },
       },
-      'https://example.test/booking-confirmation?session_id=cs_confirmed_metadata',
+      'https://example.test/booking-confirmation?sessionId=cs_confirmed_metadata',
       null,
     );
 

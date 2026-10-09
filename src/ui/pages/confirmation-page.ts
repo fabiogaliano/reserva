@@ -138,7 +138,7 @@ export function confirmationPage(
   // What the enhancer needs to poll the status API in place of the refresh. The session id is
   // already in this page's own URL, so carrying it here exposes nothing new.
   const query = new URL(requestUrl).searchParams;
-  const sessionId = query.get('sessionId') ?? query.get('session_id') ?? '';
+  const sessionId = query.get('sessionId') ?? '';
   const pollAttrs = polling && sessionId
     ? ` data-reserva-status-poll data-endpoint="${escapeHtml(context.routeConfig.paths.status)}" data-session-id="${escapeHtml(sessionId)}"`
       + ` data-attempt="${attempt}" data-max="${MAX_CONFIRMATION_ATTEMPTS}"`

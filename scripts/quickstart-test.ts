@@ -223,7 +223,7 @@ try {
   const from = new Date().toISOString().slice(0, 10);
   const to = new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10);
   const availability = await getJson<{ days: Array<{ slots: Array<{ start: string }> }> }>(
-    `/api/booking/availability?service=alfama&quantity=2&from=${from}&to=${to}`,
+    `/api/booking/availability?serviceSlug=alfama&quantity=2&from=${from}&to=${to}`,
   );
   const start = availability.days.flatMap((day) => day.slots).at(0)?.start;
   if (!start) fail('availability returned no bookable slot in the next 14 days');
@@ -234,19 +234,19 @@ try {
   if (quote.priceMinor !== 4500 || quote.currency !== 'eur') fail(`unexpected quote ${JSON.stringify(quote)}`);
 
   const checkout = await postJson<{ checkoutUrl: string; bookingId: string; reference: string }>('/api/booking/checkout', {
-    serviceSlug: 'alfama', start, quantity: 2, pickupType: 'meeting_point', locale: 'en',
+    serviceSlug: 'alfama', start, quantity: 2, pickup: 'meeting_point', locale: 'en',
   });
 
   // The session ref the simulated provider minted for this booking; a real deployment gets it back
   // from the payment provider's redirect instead.
   const sessionId = `sim_${checkout.bookingId}_${quote.priceMinor}`;
   const status = await getJson<{ status: string; booking: { reference: string } | null }>(
-    `/api/booking/status?session_id=${encodeURIComponent(sessionId)}`,
+    `/api/booking/status?sessionId=${encodeURIComponent(sessionId)}`,
   );
   if (status.status !== 'confirmed') fail(`booking did not confirm: ${JSON.stringify(status)}`);
   if (status.booking?.reference !== checkout.reference) fail(`status returned a different booking: ${JSON.stringify(status)}`);
 
-  const confirmation = await fetch(`${baseUrl}/booking-confirmation?session_id=${encodeURIComponent(sessionId)}`);
+  const confirmation = await fetch(`${baseUrl}/booking-confirmation?sessionId=${encodeURIComponent(sessionId)}`);
   const html = await confirmation.text();
   if (confirmation.status !== 200) fail(`the confirmation page returned ${confirmation.status}`);
   if (!html.includes(checkout.reference)) fail('the confirmation page does not show the booking reference');

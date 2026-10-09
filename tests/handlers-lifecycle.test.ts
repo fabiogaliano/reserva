@@ -39,7 +39,7 @@ describe('Reserva handlers', () => {
     });
     const checkout = await handleCheckout(new Request('https://example.test/api/booking/checkout', {
       method: 'POST',
-      body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity: 2, pickupType: 'default', locale: 'en' }),
+      body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity: 2, pickup: 'default', locale: 'en' }),
       headers: { 'content-type': 'application/json' },
     }), context);
     expect(checkout.status).toBe(201);
@@ -126,7 +126,7 @@ describe('Reserva handlers', () => {
     const checkoutRequest = () => new Request('https://example.test/api/booking/checkout', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.1' },
-      body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity: 2, pickupType: 'default', locale: 'en' }),
+      body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity: 2, pickup: 'default', locale: 'en' }),
     });
 
     await expect(handleCheckout(checkoutRequest(), context)).resolves.toMatchObject({ status: 201 });
@@ -162,7 +162,7 @@ describe('Reserva handlers', () => {
     const response = await handleCheckout(new Request('https://example.test/api/booking/checkout', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ serviceSlug: 'candidate', start: '2026-06-15T12:00:00.000Z', quantity: 2, pickupType: 'default', locale: 'en' }),
+      body: JSON.stringify({ serviceSlug: 'candidate', start: '2026-06-15T12:00:00.000Z', quantity: 2, pickup: 'default', locale: 'en' }),
     }), context);
     expect(response.status).toBe(409);
   });
@@ -276,7 +276,7 @@ describe('Reserva handlers', () => {
   it('rejects a multi-century availability range before enumerating its days', async () => {
     const context = createReservaContext({ config, db: {} as D1Database, repo: fakeRepository(), providers: providers() });
 
-    const response = await handleAvailability(new Request('https://example.test/api/booking/availability?service=vintage&quantity=2&from=1000-01-01&to=9999-12-31'), context);
+    const response = await handleAvailability(new Request('https://example.test/api/booking/availability?serviceSlug=vintage&quantity=2&from=1000-01-01&to=9999-12-31'), context);
     // Enumerating this span first would run past year 9999 and throw, turning the 400 into a 500.
     expect(response.status).toBe(400);
     // The bound is the deployment's own maxHorizonDays (180 in
@@ -333,7 +333,7 @@ describe('Reserva handlers', () => {
     const response = handleCheckout(new Request('https://example.test/api/booking/checkout', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity: 2, pickupType: 'default', locale: 'en' }),
+      body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity: 2, pickup: 'default', locale: 'en' }),
     }), context);
     return { response, attempts: () => insertAttempts };
   }
@@ -383,7 +383,7 @@ describe('checkout meetingPointId', () => {
     return new Request('https://example.test/api/booking/checkout', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity: 2, pickupType: 'default', locale: 'en', ...body }),
+      body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity: 2, pickup: 'default', locale: 'en', ...body }),
     });
   }
 
@@ -407,7 +407,7 @@ describe('checkout meetingPointId', () => {
     });
 
     const { context: customContext } = checkoutContext(multiPointConfig);
-    const customResponse = await handleCheckout(checkoutRequest({ pickupType: 'custom', meetingPointId: 'bogus' }), customContext);
+    const customResponse = await handleCheckout(checkoutRequest({ pickup: 'custom', meetingPointId: 'bogus' }), customContext);
     expect(customResponse.status).toBe(400);
     await expect(customResponse.json()).resolves.toMatchObject({
       error: { code: 'validation_failed', message: 'meetingPointId must be one of: square, station' },
@@ -477,13 +477,13 @@ describe('checkout pickupType', () => {
     return new Request('https://example.test/api/booking/checkout', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity: 2, pickupType: 'default', locale: 'en', ...body }),
+      body: JSON.stringify({ serviceSlug: 'vintage', start: '2026-06-15T08:00:00.000Z', quantity: 2, pickup: 'default', locale: 'en', ...body }),
     });
   }
 
   it('accepts a declared non-enum pickupType end-to-end, pricing it from the service\'s own rows', async () => {
     const { repo, context } = checkoutContext();
-    const response = await handleCheckout(checkoutRequest({ pickupType: 'meet_elsewhere', meetingPointId: 'station' }), context);
+    const response = await handleCheckout(checkoutRequest({ pickup: 'meet_elsewhere', meetingPointId: 'station' }), context);
     expect(response.status).toBe(201);
     const { bookingId } = await response.json() as { bookingId: string };
     expect(repo.rows.get(bookingId)).toMatchObject({ pickupType: 'meet_elsewhere', priceMinor: 19000, meetingPointId: 'station', meetingPointLabel: 'The Station' });
@@ -491,7 +491,7 @@ describe('checkout pickupType', () => {
 
   it('400s an undeclared pickupType, naming the service\'s valid ids', async () => {
     const { context } = checkoutContext();
-    const response = await handleCheckout(checkoutRequest({ pickupType: 'bogus' }), context);
+    const response = await handleCheckout(checkoutRequest({ pickup: 'bogus' }), context);
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({
       error: { code: 'validation_failed', message: expect.stringContaining('default, custom_pickup, custom_dropoff, meet_elsewhere') },
@@ -504,7 +504,7 @@ describe('checkout pickupType', () => {
   // `pickup`, the one spelling, even when the request used the accepted `pickupType` fallback.
   it('names the declared ids for an invalid pickup, and reports missing separately', async () => {
     const { context } = checkoutContext(config);
-    const invalidResponse = await handleCheckout(checkoutRequest({ pickupType: 'bogus' }), context);
+    const invalidResponse = await handleCheckout(checkoutRequest({ pickup: 'bogus' }), context);
     expect(invalidResponse.status).toBe(400);
     await expect(invalidResponse.json()).resolves.toMatchObject({
       error: {
@@ -513,7 +513,7 @@ describe('checkout pickupType', () => {
         details: { field: 'pickup', allowed: ['default', 'custom'] },
       },
     });
-    const missingResponse = await handleCheckout(checkoutRequest({ pickupType: undefined }), context);
+    const missingResponse = await handleCheckout(checkoutRequest({ pickup: undefined }), context);
     expect(missingResponse.status).toBe(400);
     await expect(missingResponse.json()).resolves.toMatchObject({
       error: { code: 'validation_failed', message: 'pickup is required' },
@@ -522,14 +522,14 @@ describe('checkout pickupType', () => {
 
   it('requires meetingPointId for an option with usesMeetingPoint: true even when it also requires an address (Maze\'s custom drop-off)', async () => {
     const { context } = checkoutContext();
-    const response = await handleCheckout(checkoutRequest({ pickupType: 'custom_dropoff' }), context);
+    const response = await handleCheckout(checkoutRequest({ pickup: 'custom_dropoff' }), context);
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed', message: expect.stringContaining('meetingPointId is required') } });
   });
 
   it('does not require meetingPointId for an option with usesMeetingPoint: false (Maze\'s custom pickup), and stores the resolved first point', async () => {
     const { repo, context } = checkoutContext();
-    const response = await handleCheckout(checkoutRequest({ pickupType: 'custom_pickup' }), context);
+    const response = await handleCheckout(checkoutRequest({ pickup: 'custom_pickup' }), context);
     expect(response.status).toBe(201);
     const { bookingId } = await response.json() as { bookingId: string };
     expect(repo.rows.get(bookingId)).toMatchObject({ pickupType: 'custom_pickup', meetingPointId: 'square', meetingPointLabel: 'The Square' });

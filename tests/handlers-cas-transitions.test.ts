@@ -32,7 +32,7 @@ function rescheduleRequest(token: string, newStart: string): Request {
   return new Request('https://example.test/api/booking/reschedule', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ token, newStart }),
+    body: JSON.stringify({ token, start: newStart }),
   });
 }
 
@@ -158,7 +158,7 @@ describe('stale compare-and-set transitions', () => {
     };
     const context = createReservaContext({ config, db: {} as D1Database, repo, clock, providers: providers() });
 
-    const response = await handleOperatorReschedule(operatorRequest('reschedule', { operatorToken: seeded.operatorToken, newStart: validNewStart }), context);
+    const response = await handleOperatorReschedule(operatorRequest('reschedule', { operatorToken: seeded.operatorToken, start: validNewStart }), context);
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toMatchObject({ error: { code: 'invalid_transition' } });
     const row = repo.rows.get(seeded.id);

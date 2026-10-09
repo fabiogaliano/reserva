@@ -501,7 +501,7 @@ describe('Checkout idempotency', () => {
   const checkoutRequest = (start = '2026-06-15T08:00:00.000Z') => new Request('https://example.test/api/booking/checkout', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ serviceSlug: 'vintage', start, quantity: 2, pickupType: 'default', locale: 'en' }),
+    body: JSON.stringify({ serviceSlug: 'vintage', start, quantity: 2, pickup: 'default', locale: 'en' }),
   });
 
   it('derives a checkout idempotency key from the booking id: stable for the same booking, distinct across bookings', async () => {
