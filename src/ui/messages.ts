@@ -7,7 +7,10 @@ import type { ResolvedClientConfig } from '../core/config.js';
 import portuguesePortugalCatalog from './locales/pt-PT.json' with { type: 'json' };
 
 export const defaultMessages = {
-  'admin.historyPartnerUpdated': 'Updated partner {id}',
+  'admin.historyPartnerCreated': 'Created partner {name} ({code})',
+  'admin.historyPartnerUpdated': 'Updated partner {name} ({code})',
+  'admin.historyPartnerChanged': 'Changed partner {id}',
+  'admin.errorPartnerOffers': 'Nothing was saved. This change would put a partner offer below the payment minimum, or remove a pickup it waives. Edit the offer on the Partners page first.',
   'admin.partners': 'Partners',
   'partner.create': 'Create partner',
   'partner.edit': 'Edit partner',
@@ -17,6 +20,8 @@ export const defaultMessages = {
   'partner.state': 'Partner status',
   'partner.active': 'Active',
   'partner.archived': 'Archived',
+  'partner.offer': 'Offer',
+  'partner.outOfScope': 'Not applied to: {services}',
   'partner.enabled': 'Offer enabled',
   'partner.disabled': 'Offer disabled',
   'partner.percentage': 'Service discount (%)',

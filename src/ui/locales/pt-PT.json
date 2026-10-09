@@ -1,5 +1,8 @@
 {
-  "admin.historyPartnerUpdated": "Parceiro {id} atualizado",
+  "admin.historyPartnerCreated": "Parceiro {name} ({code}) criado",
+  "admin.historyPartnerUpdated": "Parceiro {name} ({code}) atualizado",
+  "admin.historyPartnerChanged": "Parceiro {id} alterado",
+  "admin.errorPartnerOffers": "Nada foi guardado. Esta alteração deixaria uma oferta de parceiro abaixo do pagamento mínimo, ou removeria uma recolha que ela isenta. Edite primeiro a oferta na página Parceiros.",
   "admin.partners": "Parceiros",
   "partner.create": "Criar parceiro",
   "partner.edit": "Editar parceiro",
@@ -9,6 +12,8 @@
   "partner.state": "Estado do parceiro",
   "partner.active": "Ativo",
   "partner.archived": "Arquivado",
+  "partner.offer": "Oferta",
+  "partner.outOfScope": "Não aplicada a: {services}",
   "partner.enabled": "Oferta ativada",
   "partner.disabled": "Oferta desativada",
   "partner.percentage": "Desconto no serviço (%)",

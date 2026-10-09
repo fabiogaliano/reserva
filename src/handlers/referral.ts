@@ -7,7 +7,9 @@ import { run } from './shared.js';
 /** Translate typed application failures at the HTTP boundary without leaking registry contents. */
 export function referralHttpError(error: ReferralPricingError): HttpError {
   if (error.reason === 'storage') return new HttpError(503, 'partner_storage_unavailable', 'Referral resolution is temporarily unavailable. Retry before checkout.');
-  return new HttpError(400, 'validation_failed', error.message, { field: error.reason === 'invalid_code' ? 'referralCode' : 'pricing' });
+  // Offers outside a service's scope are priced normally, so a remaining pricing failure is the
+  // selection itself: a party size and pickup the service has no price for.
+  return new HttpError(400, 'validation_failed', error.message, { field: error.reason === 'invalid_code' ? 'referralCode' : 'quantity' });
 }
 
 /** Resolve only one supplied referral; errors cannot be cached or mistaken for expiration. */

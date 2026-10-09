@@ -1,5 +1,5 @@
 import type { ReservaContext } from '../context.js';
-import { resolveService } from '../core/config.js';
+import { resolveService, type ResolvedClientConfig } from '../core/config.js';
 import { checkPartnerOfferForServices, parseOfferPercentage, type PartnerOffer } from '../core/partner-offers.js';
 import { HttpError, requireString } from '../http.js';
 import type { PartnerChanges, PartnerStoreError } from '../partners.js';
@@ -17,6 +17,37 @@ function revisionFrom(form: FormData): number {
   return value;
 }
 
+function offerServices(config: ResolvedClientConfig): Parameters<typeof checkPartnerOfferForServices>[1] {
+  return Object.keys(config.services).map((slug) => {
+    const service = resolveService(config, slug);
+    return { slug, service, pickupIds: (service.location?.pickupOptions ?? []).map((option) => option.id) };
+  });
+}
+
+function minimumChargeMinor(context: ReservaContext, config: ResolvedClientConfig): number | null {
+  return context.partnerOffers?.minimumChargeMinorByCurrency[config.business.currency] ?? null;
+}
+
+/**
+ * A settings change must not quietly take a saved offer out of a service's scope: checkout
+ * would then charge those referrals the normal price. Offers that were already out of scope
+ * (for example after a deployment raised the minimum) do not block unrelated settings edits.
+ */
+export async function assertPartnerOffersStillSellable(context: ReservaContext, candidate: ResolvedClientConfig): Promise<void> {
+  // Without a payment minimum no offer with benefits is sellable, so there is nothing to protect.
+  if (!context.partners || !context.partnerOffers) return;
+  const listed = await context.partners.list();
+  if (!listed.ok) throw new HttpError(503, 'partner_storage_unavailable', 'Partner storage is unavailable.');
+  const current = offerServices(context.config);
+  const next = offerServices(candidate);
+  for (const partner of listed.value) {
+    if (partner.state !== 'active' || !partner.offer) continue;
+    if (!checkPartnerOfferForServices(partner.offer, current, minimumChargeMinor(context, context.config)).ok) continue;
+    const checked = checkPartnerOfferForServices(partner.offer, next, minimumChargeMinor(context, candidate));
+    if (!checked.ok) throw new HttpError(400, 'validation_failed', `Partner ${partner.code}: ${checked.error.message}`, { field: 'partner_offers' });
+  }
+}
+
 function changesFrom(form: FormData, context: ReservaContext): PartnerChanges {
   const name = requireString(form.get('name'), 'name').trim();
   if (name.length > 200) throw new HttpError(400, 'validation_failed', 'Partner name must be at most 200 characters.', { field: 'name' });
@@ -30,11 +61,7 @@ function changesFrom(form: FormData, context: ReservaContext): PartnerChanges {
   const offer: PartnerOffer | null = percent.value !== 0 || waivedPickupIds.length !== 0 || enabled
     ? { enabled, basisPoints: percent.value, waivedPickupIds } : null;
   if (offer) {
-    const services = Object.keys(context.config.services).map((slug) => {
-      const service = resolveService(context.config, slug);
-      return { slug, service, pickupIds: (service.location?.pickupOptions ?? []).map((option) => option.id) };
-    });
-    const checked = checkPartnerOfferForServices(offer, services, context.partnerOffers?.minimumChargeMinorByCurrency[context.config.business.currency] ?? null);
+    const checked = checkPartnerOfferForServices(offer, offerServices(context.config), minimumChargeMinor(context, context.config));
     if (!checked.ok) {
       const field = checked.error.reason === 'unsupported_pricing' ? 'offer.pricing'
         : checked.error.reason === 'payment_floor' ? 'offer.payment_floor' : 'offer.pickup';

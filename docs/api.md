@@ -120,10 +120,18 @@ partnerOffers: ({ env }) => ({
 Set the currency minimum to the payment provider/account's supported floor; the example is
 50 EUR minor units, not automatic provider discovery. Missing/nonpositive minimums,
 zero/below-minimum offer totals, unknown waiver IDs and assigning benefits to tier-priced
-services are rejected, including disabled offers prepared in admin. Percentages accept up to
+services are rejected, including disabled offers prepared in admin. A settings save that would
+push a saved offer below the minimum (for example a lower tour price) is refused until the offer
+is edited. If an offer still cannot be sold on a service, for example after a deployment raised
+the minimum, that service is outside the offer's scope: it is missing from the resolved
+benefits, quoted and charged at its normal price, and listed as "Not applied to" on the
+partners page. Percentages accept up to
 two decimal places. Discounts apply only to service subtotals; selected pickup waivers remove
 the full surcharge without removing address requirements. The gate must remain off until the
 customer funnel renders live quotes and implements changed-price review.
+
+Referral codes are matched exactly and are lowercase; lowercase visitor input before sending
+it, since a malformed code is `400 validation_failed` on `referralCode`.
 
 Whenever `referralCode` is supplied, checkout requires `quoteFingerprint`, even for unknown
 codes or an active partner with no enabled benefit. Existing non-referral callers need no
@@ -132,9 +140,8 @@ or authorization token: checkout independently resolves and calculates everythin
 browser percentages, savings or totals as payment authority.
 
 A mismatch returns **409 `quote_changed` before creating a hold/payment**, with
-`error.details.quote` containing the fresh quote to review. If the selection is no longer
-payable (for example a newly invalid payment floor), `quote_changed` has no fresh quote;
-refetch and correct the selection. **503 `partner_storage_unavailable`** is a retryable failure,
+`error.details.quote` containing the fresh quote to review. A party size or pickup the service
+cannot price is `400 validation_failed`, not a changed quote. **503 `partner_storage_unavailable`** is a retryable failure,
 not an unavailable referral; never remove the referral or fall back to a full-price checkout.
 
 Acceptance is the checkout's single coherent settings/offer read and fingerprint comparison.
@@ -150,10 +157,12 @@ With `legacyMetadataField` explicitly configured, a metadata-only referral may b
 and captured for attribution while the gate is off. The bridge resolves against the D1
 registry, not an old metadata select's options (which may be removed before old browser code
 expires). Only an active resolved code may retain an existing operator-only text/select tag;
-unknown/archived claims are stripped from new rows, and past metadata is untouched. Conflicting
-legacy/typed codes are rejected. Once application is enabled, that old
-checkout path is rejected: migrate to `referralCode` and the reviewed fingerprint. No silent
-metadata-drop retry is part of the new contract.
+unknown, archived and malformed claims are stripped from new rows, and past metadata is
+untouched. If the registry cannot be read, a metadata-only checkout is booked without
+attribution rather than refused. Conflicting legacy/typed codes are rejected. Once application
+is enabled, that old checkout path is rejected with `validation_failed` on
+`metadata.<legacyMetadataField>`, the field older clients retry without: migrate to
+`referralCode` and the reviewed fingerprint. A typed `referralCode` never falls back this way.
 
 ### Building a price table
 

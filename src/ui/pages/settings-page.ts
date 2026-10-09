@@ -342,9 +342,20 @@ export function settingsPage(
       return null;
     }
   };
+  const partnerHistoryValue = (raw: string | null): { event: string; name: string; code: string } | null => {
+    try {
+      const parsed = JSON.parse(raw ?? '') as { event?: unknown; name?: unknown; code?: unknown };
+      return typeof parsed.event === 'string' && typeof parsed.name === 'string' && typeof parsed.code === 'string'
+        ? { event: parsed.event, name: parsed.name, code: parsed.code } : null;
+    } catch {
+      return null;
+    }
+  };
   const historyChange = (entry: AdminChangeHistoryEntry): string => {
     if (entry.domain === 'partner') {
-      return escapeHtml(formatMessage(messages['admin.historyPartnerUpdated'], { id: entry.itemKey }));
+      const value = partnerHistoryValue(entry.value);
+      if (!value) return escapeHtml(formatMessage(messages['admin.historyPartnerChanged'], { id: entry.itemKey }));
+      return escapeHtml(formatMessage(messages[value.event === 'created' ? 'admin.historyPartnerCreated' : 'admin.historyPartnerUpdated'], { name: value.name, code: value.code }));
     }
     if (entry.domain === 'setting') {
       const definition = definitions.find((candidate) => candidate.key === entry.itemKey);
@@ -399,10 +410,12 @@ export function settingsPage(
     + `</nav>`;
 
   const savedAlert = saved ? `<p class="bk-alert bk-alert--ok" role="status">${escapeHtml(messages['admin.saved'])}</p>` : '';
-  const errorAlert = adminErrorAlert(messages, error, (field) => {
-    const definition = definitions.find((candidate) => candidate.key === field);
-    return definition ? labelFor(definition) : undefined;
-  });
+  const errorAlert = error?.field === 'partner_offers'
+    ? `<p class="bk-alert bk-alert--danger" role="alert">${escapeHtml(messages['admin.errorPartnerOffers'])}</p>`
+    : adminErrorAlert(messages, error, (field) => {
+      const definition = definitions.find((candidate) => candidate.key === field);
+      return definition ? labelFor(definition) : undefined;
+    });
   return pageShell({
     lang: locale,
     page: 'settings',

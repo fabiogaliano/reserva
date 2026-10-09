@@ -164,4 +164,39 @@ describe('authenticated partner admin through real D1', () => {
     expect(html).toContain('&lt;script&gt;malicious()&lt;/script&gt;');
     expect(html).not.toContain('<script>malicious()');
   });
+  it('refuses a settings change that would take a saved offer below the payment minimum', async () => {
+    const { ctx } = context();
+    const input = creation();
+    destination(await post(ctx, input));
+    const cheapFile = { ...ctx.config, services: { vintage: { ...formula, pricing: { ...formula.pricing, baseMinor: 50 } } } };
+    const reset = (minimum: number) => post({ ...ctx, baseConfig: cheapFile, partnerOffers: { enabled: false, minimumChargeMinorByCurrency: { eur: minimum } } }, { action: 'settings-reset:services.vintage.pricing.baseMinor' });
+    const refused = destination(await reset(50));
+    expect(refused.searchParams.get('error')).toBe('validation_failed');
+    expect(refused.searchParams.get('field')).toBe('partner_offers');
+    const page = await handleAdminGet(new Request(`https://example.test/booking/admin?view=settings&section=pricing&error=validation_failed&field=partner_offers`), ctx);
+    expect(await page.text()).toContain('Edit the offer on the Partners page first');
+    // An offer a deployment's higher minimum already took out of scope does not block unrelated edits.
+    expect(destination(await reset(20_000)).searchParams.get('saved')).toBe('1');
+  });
+
+  it('names the services a saved offer no longer applies to', async () => {
+    const { ctx } = context();
+    const input = creation();
+    destination(await post(ctx, input));
+    const raised = { ...ctx, partnerOffers: { enabled: true, minimumChargeMinorByCurrency: { eur: 20_000 } } };
+    const html = await (await handleAdminGet(new Request('https://example.test/booking/admin?view=partners'), raised)).text();
+    expect(html).toContain(`Not applied to: ${service.title}`);
+    expect(await (await handleAdminGet(new Request('https://example.test/booking/admin?view=partners'), ctx)).text()).not.toContain('Not applied to');
+  });
+
+  it('labels partner history with the name and code, telling creation from edits', async () => {
+    const { ctx } = context();
+    const input = creation();
+    destination(await post(ctx, input));
+    const saved = await read(input.code);
+    destination(await post(ctx, { ...input, action: 'partner-save', partner_id: saved.id, revision: String(saved.revision), name: 'Renamed partner' }));
+    const html = await (await handleAdminGet(new Request('https://example.test/booking/admin?view=settings&section=history'), ctx)).text();
+    expect(html).toContain(`Created partner Admin partner (${input.code})`);
+    expect(html).toContain(`Updated partner Renamed partner (${input.code})`);
+  });
 });

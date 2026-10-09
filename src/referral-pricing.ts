@@ -1,8 +1,8 @@
 import type { QuoteResponse, ReferralBenefit, ReferralResolution } from './core/api.js';
 import type { ResolvedClientConfig, ResolvedServiceConfig } from './core/config.js';
 import { resolveService } from './core/config.js';
-import { hasOfferBenefits, priceWithPartnerOffer, type PartnerOffersPolicy } from './core/partner-offers.js';
-import { isPricingFormula } from './core/pricing.js';
+import { checkPartnerOfferForService, hasOfferBenefits, priceWithPartnerOffer, type PartnerOffer, type PartnerOffersPolicy } from './core/partner-offers.js';
+import type { Priceable } from './core/pricing.js';
 import { sha256Base64Url } from './http.js';
 import { parseReferralCode, type PartnerRecord, type PartnerStore } from './partners.js';
 
@@ -33,12 +33,26 @@ export interface ResolvedReferral {
   readonly public: ReferralResolution | { status: 'none' };
 }
 
+function minimumChargeMinor(context: ReferralPricingContext): number | null {
+  return context.partnerOffers?.minimumChargeMinorByCurrency[context.config.business.currency] ?? null;
+}
+
+/**
+ * A price edit or a raised payment minimum can leave a saved offer unsellable for a service.
+ * That service is then out of the offer's scope, advertised and charged at its normal price,
+ * rather than refusing every quote for customers who arrived through the link.
+ */
+function offerFor(context: ReferralPricingContext, partner: PartnerRecord | null, service: Priceable): PartnerOffer | null {
+  const offer = partner?.offer;
+  if (context.partnerOffers?.enabled !== true || !offer?.enabled || !hasOfferBenefits(offer)) return null;
+  return checkPartnerOfferForService(offer, service, minimumChargeMinor(context)).ok ? offer : null;
+}
+
 function benefitsFor(context: ReferralPricingContext, partner: PartnerRecord): ReferralBenefit[] {
-  const offer = partner.offer;
-  if (context.partnerOffers?.enabled !== true || !offer?.enabled || !hasOfferBenefits(offer)) return [];
   return Object.keys(context.config.services).flatMap((serviceSlug) => {
     const service = resolveService(context.config, serviceSlug);
-    if (!isPricingFormula(service.pricing)) return [];
+    const offer = offerFor(context, partner, service);
+    if (!offer) return [];
     return [{
       serviceSlug,
       serviceDiscountBasisPoints: offer.basisPoints,
@@ -74,21 +88,19 @@ export async function quoteReferralSelection(
   context: ReferralPricingContext,
   input: { readonly serviceSlug: string; readonly service: ResolvedServiceConfig; readonly quantity: number; readonly pickup: string | null; readonly referralCode: unknown },
 ): Promise<ReferralPricingResult<{ readonly quote: QuoteResponse; readonly referral: ResolvedReferral }>> {
-  // A static runtime policy may be shared across requests. Capture it across the registry await
-  // so a gate change cannot produce descriptors from one policy and amounts from another.
-  const policy = context.partnerOffers;
+  // Read the policy once, before the registry await, so descriptors and amounts come from the
+  // same gate even if the context's policy is replaced meanwhile.
   const view: ReferralPricingContext = {
     config: context.config,
     ...(context.partners ? { partners: context.partners } : {}),
-    ...(policy ? { partnerOffers: { ...policy, minimumChargeMinorByCurrency: { ...policy.minimumChargeMinorByCurrency } } } : {}),
+    ...(context.partnerOffers ? { partnerOffers: context.partnerOffers } : {}),
   };
   const resolved = await resolveReferral(view, input.referralCode);
   if (!resolved.ok) return resolved;
   const referral = resolved.value;
-  const offer = view.partnerOffers?.enabled === true ? referral.partner?.offer ?? null : null;
   const priced = priceWithPartnerOffer({
-    service: input.service, quantity: input.quantity, pickup: input.pickup, offer,
-    minimumChargeMinor: view.partnerOffers?.minimumChargeMinorByCurrency[view.config.business.currency] ?? null,
+    service: input.service, quantity: input.quantity, pickup: input.pickup,
+    offer: offerFor(view, referral.partner, input.service), minimumChargeMinor: minimumChargeMinor(view),
   });
   if (!priced.ok) return { ok: false, error: new ReferralPricingError('pricing', priced.error.message, priced.error) };
   const publicReferral = referral.public.status === 'active'

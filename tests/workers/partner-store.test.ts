@@ -58,7 +58,9 @@ describe('partner registry against real D1', () => {
     expect(unwrap(await store.findByCode(partner.code))).toEqual(updated);
     const rows = (await history(partner.id)).results;
     expect(rows).toHaveLength(2);
-    expect(rows[1]).toMatchObject({ actor: 'second-operator', value: JSON.stringify({ name: 'New name', state: 'active', offer: { ...offer, enabled: true } }) });
+    expect(JSON.parse(String(rows[0]?.value))).toMatchObject({ event: 'created', code: partner.code, name: 'Partner name' });
+    expect(rows[1]).toMatchObject({ actor: 'second-operator' });
+    expect(JSON.parse(String(rows[1]?.value))).toEqual({ event: 'updated', code: partner.code, name: 'New name', state: 'active', offer: { ...offer, enabled: true } });
     expect(await db.prepare('SELECT revision FROM partner_offers WHERE partner_id = ?').bind(partner.id).first()).toEqual({ revision: 2 });
     expect((await createBookingRepository(db).listAdminChangeHistory(100)).find((row) => row.itemKey === partner.id)).toMatchObject({ domain: 'partner' });
   });

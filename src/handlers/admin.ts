@@ -63,7 +63,7 @@ import { ownerFacingIncidentTitle } from '../reconciliation-helpers.js';
 import { securityPosture } from './ops-health.js';
 import { settingsPage } from '../ui/pages/settings-page.js';
 import { partnersPage } from '../ui/pages/partners-page.js';
-import { performPartnerAdminAction } from './partner-admin.js';
+import { assertPartnerOffersStillSellable, performPartnerAdminAction } from './partner-admin.js';
 import {
   html,
   HttpError,
@@ -261,8 +261,7 @@ export function handleAdminGet(request: Request, context: ReservaContext): Promi
     if (url.searchParams.get('view') === 'partners') {
       const store = context.partners;
       if (!store) throw new HttpError(503, 'partner_storage_unavailable', 'Partner storage is unavailable.');
-      const today = localDayStartUtcIso(localDateKey(nowIso(context), context.config.business.timezone), context.config.business.timezone);
-      const [partners, counts, openIncidentCount] = await Promise.all([store.list(), store.bookingCounts(today), context.repo.countOpenIncidents()]);
+      const [partners, counts, openIncidentCount] = await Promise.all([store.list(), store.bookingCounts(nowIso(context)), context.repo.countOpenIncidents()]);
       if (!partners.ok || !counts.ok) throw new HttpError(503, 'partner_storage_unavailable', 'Partner storage is unavailable.');
       return html(partnersPage(context, {
         partners: partners.value, counts: counts.value, openIncidentCount,
@@ -507,9 +506,9 @@ function capacityFrom(form: FormData): number {
 
 // Saves and resets both run the whole merged config through validateConfig, since a reset can
 // break a cross-field rule as easily as a save (clearing one side of a pair the other still needs).
-function assertMergedSettingsValid(base: ResolvedClientConfig, rows: Record<string, string>): void {
+function assertMergedSettingsValid(base: ResolvedClientConfig, rows: Record<string, string>): ResolvedClientConfig {
   try {
-    mergeAndValidateSettings(base, rows);
+    return mergeAndValidateSettings(base, rows);
   } catch (error) {
     if (error instanceof SettingsMergeError) {
       const path = error.issues[0]?.path.join('.');
@@ -638,7 +637,7 @@ async function performAdminAction(request: Request, context: ReservaContext, for
       const definition = allDefinitions.find((entry) => entry.key === key);
       if (!definition) throw new HttpError(400, 'validation_failed', 'Unknown setting');
       delete candidateRows[definition.key];
-      assertMergedSettingsValid(base, candidateRows);
+      await assertPartnerOffersStillSellable(context, assertMergedSettingsValid(base, candidateRows));
       await context.repo.deleteSetting(definition.key, audit);
       dispatchSettingsChanged(context, [{ domain: 'setting', key: definition.key, action: 'delete', actor: audit.actor }]);
       return seeOther(location);
@@ -670,7 +669,7 @@ async function performAdminAction(request: Request, context: ReservaContext, for
         operations.push({ type: 'upsert', key: definition.key, value: serialized });
       }
     }
-    assertMergedSettingsValid(base, candidateRows);
+    await assertPartnerOffersStillSellable(context, assertMergedSettingsValid(base, candidateRows));
     if (operations.length > 0) {
       await context.repo.applySettingsBatch(operations, audit);
       // The same rows the batch just wrote to admin_change_history — a rebuild receiver learns

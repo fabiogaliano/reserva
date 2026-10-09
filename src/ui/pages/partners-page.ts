@@ -1,4 +1,5 @@
-import { adminLocaleFor, resolveLocalizedText } from '../../core/config.js';
+import { adminLocaleFor, resolveLocalizedText, resolveService, resolveServiceTitle } from '../../core/config.js';
+import { checkPartnerOfferForService, hasOfferBenefits } from '../../core/partner-offers.js';
 import type { ReservaContext } from '../../context.js';
 import { escapeHtml } from '../../http.js';
 import type { PartnerBookingCount, PartnerRecord } from '../../partners.js';
@@ -35,11 +36,21 @@ export function partnersPage(context: ReservaContext, input: {
       percentage: String(partner.offer.basisPoints / 100),
       pickups: partner.offer.waivedPickupIds.map((id) => pickupLabels.get(id) ?? id).join(', ') || m['partner.noPickups'],
     })}` : m['partner.none'];
+  // Checkout prices these services normally; saying so here is the only place the operator sees it.
+  const minimumChargeMinor = context.partnerOffers?.minimumChargeMinorByCurrency[context.config.business.currency] ?? null;
+  const outOfScope = (partner: PartnerRecord): string => {
+    const offer = partner.offer;
+    if (!offer || !hasOfferBenefits(offer)) return '';
+    const services = Object.keys(context.config.services)
+      .filter((slug) => !checkPartnerOfferForService(offer, resolveService(context.config, slug), minimumChargeMinor).ok)
+      .map((slug) => resolveServiceTitle(context.config, slug, locale));
+    return services.length ? `<span class="bk-sub">${e(formatMessage(m['partner.outOfScope'], { services: services.join(', ') }))}</span>` : '';
+  };
   const rows = input.partners.map((partner) => {
     const count = input.counts.find((row) => row.partnerId === partner.id);
     const url = referralUrl(partner);
     return `<tr><th scope="row"><a href="?view=partners&amp;partner=${e(encodeURIComponent(partner.id))}">${e(partner.name)}</a><span class="bk-sub">${e(partner.code)}</span></th>`
-      + `<td>${e(partner.state === 'active' ? m['partner.active'] : m['partner.archived'])}</td><td>${e(offerSummary(partner))}</td>`
+      + `<td>${e(partner.state === 'active' ? m['partner.active'] : m['partner.archived'])}</td><td>${e(offerSummary(partner))}${outOfScope(partner)}</td>`
       + `<td>${count?.upcoming ?? 0}</td><td>${count?.past ?? 0}</td><td><a href="${e(url)}">${e(m['partner.link'])}</a> `
       + `<button type="button" class="bk-btn bk-btn--secondary" aria-label="${e(m['partner.copy'])}" data-reserva-copy="${e(url)}" data-copied="${e(m['partner.copied'])}" hidden>${e(m['partner.copy'])}</button></td></tr>`;
   }).join('');
@@ -78,7 +89,7 @@ export function partnersPage(context: ReservaContext, input: {
       + (context.partnerOffers?.enabled !== true ? `<p class="bk-alert bk-alert--warn" role="status">${e(m['partner.gateOff'])}</p>` : '')
       + `<p class="bk-hint">${e(m['partner.eligibility'])}</p>`
       + (input.saved ? `<p class="bk-alert bk-alert--ok" role="status">${e(m['admin.saved'])}</p>` : '') + errorAlert
-      + `<div class="bk-partner-list" role="region" aria-label="${e(m['admin.partners'])}" tabindex="0"><table class="bk-tagtable"><thead><tr><th scope="col">${e(m['partner.name'])}</th><th scope="col">${e(m['partner.state'])}</th><th scope="col">${e(m['partner.enabled'])}</th><th scope="col">${e(m['admin.tagUpcoming'])}</th><th scope="col">${e(m['admin.tagPast'])}</th><th scope="col">${e(m['partner.link'])}</th></tr></thead><tbody>${rows}</tbody></table></div>`
+      + `<div class="bk-partner-list" role="region" aria-label="${e(m['admin.partners'])}" tabindex="0"><table class="bk-tagtable"><thead><tr><th scope="col">${e(m['partner.name'])}</th><th scope="col">${e(m['partner.state'])}</th><th scope="col">${e(m['partner.offer'])}</th><th scope="col">${e(m['admin.tagUpcoming'])}</th><th scope="col">${e(m['admin.tagPast'])}</th><th scope="col">${e(m['partner.link'])}</th></tr></thead><tbody>${rows}</tbody></table></div>`
       + form,
   });
 }

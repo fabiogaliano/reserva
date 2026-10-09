@@ -197,6 +197,28 @@ export function parseOfferPricingSnapshot(input: unknown): PartnerOfferResult<Of
 }
 
 /**
+ * Whether one service can be sold with an offer's benefits at every party size and pickup.
+ * Pickup waivers this service does not offer confer nothing here, so they are not an error.
+ */
+export function checkPartnerOfferForService(offer: PartnerOffer, service: Priceable, minimumChargeMinor: number | null): PartnerOfferResult<PartnerOffer> {
+  const parsed = parsePartnerOffer(offer);
+  if (!parsed.ok || !hasOfferBenefits(parsed.value)) return parsed;
+  if (!isPricingFormula(service.pricing)) return failure('unsupported_pricing', 'Tier pricing has no service/pickup decomposition. Convert it to formula pricing before assigning partner benefits.');
+  const formula = service.pricing;
+  const pickups = Object.keys(formula.surcharges);
+  // With nonnegative components and <=100% service discount, payable totals are monotone
+  // in occupied units. Endpoints catch the lowest payable amount and largest integer bound
+  // without making validation proportional to an operator's configured capacity.
+  for (const units of new Set([1, formula.maxUnits])) {
+    for (const pickup of pickups.length ? pickups : [null]) {
+      const result = priceWithPartnerOffer({ service, quantity: units * formula.seatsPerUnit, pickup, offer: { ...parsed.value, enabled: true }, minimumChargeMinor });
+      if (!result.ok) return result;
+    }
+  }
+  return parsed;
+}
+
+/**
  * Check every sold service/party/pickup before saving benefits, even while disabled.
  * Pickup IDs belong to the union of configured options; missing IDs on other tours confer no waiver.
  */
@@ -209,20 +231,9 @@ export function checkPartnerOfferForServices(
   if (!parsed.ok) return parsed;
   const ids = new Set(services.flatMap((entry) => entry.pickupIds));
   if (offer.waivedPickupIds.some((id) => !ids.has(id))) return failure('invalid_offer', 'Select pickup waiver IDs from the configured pickup options.');
-  if (!hasOfferBenefits(offer)) return parsed;
   for (const { slug, service } of services) {
-    if (!isPricingFormula(service.pricing)) return failure('unsupported_pricing', `Service ${slug} uses tier pricing. Convert it to formula pricing before assigning partner benefits.`);
-    const formula = service.pricing;
-    const pickups = Object.keys(formula.surcharges);
-    // With nonnegative components and <=100% service discount, payable totals are monotone
-    // in occupied units. Endpoints catch the lowest payable amount and largest integer bound
-    // without making admin validation proportional to an operator's configured capacity.
-    for (const units of new Set([1, formula.maxUnits])) {
-      for (const pickup of pickups.length ? pickups : [null]) {
-        const result = priceWithPartnerOffer({ service, quantity: units * formula.seatsPerUnit, pickup, offer: { ...offer, enabled: true }, minimumChargeMinor });
-        if (!result.ok) return failure(result.error.reason, `Service ${slug}: ${result.error.message}`);
-      }
-    }
+    const result = checkPartnerOfferForService(parsed.value, service, minimumChargeMinor);
+    if (!result.ok) return failure(result.error.reason, `Service ${slug}: ${result.error.message}`);
   }
   return parsed;
 }

@@ -109,7 +109,8 @@ describe('partner API through real D1 and checkout/payment boundary', () => {
       const charged = charges[0];
       if (!charged) throw new Error('Checkout did not reach the payment boundary');
       expect(charged.priceMinor).toBe(reviewed.priceMinor);
-      expect(await store.bookingCounts(NOW)).toMatchObject({ ok: true, value: [{ partnerId: current.id, upcoming: 1, past: 0 }] });
+      // An unpaid hold is not yet a booking the partner can be credited with.
+      expect(await store.bookingCounts(NOW)).toEqual({ ok: true, value: [] });
       const held = await context.repo.getBookingById(charged.id);
       expect(held).toMatchObject({ partnerId: current.id, partnerAttribution: { code: current.code, name: current.name, revision: 1 }, partnerPricing: reviewed.pricing, priceMinor: reviewed.priceMinor });
       await context.repo.expireHold(charged.id, NOW);
@@ -306,6 +307,8 @@ describe('partner API through real D1 and checkout/payment boundary', () => {
     expect((await handlePaymentWebhook(request({}), context)).status).toBe(200);
     const confirmed = await context.repo.getBookingById(accepted.id);
     if (!confirmed) throw new Error('Missing confirmed booking');
+    expect(await store.bookingCounts(NOW)).toEqual({ ok: true, value: [{ partnerId: current.id, upcoming: 1, past: 0 }] });
+    expect(await store.bookingCounts('2026-06-15T08:00:00.000Z')).toEqual({ ok: true, value: [{ partnerId: current.id, upcoming: 0, past: 1 }] });
     const moved = await handleCustomerReschedule(request({ token: confirmed.cancelToken, start: '2026-06-16T08:00:00.000Z' }), context);
     expect(moved.status).toBe(200);
     expect(await context.repo.getBookingById(accepted.id)).toMatchObject({ startsAt: '2026-06-16T08:00:00.000Z', priceMinor: 9_000, partnerPricing: reviewed.pricing, partnerAttribution: { name: current.name } });
@@ -326,7 +329,18 @@ describe('partner API through real D1 and checkout/payment boundary', () => {
     const on = harness(true, legacyService);
     const blocked = await checkout(on.context, undefined, undefined, { metadata: { partner: current.code } });
     expect(blocked.status).toBe(400);
+    // The field legacy clients retry on, so they book without the partner rather than fail.
+    await expect(blocked.json()).resolves.toMatchObject({ error: { code: 'validation_failed', details: { field: 'metadata.partner' } } });
     expect(on.charges).toHaveLength(0);
+  });
+
+  it('keeps legacy attribution-only checkout bookable when the registry cannot be read', async () => {
+    const current = await partner();
+    const legacyService: ResolvedServiceConfig = { ...formula, metadataFields: [{ key: 'partner', label: 'Partner', type: 'select', visibility: 'operator', options: [{ value: current.code, label: current.name }] }] };
+    const { context, charges } = harness(false, legacyService);
+    context.partners = { ...store, findByCode: async () => ({ ok: false, error: new PartnerStoreError('unavailable', 'Database failed') }) };
+    expect((await checkout(context, undefined, undefined, { metadata: { partner: current.code } })).status).toBe(201);
+    expect(charges[0]).toMatchObject({ priceMinor: 12_000, partnerId: null, partnerAttribution: null, partnerPricing: null, metadata: null });
   });
 
   it('resolves the explicit legacy bridge against D1, not retired static select options, and strips unavailable claims', async () => {
@@ -339,8 +353,11 @@ describe('partner API through real D1 and checkout/payment boundary', () => {
     expect(accepted).toMatchObject({ partnerAttribution: { code: current.code }, metadata: { partner: current.code } });
     await off.context.repo.expireHold(accepted.id, NOW);
     const bad = await checkout(off.context, undefined, undefined, { metadata: { partner: 'not/a/code' } });
-    expect(bad.status).toBe(400);
-    expect(await bad.text()).not.toContain('old-configuration-code');
+    expect(bad.status).toBe(201);
+    const stripped = off.charges.at(-1);
+    if (!stripped) throw new Error('Missing malformed-claim checkout');
+    expect(stripped).toMatchObject({ partnerId: null, partnerAttribution: null, metadata: null, priceMinor: 12_000 });
+    await off.context.repo.expireHold(stripped.id, NOW);
     await save(current, { name: current.name, state: 'archived', offer: current.offer });
     expect((await checkout(off.context, undefined, undefined, { metadata: { partner: current.code } })).status).toBe(201);
     const archived = off.charges.at(-1);
@@ -353,18 +370,33 @@ describe('partner API through real D1 and checkout/payment boundary', () => {
     expect(retired.charges[0]).toMatchObject({ partnerAttribution: { code: active.code }, metadata: null });
   });
 
-  it('refuses unsupported tier benefits, missing currency floors and zero/subminimum totals', async () => {
+  it('prices services an offer can no longer be sold on normally, and asks for review of the change', async () => {
     const current = await partner();
     const tiers = harness(true, service);
-    const unsupported = await handleQuote(request({ serviceSlug: 'vintage', quantity: 4, pickup: 'custom', referralCode: current.code }), tiers.context);
-    expect(unsupported.status).toBe(400);
+    const tierQuote = await quote(tiers.context, current.code, { quantity: 4, pickup: 'custom' });
+    expect(tierQuote).toMatchObject({ referral: { status: 'active', benefits: [] }, pricing: { savingsMinor: 0, appliedOffer: null } });
     const { context, charges } = harness();
     const reviewed = await quote(context, current.code);
+    expect(reviewed.priceMinor).toBe(9_000);
     const noFloor = { ...context, partnerOffers: { enabled: true, minimumChargeMinorByCurrency: {} } };
-    expect((await checkout(noFloor, current.code, reviewed.quoteFingerprint)).status).toBe(409);
+    const unfloored = await checkout(noFloor, current.code, reviewed.quoteFingerprint);
+    expect(unfloored.status).toBe(409);
+    await expect(unfloored.json()).resolves.toMatchObject({ error: { code: 'quote_changed', details: { quote: { priceMinor: 12_000, referral: { status: 'active', benefits: [] } } } } });
     await save(current, { name: current.name, state: 'active', offer: { enabled: true, basisPoints: 10_000, waivedPickupIds: ['custom'] } });
-    expect((await checkout(context, current.code, reviewed.quoteFingerprint)).status).toBe(409);
+    const free = await checkout(context, current.code, reviewed.quoteFingerprint);
+    expect(free.status).toBe(409);
+    await expect(free.json()).resolves.toMatchObject({ error: { code: 'quote_changed', details: { quote: { priceMinor: 12_000, pricing: { appliedOffer: null } } } } });
     expect(await holdCount()).toBe(0);
+    expect(charges).toHaveLength(0);
+  });
+
+  it('rejects an unsellable party size as invalid input, not a changed quote', async () => {
+    const current = await partner();
+    const { context, charges } = harness();
+    const reviewed = await quote(context, current.code);
+    const response = await checkout(context, current.code, reviewed.quoteFingerprint, { quantity: 9 });
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'validation_failed' } });
     expect(charges).toHaveLength(0);
   });
 });

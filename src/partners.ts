@@ -133,9 +133,10 @@ export function createPartnerStore(db: D1Database): PartnerStore {
         : db.prepare(`UPDATE partners SET name = ?, state = ?, revision = revision + 1, updated_at = ?
             WHERE id = ? AND revision = ?`)
           .bind(changes.name, changes.state, audit.changedAt, input.id, input.expectedRevision);
+      // The immutable code is read from the row so history stays legible without the registry.
       const history = db.prepare(`INSERT INTO admin_change_history(domain, item_key, action, value, actor, changed_at)
-          SELECT 'partner', ?, 'upsert', ?, ?, ? WHERE changes() = 1`)
-        .bind(input.id, JSON.stringify(changes), audit.actor, audit.changedAt);
+          SELECT 'partner', id, 'upsert', json_set(?, '$.event', ?, '$.code', code), ?, ? FROM partners WHERE id = ? AND changes() = 1`)
+        .bind(JSON.stringify(changes), creating ? 'created' : 'updated', audit.actor, audit.changedAt, input.id);
       const offer = changes.offer;
       const offerMutation = offer === null
         ? db.prepare(`DELETE FROM partner_offers WHERE partner_id = ? AND changes() = 1`).bind(input.id)
@@ -183,10 +184,10 @@ export function createPartnerStore(db: D1Database): PartnerStore {
     async bookingCounts(now) {
       try {
         const result = await db.prepare(`SELECT partner_id AS partnerId,
-            SUM(CASE WHEN starts_at >= ? THEN 1 ELSE 0 END) AS upcoming,
-            SUM(CASE WHEN starts_at < ? THEN 1 ELSE 0 END) AS past
-            FROM bookings WHERE partner_id IS NOT NULL AND status IN ('hold', 'confirmed', 'no_show') GROUP BY partner_id`)
-          .bind(now, now).all<PartnerBookingCount>();
+            SUM(status = 'confirmed' AND starts_at > ?1) AS upcoming,
+            SUM(status IN ('confirmed', 'no_show') AND starts_at <= ?1) AS past
+            FROM bookings WHERE partner_id IS NOT NULL AND status IN ('confirmed', 'no_show') GROUP BY partner_id`)
+          .bind(now).all<PartnerBookingCount>();
         return { ok: true, value: result.results };
       } catch (cause) {
         return fail('unavailable', 'Partner booking counts are unavailable.', cause);

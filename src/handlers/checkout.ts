@@ -3,6 +3,7 @@ import type { Booking } from '../core/booking.js';
 import { DEFAULT_TOKEN_EXPIRY_DAYS, pickupOptionFor, resolveLocalizedText, resolveMeetingPoint, resolveService, type MetadataField, type PickupType, type ResolvedServiceConfig } from '../core/config.js';
 import { availabilityForDay, capacityForDate, defaultCapacityForDate, occupancyFor } from '../core/occupancy.js';
 import { quoteReferralSelection } from '../referral-pricing.js';
+import { parseReferralCode } from '../partners.js';
 import { referralHttpError } from './referral.js';
 import { resolveLocale } from '../core/locale.js';
 import { generateReference } from '../core/reference.js';
@@ -247,29 +248,35 @@ export function handleCheckout(request: Request, context: ReservaContext): Promi
     const legacyField = context.partnerOffers?.legacyMetadataField;
     const claimedMetadata = validateCheckoutMetadata(service, serviceSlug, body.metadata, legacyField);
     assertSupportedPartySize(service, quantity);
+    // Errors on the legacy path name the metadata field: clients built for it retry without the
+    // partner on exactly that field, so attribution never costs them a booking.
+    const legacyErrorField = `metadata.${legacyField}`;
     const legacyValue = legacyField && body.metadata && typeof body.metadata === 'object' ? Reflect.get(body.metadata, legacyField) : undefined;
     if (legacyValue !== undefined && typeof legacyValue !== 'string') {
-      throw new HttpError(400, 'validation_failed', 'Legacy referral metadata must be a code string.', { field: 'referralCode' });
+      throw new HttpError(400, 'validation_failed', 'Legacy referral metadata must be a code string.', { field: legacyErrorField });
     }
-    const legacyCode = typeof legacyValue === 'string' ? legacyValue : undefined;
-    if (legacyCode !== undefined && body.referralCode !== undefined && legacyCode !== body.referralCode) {
+    // A malformed legacy claim is as unknown as an unregistered code, and is stripped the same way.
+    const legacyCode = typeof legacyValue === 'string' && parseReferralCode(legacyValue).ok ? legacyValue : undefined;
+    if (legacyValue !== undefined && body.referralCode !== undefined && legacyValue !== body.referralCode) {
       throw new HttpError(400, 'validation_failed', 'Legacy and typed referral codes must match.', { field: 'referralCode' });
     }
-    if (legacyCode !== undefined && body.referralCode === undefined && context.partnerOffers?.enabled === true) {
-      throw new HttpError(400, 'validation_failed', 'Legacy metadata referral checkout is attribution-only. Send referralCode and a reviewed quoteFingerprint before using offers.', { field: 'referralCode' });
+    const legacyOnly = legacyCode !== undefined && body.referralCode === undefined;
+    if (legacyOnly && context.partnerOffers?.enabled === true) {
+      throw new HttpError(400, 'validation_failed', 'Legacy metadata referral checkout is attribution-only. Send referralCode and a reviewed quoteFingerprint before using offers.', { field: legacyErrorField });
     }
     const referralCode = body.referralCode !== undefined ? body.referralCode : legacyCode;
     const comparison = typeof body.quoteFingerprint === 'string' && body.quoteFingerprint.trim() ? body.quoteFingerprint : null;
     if ((body.referralCode !== undefined || body.quoteFingerprint !== undefined) && comparison === null) {
       throw new HttpError(400, 'validation_failed', 'quoteFingerprint is required', { field: 'quoteFingerprint' });
     }
-    const selection = await quoteReferralSelection(context, { serviceSlug, service, quantity, pickup: location.pickupType, referralCode });
-    if (!selection.ok) {
-      if (comparison !== null && selection.error.reason === 'pricing') {
-        throw new HttpError(409, 'quote_changed', 'This selection can no longer be sold at the reviewed quote. Refetch the quote before checkout.');
-      }
-      throw referralHttpError(selection.error);
+    let selection = await quoteReferralSelection(context, { serviceSlug, service, quantity, pickup: location.pickupType, referralCode });
+    if (!selection.ok && selection.error.reason === 'storage' && legacyOnly) {
+      // Legacy checkout is attribution-only, so an unreadable registry can cost attribution but
+      // not the booking. A typed referral fails closed instead: its price may depend on the offer.
+      context.logger.warn?.('reserva legacy referral attribution skipped', { error: selection.error.message });
+      selection = await quoteReferralSelection(context, { serviceSlug, service, quantity, pickup: location.pickupType, referralCode: undefined });
     }
+    if (!selection.ok) throw referralHttpError(selection.error);
     const { quote, referral } = selection.value;
     if (comparison !== null && comparison !== quote.quoteFingerprint) {
       throw new HttpError(409, 'quote_changed', 'Price or referral benefits changed. Review the new quote before checkout.', { quote });
