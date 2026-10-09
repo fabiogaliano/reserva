@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.1
+
+### Patch Changes
+
+- 81fd7cf: Partners admin: a muted pencil after each partner's name in the list shows that the name opens the partner for editing.
+
 ## 0.18.0
 
 ### Minor Changes
