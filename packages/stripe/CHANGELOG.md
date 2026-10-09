@@ -1,5 +1,12 @@
 # @reservajs/stripe
 
+## 0.8.3
+
+### Patch Changes
+
+- Updated dependencies [6f0d241]
+  - @reservajs/astro@0.17.0
+
 ## 0.8.2
 
 ### Patch Changes
