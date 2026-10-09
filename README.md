@@ -2,34 +2,31 @@
 
 # Reserva
 
-**A booking engine for fixed-capacity time slots, built as an Astro integration — runs in
-your own Cloudflare account on Workers + D1.**
+**A booking engine for fixed-capacity time slots, built as an Astro integration. It runs in
+your own Cloudflare account on Workers + D1, with no per-booking fees.**
 
-Reserva plugs into an Astro 7 site: it injects a complete booking API and the operator pages
-behind it, and stores everything in your own D1 database. It runs on the Workers Free plan; see
-[Which Workers plan](./docs/deployment.md#which-workers-plan) for what Paid changes.
+Add Reserva to an Astro 7 site and it mounts a booking API, the confirmation and manage pages,
+and an admin dashboard, all backed by your own D1 database. It runs on the Workers Free plan;
+[Which Workers plan](./docs/deployment.md#which-workers-plan) covers what Paid changes.
 
-The library owns availability, holds, payment-session correctness, cancellation and reschedule
-rules, refunds, calendar and email side effects, retries, reconciliation, and the admin
-dashboard. It does not own your customer-facing funnel: you build that on the public API.
+Reserva handles availability, holds, payment checks, cancellations and reschedules, refunds,
+calendar and email delivery, retries, partners and referral codes, and the admin. You build the
+customer-facing booking form yourself, on the public API.
 
 ## What it books
 
-One service, a fixed-duration slot, a headcount against a capacity counter, hold → pay →
-confirm, cancel/reschedule with cutoffs. That covers tours, classes, workshops, restaurant
-reservations, court/room/venue hire, general-admission events, and appointments with
-interchangeable staff. [`examples/configs/`](./examples/configs) has complete configs for
-several of these shapes. All services draw from one capacity pool; independent fleets are not
-modelled.
+Fixed-length slots with a shared capacity: hold, pay, confirm, then cancel or reschedule within
+cutoffs. That fits tours, classes, workshops, restaurant tables, court and room hire,
+general-admission events, and appointments with interchangeable staff.
+[`examples/configs/`](./examples/configs) has complete configs for several of these. All
+services share one capacity pool.
 
-Out of scope:
+It doesn't do:
 
-- **Multi-day or date-range rentals.** Interval math, not slots.
-- **Per-seat assigned ticketing.** Individually addressable units, not a capacity counter.
-- **Per-staff-member scheduling.** A per-staff overlap model, not one shared capacity.
-- **A booking widget.** Build the funnel you want on the public API;
-  [`examples/smoke-site`](./examples/smoke-site) is a complete reference consumer, widget
-  included.
+- Multi-day or date-range rentals.
+- Assigned seating, where each seat is its own unit.
+- Scheduling per staff member.
+- A booking widget. [`examples/smoke-site`](./examples/smoke-site) has a complete one to copy.
 
 ## Quickstart
 
@@ -64,10 +61,9 @@ export default {
 } satisfies ClientConfig;
 ```
 
-That is the whole config. Booking rules, locales, and legal links have working defaults; a
-service that declares only `meetingPoints` gets a single `meeting_point` pickup option, which
-is why the pricing row needs no `pickup`. [`docs/configuration.md`](./docs/configuration.md)
-covers every key you can add.
+Everything else has a default. A service with only `meetingPoints` gets one implied pickup
+option, so its pricing row needs no `pickup`.
+[`docs/configuration.md`](./docs/configuration.md) covers the rest.
 
 ```ts
 // astro.config.ts
@@ -97,7 +93,7 @@ export default defineCloudflareReservaRuntime<Env>({
 });
 ```
 
-Declare the D1 binding Reserva reads, then apply its migrations:
+Declare the D1 binding and apply the migrations:
 
 ```jsonc
 // wrangler.jsonc
@@ -115,64 +111,63 @@ bunx reserva-migrate --local   # local dev database
 bunx reserva-migrate           # remote
 ```
 
-That is a working deployment: the booking API, the confirmation page, the manage page, and the
-admin dashboard are mounted. Both `output: 'server'` and `output: 'static'` work — the injected
-routes declare `prerender: false`, so a static site renders them on demand.
+That's a working deployment. `output: 'static'` works too: the injected routes set
+`prerender: false`, so they render on demand.
 
 ## The runtime module
 
-The runtime lives in a separate module because Astro serializes integration configuration during
-its build, and provider instances (functions, sockets, secret-backed clients) cannot be
-serialized into a deployed Worker. Reserva validates the public config at build time, ships it to
-the runtime through `virtual:reserva/config`, and loads your runtime module at request time
-through `virtual:reserva/runtime`. `reserva()` looks for the module at `./src/reserva-runtime.ts`;
-pass `runtimeEntrypoint` only if yours lives elsewhere.
+Astro serializes integration options at build time, and provider instances (clients, closures,
+secrets) can't be serialized. So the config travels to the runtime through
+`virtual:reserva/config`, and your runtime module is loaded per request through
+`virtual:reserva/runtime`. The default path is `./src/reserva-runtime.ts`; pass
+`runtimeEntrypoint` only if yours is elsewhere.
 
-`defineCloudflareReservaRuntime()` reads production bindings from `cloudflare:workers`
-(`import { env } from 'cloudflare:workers'`), the current `@astrojs/cloudflare` v14 API. Older
-tutorials use `locals.runtime.env`; on v14 that throws, and `locals.env` is accepted only as a
-test-harness seam. The default D1 binding is `RESERVA_DB`
-and the default Cache binding is `RESERVA_CACHE`, with a fallback to `caches.default`. Provider
-factories run once per request.
+Bindings come from `cloudflare:workers`. Don't read `locals.runtime.env`: it throws on
+`@astrojs/cloudflare` v14. The default D1 binding is `RESERVA_DB`, and the cache is
+`RESERVA_CACHE` with a fallback to `caches.default`.
 
-Keep payment keys, service-account material, webhook signing keys, and the operator secret out
-of `ClientConfig`, checked-in examples, and component props. Store them as Worker secrets. Reserva
-reads its own `RESERVA_*` secrets and every `config.webhooks[].secretBinding` without being told
-to, so `secretBindings` only has to name secrets your own provider factory or hooks read.
+Keep secrets (payment keys, service-account keys, webhook signing keys) out of `ClientConfig`
+and out of the repo. Store them as Worker secrets. Reserva reads its own `RESERVA_*` secrets and
+each `config.webhooks[].secretBinding` by itself; list in `secretBindings` only the ones your
+own code reads.
 
 ## Payments
 
-The payment port is a documented interface (`PaymentProvider`, exported from
-`@reservajs/astro/core`), not a Stripe binding. `@reservajs/astro` has no `stripe` dependency:
-install [`@reservajs/stripe`](./packages/stripe) for Stripe Checkout, or implement the port
-against another processor. Prices always come from Reserva's pricing module; an adapter never
-computes one, and anything in a processor's own vocabulary (`termsOfService: 'none'`) is an
-option on the adapter rather than on Reserva.
+`@reservajs/astro` has no Stripe dependency. Payments go through the `PaymentProvider`
+interface: install [`@reservajs/stripe`](./packages/stripe) for Stripe Checkout, or
+[write an adapter](./docs/providers.md) for another processor. Reserva always computes the
+price; the adapter only charges it.
 
-Stripe is the only officially tested adapter. Its own limits (checkout locales, the 24-hour
-session cap against `booking.holdMinutes`, presentable currencies) are validated by the adapter
-at startup. Point a Stripe webhook at `/api/booking/webhooks/payment` and subscribe to
+Point a Stripe webhook at `/api/booking/webhooks/payment` and subscribe it to
 `checkout.session.completed`, `checkout.session.expired`,
 `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`,
-`charge.refunded`, `charge.dispute.created`, and `charge.dispute.closed`. An endpoint without
-`charge.dispute.closed` keeps working; its disputes just stay open on the booking. Payment methods
-are managed in the Stripe dashboard; delayed methods (Multibanco, SEPA Direct Debit, bank
-transfer) are not supported and are refused safely.
+`charge.refunded`, `charge.dispute.created` and `charge.dispute.closed`. Turn payment methods on
+in the Stripe dashboard, but leave delayed ones off (Multibanco, SEPA Direct Debit, bank
+transfer): their money arrives after the hold expires, so Reserva refuses them.
+
+## Partners and referral codes
+
+Partners (hotels, agents, affiliates) are managed in the admin at `/booking/admin?view=partners`.
+Each partner gets a code and a referral link, `<business.url>?ref=<code>`, and can carry an
+offer: a percentage off the service price, free pickup, or both. Bookings made with a code show
+the partner, the price before the offer and the discount in the admin.
+
+Your site reads `ref`, resolves it with `resolveReferral()`, and passes it as `referralCode` to
+`quote()` and `checkout()`. Offers stay off until you enable them in the runtime with a minimum
+charge per currency. [Partner offers](./docs/api.md#partner-offers-and-referral-codes) has the
+full flow.
 
 ## Booking events
 
-Every booking occurrence leaves the library through one of two subscribers, both delivered
-from the same durable outbox. The emittable set is exported as `BOOKING_EVENTS` from
-`@reservajs/astro/core`, and every subscriber's `events` filter is validated at startup against
-`WEBHOOK_EVENTS` (these plus `settings.changed`):
+Each booking event reaches two kinds of subscriber, both delivered from one durable outbox.
+The set is exported as `BOOKING_EVENTS` from `@reservajs/astro/core`:
 
 <!-- generated:booking-events -->
 `booking.confirmed`, `booking.cancelled_by_customer`, `booking.cancelled_by_operator`, `booking.rescheduled`, `booking.no_show`, `booking.reminder`, `payment.dispute_created`
 <!-- /generated:booking-events -->
 
-**In-process hooks** are registered on the runtime; a plain hook is fire-and-forget (one
-warning log, never retried), and a `durable: true` hook gets an outbox row per occurrence,
-retried and abandoned like every other side effect:
+**Hooks** run in-process. A plain hook is fire-and-forget; a `durable: true` hook is retried
+like any other side effect:
 
 ```ts
 hooks: [
@@ -181,28 +176,20 @@ hooks: [
 ]
 ```
 
-**Outbound webhooks** are declared in `config.webhooks`, because the URL is ordinary
-configuration and only the signing key is secret:
+**Webhooks** go in `config.webhooks`. They're always durable and signed per
+[Standard Webhooks](https://www.standardwebhooks.com/):
 
 ```ts
 webhooks: [{ name: 'partner', url: 'https://partner.example/reserva', secretBinding: 'PARTNER_WEBHOOK_SECRET', events: ['booking.confirmed'] }]
 ```
 
-`settings.changed` is the one non-booking event: it fires once per admin save (settings, day
-overrides, capacity defaults) so a static site can rebuild from the live catalog. It is delivered
-best-effort, outside the outbox, and only to subscribers that name it explicitly — see
-[`docs/deployment.md`](docs/deployment.md).
-
-`secretBinding` names a Worker secret, which Reserva may read because the endpoint declaring it
-is in the config. A webhook is always durable, and every delivery is signed per the
-[Standard Webhooks](https://www.standardwebhooks.com/) specification — see
-[`docs/api.md`](./docs/api.md#subscribers-and-the-webhook-envelope) for the frozen envelope and
-the signature headers, and [`AGENTS.md`](./AGENTS.md) for a verification snippet.
+A subscriber can also name `settings.changed`, which fires on each admin save so a static site
+can rebuild. See [Rebuilding a static site](./docs/deployment.md#rebuilding-a-static-site-on-admin-changes).
+The envelope and signature headers are in [`docs/api.md`](./docs/api.md#webhooks).
 
 ## Injected routes
 
-Every route is server-only with `prerender: false`. The canonical list is generated from the
-package's route manifest:
+All routes are server-rendered. This table is generated from the route manifest:
 
 <!-- generated:routes -->
 | Route id | Path | Group |
@@ -229,44 +216,31 @@ package's route manifest:
 | `confirmationPage` | `/booking-confirmation` | customer |
 <!-- /generated:routes -->
 
-Every request and response shape is exported as a type from `@reservajs/astro/core`, and every
-failure is `{ error: { code, message } }` whose `code` comes from the closed `API_ERROR_CODES`
-set:
+Request and response types are exported from `@reservajs/astro/core`. Every error is
+`{ error: { code, message, details? } }`, with `code` from `API_ERROR_CODES`:
 
 <!-- generated:error-codes -->
 `validation_failed`, `method_not_allowed`, `payload_too_large`, `forbidden`, `not_found`, `past_cutoff`, `invalid_transition`, `slot_unavailable`, `too_many_holds`, `quote_changed`, `partner_storage_unavailable`, `partner_conflict`, `payment_session_mismatch`, `payment_amount_mismatch`, `invalid_payment_signature`, `duplicate_payment_ref`, `confirmation_in_progress`, `reconciliation_in_progress`, `refund_conflict`, `refund_payment_ref_missing`, `refund_failed`, `calendar_unavailable`, `internal_error`
 <!-- /generated:error-codes -->
 
-One vocabulary across the routes: `serviceSlug`, `pickup`, `start` and `sessionId`. The previous
-spellings (`?service=`, `?session_id=`, `pickupType`, `newStart`) still read for one minor and log
-`deprecated field` once per isolate.
-
-[`docs/api.md`](./docs/api.md) describes the non-obvious endpoints, the wire types, and the
-behavior behind the less usual status codes.
-
 ## Documentation
 
-- [`docs/configuration.md`](./docs/configuration.md) — every `ClientConfig` key: services and
-  pricing, the location module, declared metadata, and turning route groups off.
-- [`docs/api.md`](./docs/api.md) — the injected endpoints in detail, wire types, error codes,
-  the webhook envelope and its signature, and the deliberate behavior behind the confirmation
-  lease and the payment-webhook guards.
-- [`docs/deployment.md`](./docs/deployment.md) — the Cloudflare runbook: secrets, typed
-  bindings, admin access, the scheduled reconciliation Worker, and migrations.
-- [`docs/customization.md`](./docs/customization.md) — components, theming, UI copy, email
-  templates, and the calendar/email providers.
-- [`docs/providers.md`](./docs/providers.md) — writing an adapter against the payment,
-  calendar, email and alert ports.
-- [`docs/development.md`](./docs/development.md) — the local interactive demo, the test
-  suites, and how to contribute.
-- [`docs/architecture.md`](./docs/architecture.md) — the system map, the invariants, and the
-  deliberate boundaries.
-- [`docs/decisions.md`](./docs/decisions.md) — where the implementation deliberately goes
-  beyond the external build contract, and why.
-- [`docs/MIGRATING-v2.md`](./docs/MIGRATING-v2.md) — upgrading across breaking releases (0.2,
-  0.5, 0.6, 0.15): every renamed or removed binding, symbol, option, config key, and column.
-- [`AGENTS.md`](./AGENTS.md) — the packaged integration contract, written for a coding agent
-  wiring Reserva into a site.
+- [`docs/configuration.md`](./docs/configuration.md): every config key, pricing, opening hours,
+  locations, metadata fields, routes and CORS.
+- [`docs/api.md`](./docs/api.md): the endpoints, the typed client, partner offers, webhooks,
+  and why some status codes behave the way they do.
+- [`docs/deployment.md`](./docs/deployment.md): secrets, admin access, the setup checklist,
+  the scheduled sweep, and migrations.
+- [`docs/customization.md`](./docs/customization.md): theming, branding, copy, and email
+  templates.
+- [`docs/providers.md`](./docs/providers.md): writing a payment, calendar, email or alert
+  adapter.
+- [`docs/development.md`](./docs/development.md): the local demo, tests, and contributing.
+- [`docs/architecture.md`](./docs/architecture.md): the system map and the rules a change must
+  keep.
+- [`docs/decisions.md`](./docs/decisions.md): where Reserva departs from its original spec, and
+  why.
+- [`AGENTS.md`](./AGENTS.md): the integration contract, written for coding agents.
 
 Security reports: see [`SECURITY.md`](./SECURITY.md).
 

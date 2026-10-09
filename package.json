@@ -31,7 +31,6 @@
     "docs/deployment.md",
     "docs/development.md",
     "docs/providers.md",
-    "docs/MIGRATING-v2.md",
     "LICENSE"
   ],
   "bin": {

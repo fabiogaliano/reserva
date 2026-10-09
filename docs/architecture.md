@@ -1,96 +1,76 @@
-# Reserva — architecture and design law
+# Architecture
 
-Distilled from the v2 direction record when the plan ledger was retired
-(2026-09; the full wave-by-wave record lives in git history under
-`docs/plans/`). This file carries only what still governs future changes.
+How Reserva is put together, the rules every change must keep, and what's deliberately left out.
 
 ## System map
 
-Layers bottom-up, each with its single source of truth. Every other surface
-derives from that source and none may cache or duplicate it.
+Each layer has one source of truth. Everything else derives from it and never copies it.
 
-| Layer | Single source of truth |
+| Layer | Source of truth |
 |---|---|
-| Declared intent | `ClientConfig` schema (`src/core/config.ts`), validated during Astro config and again when the runtime definition initializes |
-| Domain | `Booking` + the status machine + the one pricing path (`src/core/`) |
-| State & delivery | `bookings` rows + `side_effect_operations` outbox rows — delivery/sync state lives nowhere else |
-| Contract | exported wire types, `API_ERROR_CODES` (+ `ApiErrorCode`), `BOOKING_EVENTS`, the webhook envelope, the `toWireBooking` projection |
-| Surfaces | route manifest (`src/routes-manifest.ts`), admin/manage/confirmation pages (`src/ui/pages/`), email renderer + copy catalogs (`src/email/`) |
-| Distribution | packed `@reservajs/astro` + `@reservajs/stripe` (`dist/` mirrors `src/`), shipped `AGENTS.md`, contract docs generated from the exported constants with a CI drift check |
+| Config | the `ClientConfig` schema (`src/core/config.ts`), validated at build time and again when the runtime starts |
+| Domain | `Booking`, its status machine, and the one pricing path (`src/core/`) |
+| State and delivery | `bookings` rows and `side_effect_operations` outbox rows; delivery state lives nowhere else |
+| Partners | the D1 partner registry (`src/partners.ts`); bookings keep a snapshot of the partner and price taken at checkout |
+| Contract | exported wire types, `API_ERROR_CODES`, `BOOKING_EVENTS`, the webhook envelope, the `toWireBooking` projection |
+| Surfaces | the route manifest (`src/routes-manifest.ts`), the pages (`src/ui/pages/`), the email renderer and copy (`src/email/`) |
+| Distribution | `@reservajs/astro` and `@reservajs/stripe`, the shipped `AGENTS.md`, and docs generated from the exported constants |
 
 ## Invariants
 
-Hold at every commit; a change that would break one stops until the design is
-revisited.
+These hold at every commit. A change that would break one waits until the design is
+reconsidered.
 
-- Delivery/sync state is derived from outbox rows; no entity flag may
-  duplicate it.
-- Quote and checkout price through one code path and cannot disagree.
-- Every API failure flows through the single error envelope (`src/http.ts`);
-  every code comes from the closed `API_ERROR_CODES` set.
-- A schema change updates the fingerprint (`src/schema-check.ts`) and its
-  preservation test in the same commit.
-- A table rebuild migration has exactly one owner: no two migrations may
-  rebuild the same table as part of one change wave.
+- Delivery state comes from outbox rows. No flag on a booking duplicates it.
+- Quote and checkout price through the same code and can't disagree.
+- Every API error goes through one envelope (`src/http.ts`) with a code from `API_ERROR_CODES`.
+- A booking's price and partner are fixed at checkout. Later edits to settings or offers don't
+  change them.
+- A schema change updates the fingerprint (`src/schema-check.ts`) and its test in the same
+  commit.
+- Only one migration rebuilds a given table within one change.
 
-## Design law (agent legibility)
+## Design rules
 
-Headless consumers increasingly integrate and operate through coding agents;
-Reserva treats them as a first-class audience.
+Many people will wire Reserva in through a coding agent, so the library is written to be read
+by one.
 
-- **One truth per fact.** Routes only in the manifest; prices only in the
-  pricing module; email copy only in the extracted catalogs; the public
-  booking shape only in `toWireBooking`.
-- **Closed, exported vocabularies.** Every finite set ships as a runtime
-  value, not just a type (`BOOKING_EVENTS`, `API_ERROR_CODES`, route ids,
-  outbox operation families), so an agent or a consumer `switch` can
-  enumerate every case and prove exhaustiveness.
-- **Self-description.** A deployment answers "what are you?" without source
-  access: `GET /api/booking/catalog` (rendering contract) and
-  `GET /api/booking/ops/health` (migrations/fingerprint, outbox debt, open
-  incidents).
-- **Remediating errors.** Every rejection names what was wrong *and* what to
-  do: config errors carry the key path, the violated rule, and the fix; API
-  envelopes carry enough to correct the request without reading source.
-- **Versioned envelopes, one projection.** The webhook envelope carries
-  `apiVersion`; pushed and pulled booking shapes come from the same exported
-  projection. A durable event's envelope is serialized atomically into its
-  outbox row and every retry sends those exact bytes — it is the historical
-  truth of the occurrence, never a view of current state.
-- **Accretive records.** Knowledge lands where the next reader looks:
-  migration files record the why of each backfill; snapshot suites pin
-  behavior so every diff maps to a written decision; contract docs are
-  generated, never hand-copied.
+- **One place per fact.** Routes only in the manifest, prices only in the pricing module, email
+  copy only in the catalogs, the public booking shape only in `toWireBooking`.
+- **Closed sets ship as values.** `BOOKING_EVENTS`, `API_ERROR_CODES`, route ids and outbox
+  families are exported at runtime, not just as types, so a consumer can list every case.
+- **A deployment describes itself.** `GET /api/booking/catalog` says what can be booked, and
+  `GET /api/booking/ops/health` reports migrations, outbox debt and open incidents.
+- **Errors say how to fix them.** Config errors carry the key path, the rule and the fix. API
+  errors carry enough to correct the request without reading source.
+- **Versioned envelopes, one projection.** Webhooks carry `apiVersion`, and pushed and pulled
+  bookings come from the same projection. An event's envelope is written with the change that
+  caused it, and retries send the same bytes.
+- **Records build up where the next reader looks.** Migrations explain their backfills,
+  snapshot tests pin behavior so every diff maps to a decision, and contract docs are
+  generated.
 
-## Deliberate boundaries
+## Boundaries
 
-- Cloudflare D1 + Workers are the one blessed target — the atomic capacity
-  guards depend on it, and edge-native is the differentiator.
-- Stripe Checkout is the only shipped and tested payment implementation; the
-  port (`PaymentProvider` from `@reservajs/astro/core`) is public so others
-  are writable, with no registry and no speculative second implementation.
-- No customer booking-funnel UI ships in the package; `examples/smoke-site`
-  is the reference consumer.
-- Non-goals: multi-day/date-range rentals, per-seat assigned ticketing,
-  per-staff-member scheduling.
+- Cloudflare Workers and D1 are the only target. The atomic capacity checks depend on D1.
+- Stripe Checkout is the only shipped payment adapter. `PaymentProvider` is public so others can
+  be written; there's no registry.
+- No customer booking form ships in the package. `examples/smoke-site` is the reference.
+- Out of scope: multi-day rentals, assigned seating, per-staff scheduling.
 
-## Deferred — with revisit triggers
+## Deferred
 
-- **`src/repo.ts` split** (81 methods): real debt, deliberately deferred —
-  the surface is CAS/transaction-sensitive. Revisit once the concurrency
-  patterns have been stable for a few months.
-- **Enhancer DOM test harness** (manage/admin/settings enhancers have no
-  executed-behavior tests): revisit when that UI next changes materially.
-- **Per-route path overrides** (beyond the prefix): open; revisit when a
-  consumer asks.
-- **Broad public provider-error contract**: only the narrow
-  operational-alert/reconciliation contracts are exported; the full hierarchy
-  stays internal until an external adapter needs it.
-- **Admin search scan + per-row decrypts, calendar occupancy over the whole
-  horizon**: the list pages in SQL, but a free-text search scans up to a fixed
-  cap in memory and the calendar recomputes each day's peak on every load;
-  acceptable at the documented deployment scale; revisit at an order of
-  magnitude more bookings.
-- **Pre-0008 occupancy backfill**: pre-upgrade rows' occupancy columns are
-  NULL by design; a config-aware repair belongs to a deployment's own data
-  migration, not to a library migration.
+Each with what would make it worth revisiting.
+
+- **Splitting `src/repo.ts`.** Real debt, but every method is sensitive to transactions and
+  compare-and-set. Revisit once those patterns have been stable for a few months.
+- **Tests for the admin, manage and settings enhancers** (the client-side scripts). Revisit next
+  time that UI changes substantially.
+- **Per-route path overrides**, beyond the prefix. Revisit when someone asks.
+- **A public provider error hierarchy.** Only the alert and reconciliation contracts are
+  exported. Revisit when an external adapter needs more.
+- **Admin search and calendar cost.** Free-text search scans up to a fixed cap in memory, and
+  the calendar recomputes each day's peak on every load. Fine at today's scale; revisit at ten
+  times the bookings.
+- **Bookings with no stored occupancy units** count as one unit. Re-counting them needs the
+  deployment's config, so it belongs in that deployment's own data migration, not in Reserva's.

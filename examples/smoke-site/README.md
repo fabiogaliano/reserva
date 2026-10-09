@@ -1,44 +1,42 @@
 # Reserva local demo
 
-A complete Astro 7 site wired against Reserva, running on Cloudflare's workerd with a persistent
-local D1 database. Payment, calendar, email, alerts, and admin auth are simulated in
-`src/runtime.ts`; nothing contacts an external service.
+A complete Astro 7 site running Reserva on Cloudflare's workerd, with a persistent local D1
+database. Payments, calendar, email, alerts and admin sign-in are simulated in `src/runtime.ts`,
+so nothing calls an external service.
 
 ```bash
-bun run demo        # applies the migrations, then `astro dev`
+bun run demo        # applies the migrations, then runs `astro dev`
 ```
 
-Open <http://localhost:4321>. Local D1 state lives under `.wrangler/state`; delete that directory
-to start empty.
+Open <http://localhost:4321>. Local data lives in `.wrangler/state`; delete it to start over.
 
 | Page | What it shows |
 |---|---|
-| `/` | booking widget and the embeddable fragments |
-| `/booking-confirmation?sessionId=…` | payment recovery and confirmation |
-| `/booking/admin` | owner dashboard (auth bypassed by the demo runtime only) |
+| `/` | the booking widget and the `<ManageBooking />` form |
+| `/booking-confirmation?sessionId=…` | payment and confirmation |
+| `/booking/admin` | the owner dashboard (sign-in skipped by the demo runtime) |
 | `/booking/manage?token=…` | customer or operator controls |
 | `/api/booking/availability` | availability JSON |
 
-The simulated email provider prints customer and operator manage URLs to the terminal. The
-operator bearer token is `local-operator-secret`.
+The fake email provider prints customer and operator manage links in the terminal. The operator
+bearer token is `local-operator-secret`.
 
 ## Scheduled reconciliation
 
-`src/worker.ts` is this site's own Worker entry, pointed at by `main` in `wrangler.jsonc`. It
-exports `fetch: handle` from `@astrojs/cloudflare/handler` alongside
-`scheduled: scheduledHandler(runtime)`, so the cron runs in the same Worker as the site, with the
-same bindings and secrets. `triggers.crons` runs it every 5 minutes.
+`src/worker.ts` is the site's Worker entry (`main` in `wrangler.jsonc`). It exports
+`fetch: handle` from `@astrojs/cloudflare/handler` and `scheduled: scheduledHandler(runtime)`, so
+the cron runs in the same Worker as the site, with the same bindings and secrets, every five
+minutes.
 
-`POST /api/booking/ops/reconcile` runs the same sweep on demand; both paths share one D1 lease row,
-so they never sweep concurrently.
+`POST /api/booking/ops/reconcile` runs the same sweep on demand. Both share one lease, so they
+never run at the same time.
 
 ```bash
-bun run cron:dev       # wrangler dev against the demo D1 state; trigger the cron with GET /cdn-cgi/handler/scheduled
-bun run cron:trigger   # fire one sweep, as Cron Triggers would
+bun run cron:dev       # wrangler dev on the demo's D1; trigger with GET /cdn-cgi/handler/scheduled
+bun run cron:trigger   # run one sweep, as the cron would
 bun run cron:deploy    # deploy for real
 ```
 
-The default cadence is every 5 minutes. Both `wrangler.jsonc` files enable full-log observability
-so reconciliation and incident events are inspectable in production; also set a Cloudflare-side
-alert on this Worker's failures, since the in-process alert sink cannot fire if the invocation
-itself never completes.
+Both `wrangler.jsonc` files turn on full-log observability. In production, also add a
+Cloudflare alert on this Worker's failures: if the invocation never finishes, Reserva can't send
+an alert itself.

@@ -2,8 +2,8 @@
 
 The official Stripe Checkout adapter for [Reserva](https://www.npmjs.com/package/@reservajs/astro).
 
-Reserva's payment port is provider-neutral and documented, so anyone can write an adapter for
-another processor. Stripe is the only one that is officially shipped and tested.
+Reserva's payment interface isn't tied to any processor, so you can write an adapter for
+another one. Stripe is the only one shipped and tested.
 
 ```sh
 bun add @reservajs/astro @reservajs/stripe
@@ -11,15 +11,14 @@ bun add @reservajs/astro @reservajs/stripe
 
 ## Setup
 
-`stripe(options)` returns a `PaymentProvider`. Wire it in your runtime module — the same file that
-`reserva({ runtimeEntrypoint })` points at:
+`stripe(options)` returns a `PaymentProvider`. Pass it in your runtime module
+(`src/reserva-runtime.ts` by default):
 
 ```ts
 import { defineCloudflareReservaRuntime } from '@reservajs/astro/runtime';
 import { stripe } from '@reservajs/stripe';
-import config from './reserva.config';
 
-export default defineCloudflareReservaRuntime<Env>(config, {
+export default defineCloudflareReservaRuntime<Env>({
   providers: ({ env }) => ({
     payments: stripe({
       secretKey: env.STRIPE_SECRET_KEY,
@@ -29,59 +28,53 @@ export default defineCloudflareReservaRuntime<Env>(config, {
 });
 ```
 
-There is no class to construct and no default export: the factory is the whole surface.
-
 ### Options
 
 | Option | Purpose |
 |---|---|
 | `secretKey` | Stripe secret key. Required. |
 | `webhookSecret` | Signing secret of the endpoint you point at `/api/booking/webhooks/payment`. Required. |
-| `termsOfService` | `'required'` (default) records consent at checkout; `'none'` for accounts without a public ToS URL. |
+| `termsOfService` | `'required'` (default) asks for consent at checkout; `'none'` for accounts without a public terms URL. |
 | `lineItemName`, `productDescription`, `pickupFieldLabel`, `guestCountFieldLabel` | Copy on the hosted checkout line item, pickup field and headcount field. Each takes a value or a `(booking, config)` callback. `lineItemName` defaults to the service's localized `title`; `guestCountFieldLabel` to "Exact number of guests" (Stripe allows 50 characters). |
 | `successUrl`, `cancelUrl` | Override the URLs Reserva derives from `business.url` and its confirmation route. Each takes a string or a `(booking, config)` callback; `cancelUrl` defaults to `business.url`. |
 | `now` | Inject a clock (tests). |
 | `client` | Inject a Stripe client (tests). |
 
-Stripe's own limits are validated once, when the runtime definition initializes, and the error names
-the offending config path: the checkout session cannot stay open longer than 24 hours
-(`booking.holdMinutes`), the locale must be one Stripe has checkout copy for, and the currency must
-be one Stripe can present.
+Stripe's own limits are checked once at startup, and an error names the config path: a checkout
+session can't stay open more than 24 hours (`booking.holdMinutes`), and the locales and currency
+must be ones Stripe Checkout supports.
 
 ## Payment methods
 
-Payment methods are managed in the Stripe dashboard. This adapter never sends
-`payment_method_types`, so Apple Pay, Google Pay, Link and anything else you enable there show up
-at checkout without a code change.
+Turn payment methods on in the Stripe dashboard. The adapter never sends
+`payment_method_types`, so Apple Pay, Google Pay, Link and anything else you enable appear at
+checkout without a code change.
 
-**Reserva does not support delayed payment methods. Do not enable Multibanco, SEPA Direct Debit, or
-bank transfer in the Stripe dashboard.** Their money arrives days after the booking's capacity hold
-expires, so there is nothing left to confirm. As a guard, every session is created with
-`excluded_payment_method_types` set to the exported `STRIPE_DELAYED_PAYMENT_METHOD_TYPES` constant
-(bank debits, bank transfer, vouchers). If one is enabled and used anyway, Reserva refuses the
-checkout — the hold is released, the payment intent is cancelled where Stripe allows it, and the
-customer sees a "we couldn't take this payment" page. Money that settles regardless arrives as
-`checkout.session.async_payment_succeeded` and is refunded in full automatically.
+**Don't enable delayed payment methods** such as Multibanco, SEPA Direct Debit or bank
+transfer. Their money arrives days after the booking's hold expires. Every session excludes
+them through `excluded_payment_method_types` (the exported `STRIPE_DELAYED_PAYMENT_METHOD_TYPES`:
+bank debits, bank transfer, vouchers). If one gets used anyway, Reserva refuses the checkout: the
+hold is released, the payment is cancelled where Stripe allows, and the customer sees a "we
+couldn't take this payment" page. Money that settles anyway is refunded in full automatically.
 
 ## Checkout semantics
 
-- One line item for the whole booking, priced by Reserva's pricing module — this adapter never
-  computes a price itself.
+- One line item for the whole booking, at the price Reserva computed, partner discount
+  included. The adapter never computes a price.
 - `submit_type: 'book'`, so Stripe's button reads "Book".
-- The session expires 5 minutes before the booking hold does, so a paid session can never outlive
-  the capacity it holds.
-- `pickup_address` is collected as a custom field only when the booked service's location option
-  declares `requiresAddress`.
-- `guest_count` is an optional numeric custom field, added only when the booked service sets
-  `collectGuestCount`. A blank or unusable answer is stored as no headcount; the payer is never
-  blocked from paying.
-- Checkout creation is idempotent per booking, and a refund carries a marker that lets a retry
-  recognize a refund it already issued instead of issuing a second one.
+- The session expires 5 minutes before the hold, so a session can't be paid after its slot is
+  released.
+- `pickup_address` is asked for only when the chosen pickup option has `requiresAddress`.
+- `guest_count` is an optional number field, added only when the service sets
+  `collectGuestCount`. A blank or unusable answer is stored as no headcount and never blocks
+  payment.
+- Creating a checkout is idempotent per booking, and a retried refund recognizes one it already
+  made instead of refunding twice.
 
 ## Webhooks
 
-Create a Stripe webhook endpoint pointing at `https://<your site>/api/booking/webhooks/payment` and
-subscribe to exactly these seven events:
+Create a webhook endpoint at `https://<your site>/api/booking/webhooks/payment` and subscribe it
+to these seven events:
 
 - `checkout.session.completed`
 - `checkout.session.expired`
@@ -91,11 +84,10 @@ subscribe to exactly these seven events:
 - `charge.dispute.created`
 - `charge.dispute.closed`
 
-`charge.refunded` fires for partial refunds too, including ones made in the Stripe dashboard, and
-carries the charge's cumulative refunded amount; Reserva stores it as the booking's refunded total.
-`charge.dispute.closed` records how a dispute ended. An endpoint set up for an earlier release keeps
-working without it, but its disputes stay open on the booking until you add it. Stripe's closing
-statuses map to an outcome by whether the money stayed with you:
+`charge.refunded` also fires for partial refunds and ones made in the dashboard; Reserva stores
+the charge's refunded total on the booking. `charge.dispute.closed` records how a dispute ended.
+Without it, disputes stay open on the booking. Stripe's statuses map to an outcome by whether you
+kept the money:
 
 | Stripe `status` | Outcome |
 |---|---|
@@ -105,13 +97,13 @@ statuses map to an outcome by whether the money stayed with you:
 | `prevented` (settled by refunding the cardholder through a prevention programme) | lost |
 | anything else | none: the dispute stays open and Reserva logs a warning |
 
-Put its signing secret in `STRIPE_WEBHOOK_SECRET`. Signatures are verified
-against the raw body before anything is parsed, and an unsigned or tampered request is rejected
-without touching the booking.
+Put the endpoint's signing secret in `STRIPE_WEBHOOK_SECRET`. The signature is checked against
+the raw body before anything is parsed, and an unsigned or altered request is rejected without
+touching the booking.
 
-**Set the webhook endpoint's API version explicitly** in the Stripe dashboard rather than leaving it
-on "your account's default". The event payload's shape follows the endpoint's version, so an account
-default that moves under you can change the fields this adapter reads without any deploy on your side.
+**Pin the endpoint's API version** in the Stripe dashboard instead of leaving it on the account
+default. The payload's shape follows that version, so a default that changes could change the
+fields this adapter reads without any deploy on your side.
 
 ## License
 

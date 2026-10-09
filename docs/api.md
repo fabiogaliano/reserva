@@ -1,217 +1,259 @@
 # The booking API
 
-The injected endpoints in detail — the ones whose contract is not obvious from their name —
-plus the wire types, the error envelope, and the deliberate behavior behind a few status codes.
+What each endpoint takes and returns, the typed client, partner offers, webhooks, and the
+reasons behind a few status codes. The route table is in the
+[README](../README.md#injected-routes) and in [`AGENTS.md`](../AGENTS.md).
 
-The canonical route table is generated from the package's route manifest and lives in
-[`../README.md`](../README.md#injected-routes); [`../AGENTS.md`](../AGENTS.md) carries the same
-table inside the published tarball.
+A booking goes `catalog` (what can be booked) → `availability` (when) → `quote` (how much) →
+`checkout` (hold the slot, open the payment page). The payment provider then sends the
+customer to `/booking-confirmation?sessionId=…`, which polls `status` until the payment webhook
+confirms the booking.
 
-## Endpoint notes
+## Endpoints
 
-- `GET /api/booking/availability?serviceSlug=&quantity=&from=&to=` — bookable slots per day. Each
-  slot is `{ start, date, time, remaining }`: `start` is the ISO instant with its offset, `date`
-  (`YYYY-MM-DD`) and `time` (`HH:MM`) are the same instant in the business timezone, already
-  projected so a consumer never re-derives it. `remaining: number | null` is published only at or
-  below `config.booking.limitedThreshold` and `null` above it (exact capacity is
-  deployment-private). `quantity` is optional and defaults to 1. One request covers at most 62
-  days (`MAX_AVAILABILITY_RANGE_DAYS`) and never reaches past `maxHorizonDays`; a longer range is
-  a 400 `validation_failed` with `details: { field: 'to' }`. The limit keeps one
-  request's CPU bounded, since every day costs slot generation and an occupancy pass. The client's
-  `availability()` splits a longer range into consecutive requests and merges the days, so only a
-  raw HTTP consumer has to chunk. A reschedule picker sends the booking's
-  manage token in the `x-reserva-manage-token` header (`MANAGE_TOKEN_HEADER`, or `manageToken` on
-  the client) so the booking's own slot isn't counted against it. That answer is never cached; an
-  unknown or revoked token gets the normal answer.
-- `POST /api/booking/quote` — `{ serviceSlug, quantity, pickup?, referralCode? }` →
-  `{ priceMinor, currency, pricing, referral, quoteFingerprint }`. Checkout recomputes through
-  the same pricing module. `pricing` contains original/service/pickup amounts, discounts and
-  savings; tier component subtotals are null rather than inferred. `referral.status` is `none`,
-  `active` or `unavailable`. A `locale` key is accepted and ignored. All answers are `no-store`.
-- `POST /api/booking/referral` — `{ referralCode }` → `ReferralResolution`: either
-  `{ status: 'active', benefits: [{ serviceSlug, serviceDiscountBasisPoints, waivedPickupIds }] }`
-  or `{ status: 'unavailable' }`. Unknown and archived codes are indistinguishable. Disabled
-  offers and a globally disabled application gate return active attribution with empty benefits.
-  Operator names, IDs, revisions and other referral codes are never returned. No list endpoint
-  exists. This endpoint and the typed `resolveReferral()` client method are uncached.
-- `GET /api/booking/catalog?locale=` — everything needed to build a booking flow before a date
-  is chosen: per service `slug`, locale-resolved `title`, `durationMin`, `location` (or
-  `null`), `metadataFields` (`[]` for none; fields declared `visibility: 'operator'` are left
-  out), `pricing` (as configured: rows, each
-  `{ maxQuantity, pickup, priceMinor }` with `pickup` null where the service has no pickup axis,
-  or a formula `{ baseMinor, surcharges, maxUnits, surchargeScope, seatsPerUnit }` with every
-  inherited field already filled in), `maxQuantity` (the largest party it prices) and
-  `fromPriceMinor` (the lowest amount any party and pickup pays, for a "from" price); top-level
-  `locales`, `currency`, `maxHorizonDays` and `policy` (`cancelCutoffHours`,
-  `reschedule.enabled`, `reschedule.cutoffHours`: the admin-editable policy a site prints next to
-  a price). Every service and every meeting point also carries
-  `meta`: the opaque JSON object its config declared, echoed back verbatim (`{}` when none) so a
-  site can fetch prices and its own content in one call. Never exposes schedules, turnaround,
-  capacity, or occupancy — a charged price still comes from `/api/booking/quote`.
-  `Cache-Control: public, max-age=60`.
-- `POST /api/booking/checkout` —
-  `{ serviceSlug, start, quantity, pickup?, locale, meetingPointId?, metadata?, referralCode?, quoteFingerprint? }` →
-  `{ checkoutUrl, bookingId, reference, paymentDeadline }`.
-  `meetingPointId` is required when the service declares more than one meeting point and the
-  selected pickup option uses one; a single-point service resolves to its first declared
-  point. `paymentDeadline` (UTC ISO) is when the payment page closes; the hold may outlive it by
-  a few minutes.
-- `GET /api/booking/status?sessionId=` — the confirmation page's poll target. `status` is
-  `pending | confirmed | failed | cancelled | expired | not_found`. `failed` means the payment
-  session completed but its payment was not acceptable — a delayed payment method, or an amount
-  or currency that does not match the booking. No booking was made, the hold is released, the
-  payment is cancelled where the adapter can, and an operational incident is opened. It is
-  terminal: polling again cannot change it. For four hours after the booking was created a
-  `confirmed` answer carries the full `ConfirmationBooking`; after that it carries the
-  `ConfirmationSummary` `{ reference, serviceTitle, start, end, locale }` instead, and the
-  confirmation page says the details were emailed. `metadataRows` never includes an
-  operator-only field.
-- `GET /api/booking/manage?token=` — `cancelDeadline` and `rescheduleDeadline` are the two
-  cutoffs, as UTC instants; they are independent policies. `deadline` remains as an alias of
-  `cancelDeadline` for one minor and is then removed. With a customer token, `booking.metadata`
-  and `booking.metadataRows` leave out operator-only fields; an operator token gets them all.
-- `GET /api/booking/ops/health` — deployment health behind admin auth: `schema` (migrations
-  and fingerprint), `outbox` (pending/abandoned counts by family, oldest pending age),
-  `incidents` (open count), `security`, `reconciliation` (`lastRunAt`, `lastSummary`). Reads
-  everything except the `reconciliation_stale` incident, which it opens when the sweep has
-  stopped running and resolves once it runs again.
-- `GET /booking/assets/reserva.css` and `/booking/assets/reserva.js` — static first-party
-  assets for the server-rendered pages; see
-  [`customization.md`](./customization.md#components-and-theming).
+### `GET /api/booking/catalog?locale=`
 
-## Wire types and error codes
+Everything a booking form needs before a date is picked. Per service: `slug`, `title` in the
+requested locale, `durationMin`, `location` (or `null`), `metadataFields` (`[]` when none;
+operator-only fields are left out), `pricing`, `maxQuantity` (the largest party it prices),
+`fromPriceMinor` (the lowest price, for a "from €X" label) and `meta`. At the top level:
+`locales`, `currency`, `maxHorizonDays` and `policy` (`cancelCutoffHours`,
+`reschedule.enabled`, `reschedule.cutoffHours`).
 
-Every request and response shape is exported as a type from `@reservajs/astro/core`
-(`AvailabilityResponse`, `QuoteRequest`/`QuoteResponse`, `CheckoutRequest`/`CheckoutResponse`,
+`pricing` comes back as configured: rows of `{ maxQuantity, pickup, priceMinor }` (`pickup` is
+`null` without a pickup axis), or a formula `{ baseMinor, surcharges, maxUnits, surchargeScope,
+seatsPerUnit }` with inherited values filled in. `meta` is the JSON object the config declared
+for the service or meeting point, returned as is (`{}` when none), so a site gets prices and its
+own content in one call.
+
+The catalog never exposes schedules, turnaround, capacity or occupancy. It's cached for 60
+seconds. The amount actually charged always comes from `quote`.
+
+### `GET /api/booking/availability?serviceSlug=&quantity=&from=&to=`
+
+Bookable slots per day. Each slot is `{ start, date, time, remaining }`. `start` is the ISO
+instant with its offset; `date` (`YYYY-MM-DD`) and `time` (`HH:MM`) are the same moment in the
+business timezone. `remaining` is a number only at or below `booking.limitedThreshold`, and
+`null` above it, so exact capacity stays private. `quantity` defaults to 1.
+
+One request covers at most 62 days (`MAX_AVAILABILITY_RANGE_DAYS`) and never goes past
+`maxHorizonDays`. A longer range is `400 validation_failed` with `details.field: 'to'`. The
+client's `availability()` splits long ranges for you.
+
+For a reschedule picker, send the booking's manage token in the `x-reserva-manage-token` header
+(`MANAGE_TOKEN_HEADER`, or `manageToken` on the client). The booking's own slot then doesn't
+count against it. That answer is never cached, and an unknown or revoked token gets the normal
+answer.
+
+### `POST /api/booking/quote`
+
+`{ serviceSlug, quantity, pickup?, referralCode? }` →
+`{ priceMinor, currency, pricing, referral, quoteFingerprint }`.
+
+Checkout prices through the same code, so a quote and the charge can't disagree. `pricing` is
+the breakdown: `originalTotalMinor`, `serviceDiscountMinor`, `pickupDiscountMinor`,
+`savingsMinor`, `priceMinor`, and the service and pickup subtotals (`null` for row pricing,
+which can't be split). `referral.status` is `none`, `active` or `unavailable`. Never cached.
+
+### `POST /api/booking/referral`
+
+`{ referralCode }` → `{ status: 'active', benefits }` or `{ status: 'unavailable' }`. Each
+benefit is `{ serviceSlug, serviceDiscountBasisPoints, waivedPickupIds }`. Unknown and archived
+codes look the same. A partner whose offer is switched off, or a deployment with offers
+disabled, answers `active` with empty `benefits`. Partner names, ids and other codes are never
+returned, and there's no endpoint that lists partners. Never cached.
+
+### `POST /api/booking/checkout`
+
+`{ serviceSlug, start, quantity, locale, pickup?, meetingPointId?, metadata?, referralCode?, quoteFingerprint? }`
+→ `{ checkoutUrl, bookingId, reference, paymentDeadline }`.
+
+`meetingPointId` is required when the chosen pickup option uses a meeting point and the service
+has more than one; with a single point it's picked for you. `paymentDeadline` (UTC) is when the
+payment page closes. The hold can outlive it by a few minutes.
+
+### `GET /api/booking/status?sessionId=`
+
+What the confirmation page polls. `status` is one of `pending`, `confirmed`, `failed`,
+`cancelled`, `expired`, `not_found`.
+
+`failed` means the payment session completed but the payment wasn't acceptable: a delayed
+payment method, or an amount or currency that doesn't match. No booking is made, the hold is
+released, the payment is cancelled where the adapter can, and an incident opens for the
+operator. It won't change on a later poll.
+
+For four hours after the booking was created, `confirmed` carries the full booking. After that
+it carries only `{ reference, serviceTitle, start, end, locale }` (`ConfirmationSummary`), and
+the page says the details were emailed. Operator-only fields never appear.
+
+### `GET /api/booking/manage?token=`
+
+The booking behind a manage token. `cancelDeadline` and `rescheduleDeadline` are the two
+cutoffs, as UTC instants; they're separate policies. A customer token gets `metadata` and `metadataRows` without operator-only
+fields; an operator token gets everything.
+
+### `GET /api/booking/ops/health`
+
+Behind admin auth. Reports `schema` (migrations applied, fingerprint match), `outbox` (pending
+and abandoned counts per family, oldest pending age), `incidents` (open count), `security`
+(whether the CSRF and token-encryption secrets are set, and which admin auth is in use) and
+`reconciliation` (`lastRunAt`, `lastSummary`). Its only write: it opens a
+`reconciliation_stale` incident when the sweep hasn't run for three cadences, and resolves it
+once the sweep runs again.
+
+### `/booking/assets/reserva.css` and `reserva.js`
+
+Static assets for the server-rendered pages. See
+[customization](./customization.md#components-and-theming).
+
+## Types and errors
+
+Every request and response type is exported from `@reservajs/astro/core`:
+`AvailabilityResponse`, `QuoteRequest`/`QuoteResponse`,
+`ResolveReferralRequest`/`ReferralResolution`, `CheckoutRequest`/`CheckoutResponse`,
 `CatalogResponse`, `StatusResponse`, `ConfirmationSummary`, `ManageResponse`,
-`CancelRequest`/`RescheduleRequest`, `ManageActionResponses`,
-`OpsHealthResponse`, `ApiErrorEnvelope`, `ApiErrorDetails`); the handlers are typed against the same
-declarations. Collections are always present and empty (`[]`, `{}`) and optional modules are
-always present and `null`, so nothing branches on key presence.
+`CancelRequest`/`RescheduleRequest`, `ManageActionResponses`, `OpsHealthResponse`,
+`ApiErrorEnvelope`, `ApiErrorDetails`. Lists are always present, empty when there's nothing.
+Optional modules are always present, `null` when off.
 
-Every failure is `{ error: { code, message, details? } }`. The `code` is one of a closed set
-exported as `API_ERROR_CODES` (with the `ApiErrorCode` union and `isApiErrorCode` guard), listed
-in the [README](../README.md#injected-routes). `validation_failed` messages name the offending
-field and the rule that rejected it. `details` (type `ApiErrorDetails`) is optional and carries
-`{ field?: string; allowed?: string[]; quote?: QuoteResponse }`: the rejected input's name and, when the input is a
-closed set (service slugs, pickup ids, meeting point ids, `select` metadata options), the values
-it accepts.
+Every error is `{ error: { code, message, details? } }`. `code` comes from `API_ERROR_CODES`
+(with the `ApiErrorCode` type and `isApiErrorCode` guard). `validation_failed` messages name the
+field and the rule. `details` can carry `field`, `allowed` (the accepted values, for closed sets
+like service slugs, pickup ids or select options) and `quote` (on `quote_changed`). Switch on
+`code`, not on `message`.
 
-### Partner offers and reviewed quotes
+## Partner offers and referral codes
 
-Partners are managed at `/booking/admin?view=partners` using the same admin authentication,
-origin checks and CSRF tokens as settings: a list, one page per partner
-(`&partner=<id>`, with its referral link, offer, price preview and archive/restore), and an add
-form (`&partner=new`). Codes are immutable and reserved after archival. Archiving stops new
-attribution/benefits; switching an offer off keeps its values and leaves attribution active.
-Saves are revision-checked and audit records commit with the partner/offer changes, recording
-which of the name, offer and state changed so Settings → Recent changes can say what happened.
-These saves do not dispatch `settings.changed` or trigger catalog rebuilds. A booking made
-through a partner shows that partner in the admin list and details, with the price before the
-offer and what the offer took off, as recorded when the booking was made.
+### In the admin
 
-Offer application is **off by default**. Configure the server-only `partnerOffers` runtime
-option (never `ClientConfig`), either as an object or a per-request binding callback:
+Partners live at `/booking/admin?view=partners`, behind the same auth, origin checks and CSRF
+tokens as the settings page. There's a list, a page per partner (`&partner=<id>`) with its
+referral link, offer, price preview and archive/restore, and an add form (`&partner=new`).
+
+- Codes are lowercase (`a-z`, `0-9`, `-`, `_`, up to 64 characters), can't be changed, and
+  stay reserved after a partner is archived.
+- Archiving stops new attribution and discounts. Switching an offer off keeps its values and
+  keeps attribution working.
+- Saves are revision-checked: a concurrent edit gets `409 partner_conflict`. Each save is
+  recorded under Settings → Recent changes. Partner saves don't fire `settings.changed`.
+- A referral link is `<business.url>?ref=<code>`.
+
+An offer is a percentage off the service price (up to two decimals), free pickup on chosen
+pickup options, or both. Discounts apply to the service subtotal only. A waived pickup still
+collects its address if it requires one. Offers need formula pricing: a service priced by rows
+can't be split into service and pickup, so it can't carry an offer.
+
+### Turning offers on
+
+Offers are off by default. Enable them with the server-only `partnerOffers` runtime option,
+never in `ClientConfig`:
 
 ```ts
-// Inside defineCloudflareReservaRuntime<Env>({...}). The site defines this binding.
+// in defineCloudflareReservaRuntime<Env>({ … })
 partnerOffers: ({ env }) => ({
   enabled: env.RESERVA_PARTNER_OFFERS_ENABLED === 'true',
   minimumChargeMinorByCurrency: { eur: 50 },
-  legacyMetadataField: 'partner', // optional, explicit attribution-only bridge
+  legacyMetadataField: 'partner', // optional, see below
 }),
 ```
 
-Set the currency minimum to the payment provider/account's supported floor; the example is
-50 EUR minor units, not automatic provider discovery. Missing/nonpositive minimums,
-zero/below-minimum offer totals, unknown waiver IDs and assigning benefits to tier-priced
-services are rejected, including disabled offers prepared in admin. A settings save that would
-push a saved offer below the minimum (for example a lower tour price) is refused until the offer
-is edited. If an offer still cannot be sold on a service, for example after a deployment raised
-the minimum, that service is outside the offer's scope: it is missing from the resolved
-benefits, quoted and charged at its normal price, and named as charged the normal price on the
-partners page. Percentages accept up to
-two decimal places. Discounts apply only to service subtotals; selected pickup waivers remove
-the full surcharge without removing address requirements. The gate must remain off until the
-customer funnel renders live quotes and implements changed-price review.
+Set the minimum to your payment provider's smallest allowed charge. Reserva doesn't look it
+up. The admin refuses an offer that would bring a price below the minimum, and the settings
+page refuses a price change that would do the same to a saved offer. If an offer still can't be
+sold on a service (say, the minimum was raised later), that service is left out of the offer:
+it's charged the normal price, and the partner's page says so.
 
-Referral codes are matched exactly and are lowercase; lowercase visitor input before sending
-it, since a malformed code is `400 validation_failed` on `referralCode`.
+Only enable offers once your booking form shows live quotes and handles a changed price (below).
 
-Whenever `referralCode` is supplied, checkout requires `quoteFingerprint`, even for unknown
-codes or an active partner with no enabled benefit. Existing non-referral callers need no
-fingerprint; callers may opt into comparison by supplying one. The fingerprint is not a price
-or authorization token: checkout independently resolves and calculates everything. Never send
-browser percentages, savings or totals as payment authority.
+### In your booking form
 
-A mismatch returns **409 `quote_changed` before creating a hold/payment**, with
-`error.details.quote` containing the fresh quote to review. A party size or pickup the service
-cannot price is `400 validation_failed`, not a changed quote. **503 `partner_storage_unavailable`** is a retryable failure,
-not an unavailable referral; never remove the referral or fall back to a full-price checkout.
+1. Read `ref` from the page URL, lowercase it, and keep it for the session. A malformed code is
+   `400 validation_failed` on `referralCode`.
+2. Call `resolveReferral({ referralCode })` to show what the partner's offer gives, per service.
+3. Send `referralCode` to `quote()` and show the result. Keep its `quoteFingerprint`.
+4. Send `referralCode` and that `quoteFingerprint` to `checkout()`.
 
-Acceptance is the checkout's single coherent settings/offer read and fingerprint comparison.
-An edit after that read applies to later checkouts, not an accepted hold. Attribution
-(`booking.partnerId`, `partnerAttribution`) and customer-safe pricing (`partnerPricing`) are
-server-authored snapshots inserted atomically with the hold; they cannot be patched through
-metadata or later relabeled/repriced. Payment verification, rescheduling and refunds retain
-the stored `booking.priceMinor` and currency. Confirmation/manage responses expose the
-customer-safe snapshot as `booking.pricing` (null for legacy/non-referral rows), never operator
-attribution. Webhook booking field names remain unchanged.
+With a `referralCode`, checkout requires `quoteFingerprint` (`400 validation_failed` without
+it), even for an unknown code or a partner with no offer. Without a code, the fingerprint is
+optional. Checkout recomputes the price
+on its own; the fingerprint only checks that the customer saw the same price. Never send prices
+or discounts from the browser.
 
-With `legacyMetadataField` explicitly configured, a metadata-only referral may be resolved
-and captured for attribution while the gate is off. The bridge resolves against the D1
-registry, not an old metadata select's options (which may be removed before old browser code
-expires). Only an active resolved code may retain an existing operator-only text/select tag;
-unknown, archived and malformed claims are stripped from new rows, and past metadata is
-untouched. If the registry cannot be read, a metadata-only checkout is booked without
-attribution rather than refused. Conflicting legacy/typed codes are rejected. Once application
-is enabled, that old checkout path is rejected with `validation_failed` on
-`metadata.<legacyMetadataField>`, the field older clients retry without: migrate to
-`referralCode` and the reviewed fingerprint. A typed `referralCode` never falls back this way.
+If the price or the offer changed since the quote, checkout answers `409 quote_changed` before
+it holds anything, with the new quote in `error.details.quote`. Show it and let the customer
+confirm again. `503 partner_storage_unavailable` is temporary: retry, and don't drop the code
+or fall back to full price. A party size or pickup the service can't price is
+`400 validation_failed`, not a changed quote.
 
-### Building a price table
+```ts
+try {
+  await reserva.checkout({ serviceSlug, start, quantity, locale, referralCode, quoteFingerprint });
+} catch (cause) {
+  if (isReservaApiError(cause) && cause.code === 'quote_changed') showNewPrice(cause.details?.quote);
+}
+```
 
-A service prices either by breakpoint rows (`{ maxQuantity, pickup?, priceMinor }`: the tightest
-row whose `maxQuantity` covers the request wins) or by formula (`baseMinor` per capacity unit,
-times the units the party needs, plus the pickup option's surcharge). `@reservajs/astro/core`
-exports the helpers that apply both rules, so a funnel never re-derives them; `Array.isArray(
-service.pricing)` (or `isPricingFormula`) tells the shapes apart when a UI wants to explain the
-price. All are order-safe — they accept the catalog's entry or a raw config module, sorted or not.
+### What the booking keeps
+
+The checkout reads settings and the offer once, and that read is what the booking gets. Later
+edits apply to later checkouts. The partner (`booking.partnerId`, `partnerAttribution`) and the
+price breakdown (`partnerPricing`) are written with the hold and can't be changed through
+metadata or later edits. Payment checks, reschedules and refunds use the stored
+`booking.priceMinor` and currency. Confirmation and manage responses show the breakdown as
+`booking.pricing` (`null` without a referral) and never show which partner it was. Webhook
+field names are unchanged.
+
+### Migrating from a metadata field
+
+Sites that tracked partners with a `select` metadata field can set `legacyMetadataField` to
+that field's key. Checkouts that send the code only in metadata then get attributed to the
+matching partner in the admin, even with offers off. Codes are looked up in the partner list,
+not in the field's options. An active code keeps its value in an operator-only field; unknown,
+archived and malformed codes are stripped from new bookings, and past bookings are untouched. If
+the partner list can't be read, the booking goes through without attribution. A checkout that
+sends different codes in metadata and `referralCode` is rejected.
+
+Once offers are enabled, a metadata-only referral is rejected with `validation_failed` on
+`metadata.<field>`, so older clients retry without it. Move them to `referralCode` with a
+fingerprint.
+
+## Prices
+
+A service prices by rows (`{ maxQuantity, pickup?, priceMinor }`, where the smallest row that
+fits the party wins) or by formula (`baseMinor` per capacity unit, times the units the party
+needs, plus the pickup surcharge). `@reservajs/astro/core` exports helpers that apply both, so
+your form doesn't re-implement them. They accept a catalog entry or a raw config service, in
+any row order:
 
 ```ts
 import { priceFor, resolvedPriceTableFor, pricingCombinations, lowestPriceMinor, maxQuantityFor } from '@reservajs/astro/core';
 
-priceFor(service, 3, 'custom_pickup');    // one charged amount, in minor units
+priceFor(service, 3, 'custom_pickup');    // one price, in minor units
 resolvedPriceTableFor(service);           // { [pickup or '']: number[] } indexed by quantity
-pricingCombinations(service);             // [{ quantity, pickup, priceMinor }, …] — one row per cell
+pricingCombinations(service);             // [{ quantity, pickup, priceMinor }, …]
 maxQuantityFor(service);                  // the largest party the service prices
-lowestPriceMinor(service);                // the "from" price (also published as fromPriceMinor)
+lowestPriceMinor(service);                // the "from" price (also fromPriceMinor)
 ```
 
-`resolvedPriceTableFor` is what a build-time price grid reads (`table[pickup][quantity]`);
-`pricingCombinations` is the same data flattened, for rendering a list. `service` is anything with
-a `pricing` key of either shape, so `catalog.services[i]` works directly.
+`isPricingFormula(service.pricing)` tells the two shapes apart. These give list prices; a
+partner's discount only shows up in `quote`.
 
-Locale-bearing endpoints negotiate the requested tag against `config.locales.supported` by
-longest prefix match; an unsupported tag falls back to `locales.default`. Every human-readable
-label in config (`services.<slug>.title`, meeting-point and pickup labels and hints, metadata
-labels) is a plain string or a `Record<locale, string>` resolved with the same chain, so a
-response's `title`, `serviceTitle` and pickup labels come back in the request's — or the
-booking's — locale.
+## Locales
 
-### One vocabulary, and the deprecated spellings
+Endpoints that take a locale match it against `locales.supported` by longest prefix and fall
+back to `locales.default`. Every label in config (titles, meeting points, pickup labels and
+hints, metadata labels) is a string or a `Record<locale, string>`, resolved the same way, so
+`title` and `serviceTitle` come back in the request's or the booking's locale.
 
-The field names are `serviceSlug`, `pickup`, `start` and `sessionId` on every endpoint that takes
-them. The older spellings still read for one minor and log `deprecated field` once per isolate:
-`?service=` on availability, `?session_id=` on status, `pickupType` in the checkout body, and
-`newStart` in the reschedule body. They are already gone from the exported request types. The
-webhook envelope's booking keeps `pickupType`, which is frozen for this release line.
+## Field names
 
-## The typed browser client
+Requests use `serviceSlug`, `pickup`, `start` and `sessionId` everywhere. The webhook booking
+still calls the pickup `pickupType`.
 
-`@reservajs/astro/client` is the browser-safe entry: it imports nothing but the wire types, the
-error catalog and the route pattern table, so it carries no Astro, Node or Cloudflare code into a
-bundle.
+## The typed client
+
+`@reservajs/astro/client` is safe to ship to the browser: it imports only wire types, error
+codes and route patterns.
 
 ```ts
 import virtualConfig from 'virtual:reserva/config';
@@ -224,48 +266,44 @@ const days = await reserva.availability({ serviceSlug: 'old-town', quantity: 2, 
 const { checkoutUrl } = await reserva.checkout({ serviceSlug, start, quantity, locale, pickup });
 ```
 
-- `paths` (the deployment's resolved table, which already honours `routePrefix`) and `base` (a
-  plain prefix or origin the default patterns hang off) are mutually exclusive; with neither, the
-  client uses the default patterns on the current origin. A `base` on another origin needs the
-  page's origin in the deployment's `routes.cors.origins` (see
-  [configuration](./configuration.md#moving-and-disabling-routes)).
-- `fetch` swaps the transport (tests, a server-side call); `bearer` is the operator secret the
-  `operator.*`, `opsHealth` and `opsReconcile` methods send.
-- Methods: `catalog`, `availability`, `quote`, `resolveReferral`, `checkout`, `status`, `manage`, `cancel`,
-  `reschedule`, `operator.cancel` / `operator.reschedule` / `operator.noShow`, `opsHealth`,
-  `opsReconcile`. Each takes an optional `{ signal }`; reads whose answer moves (availability,
-  status, manage, quote, referral resolution) are sent `cache: 'no-store'`.
-- Every failure — a `validation_failed` envelope, a bare 502 from a proxy, or a dropped
-  connection — arrives as a `ReservaApiError` with `status`, `code` (an `ApiErrorCode`) and
-  `details`. A network failure carries `status: 0` and `code: 'internal_error'`. Narrow with
-  `isReservaApiError(cause)`.
+- Pass either `paths` (the deployment's route table, `routePrefix` included) or `base` (a
+  prefix or another origin). With neither, it uses the default paths on the current origin. A
+  `base` on another origin needs your site in `routes.cors.origins`
+  ([configuration](./configuration.md#routes-and-cors)).
+- `fetch` replaces the transport (tests, server-side calls). `bearer` is the operator secret
+  for the `operator.*`, `opsHealth` and `opsReconcile` methods.
+- Methods: `catalog`, `availability`, `quote`, `resolveReferral`, `checkout`, `status`,
+  `manage`, `cancel`, `reschedule`, `operator.cancel`, `operator.reschedule`,
+  `operator.noShow`, `opsHealth`, `opsReconcile`. Each takes an optional `{ signal }`.
+  Availability, quote, referral, status and manage are sent with `cache: 'no-store'`.
+- Every failure throws a `ReservaApiError` with `status`, `code` and `details`, whether it's an
+  API error, a bare 502 from a proxy, or a dropped connection (`status: 0`,
+  `code: 'internal_error'`). Check with `isReservaApiError(cause)`.
 
-Calendar helpers ship from the same entry, so a date picker stops re-deriving them:
-`openDays(response)`, `firstOpenDay(response)`, `isDayDisallowed(response)` (UTC getters, matching
-the `Date.UTC` dates a `<calendar-date>` hands its callback), `dateKey(date)` and
-`horizonRange(catalog, today)`.
+Date-picker helpers ship from the same entry: `openDays(response)`, `firstOpenDay(response)`,
+`isDayDisallowed(response)` (UTC getters, matching the `Date.UTC` dates `<calendar-date>`
+passes), `dateKey(date)` and `horizonRange(catalog, today)`.
 
-Presentation helpers live in `@reservajs/astro/ui`: the message catalog (`defaultMessages`,
-`resolveMessages`, `formatMessage`) plus the formatters Reserva's own pages render with —
-`formatDateTime`, `formatDayDate`, `formatDateParts`, `formatPrice`, `googleCalendarUrl`,
-`icsDataUrl(event, { uid, generatedAt })`. Build the `uid` with `calendarUid(reference, businessUrl)`
-to match the UID Reserva's own pages and emails use for that booking.
+`@reservajs/astro/ui` has the message catalog (`defaultMessages`, `resolveMessages`,
+`formatMessage`) and the formatters Reserva's own pages use: `formatDateTime`, `formatDayDate`,
+`formatDateParts`, `formatPrice`, `googleCalendarUrl`, and
+`icsDataUrl(event, { uid, generatedAt })`. Build `uid` with
+`calendarUid(reference, businessUrl)` to match the one in Reserva's pages and emails.
 
-Rate limiting for the public routes belongs at the Cloudflare edge (WAF or rate-limiting
-rules), not inside this library.
+Rate limiting belongs at the Cloudflare edge (WAF or rate-limiting rules), not in Reserva.
 
-One Astro 7 footgun: `src/fetch.ts` in your project is treated as a custom fetch-handler
-entrypoint (the `fetchFile` option defaults to `'fetch'`). Reserva does not need that file;
-do not use the name for unrelated code.
+Astro 7 treats `src/fetch.ts` as a custom fetch entrypoint. Reserva doesn't need one; don't use
+that filename for anything else.
 
-## Subscribers and the webhook envelope
+## Webhooks
 
-An in-process hook's `name` matches `^[a-z][a-z0-9-]{0,31}$` and is unique among hooks; its
-`events` filter defaults to every event in `BOOKING_EVENTS`. `handler(event, booking, { id,
-occurredAt, config })` receives the same wire booking projection an outbound webhook carries,
-plus the envelope id below.
+### Subscribers
 
-The subscribable vocabulary is `WEBHOOK_EVENTS` = `BOOKING_EVENTS` + `SETTINGS_EVENTS`:
+A hook's `name` matches `^[a-z][a-z0-9-]{0,31}$` and is unique. Its `events` filter defaults to
+all of `BOOKING_EVENTS`. `handler(event, booking, { id, occurredAt, config })` receives the same
+booking a webhook carries, plus the envelope id.
+
+You can subscribe to `WEBHOOK_EVENTS`, which is `BOOKING_EVENTS` plus `settings.changed`:
 
 | Event | Payload |
 | --- | --- |
@@ -274,36 +312,11 @@ The subscribable vocabulary is `WEBHOOK_EVENTS` = `BOOKING_EVENTS` + `SETTINGS_E
 | `booking.cancelled_by_operator` | `data.booking` |
 | `booking.rescheduled` | `data.booking` |
 | `booking.no_show` | `data.booking` |
-| `booking.reminder` | `data.booking` — fired by the reconciliation sweep `booking.reminderHoursBefore` hours before the start (default 24, `0` disables); the built-in subscriber is the customer reminder email |
-| `settings.changed` | `data.changes` — see below |
+| `booking.reminder` | `data.booking`, sent by the sweep `booking.reminderHoursBefore` hours before the start (default 24, `0` turns it off) |
+| `payment.dispute_created` | `data.booking` |
+| `settings.changed` | `data.changes` |
 
-`settings.changed` is never implied by an absent `events` filter: a subscriber receives it only
-by naming it. It is also never durable — the outbox is keyed by booking, and a settings save has
-none — so it is delivered best-effort from the admin request: up to three attempts (2 s then 8 s
-backoff), then `logger.error('settings webhook delivery failed', …)` and no incident row. A
-missed rebuild is recovered by saving again or deploying by hand.
-
-```json
-{
-  "apiVersion": 1,
-  "id": "settings/<changeBatchId>",
-  "event": "settings.changed",
-  "occurredAt": "2026-06-14T08:00:00.000Z",
-  "data": { "changes": [{ "domain": "setting", "key": "booking.cancelCutoffHours", "action": "upsert", "actor": "ops@example.com" }] }
-}
-```
-
-`domain` is `setting` | `day_override` | `capacity_default` and `action` is `upsert` | `delete`,
-mirroring the `admin_changes` rows the save wrote; `key` is the setting key or the date. New
-values are not in the payload — read them back from `/api/booking/catalog`. An in-process hook
-subscribed to it receives `(event, null, { id, occurredAt, config, changes })`: `booking` is
-`null` for this event, narrowed by the event name.
-
-> **The booking payload's field names are frozen** for this release line
-> (`serviceSlug`, `quantity`, `priceMinor` + `currency`, `pickupType`); any further change to
-> these names bumps `apiVersion`.
-
-Each webhook delivery POSTs this JSON body:
+### The envelope
 
 ```json
 {
@@ -315,67 +328,77 @@ Each webhook delivery POSTs this JSON body:
 }
 ```
 
-The envelope is serialized once, in the same atomic write as the booking mutation, and every
-retry sends those exact bytes. It is the historical record of what occurred, not a cache of
-the booking's current state. Delivery order is not guaranteed: deduplicate on `id`, and
-compare `occurredAt`/`booking.updatedAt` before replacing newer local state.
+The envelope is written in the same transaction as the change that caused it, and every retry
+sends the same bytes. It records what happened at that moment, not the booking's current state.
+Deliveries can arrive out of order: deduplicate on `id`, and compare `occurredAt` or
+`booking.updatedAt` before overwriting newer data. The booking's field names (`serviceSlug`,
+`quantity`, `priceMinor`, `currency`, `pickupType`) are fixed for `apiVersion: 1`.
 
-Requests are signed per the [Standard Webhooks](https://www.standardwebhooks.com/)
-specification, so any spec-compliant verifier works:
+### Signatures
+
+Deliveries are signed per [Standard Webhooks](https://www.standardwebhooks.com/), so any
+compliant verifier works:
 
 | Header | Value |
 | --- | --- |
 | `webhook-id` | the envelope's `id` |
-| `webhook-timestamp` | Unix seconds, fresh for each attempt (receivers enforce a 300-second tolerance) |
+| `webhook-timestamp` | Unix seconds, new on each attempt (receivers allow 300 seconds) |
 | `webhook-signature` | `v1,<base64 HMAC-SHA256>` over `<webhook-id>.<webhook-timestamp>.<body>` |
 
-The signing key is the secret named by `secretBinding`, in the spec's `whsec_<base64>` form
-(`openssl rand -base64 32`, stored as `whsec_<that value>`). A non-2xx response or network
-failure is retried with backoff and abandoned after the attempt cap or a permanent (4xx)
-response, surfacing as an incident in the admin dashboard.
-[`../AGENTS.md`](../AGENTS.md) has a verification snippet using the `standardwebhooks` package.
+The key is the secret named by `secretBinding`, as `whsec_<base64>`: generate it with
+`openssl rand -base64 32` and store `whsec_<that value>`. A non-2xx response or a network error
+is retried with backoff. After the last attempt, or on a permanent 4xx, the delivery is
+abandoned and shows up as an incident in the admin. [`AGENTS.md`](../AGENTS.md) has a
+verification example.
+
+### `settings.changed`
+
+Fires once per admin save of settings, day overrides or capacity defaults. A subscriber only
+gets it by naming it. It's not durable, since the outbox is per booking: Reserva tries three
+times (after 2 s, then 8 s), then logs `settings webhook delivery failed` and gives up. Save
+again or deploy by hand if a rebuild was missed.
+
+```json
+{
+  "apiVersion": 1,
+  "id": "settings/<changeBatchId>",
+  "event": "settings.changed",
+  "occurredAt": "2026-06-14T08:00:00.000Z",
+  "data": { "changes": [{ "domain": "setting", "key": "booking.cancelCutoffHours", "action": "upsert", "actor": "ops@example.com" }] }
+}
+```
+
+`domain` is `setting`, `day_override` or `capacity_default`; `action` is `upsert` or `delete`;
+`key` is the setting key or the date. New values aren't included: read them from the catalog. A
+hook gets `(event, null, { id, occurredAt, config, changes })`.
 
 ## Behavior notes
 
-Decisions that are easy to mistake for accidents:
+These look like bugs but are deliberate.
 
-- **Confirmation lease.** A payment webhook and a `/status` poll can both observe an
-  unconfirmed booking. Reserva acquires a compare-and-set lease (5-minute TTL) before the
-  confirm-plus-side-effects section. A blocked attempt returns `503 confirmation_in_progress`:
-  the webhook path lets the provider redeliver, the `/status` path re-reads the booking.
-- **Webhook hardening guards.** The payment webhook rejects `409 payment_session_mismatch`
-  when the event's session conflicts with the stored one, and `409 payment_amount_mismatch`
-  when the captured amount differs from the stored price. Both are non-2xx on purpose: an
-  amount mismatch must page someone through webhook-failure alerts, not silently confirm.
-- **Delayed payment methods are refused, not awaited.** A completed checkout session that is
-  not paid means the customer chose a method whose money arrives days later (a voucher, a bank
-  debit) — long after the capacity hold dies. Reserva releases the hold, asks the adapter to
-  cancel the payment, and answers `200`: the event will never become acceptable, so redelivery
-  is pointless. If the money settles anyway, the provider's `async_payment_succeeded` event
-  records a full refund in `refund_operations` and issues it through the same idempotent
-  `refund` port every other refund uses.
-- **Refunds are durable, not in-memory.** A `refund_operations` table records every refund
-  decision, with `UNIQUE(booking_id)` as a compare-and-set claim inserted before the payment
-  provider is ever called, so two requests deciding differently can never both refund; the loser
-  gets `409 refund_conflict`. The provider's refund webhook upserts the same table.
-- **A refund is one decision per booking, made at cancellation.** `refund` is `none`, `full`, or
-  `partial`; `partial` also takes `refundAmountMinor`, which must be at least 1 and below the
-  booking's price (0 is `none`, the whole price is `full`). The amount is stored on the row as
-  `requested_amount_cents`, separately from `amount_cents` — what the provider reported it moved —
-  because a reconciler retry has only the row to replay from. Two `partial` requests for different
-  amounts are different decisions, so the loser gets `409 refund_conflict` like any other mismatch.
-  A booking cannot be refunded twice, or topped up later; a second refund is a provider-dashboard
-  action, and Reserva's webhook records it without cancelling anything.
-- **Delivery state is not an entity flag.** There are no `*_synced` columns on a booking.
-  Calendar, email, hook, and webhook delivery live only in `side_effect_operations` rows;
-  anything that needs to know derives it from there.
-- **Email templates are code, not files.** Per-locale template objects live in the package's
-  email module rather than a `templates/{locale}/{event}.ts` layout.
+- **Confirmation lease.** A payment webhook and a `status` poll can both try to confirm the same
+  booking. The first takes a 5-minute lease; the other gets `503 confirmation_in_progress`. The
+  webhook is redelivered by the provider, and the poll just reads again.
+- **Webhook guards.** The payment webhook answers `409 payment_session_mismatch` when the
+  event's session doesn't match the booking's, and `409 payment_amount_mismatch` when the amount
+  paid differs from the stored price. Both are errors on purpose, so they trigger webhook-failure
+  alerts instead of confirming quietly.
+- **Delayed payment methods are refused.** A completed session that isn't paid means a method
+  whose money arrives days later, after the hold has expired. Reserva releases the hold, asks
+  the adapter to cancel the payment, and answers `200`, since a retry won't change anything. If
+  the money arrives anyway, it's refunded in full through the normal refund path.
+- **One refund per booking.** Each refund decision is recorded in `refund_operations` before the
+  provider is called, with one row per booking, so two conflicting refunds can't both go
+  through. The second gets `409 refund_conflict`. `refund` is `none`, `full` or `partial`;
+  `partial` takes `refundAmountMinor`, at least 1 and below the price. Further refunds are made
+  in the provider's dashboard, and Reserva records them from the webhook without cancelling the
+  booking.
+- **Delivery state lives in the outbox.** Bookings have no `*_synced` columns. Whether a
+  calendar event, email, hook or webhook was delivered is only in `side_effect_operations`.
 
 ## Why not Astro sessions?
 
-Booking-flow state (holds, checkout progress, confirmation) lives in D1, not Astro's
-`session` API. Astro sessions on Cloudflare are backed by Workers KV, which is only
-eventually consistent across regions (up to about 60 seconds). A customer can create a hold
-in one region and complete checkout through another; booking correctness needs
-read-after-write consistency, which D1 provides and KV-backed sessions do not.
+Booking state lives in D1, not in Astro's `session` API. On Cloudflare, Astro sessions use
+Workers KV, which can take up to about 60 seconds to agree across regions. A customer can hold a
+slot through one region and pay through another, and bookings need to read their own writes.
+D1 does that; KV doesn't.
