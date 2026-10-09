@@ -1095,6 +1095,9 @@ a.bk-day { padding-bottom: 0.35rem; box-sizing: border-box; }
 .bk-partner-table tbody th { min-width: 9rem; }
 .bk-partner-table tbody th a, .bk-partner-card h2 a { color: var(--bk-text); font-weight: 600; text-decoration: none; }
 .bk-partner-table tbody th a:hover, .bk-partner-card h2 a:hover { text-decoration: underline; }
+/* The row has no other edit control, so the pencil is what tells an operator the name opens it. */
+.bk-partner-name svg { width: 0.85em; height: 0.85em; margin-left: 0.35em; vertical-align: -0.05em; color: var(--bk-text-muted); }
+.bk-partner-name:hover svg, .bk-partner-name:focus-visible svg { color: var(--bk-text); }
 .bk-partner-count { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .bk-partner-action { text-align: right; white-space: nowrap; }
 .bk-partner-cards { display: none; grid-template-columns: minmax(0, 1fr); margin: 0; padding: 0; list-style: none; gap: 0.75rem; }
