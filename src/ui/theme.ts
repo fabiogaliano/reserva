@@ -108,7 +108,8 @@ export const themeCss = `
 /* Per-viewer theme switch (System / Light / Dark), all three visible so a choice is one click.
    Server-rendered hidden; the enhancer reveals it so no-JS viewers get the OS default instead of a
    dead control. Glass on the dark masthead and the dark top bar alike. */
-.bk-theme-toggle {
+.bk-theme-toggle { display: inline-flex; position: relative; }
+.bk-theme-options {
   display: inline-flex;
   gap: 0.15rem;
   padding: 0.2rem;
@@ -116,7 +117,7 @@ export const themeCss = `
   border: 1px solid rgb(255 255 255 / 0.1);
   background: rgb(255 255 255 / 0.06);
 }
-.bk-theme-toggle button {
+.bk-theme-options button {
   display: inline-grid;
   place-items: center;
   width: 2.1rem;
@@ -129,15 +130,60 @@ export const themeCss = `
   transition: background-color 100ms ease, color 100ms ease;
 }
 @media (hover: hover) and (pointer: fine) {
-  .bk-theme-toggle button:hover { color: var(--bk-masthead-text); }
+  .bk-theme-options button:hover { color: var(--bk-masthead-text); }
 }
-.bk-theme-toggle button[aria-pressed="true"] { background: rgb(255 255 255 / 0.12); color: var(--bk-masthead-text); }
+.bk-theme-options button[aria-pressed="true"] { background: rgb(255 255 255 / 0.12); color: var(--bk-masthead-text); }
 .bk-theme-toggle button:focus-visible { outline: 2px solid var(--bk-accent); outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) { .bk-theme-toggle button { transition: none; } }
 /* In-flow as the masthead's first row, right-aligned, so title text below can't underlap the
    control on a narrow screen. */
 .bk-masthead .bk-theme-toggle { display: flex; width: fit-content; margin: 0 0 0.9rem auto; }
 .bk-topbar .bk-theme-toggle { flex: none; margin-left: auto; }
+.bk-theme-trigger, .bk-theme-label { display: none; }
+/* Below 560px the three buttons crowd the nav off the bar, so one trigger showing the current mode
+   opens them as a labelled menu. Absolute, not in flow: the sticky bar must not grow. */
+@media (max-width: 560px) {
+  .bk-topbar .bk-theme-trigger {
+    display: inline-grid;
+    place-items: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: #aeb1b8;
+    cursor: pointer;
+  }
+  .bk-topbar .bk-theme-trigger[aria-expanded="true"] { background: rgb(255 255 255 / 0.1); color: #ffffff; }
+  .bk-topbar .bk-theme-options {
+    display: none;
+    position: absolute;
+    top: calc(100% + 0.4rem);
+    right: 0;
+    flex-direction: column;
+    min-width: 9.5rem;
+    padding: 0.3rem;
+    background: #1b1c20;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+  }
+  .bk-topbar .bk-theme-toggle[data-open] .bk-theme-options { display: flex; }
+  .bk-topbar .bk-theme-options button {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    width: 100%;
+    height: 2.5rem;
+    padding: 0 0.6rem;
+    color: #d6d7db;
+    font: inherit;
+    font-size: 0.875rem;
+  }
+  .bk-topbar .bk-theme-label { display: inline; }
+  .bk-topbar .bk-theme-options button[aria-pressed="true"]::after { content: '✓'; margin-left: auto; font-size: 0.8rem; }
+}
+@media (max-width: 560px) and (hover: hover) and (pointer: fine) {
+  .bk-topbar .bk-theme-trigger:hover { background: rgb(255 255 255 / 0.06); color: #ededef; }
+}
 /* Scoped higher than the display rules above so the server-rendered control stays hidden until
    the enhancer reveals it, no matter the source order of the context rules. */
 .bk-theme-toggle[hidden],

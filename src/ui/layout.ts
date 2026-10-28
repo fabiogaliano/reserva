@@ -162,16 +162,22 @@ const themeIcons = {
 
 // The per-viewer theme switch: all three choices visible at once, so picking one is one click
 // rather than cycling through the others. Rendered hidden because only the enhancer can store the
-// choice; without it the page follows the OS. `theme` undefined marks "System" as pressed.
+// choice; without it the page follows the OS. `theme` undefined marks "System" as pressed. The
+// trigger only shows in the narrow top bar, where the three buttons would crowd out the nav; there
+// it turns the same buttons into a labelled menu.
 export function themeToggle(messages: ReservaMessages, theme: ThemePreference | undefined): string {
   const mode = theme ?? 'system';
+  const iconSvg = (value: keyof typeof themeIcons): string =>
+    `<svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${themeIcons[value]}</svg>`;
   const button = (value: keyof typeof themeIcons): string => {
     const label = escapeHtml(messages[`theme.${value}`]);
     return `<button type="button" value="${value}" aria-pressed="${value === mode}" aria-label="${label}" title="${label}">`
-      + `<svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${themeIcons[value]}</svg></button>`;
+      + `${iconSvg(value)}<span class="bk-theme-label" aria-hidden="true">${label}</span></button>`;
   };
-  return `<div class="bk-theme-toggle" role="group" aria-label="${escapeHtml(messages['theme.toggle'])}" data-reserva-theme-toggle hidden>`
-    + `${button('system')}${button('light')}${button('dark')}</div>`;
+  const groupLabel = escapeHtml(messages['theme.toggle']);
+  return `<div class="bk-theme-toggle" data-reserva-theme-toggle hidden>`
+    + `<button type="button" class="bk-theme-trigger" aria-expanded="false" aria-controls="bk-theme-options" aria-label="${groupLabel}" title="${groupLabel}">${iconSvg(mode)}</button>`
+    + `<div class="bk-theme-options" id="bk-theme-options" role="group" aria-label="${groupLabel}">${button('system')}${button('light')}${button('dark')}</div></div>`;
 }
 
 const statusTone: Record<string, string> = {
