@@ -1,5 +1,16 @@
 # @reservajs/stripe
 
+## 0.8.5
+
+### Patch Changes
+
+- d33d671: Rewrote the README, `AGENTS.md` and the shipped docs to be shorter and plainer, and brought them up to date with partners, referral codes, CORS and the hold cap. `docs/MIGRATING-v2.md` is no longer shipped. The Stripe README's setup example no longer passes `config` to `defineCloudflareReservaRuntime`, which stopped taking it in 0.5.0.
+- 5ea4b1d: Calls the Stripe API as version `2026-08-26.dahlia`, the version stripe-node 22.6 pins by default. It's a monthly release under the same `dahlia` name, so nothing breaks.
+- Updated dependencies [26cf107]
+- Updated dependencies [d33d671]
+- Updated dependencies [dfa40fc]
+  - @reservajs/astro@0.19.0
+
 ## 0.8.4
 
 ### Patch Changes
