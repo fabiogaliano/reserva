@@ -4,8 +4,8 @@
 // Behaviour mirrors stripe-node 22 (API version, form encoding, retries, error classes, webhook
 // signature scheme) so swapping it in changes nothing Stripe or Reserva can observe.
 
-// The version stripe-node 22.5 pins by default: responses keep exactly the shape the SDK returned.
-export const STRIPE_API_VERSION = '2026-07-29.dahlia';
+// The version stripe-node 22.6 pins by default: responses keep exactly the shape the SDK returned.
+export const STRIPE_API_VERSION = '2026-08-26.dahlia';
 const STRIPE_API_BASE = 'https://api.stripe.com';
 // stripe-node's defaults on Workers: two retries, 0.5 s initial backoff capped at 5 s, 80 s timeout.
 const MAX_NETWORK_RETRIES = 2;
